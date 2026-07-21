@@ -1,0 +1,3 @@
+loadstring(game:HttpGet('https://raw.githubusercontent.com/plutoxqqq/AetherV2/main/init.lua', true), 'init.lua')({
+    Closet = false -- Change to true to disable notifs, loading screen, and console messages
+})

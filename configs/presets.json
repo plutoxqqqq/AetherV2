@@ -1,0 +1,26 @@
+{
+	"presets": [
+		{
+			"name": "CC",
+			"file": "cc.json",
+			"credits": "plutoxqqq",
+			"tags": [
+				"Legit",
+				"Closet",
+				"Combat"
+			],
+			"description": "Balanced closet-combat config tuned to look legit."
+		},
+		{
+			"name": "Rage",
+			"file": "rage.json",
+			"credits": "plutoxqqq",
+			"tags": [
+				"Rage",
+				"Blatant",
+				"Aggressive"
+			],
+			"description": "Aggressive blatant config for raw kill pressure."
+		}
+	]
+}
