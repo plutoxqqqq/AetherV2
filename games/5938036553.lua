@@ -17,7 +17,7 @@ local function downloadFile(path, func)
 	if not isfile(path) then
 		local suc, res = pcall(function()
 			return game:HttpGet(
-				'https://raw.githubusercontent.com/plutoxqqq/AetherV2/'
+				'https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'
 					.. readfile('aetherv2/profiles/commit.txt')
 					.. '/'
 					.. select(1, path:gsub('aetherv2/', '')),

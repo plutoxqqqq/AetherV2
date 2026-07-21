@@ -697,7 +697,7 @@ local function downloadFile(path, func)
 	if not isfile(path) then
 		createDownloader(path)
 		local suc, res = pcall(function()
-			return game:HttpGet('https://raw.githubusercontent.com/plutoxqqq/AetherV2/'..readfile('aetherv2/profiles/commit.txt')..'/'..select(1, path:gsub('aetherv2/', '')), true)
+			return game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..readfile('aetherv2/profiles/commit.txt')..'/'..select(1, path:gsub('aetherv2/', '')), true)
 		end)
 		if not suc or res == '404: Not Found' then
 			error(res)
@@ -5512,7 +5512,7 @@ function mainapi:CreateCategoryList(categorysettings)
 	if categorysettings.Profiles then
 		local function repoBase()
 			local commit = isfile('aetherv2/profiles/commit.txt') and readfile('aetherv2/profiles/commit.txt') or 'main'
-			return 'https://raw.githubusercontent.com/plutoxqqq/AetherV2/'..commit..'/configs/'
+			return 'https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..commit..'/configs/'
 		end
 
 		local downloadbtn = Instance.new('ImageButton')
@@ -8952,7 +8952,7 @@ general:CreateButton({
 		if shared.VapeDeveloper then
 			loadstring(readfile('aetherv2/main.lua'), 'main')(license)
 		else
-			loadstring(game:HttpGet('https://raw.githubusercontent.com/plutoxqqq/AetherV2/'..readfile('aetherv2/profiles/commit.txt')..'/main.lua', true), 'main')(license)
+			loadstring(game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..readfile('aetherv2/profiles/commit.txt')..'/main.lua', true), 'main')(license)
 		end
 	end,
 	Tooltip = 'This will set your profile to the default settings of Vape'
@@ -9043,7 +9043,7 @@ general:CreateButton({
 		if shared.VapeDeveloper then
 			loadstring(readfile('aetherv2/main.lua'), 'main')(license)
 		else
-			loadstring(game:HttpGet('https://raw.githubusercontent.com/plutoxqqq/AetherV2/'..readfile('aetherv2/profiles/commit.txt')..'/main.lua', true), 'main')(license)
+			loadstring(game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..readfile('aetherv2/profiles/commit.txt')..'/main.lua', true), 'main')(license)
 		end
 	end,
 	Tooltip = 'Reloads vape for debugging purposes'
@@ -9166,7 +9166,7 @@ guipane:CreateDropdown({
 			if shared.VapeDeveloper then
 				loadstring(readfile('aetherv2/main.lua'), 'main')(license)
 			else
-				loadstring(game:HttpGet('https://raw.githubusercontent.com/plutoxqqq/AetherV2/'..readfile('aetherv2/profiles/commit.txt')..'/main.lua', true), 'main')(license)
+				loadstring(game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..readfile('aetherv2/profiles/commit.txt')..'/main.lua', true), 'main')(license)
 			end
 		end
 	end,
