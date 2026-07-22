@@ -910,6 +910,27 @@ run(function()
 		end
 	})
 	getgenv().bedwars = bedwars
+	-- BedWars packet-integrity: the position vectors inside an attack `validate` payload
+	-- must be wrapped by the game's own RemoteHashUtil.prepareHashVector3, which folds in
+	-- the rolling session key the server re-checks. A hand-built {value = vec} carries no
+	-- hash, so the server accepts a short grace burst and then throttles the stream (the
+	-- "hits a few times then stops until you leave range" symptom). We grab the real
+	-- function once, pcall-guarded so a moved module path can never break loading, and
+	-- fall back to the raw table only when it is genuinely unavailable.
+	do
+		local ok, util = pcall(function()
+			return require(replicatedStorage.TS['remote-hash']['remote-hash-util']).RemoteHashUtil
+		end)
+		local hashfn = ok and util and util.prepareHashVector3
+		bedwars.prepareHashVector3 = function(vec)
+			if typeof(vec) ~= 'Vector3' then return vec end
+			if hashfn then
+				local good, res = pcall(hashfn, vec)
+				if good and res ~= nil then return res end
+			end
+			return {value = vec}
+		end
+	end
 	store.enchants = setmetatable({}, {
 		__index = function(self, plr)
 			return {
@@ -1116,6 +1137,20 @@ run(function()
 								return (select(2, whitelist:get(plr)))
 							end)
 							if ok and not targetable then return end
+						end
+
+						-- Hash the final position vectors with the game's own util so every
+						-- packet validates and the anti-cheat never throttles the stream. Done
+						-- here, after any reach extension above, so we hash the value we send.
+						-- Both fields are wrapped exactly as the game does it; when the util is
+						-- unavailable this degrades to the previous raw {value = vec} behaviour.
+						if bedwars.prepareHashVector3 and validate then
+							if validate.selfPosition and typeof(validate.selfPosition.value) == 'Vector3' then
+								validate.selfPosition = bedwars.prepareHashVector3(validate.selfPosition.value)
+							end
+							if validate.targetPosition and typeof(validate.targetPosition.value) == 'Vector3' then
+								validate.targetPosition = bedwars.prepareHashVector3(validate.targetPosition.value)
+							end
 						end
 
 						return call:SendToServer(attackTable, ...)
@@ -5790,12 +5825,12 @@ run(function()
                                         store.attackReachUpdate = tick() + 1
                                         swingCooldown = tick()
 
-                                        -- BedWars patched the forged-raycast attack path (server now
-                                        -- validates cameraPosition/cursorDirection against a real ray).
-                                        -- New method: send an empty raycast so validation falls back to
-                                        -- the position-only path, matching the still-working Reach module
-                                        -- (bedwars.Client:Get('SwordHit')) in this same file. selfPosition
-                                        -- stays reach-extended via `pos`, so range/hit behaviour is unchanged.
+                                        -- Empty raycast puts the server on the position-only validation
+                                        -- path; selfPosition/targetPosition are then hashed for us by the
+                                        -- central AttackEntity hook (bedwars.prepareHashVector3) before the
+                                        -- packet leaves, which is what actually gets the hit accepted every
+                                        -- time instead of only for a short burst. selfPosition stays
+                                        -- reach-extended via `pos`, so range/hit behaviour is unchanged.
                                         AttackRemote:SendToServer({
                                             weapon = sword.tool,
                                             chargedAttack = {chargeRatio = 0},
@@ -14444,7 +14479,8 @@ run(function()
                 local _, spos = nearestShop()
                 if spos then travelTo(function() return spos end, 10, false, true) end
             end
-            repeat task.wait() until store.shopLoaded or not AutoWin.Enabled
+            local shopWait = tick() + 8
+            repeat task.wait() until store.shopLoaded or tick() > shopWait or not AutoWin.Enabled or not entitylib.isAlive
             buyWoolHere(target)
         end
         return woolCount() > 0
@@ -14629,12 +14665,46 @@ run(function()
         local deadline = tick() + 90
         local flyY
         local lastPos, stuckSince = nil, tick()
+        -- Progress toward the target (not raw movement): a wall bounce that nudges us
+        -- forward and back each cycle still counts as "no progress", so we bail on a real
+        -- stall instead of grinding uselessly until the 90s deadline.
+        local bestDist, lastProgress = math.huge, tick()
+        local lastSafePos            -- last spot we stood on solid ground (void bailout)
+        local rootGoneSince          -- when the live root first went missing this stretch
+        -- When a trip has to abort while we're out over a gap, drop back onto the last
+        -- solid ground we recorded instead of leaving the character hovering to fall to
+        -- its death. Teleport mode only (Walk mode recovers via Return Home); always
+        -- returns false so callers can `return bailToSafeGround(...)` directly.
+        local function bailToSafeGround(overVoid)
+            if overVoid and lastSafePos and not isWalk() then
+                local liveRoot = myRoot()
+                if liveRoot then
+                    liveRoot.CFrame = CFrame.new(lastSafePos)
+                    liveRoot.AssemblyLinearVelocity = Vector3.zero
+                end
+            end
+            return false
+        end
         while AutoWin.Enabled and tick() < deadline do
             if not entitylib.isAlive then return false end
-            -- Never fight an AntiDeath dodge: if the root is parked, wait it out.
-            if store.rootpart then task.wait() continue end
+            -- Never fight an AntiDeath dodge: if the root is parked, wait it out - but
+            -- don't spin here forever if something leaves it parked (bounded safety net).
+            if store.rootpart then
+                if tick() - lastProgress > 15 then return false end
+                task.wait()
+                continue
+            end
             local root, char = myRoot()
-            if not root then task.wait() return false end
+            if not root then
+                -- A one-frame nil root (a respawn / character swap) must not abort the
+                -- whole trip. Wait briefly for it to come back; only give up if it stays
+                -- gone (a real death, which the caller's ensureAlive handles).
+                rootGoneSince = rootGoneSince or tick()
+                if tick() - rootGoneSince > 1.5 then return false end
+                task.wait()
+                continue
+            end
+            rootGoneSince = nil
             local target = getTarget()
             if not target then return false end
 
@@ -14645,6 +14715,12 @@ run(function()
             local flat = (target - pos) * Vector3.new(1, 0, 1)
             local dist = flat.Magnitude
             if dist <= stopRange then return true end
+            -- Only real progress toward the target resets the stall timer.
+            if dist < bestDist - 1 then
+                bestDist, lastProgress = dist, tick()
+            elseif tick() - lastProgress > 10 then
+                return bailToSafeGround(flyY ~= nil)
+            end
             local hip = char.HipHeight or 3
             local dir = dist > 0 and flat.Unit or root.CFrame.LookVector
             local maxStep = math.min(HopDistance.Value, dist)
@@ -14673,6 +14749,7 @@ run(function()
             if reach >= 2 and reachY then
                 -- Solid ground ahead.
                 flyY = nil
+                lastSafePos = pos          -- remember safe footing for the void bailout
                 local foot = pos + dir * reach
                 if isWalk() then
                     local stepUp = reachY - (pos.Y - hip)
@@ -14696,7 +14773,11 @@ run(function()
                 else
                     flyY = nil
                     local newFootY = doBridge(root, dir, footY, target, hip, noRestock)
-                    if not newFootY then return false end
+                    if not newFootY then
+                        -- Out of blocks over a gap: recover onto solid ground instead of
+                        -- being left to fall (we're definitely over a void here).
+                        return bailToSafeGround(true)
+                    end
                     flyY = newFootY
                 end
             end
@@ -14770,6 +14851,10 @@ run(function()
         repeat task.wait(0.2) until entitylib.isAlive or not AutoWin.Enabled
         if not (AutoWin.Enabled and entitylib.isAlive) then return false end
         task.wait(0.4)
+        -- Re-check after the settle wait: if the user turned AutoWin off during it, do
+        -- NOT re-drive the modules - cleanup() has already restored them and re-enabling
+        -- here would leave Killaura/Breaker stuck on.
+        if not (AutoWin.Enabled and entitylib.isAlive) then return false end
         driveModule('Breaker', true, 'Break Bed')
         driveModule('Killaura', true)
         if userAntiDeath then
