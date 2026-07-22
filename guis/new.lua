@@ -4168,7 +4168,7 @@ function mainapi:CreateCategory(categorysettings)
 		favourite.FontFace = uipallet.Font
 		favourite.Parent = modulebutton
 		addCorner(favourite, UDim.new(1, 0))
-		addTooltip(favourite, 'Favourite (pins to top of category)')
+		addTooltip(favourite, 'Favourite (pins to top + adds to the Favourites tab)')
 		local favscale = Instance.new('UIScale')
 		favscale.Parent = favourite
 		-- instant skips the colour tween; used on bulk paths (config loads)
@@ -4185,6 +4185,58 @@ function mainapi:CreateCategory(categorysettings)
 				tween:Tween(favourite, uipallet.Tween, {TextColor3 = starcolor})
 			end
 		end
+		moduleapi.UpdateFavouriteVisual = updateFavouriteVisual
+
+		-- All the one-shot flourishes for a state change, kept out of SetFavourite
+		-- so the state path stays readable. Only ever runs on user-driven toggles
+		-- (silent = false); bulk config loads skip it entirely.
+		local function playFavouriteBurst(state)
+			-- Border trim fades with the state instead of snapping.
+			if state then
+				favstroke.Enabled = true
+				favstroke.Transparency = 1
+				tweenService:Create(favstroke, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+					Transparency = 0.35
+				}):Play()
+			else
+				local fade = tweenService:Create(favstroke, TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+					Transparency = 1
+				})
+				fade.Completed:Once(function()
+					if not moduleapi.Favourited then
+						favstroke.Enabled = false
+					end
+				end)
+				fade:Play()
+			end
+			-- Star pop in both directions: shrink-in when favouriting,
+			-- overshoot-out when unfavouriting.
+			favscale.Scale = state and 0.6 or 1.2
+			tweenService:Create(favscale, TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+				Scale = 1
+			}):Play()
+			if not state then return end
+			-- Soft gold ring that swells outward and dissolves on favouriting.
+			local oldpulse = modulebutton:FindFirstChild('FavouritePulse')
+			if oldpulse then
+				oldpulse:Destroy()
+			end
+			local pulse = Instance.new('UIStroke')
+			pulse.Name = 'FavouritePulse'
+			pulse.Color = favGold
+			pulse.Thickness = 1
+			pulse.Transparency = 0.25
+			pulse.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+			pulse.Parent = modulebutton
+			tweenService:Create(pulse, TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+				Transparency = 1,
+				Thickness = 7
+			}):Play()
+			task.delay(0.55, function()
+				pulse:Destroy()
+			end)
+		end
+
 		function moduleapi:SetFavourite(state, silent)
 			state = state and true or false
 			-- Early-out when nothing changes: config loads call SetFavourite on
@@ -4197,55 +4249,20 @@ function mainapi:CreateCategory(categorysettings)
 			self.Favourited = state
 			updateFavouriteVisual(silent)
 			mainapi:SortModules()
+			-- Hand the ordered favourites list + the Favourites tab to the central
+			-- controller; it owns everything shared between modules.
+			if mainapi.Favourites then
+				if state then
+					mainapi.Favourites:Add(self)
+				else
+					mainapi.Favourites:Remove(self.Name)
+				end
+			end
 			if mainapi.RefreshFavourites then
 				task.defer(mainapi.RefreshFavourites)
 			end
 			if not silent then
-				-- Border trim fades with the state instead of snapping.
-				if state then
-					favstroke.Enabled = true
-					favstroke.Transparency = 1
-					tweenService:Create(favstroke, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-						Transparency = 0.35
-					}):Play()
-				else
-					local fade = tweenService:Create(favstroke, TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-						Transparency = 1
-					})
-					fade.Completed:Once(function()
-						if not moduleapi.Favourited then
-							favstroke.Enabled = false
-						end
-					end)
-					fade:Play()
-				end
-				-- Star pop in both directions: shrink-in when favouriting,
-				-- overshoot-out when unfavouriting.
-				favscale.Scale = state and 0.6 or 1.2
-				tweenService:Create(favscale, TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
-					Scale = 1
-				}):Play()
-			end
-			if state and not silent then
-				-- Soft gold ring that swells outward and dissolves.
-				local oldpulse = modulebutton:FindFirstChild('FavouritePulse')
-				if oldpulse then
-					oldpulse:Destroy()
-				end
-				local pulse = Instance.new('UIStroke')
-				pulse.Name = 'FavouritePulse'
-				pulse.Color = favGold
-				pulse.Thickness = 1
-				pulse.Transparency = 0.25
-				pulse.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-				pulse.Parent = modulebutton
-				tweenService:Create(pulse, TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-					Transparency = 1,
-					Thickness = 7
-				}):Play()
-				task.delay(0.55, function()
-					pulse:Destroy()
-				end)
+				playFavouriteBurst(state)
 			end
 		end
 		favourite.MouseEnter:Connect(function()
@@ -6506,6 +6523,11 @@ function mainapi:Load(skipgui, profile)
 				object:SetFavourite(v.Favourited, true)
 			end
 		end
+		-- Reinstate the saved order of the Favourites tab now that every module's
+		-- Favourited state has been applied (older configs simply have no order).
+		if self.Favourites and savedata.FavouritesOrder then
+			self.Favourites:ApplyOrder(savedata.FavouritesOrder)
+		end
 		for i, object in self.Legit.Modules do
 			local v = savedata.Legit[i]
 			if not v then
@@ -6663,6 +6685,9 @@ function mainapi:Save(newprofile)
 			Options = mainapi:SaveOptions(v, true)
 		}
 	end
+	-- Persist the Favourites-tab ordering alongside the per-module flags so the
+	-- pinned order the user arranged survives a rejoin.
+	savedata.FavouritesOrder = self.Favourites and self.Favourites:GetOrder() or nil
 
 	for i, v in self.Legit.Modules do
 		savedata.Legit[i] = {
@@ -6886,26 +6911,73 @@ mainapi:CreateCategory({
 })
 
 --[[
-	Favourites (rewritten)
-	A dedicated Favourites tab that mirrors every starred module, wherever it
-	lives. Rows are live proxies of the real module buttons: clicking one
-	toggles the real module, and the visuals (enabled colour, hover state)
-	track the source button through property signals, so the tab is always in
-	sync without polling. mainapi.RefreshFavourites rebuilds the tab and is
-	invoked from every SetFavourite call (star click, config load, plugins).
+	Favourites (rebuilt from scratch)
+
+	Everything favourite-related routes through one controller stored at
+	mainapi.Favourites. A module's star click / config load calls
+	moduleapi:SetFavourite, which flips that module's own visuals and hands the
+	shared bookkeeping to this controller:
+
+	  * Order  - names of favourited modules in the order they were starred, so
+	             the tab is stable and user-controlled rather than alphabetical.
+	             Persisted per profile as savedata.FavouritesOrder.
+	  * Rows   - one live proxy row per favourite. Each mirrors its source module
+	             button (enabled colour, hover) through property signals; left
+	             click toggles the real module, right click un-pins it.
+	  * Header - a live "n" count beside the tab title, plus an empty-state hint.
+
+	controller:Refresh rebuilds the tab and is safe to call anytime. It is driven
+	by SetFavourite, by mainapi:Remove (module teardown) and by a config load,
+	all via the mainapi.RefreshFavourites alias.
 ]]
 do
+	local favGold = Color3.fromRGB(255, 200, 60)
 	local favCategory = mainapi:CreateCategory({
 		Name = 'Favourites',
 		Icon = getcustomasset('aetherv2/assets/new/allowedicon.png'),
 		Size = UDim2.fromOffset(15, 14)
 	})
 	local favChildren = favCategory.Object.Children
-	local favProxies = {}
+
+	local controller = {
+		Order = {}, -- array<string>: favourited module names, insertion order
+		Rows = {}   -- [name] = {Object = TextButton, Connections = {RBXScriptConnection}}
+	}
+	mainapi.Favourites = controller
+
+	-- Header row: a subtle section label with a live gold count on the right.
+	local header = Instance.new('Frame')
+	header.Name = 'Header'
+	header.LayoutOrder = -1
+	header.Size = UDim2.fromOffset(220, 32)
+	header.BackgroundTransparency = 1
+	header.Parent = favChildren
+	local headerTitle = Instance.new('TextLabel')
+	headerTitle.Name = 'Title'
+	headerTitle.Size = UDim2.new(1, -24, 1, 0)
+	headerTitle.Position = UDim2.fromOffset(14, 0)
+	headerTitle.BackgroundTransparency = 1
+	headerTitle.Text = 'PINNED'
+	headerTitle.TextXAlignment = Enum.TextXAlignment.Left
+	headerTitle.TextColor3 = color.Dark(uipallet.Text, 0.30)
+	headerTitle.TextSize = 12
+	headerTitle.FontFace = uipallet.Font
+	headerTitle.Parent = header
+	local headerCount = Instance.new('TextLabel')
+	headerCount.Name = 'Count'
+	headerCount.Size = UDim2.new(1, -24, 1, 0)
+	headerCount.Position = UDim2.fromOffset(10, 0)
+	headerCount.BackgroundTransparency = 1
+	headerCount.Text = '0'
+	headerCount.TextXAlignment = Enum.TextXAlignment.Right
+	headerCount.TextColor3 = favGold
+	headerCount.TextSize = 12
+	headerCount.FontFace = uipallet.Font
+	headerCount.Parent = header
 
 	local emptyLabel = Instance.new('TextLabel')
 	emptyLabel.Name = 'Empty'
-	emptyLabel.Size = UDim2.fromOffset(220, 40)
+	emptyLabel.Size = UDim2.fromOffset(220, 46)
 	emptyLabel.BackgroundTransparency = 1
 	emptyLabel.Text = 'Star a module to pin it here'
 	emptyLabel.TextColor3 = color.Dark(uipallet.Text, 0.43)
@@ -6913,19 +6985,25 @@ do
 	emptyLabel.FontFace = uipallet.Font
 	emptyLabel.Parent = favChildren
 
-	local function removeProxy(name)
-		local proxy = favProxies[name]
-		if not proxy then return end
-		favProxies[name] = nil
-		for _, connection in proxy.Connections do
-			connection:Disconnect()
+	local function indexOf(name)
+		for i, v in controller.Order do
+			if v == name then return i end
 		end
-		proxy.Object:Destroy()
 	end
 
-	local function addProxy(module)
-		if favProxies[module.Name] or not module.Object then return end
+	local function destroyRow(name)
+		local row = controller.Rows[name]
+		if not row then return end
+		controller.Rows[name] = nil
+		for _, connection in row.Connections do
+			connection:Disconnect()
+		end
+		row.Object:Destroy()
+	end
+
+	local function buildRow(module)
 		local source = module.Object
+		if not source then return end
 		local row = Instance.new('TextButton')
 		row.Name = module.Name
 		row.Size = UDim2.fromOffset(220, 40)
@@ -6939,11 +7017,24 @@ do
 		row.TextSize = 14
 		row.FontFace = uipallet.Font
 		row.Parent = favChildren
-		addTooltip(row, module.Category..' module')
+		addTooltip(row, module.Category..' • left-click toggles, right-click unpins')
+
+		-- Gold star marker sitting in the row's left text indent.
+		local star = Instance.new('TextLabel')
+		star.Name = 'Star'
+		star.Size = UDim2.fromOffset(20, 40)
+		star.Position = UDim2.fromOffset(8, 0)
+		star.BackgroundTransparency = 1
+		star.Text = '★'
+		star.TextColor3 = favGold
+		star.TextSize = 12
+		star.FontFace = uipallet.Font
+		star.Parent = row
+
 		local tag = Instance.new('TextLabel')
 		tag.Name = 'Category'
-		tag.Size = UDim2.fromOffset(60, 40)
-		tag.Position = UDim2.new(1, -70, 0, 0)
+		tag.Size = UDim2.fromOffset(90, 40)
+		tag.Position = UDim2.new(1, -100, 0, 0)
 		tag.BackgroundTransparency = 1
 		tag.Text = module.Category
 		tag.TextXAlignment = Enum.TextXAlignment.Right
@@ -6963,34 +7054,111 @@ do
 				row.BackgroundTransparency = source.BackgroundTransparency
 			end),
 			row.MouseButton1Click:Connect(function()
+				if mainapi.PushUndo then mainapi:PushUndo(module) end
 				module:Toggle()
+			end),
+			row.MouseButton2Click:Connect(function()
+				module:SetFavourite(false)
 			end)
 		}
-		favProxies[module.Name] = {Object = row, Connections = connections}
+		controller.Rows[module.Name] = {Object = row, Connections = connections}
 	end
 
-	function mainapi.RefreshFavourites()
-		for name in favProxies do
-			local module = mainapi.Modules[name]
-			if not module or not module.Favourited then
-				removeProxy(name)
-			end
+	-- Add/Remove only touch the ordered list; the actual UI rebuild is deferred
+	-- and coalesced by SetFavourite so a whole config load rebuilds once.
+	function controller:Add(module)
+		if not indexOf(module.Name) then
+			table.insert(self.Order, module.Name)
 		end
-		local names = {}
-		for name, module in mainapi.Modules do
-			if module.Favourited then
-				addProxy(module)
-				table.insert(names, name)
-			end
-		end
-		table.sort(names)
-		for order, name in names do
-			if favProxies[name] then
-				favProxies[name].Object.LayoutOrder = order
-			end
-		end
-		emptyLabel.Visible = #names == 0
 	end
+
+	function controller:Remove(name)
+		local i = indexOf(name)
+		if i then
+			table.remove(self.Order, i)
+		end
+	end
+
+	-- The live favourite order, pruned to modules that still exist and are still
+	-- favourited. Persisted so the tab order survives a rejoin.
+	function controller:GetOrder()
+		local order = {}
+		for _, name in self.Order do
+			local module = mainapi.Modules[name]
+			if module and module.Favourited then
+				table.insert(order, name)
+			end
+		end
+		return order
+	end
+
+	-- Restore a saved order, then append any favourited modules the saved list
+	-- didn't mention (added in a newer build, or by a plugin). Old configs with
+	-- no saved order simply keep whatever order the load produced.
+	function controller:ApplyOrder(order)
+		if type(order) ~= 'table' then return end
+		local seen = {}
+		local rebuilt = {}
+		local function push(name)
+			local module = mainapi.Modules[name]
+			if module and module.Favourited and not seen[name] then
+				seen[name] = true
+				table.insert(rebuilt, name)
+			end
+		end
+		for _, name in order do
+			push(name)
+		end
+		for _, name in self.Order do
+			push(name)
+		end
+		self.Order = rebuilt
+		self:Refresh()
+	end
+
+	function controller:Refresh()
+		-- Drop order entries for modules that vanished or were unfavourited.
+		for i = #self.Order, 1, -1 do
+			local module = mainapi.Modules[self.Order[i]]
+			if not module or not module.Favourited then
+				table.remove(self.Order, i)
+			end
+		end
+		-- Self-heal: adopt any module flagged Favourited outside SetFavourite
+		-- (e.g. a plugin) so the tab never silently misses one.
+		for name, module in mainapi.Modules do
+			if module.Favourited and not indexOf(name) then
+				table.insert(self.Order, name)
+			end
+		end
+		-- Tear down rows no longer in the order.
+		for name in self.Rows do
+			if not indexOf(name) then
+				destroyRow(name)
+			end
+		end
+		-- Ensure a row per ordered favourite and lay them out in order.
+		for order, name in self.Order do
+			local module = mainapi.Modules[name]
+			if module then
+				if not self.Rows[name] then
+					buildRow(module)
+				end
+				if self.Rows[name] then
+					self.Rows[name].Object.LayoutOrder = order
+				end
+			end
+		end
+		headerCount.Text = tostring(#self.Order)
+		emptyLabel.Visible = #self.Order == 0
+	end
+
+	-- Back-compat entry point used by mainapi:Remove and the config loader.
+	mainapi.RefreshFavourites = function()
+		controller:Refresh()
+	end
+
+	controller:Refresh()
 end
 
 mainapi.Categories.Main:CreateDivider('misc')
