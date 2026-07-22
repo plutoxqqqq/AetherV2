@@ -4038,9 +4038,48 @@ run(function()
     -- an arcing arrow until it is almost on top of you, which is what made the dodge
     -- fire a frame or two after the hit already registered. Sampling the real
     -- parabola lets us see the threat while there is still time to move.
+    -- Ballistic helpers ported from cv.lua's "Arrow Dodge" (AnticheatBypass).
+    local function LaunchAngle(v, g, d, h, higherArc)
+        local root = v * v * v * v - g * (g * d * d + 2 * h * v * v)
+        if root < 0 then return nil end
+        root = math.sqrt(root)
+        local angle = higherArc and (v * v + root) or (v * v - root)
+        return math.atan2(angle, g * d)
+    end
+
+    local function LaunchDirection(startPos, target, v, g, higherArc)
+        local horizontal = Vector3.new(target.X - startPos.X, 0, target.Z - startPos.Z)
+        local d = horizontal.Magnitude
+        if d < 0.01 then return nil end
+        local a = LaunchAngle(v, g, d, target.Y - startPos.Y, higherArc)
+        if a == nil or a ~= a then return nil end
+        local vec = horizontal.Unit * v
+        local rotAxis = Vector3.new(-horizontal.Z, 0, horizontal.X)
+        return CFrame.fromAxisAngle(rotAxis, a) * vec
+    end
+
+    local function FindLeadShot(targetPosition, targetVelocity, projectileSpeed, shooterPosition, shooterVelocity, gravity)
+        local distance = (targetPosition - shooterPosition).Magnitude
+        local vrel = targetVelocity - shooterVelocity
+        local timeTaken = distance / projectileSpeed
+        if gravity > 0 then
+            timeTaken = projectileSpeed / gravity + math.sqrt(2 * distance / gravity + projectileSpeed ^ 2 / gravity ^ 2)
+        end
+        return Vector3.new(
+            targetPosition.X + vrel.X * timeTaken,
+            targetPosition.Y + vrel.Y * timeTaken,
+            targetPosition.Z + vrel.Z * timeTaken
+        )
+    end
+
+    -- Projectile detection replaced with Arrow Dodge logic: a projectile counts as a threat
+    -- when its actual velocity matches the velocity that would be required to hit us from its
+    -- position (i.e. it is genuinely aimed at us), rather than the old closest-approach arc
+    -- heuristic. Returns the same {Object, Part, TimeToHit, Velocity} shape the dodge relies on.
     local function incomingProjectile(root)
         local best, bestTime = false, math.huge
         local rootPos = root.Position
+        local aimPos = rootPos + Vector3.new(0, 0.8, 0)
         local range = math.max(Range.Value, 70)
         for obj in projectileCache do
             local part = obj.Parent and projectilePart(obj)
@@ -4050,30 +4089,30 @@ run(function()
                 continue
             end
             local origin = part.Position
-            if (origin - rootPos).Magnitude <= range then
+            local dist = (origin - rootPos).Magnitude
+            if dist <= range then
                 local velocity = getProjectileVelocity(obj, part)
-                if velocity.Magnitude > 2 then
-                    local toLocal = rootPos - origin
-                    local closingSpeed = velocity:Dot(toLocal.Unit)
-                    if closingSpeed > 0 then
-                        local meta = bedwars.ProjectileMeta[obj.Name]
-                        local grav = meta and meta.gravitationalAcceleration or workspace.Gravity
-                        -- Look ahead a little past the straight-line ETA so the whole
-                        -- approach is covered, then walk the arc for the nearest pass.
-                        local horizon = math.clamp((toLocal.Magnitude / closingSpeed) * 1.3, 0.05, 1.4)
-                        local miss, timeToHit = math.huge, horizon
-                        for i = 0, 16 do
-                            local t = horizon * i / 16
-                            local pos = origin + velocity * t - Vector3.new(0, 0.5 * grav * t * t, 0)
-                            local d = (pos - rootPos).Magnitude
-                            if d < miss then
-                                miss = d
-                                timeToHit = t
+                local speed = velocity.Magnitude
+                if speed > 2 and velocity:Dot((rootPos - origin).Unit) > 0 then
+                    local meta = bedwars.ProjectileMeta[obj.Name]
+                    local grav = meta and meta.gravitationalAcceleration or workspace.Gravity
+                    -- Velocity the projectile would need to land on us from where it is now.
+                    local lead = FindLeadShot(aimPos, Vector3.zero, speed, origin, Vector3.zero, grav)
+                    local arc = LaunchDirection(origin, aimPos, speed, grav, false)
+                    local flat = (lead - origin)
+                    if flat.Magnitude > 0 then
+                        flat = flat.Unit * speed
+                        local requiredVelo = Vector3.new(flat.X, arc and arc.Y or flat.Y, flat.Z)
+                        if requiredVelo.Magnitude > 0 then
+                            requiredVelo = requiredVelo.Unit * speed
+                            -- Within Arrow Dodge's 20-stud tolerance -> it is aimed at us.
+                            if (requiredVelo - velocity).Magnitude <= 20 then
+                                local timeToHit = dist / speed
+                                if timeToHit < bestTime then
+                                    best = {Object = obj, Part = part, TimeToHit = timeToHit, Velocity = velocity}
+                                    bestTime = timeToHit
+                                end
                             end
-                        end
-                        if miss < 14 and timeToHit < bestTime then
-                            best = {Object = obj, Part = part, TimeToHit = timeToHit, Velocity = velocity}
-                            bestTime = timeToHit
                         end
                     end
                 end
@@ -4274,6 +4313,183 @@ run(function()
 	Default = 0.55,
 	Decimal = 2,
 	Darker = true,
+    })
+end)
+
+
+run(function()
+    local ChillLighting
+    local oldAmbient, oldOutdoor
+    ChillLighting = vape.Categories.Render:CreateModule({
+        Name = 'ChillLighting',
+        Function = function(callback)
+            if callback then
+                oldAmbient = lightingService.Ambient
+                oldOutdoor = lightingService.OutdoorAmbient
+                lightingService.Ambient = Color3.fromRGB(32, 212, 212)
+                lightingService.OutdoorAmbient = Color3.fromRGB(32, 212, 212)
+            else
+                if oldAmbient then lightingService.Ambient = oldAmbient end
+                if oldOutdoor then lightingService.OutdoorAmbient = oldOutdoor end
+            end
+        end,
+        Tooltip = 'Changes the ambient lighting to a chill teal'
+    })
+end)
+
+run(function()
+    local ChatPosition
+    ChatPosition = vape.Categories.Render:CreateModule({
+        Name = 'ChatPosition',
+        Function = function(callback)
+            pcall(function()
+                if callback then
+                    starterGui:SetCore('ChatWindowPosition', UDim2.new(0, 0, 0, 200))
+                else
+                    starterGui:SetCore('ChatWindowPosition', UDim2.new(0, 0, 0, 0))
+                end
+            end)
+        end,
+        Tooltip = 'Repositions the chat window'
+    })
+end)
+
+run(function()
+    local ChatCrasher
+    ChatCrasher = vape.Categories.Utility:CreateModule({
+        Name = 'ChatCrasher',
+        Function = function(callback)
+            if callback then
+                repeat
+                    pcall(function()
+                        if textChatService.ChatVersion == Enum.ChatVersion.TextChatService then
+                            textChatService.ChatInputBarConfiguration.TargetTextChannel:SendAsync(' ')
+                        else
+                            replicatedStorage.DefaultChatSystemChatEvents.SayMessageRequest:FireServer(' ', 'All')
+                        end
+                    end)
+                    task.wait(1.7)
+                until not ChatCrasher.Enabled
+            end
+        end,
+        Tooltip = 'Spams empty chat messages'
+    })
+end)
+
+run(function()
+    local BoostAirJump
+    BoostAirJump = vape.Categories.Blatant:CreateModule({
+        Name = 'BoostAirJump',
+        Function = function(callback)
+            if callback then
+                repeat
+                    if entitylib.isAlive then
+                        local root = entitylib.character.RootPart
+                        root.AssemblyLinearVelocity = root.AssemblyLinearVelocity + Vector3.new(0, 35, 0)
+                    end
+                    task.wait(0.1)
+                until not BoostAirJump.Enabled
+            end
+        end,
+        Tooltip = 'Adds upward velocity to bypass jump-height detection'
+    })
+end)
+
+run(function()
+    local BedTPv2
+    BedTPv2 = vape.Categories.Blatant:CreateModule({
+        Name = 'BedTPv2',
+        Function = function(callback)
+            if callback then
+                local myteam = lplr:GetAttribute('Team')
+                repeat
+                    if entitylib.isAlive then
+                        local enemybed
+                        for _, v in workspace:GetChildren() do
+                            if v.Name == 'bed' and v:GetAttribute('Team') and v:GetAttribute('Team') ~= myteam then
+                                enemybed = v
+                                break
+                            end
+                        end
+                        if enemybed and enemybed.Parent == workspace then
+                            entitylib.character.RootPart.CFrame = enemybed.CFrame + Vector3.new(0, 5, 0)
+                        end
+                    end
+                    task.wait(0.1)
+                until not BedTPv2.Enabled
+            end
+        end,
+        Tooltip = 'Teleports to the enemy bed'
+    })
+end)
+
+run(function()
+    local BalloonDisabler
+    local AutoDisable
+    local autoConn
+    local old_hook, old_enablePhysics, old_deflate
+
+    local function restore()
+        pcall(function()
+            if old_hook then bedwars.BalloonController.hookBalloon = old_hook end
+            if old_enablePhysics then bedwars.BalloonController.enableBalloonPhysics = old_enablePhysics end
+            if old_deflate then bedwars.BalloonController.deflateBalloon = old_deflate end
+        end)
+        old_hook, old_enablePhysics, old_deflate = nil, nil, nil
+    end
+
+    BalloonDisabler = vape.Categories.Utility:CreateModule({
+        Name = 'BalloonDisabler',
+        Function = function(callback)
+            if callback then
+                if not getItem('balloon') then
+                    notif('BalloonDisabler', 'No balloon in inventory', 5, 'alert')
+                    return
+                end
+                old_hook = bedwars.BalloonController.hookBalloon
+                old_enablePhysics = bedwars.BalloonController.enableBalloonPhysics
+                old_deflate = bedwars.BalloonController.deflateBalloon
+                pcall(function() bedwars.BalloonController:inflateBalloon() end)
+                bedwars.BalloonController.enableBalloonPhysics = function() end
+                bedwars.BalloonController.deflateBalloon = function() end
+                bedwars.BalloonController.hookBalloon = function(self, plr, attachment, balloon)
+                    if tostring(plr) == lplr.Name then
+                        pcall(function()
+                            balloon:WaitForChild('Balloon').CFrame = CFrame.new(0, -1995, 0)
+                            balloon.Balloon:ClearAllChildren()
+                        end)
+                        task.delay(0.5, function()
+                            notif('BalloonDisabler', 'Disabled Anticheat!', 5)
+                        end)
+                        bedwars.BalloonController.hookBalloon = old_hook
+                        bedwars.BalloonController.enableBalloonPhysics = old_enablePhysics
+                    end
+                end
+            else
+                restore()
+            end
+        end,
+        Tooltip = 'Anticheat-bypass exploit via the balloon controller'
+    })
+    AutoDisable = BalloonDisabler:CreateToggle({
+        Name = 'AutoDisable',
+        Function = function(callback)
+            if callback then
+                autoConn = replicatedStorage.Inventories.DescendantAdded:Connect(function(p3)
+                    if p3.Parent and p3.Parent.Name == lplr.Name and p3.Name == 'balloon' then
+                        repeat task.wait() until getItem('balloon') or (not AutoDisable.Enabled)
+                        if AutoDisable.Enabled and not BalloonDisabler.Enabled then
+                            BalloonDisabler:Toggle()
+                        end
+                    end
+                end)
+            else
+                if autoConn then
+                    autoConn:Disconnect()
+                    autoConn = nil
+                end
+            end
+        end
     })
 end)
 
@@ -5534,7 +5750,8 @@ run(function()
 							end
                                 local delta = (v.RootPart.Position - selfpos)
                                 local angle = math.acos(localfacing:Dot((delta * Vector3.new(1, 0, 1)).Unit))
-                                if angle > (math.rad(AngleSlider.Value) / 2) then continue end
+                                -- MultiAura: Multi mode ignores the facing/angle limit and hits every target in range (360 degrees)
+                                if Mode.Value ~= 'Multi' and angle > (math.rad(AngleSlider.Value) / 2) then continue end
 
                                 table.insert(attacked, {
                                     Entity = v,
