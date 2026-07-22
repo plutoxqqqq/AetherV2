@@ -1174,9 +1174,23 @@ run(function()
 		return false
 	end
 	local function calculatePath(target, blockpos, method, angle, wallcheck)
-		local visited, unvisited, distances, air, path = {}, {{0, blockpos}}, {[blockpos] = 0}, {}, {}
+		-- Breaker's "Legit" mode passes a line-of-sight predicate function as `wallcheck`.
+		-- When present, only air nodes genuinely visible from the camera are eligible AND the
+		-- entire break path to that node must be visible, so we never blindly mine through walls.
+		-- Any non-function value keeps the original behaviour (boolean/Vector3 -> isMinable gate),
+		-- so AutoTool and Blatant breaking are completely unaffected.
+		local legitCheck = type(wallcheck) == 'function' and wallcheck or nil
+		local visited, unvisited, distances, air, path = {}, {{0, blockpos, 0}}, {[blockpos] = 0}, {}, {}
+		local depths, visibility = {[blockpos] = 0}, {}
 
-		for _ = 1, 10000 do
+		local function isNodeVisible(pos)
+			if visibility[pos] == nil then
+				visibility[pos] = not legitCheck or legitCheck(pos)
+			end
+			return visibility[pos]
+		end
+
+		for _ = 1, (legitCheck and 300 or 10000) do
 			local _, node = next(unvisited)
 			if not node then break end
 			table.remove(unvisited, 1)
@@ -1188,7 +1202,7 @@ run(function()
 
 				local block = getPlacedBlock(side)
 				if not block or block:GetAttribute('NoBreak') or block == target then
-					if not block then
+					if not block and isNodeVisible(node[2]) then
 						air[node[2]] = true
 					end
 					continue
@@ -1200,8 +1214,9 @@ run(function()
 
 				local curdist = (method and method(block, side) or getBlockHits(block, side)) + node[1]
 				if curdist < (distances[side] or math.huge) then
-					table.insert(unvisited, {curdist, side})
+					table.insert(unvisited, {curdist, side, node[3] + 1})
 					distances[side] = curdist
+					depths[side] = node[3] + 1
 					path[side] = node[2]
 				end
 			end
@@ -1209,8 +1224,36 @@ run(function()
 
 		local pos, cost = nil, math.huge
 		for node in air do
-			if distances[node] < cost and (not wallcheck or isMinable(node)) then
+			if distances[node] >= cost then continue end
+			if legitCheck then
+				local ok, cur, guard = true, node, 0
+				while cur ~= blockpos do
+					guard += 1
+					if guard > 10000 or not isNodeVisible(cur) then
+						ok = false
+						break
+					end
+					cur = path[cur]
+				end
+				if ok then
+					pos, cost = node, distances[node]
+				end
+			elseif not wallcheck or isMinable(node) then
 				pos, cost = node, distances[node]
+			end
+		end
+
+		-- Legit fallback: if no fully-visible air pocket exists, aim for the shallowest still-visible
+		-- node so the module keeps making progress instead of stalling behind cover.
+		if not pos and legitCheck then
+			local depth = math.huge
+			for node, dcost in distances do
+				if node ~= blockpos and isNodeVisible(node) then
+					local d = depths[node]
+					if d < depth or (d == depth and dcost < cost) then
+						pos, cost, depth = node, dcost, d
+					end
+				end
 			end
 		end
 
@@ -5530,15 +5573,18 @@ run(function()
                                         store.attackReachUpdate = tick() + 1
                                         swingCooldown = tick()
 
+                                        -- BedWars patched the forged-raycast attack path (server now
+                                        -- validates cameraPosition/cursorDirection against a real ray).
+                                        -- New method: send an empty raycast so validation falls back to
+                                        -- the position-only path, matching the still-working Reach module
+                                        -- (bedwars.Client:Get('SwordHit')) in this same file. selfPosition
+                                        -- stays reach-extended via `pos`, so range/hit behaviour is unchanged.
                                         AttackRemote:SendToServer({
                                             weapon = sword.tool,
                                             chargedAttack = {chargeRatio = 0},
                                             entityInstance = v.Character,
                                             validate = {
-                                                raycast = {
-                                                    cameraPosition = {value = pos},
-                                                    cursorDirection = {value = dir}
-                                                },
+                                                raycast = {},
                                                 targetPosition = {value = actualRoot.Position},
                                                 selfPosition = {value = pos}
                                             }
@@ -17576,6 +17622,8 @@ run(function()
     local InstantBreak
     local LimitItem
     local Closest
+    local BreakerType
+    local losFilter
     local customlist, parts = {}, {}
 
     -- Minimal self-contained maid. Recent BedWars updates stopped exposing
@@ -17736,6 +17784,37 @@ run(function()
         return (cache - block.Position).Magnitude
     end
 
+    -- Line-of-sight support for "Legit" breaker type: only break blocks whose surrounding
+    -- air is actually visible from the camera, never blindly through walls.
+    losFilter = RaycastParams.new()
+    losFilter.FilterType = Enum.RaycastFilterType.Exclude
+    losFilter.RespectCanCollide = false
+    losFilter.IgnoreWater = true
+
+    local function refreshFilter()
+        losFilter.FilterDescendantsInstances = {lplr.Character, gameCamera}
+    end
+
+    local VISIBILITY_PROBES = {
+        Vector3.zero,
+        Vector3.new(1.35, 0, 0), Vector3.new(-1.35, 0, 0),
+        Vector3.new(0, 1.35, 0), Vector3.new(0, -1.35, 0),
+        Vector3.new(0, 0, 1.35), Vector3.new(0, 0, -1.35)
+    }
+
+    local function isVisible(worldPos)
+        local eye = gameCamera.CFrame.Position
+        for _, offset in VISIBILITY_PROBES do
+            local probe = worldPos + offset
+            local ray = probe - eye
+            local hit = workspace:Raycast(eye, ray, losFilter)
+            if not hit or (hit.Position - eye).Magnitude >= ray.Magnitude - 1.5 then
+                return true
+            end
+        end
+        return false
+    end
+
     local function attemptBreak(tab, localPosition)
         if not tab then return end
         for _, v in tab do
@@ -17745,7 +17824,8 @@ run(function()
                 if LimitItem.Enabled and not (store.hand.tool and bedwars.ItemMeta[store.hand.tool.Name].breakBlock) then continue end
 
                 hit += 1
-                local target, path, endpos = bedwars.breakBlock(v, Effect.Enabled, Animation.Enabled, CustomHealth.Enabled and customHealthbar or nil, AutoTool.Enabled, Closest.Enabled and closestMethod or breakmethods[Mode.Value], Angle.Value, Closest.Enabled)
+                local target, path, endpos = bedwars.breakBlock(v, Effect.Enabled, Animation.Enabled, CustomHealth.Enabled and customHealthbar or nil, AutoTool.Enabled, Closest.Enabled and closestMethod or breakmethods[Mode.Value], Angle.Value, BreakerType.Value == 'Legit' and isVisible or nil)
+                if not target then continue end
                 if path then
                     local currentnode = target
                     for _, part in parts do
@@ -17819,6 +17899,9 @@ run(function()
                     if entitylib.isAlive then
                         local localPosition = entitylib.character.RootPart.Position
 
+                        if BreakerType.Value == 'Legit' then
+                            refreshFilter()
+                        end
                         if attemptBreak(Bed.Enabled and beds, localPosition) then continue end
                         if attemptBreak(Tesla.Enabled and teslas, localPosition) then continue end
                         if attemptBreak(Hive.Enabled and hives, localPosition) then continue end
@@ -17839,7 +17922,10 @@ run(function()
                 table.clear(parts)
             end
         end,
-        Tooltip = 'Break blocks around you automatically'
+        Tooltip = 'Break blocks around you automatically',
+        ExtraText = function()
+            return BreakerType.Value
+        end
     })
     local methods = {}
     for i in breakmethods do
@@ -17930,6 +18016,12 @@ run(function()
     SelfBreak = Breaker:CreateToggle({Name = 'Self Break'})
     InstantBreak = Breaker:CreateToggle({Name = 'Instant Break'})
     AutoTool = Breaker:CreateToggle({Name = 'Auto Tool'})
+    BreakerType = Breaker:CreateDropdown({
+        Name = 'Breaker Type',
+        List = {'Blatant', 'Legit'},
+        Default = 'Blatant',
+        Tooltip = 'Blatant breaks any block in range regardless of visibility\nLegit only breaks blocks that are actually visible from your camera, never blindly through walls'
+    })
     Closest = Breaker:CreateToggle({
         Name = 'Closest break',
         Tooltip = 'Uses your mouse position to get the closest block to you',
