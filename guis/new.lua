@@ -6876,6 +6876,13 @@ mainapi:CreateCategory({
 	Icon = getcustomasset('aetherv2/assets/new/blatanticon.png'),
 	Size = UDim2.fromOffset(14, 14)
 })
+-- Exploits: game-specific exploit modules (kit exploits, disablers). Uses the Blatant
+-- icon for now until a dedicated asset is made.
+mainapi:CreateCategory({
+	Name = 'Exploits',
+	Icon = getcustomasset('aetherv2/assets/new/blatanticon.png'),
+	Size = UDim2.fromOffset(14, 14)
+})
 mainapi:CreateCategory({
 	Name = 'Render',
 	Icon = getcustomasset('aetherv2/assets/new/rendericon.png'),
@@ -7595,6 +7602,7 @@ guipane:CreateButton({
 			GUICategory = 1,
 			CombatCategory = 2,
 			BlatantCategory = 3,
+			ExploitsCategory = 4,
 			RenderCategory = 4,
 			VisualsCategory = 5,
 			LegitCategory = 6,

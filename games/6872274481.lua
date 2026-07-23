@@ -59,6 +59,13 @@ local lplr = playersService.LocalPlayer
 local assetfunction = getcustomasset
 
 local vape = shared.vape
+-- 'Exploits' category safety net. The `new`, `newer` and `old` GUI themes create a real
+-- Exploits tab; any other theme (e.g. `rise`, which has an unusual category layout) won't,
+-- so we alias Exploits -> Blatant there. This guarantees `vape.Categories.Exploits` is
+-- always a valid category, so the exploit modules below never get skipped for indexing nil.
+if vape.Categories and not vape.Categories.Exploits then
+	vape.Categories.Exploits = vape.Categories.Blatant
+end
 local entitylib = vape.Libraries.entity
 local targetinfo = vape.Libraries.targetinfo
 local sessioninfo = vape.Libraries.sessioninfo
@@ -4473,7 +4480,7 @@ run(function()
         old_hook, old_enablePhysics, old_deflate = nil, nil, nil
     end
 
-    BalloonDisabler = vape.Categories.Utility:CreateModule({
+    BalloonDisabler = vape.Categories.Exploits:CreateModule({
         Name = 'BalloonDisabler',
         Function = function(callback)
             if callback then
@@ -4525,6 +4532,194 @@ run(function()
                 end
             end
         end
+    })
+end)
+
+-- Krystal Disabler (ported from the BedFight module). Krystal (the GlacialSkater kit) skates
+-- on momentum; the server periodically corrects the client, which reads as a lagback. We hook
+-- the controller's own updateMomentum so momentum is always reported maxed, and suppress the
+-- local CFrame/Velocity correction listeners so the skate never snaps back. Fails gracefully
+-- (notif + untoggle) if this game doesn't expose the Krystal controller.
+run(function()
+    local KrystalDisabler
+    local oldUpdateMomentum
+    local momentumRemote
+    local patchedSignals = setmetatable({}, {__mode = 'k'})
+    local targetMomentum = 9e9
+
+    local function getController()
+        return bedwars and bedwars.GlacialSkaterController
+    end
+
+    local function setKrystalMomentum(controller)
+        controller = controller or getController()
+        if not controller then return end
+        controller.momentum = targetMomentum
+        controller.lastMomentumReport = targetMomentum
+        if momentumRemote then
+            pcall(function()
+                momentumRemote:SendToServer({momentumValue = targetMomentum})
+            end)
+        end
+    end
+
+    local function patchMovementSignal(signal)
+        if not signal or not getconnections or not hookfunction then return end
+        for _, connection in getconnections(signal) do
+            local func = connection and connection.Function
+            if func and not patchedSignals[func] then
+                patchedSignals[func] = true
+                pcall(hookfunction, func, function() end)
+            end
+        end
+    end
+
+    local function patchCharacter(character)
+        local root = character and character.RootPart
+        if not root then return end
+        patchMovementSignal(root:GetPropertyChangedSignal('CFrame'))
+        patchMovementSignal(root:GetPropertyChangedSignal('Velocity'))
+        patchMovementSignal(root:GetPropertyChangedSignal('AssemblyLinearVelocity'))
+    end
+
+    KrystalDisabler = vape.Categories.Exploits:CreateModule({
+        Name = 'Krystal Disabler',
+        Function = function(callback)
+            local controller = getController()
+            if callback then
+                if not controller or type(controller.updateMomentum) ~= 'function' then
+                    notif('Krystal Disabler', 'Krystal controller is unavailable.', 5, 'warning')
+                    KrystalDisabler:Toggle()
+                    return
+                end
+
+                momentumRemote = bedwars.Client and bedwars.Client:Get('MomentumUpdate')
+                if not oldUpdateMomentum then
+                    oldUpdateMomentum = controller.updateMomentum
+                    controller.updateMomentum = function(self, ...)
+                        local result = oldUpdateMomentum(self, ...)
+                        setKrystalMomentum(self)
+                        return result
+                    end
+                end
+
+                KrystalDisabler:Clean(entitylib.Events.LocalAdded:Connect(patchCharacter))
+                if entitylib.isAlive then
+                    patchCharacter(entitylib.character)
+                end
+                setKrystalMomentum(controller)
+                pcall(controller.updateMomentum, controller)
+            else
+                if controller and oldUpdateMomentum then
+                    controller.updateMomentum = oldUpdateMomentum
+                end
+                oldUpdateMomentum = nil
+                momentumRemote = nil
+            end
+        end,
+        Tooltip = 'Removes Krystal lagbacks: keeps momentum reported maxed and suppresses the local movement-correction listeners so the skate never snaps back.'
+    })
+end)
+
+-- Infinite Sigrid. Ride the Sigrid kit's elk indefinitely. Two layers, neither of which spams
+-- a remote every frame the way the naive version does:
+--   1. Best-effort: auto-discover the elk/Sigrid kit controller and no-op its local dismount
+--      so the client never voluntarily leaves the mount (the Krystal-Disabler philosophy).
+--      Purely opportunistic - a wrong guess can't error anything and the re-assert below still
+--      carries the module on its own.
+--   2. Reliable: while the elk kit is equipped, re-fire the ElkKitMounted remote at a
+--      rate-limited, user-tunable cadence (default a few times a second) so the mount stays
+--      refreshed at a plausible packet rate instead of ~60x/sec.
+run(function()
+    local InfiniteSigrid
+    local RefreshRate
+    local KIT = 'elk_master'
+    local mountRemote
+    local hookController, hookMethod, hookOld
+
+    -- Names/methods to probe for the elk controller. bedwars[<name>] resolves through the
+    -- Knit.Controllers proxy, so an unknown name just yields nil (guarded); nothing breaks.
+    local CONTROLLER_NAMES = {'ElkController', 'ElkKitController', 'ElkMasterController', 'SigridController', 'ReindeerController', 'ElkMountController'}
+    local DISMOUNT_METHODS = {'dismount', 'unmount', 'onDismount', 'endRide', 'stopRiding', 'despawnElk', 'removeElk', 'onElkDismount'}
+
+    local function findController()
+        for _, name in CONTROLLER_NAMES do
+            local ok, controller = pcall(function() return bedwars[name] end)
+            if ok and type(controller) == 'table' then
+                return controller
+            end
+        end
+        return nil
+    end
+
+    local function hookDismount()
+        local controller = findController()
+        if not controller then return end
+        for _, m in DISMOUNT_METHODS do
+            local ok, fn = pcall(function() return controller[m] end)
+            if ok and type(fn) == 'function' then
+                hookController, hookMethod, hookOld = controller, m, fn
+                controller[m] = function(...)
+                    -- Swallow the local dismount while the module is on; restored on toggle-off.
+                    if InfiniteSigrid.Enabled then return end
+                    return hookOld(...)
+                end
+                return
+            end
+        end
+    end
+
+    local function restoreHook()
+        if hookController and hookMethod and hookOld then
+            pcall(function() hookController[hookMethod] = hookOld end)
+        end
+        hookController, hookMethod, hookOld = nil, nil, nil
+    end
+
+    InfiniteSigrid = vape.Categories.Exploits:CreateModule({
+        Name = 'InfiniteSigrid',
+        Function = function(callback)
+            if callback then
+                if not mountRemote then
+                    pcall(function()
+                        mountRemote = bedwars.Client and bedwars.Client:Get('ElkKitMounted')
+                    end)
+                end
+                if not mountRemote then
+                    notif('InfiniteSigrid', 'Elk mount remote unavailable.', 5, 'warning')
+                    InfiniteSigrid:Toggle()
+                    return
+                end
+
+                hookDismount()
+
+                task.spawn(function()
+                    local lastAssert = 0
+                    repeat
+                        if entitylib.isAlive and store.equippedKit == KIT then
+                            local rate = RefreshRate and RefreshRate.Value or 0.4
+                            if (tick() - lastAssert) >= rate then
+                                lastAssert = tick()
+                                pcall(function() mountRemote:SendToServer() end)
+                            end
+                        end
+                        task.wait()
+                    until not InfiniteSigrid.Enabled
+                end)
+            else
+                restoreHook()
+            end
+        end,
+        Tooltip = 'Ride the Sigrid elk forever. Suppresses the local dismount when the elk controller is found and re-asserts the mount at a rate-limited cadence, instead of spamming the mount remote every frame like the naive version.'
+    })
+    RefreshRate = InfiniteSigrid:CreateSlider({
+        Name = 'Refresh rate',
+        Min = 0.1,
+        Max = 2,
+        Default = 0.4,
+        Decimal = 100,
+        Suffix = ' s',
+        Tooltip = 'How often the mount is re-asserted. Lower = more resilient but more packets; raise it if the anticheat still flags you.'
     })
 end)
 
@@ -5624,6 +5819,7 @@ run(function()
 
     local FastHits
     local Legit
+    local Unpatch
     local FireRate
     local Whitelist
     local FireRates = {}
@@ -5751,6 +5947,9 @@ run(function()
                 end
 
                 local swingCooldown, switchCooldown, lastSwing, targetIndex = tick(), tick(), 0, 0
+                -- Original sword-region constant, saved the first time 'Unpatch' widens it so we
+                -- can hand it straight back on toggle-off (never leave normal clicks with reach).
+                local savedRegion
                 local lastShot, projectileIndex = tick(), 0
                 local lastHit = 0
                 repeat
@@ -5825,22 +6024,38 @@ run(function()
                                         store.attackReachUpdate = tick() + 1
                                         swingCooldown = tick()
 
-                                        -- Empty raycast puts the server on the position-only validation
-                                        -- path; selfPosition/targetPosition are then hashed for us by the
-                                        -- central AttackEntity hook (bedwars.prepareHashVector3) before the
-                                        -- packet leaves, which is what actually gets the hit accepted every
-                                        -- time instead of only for a short burst. selfPosition stays
-                                        -- reach-extended via `pos`, so range/hit behaviour is unchanged.
-                                        AttackRemote:SendToServer({
-                                            weapon = sword.tool,
-                                            chargedAttack = {chargeRatio = 0},
-                                            entityInstance = v.Character,
-                                            validate = {
-                                                raycast = {},
-                                                targetPosition = {value = actualRoot.Position},
-                                                selfPosition = {value = pos}
-                                            }
-                                        })
+                                        if Unpatch.Enabled then
+                                            -- Deep unpatch: rather than hand-forge the packet, let the game's
+                                            -- own sword swing build and send it, so the hash, attack sequence
+                                            -- and CPS state are exactly what a real click produces - nothing
+                                            -- for the anticheat to single out. Reach comes from momentarily
+                                            -- widening the game's own sword-region constant to our range; the
+                                            -- game's CPS check naturally rate-limits any redundant swings.
+                                            pcall(function()
+                                                if savedRegion == nil then
+                                                    local ok, cur = pcall(debug.getconstant, bedwars.SwordController.swingSwordInRegion, 6)
+                                                    savedRegion = (ok and type(cur) == 'number') and cur or 3.8
+                                                end
+                                                debug.setconstant(bedwars.SwordController.swingSwordInRegion, 6, math.max(AttackRange.Value, 3.8) / 3)
+                                                bedwars.SwordController:swingSwordAtMouse()
+                                            end)
+                                        else
+                                            -- Default: empty raycast puts the server on the position-only
+                                            -- validation path; selfPosition/targetPosition are hashed for us
+                                            -- by the central AttackEntity hook (bedwars.prepareHashVector3)
+                                            -- before the packet leaves. selfPosition stays reach-extended via
+                                            -- `pos`, so range/hit behaviour is unchanged.
+                                            AttackRemote:SendToServer({
+                                                weapon = sword.tool,
+                                                chargedAttack = {chargeRatio = 0},
+                                                entityInstance = v.Character,
+                                                validate = {
+                                                    raycast = {},
+                                                    targetPosition = {value = actualRoot.Position},
+                                                    selfPosition = {value = pos}
+                                                }
+                                            })
+                                        end
 
                                         if FastHits.Enabled and tick() > lastShot and not entitylib.Wallcheck(entitylib.character.RootPart.Position, actualRoot.Position, {gameCamera, lplr.Character, v.Character}) then
                                             local projectiles = getProjectiles()
@@ -5964,6 +6179,15 @@ run(function()
 
                     task.wait()
                 until not Killaura.Enabled
+
+                -- Hand the sword region back exactly as we found it so normal clicks never
+                -- keep the 'Unpatch' reach after Killaura is turned off.
+                if savedRegion ~= nil then
+                    pcall(function()
+                        debug.setconstant(bedwars.SwordController.swingSwordInRegion, 6, savedRegion)
+                    end)
+                    savedRegion = nil
+                end
             else
                 store.KillauraTarget = nil
                 for _, v in Boxes do
@@ -6061,6 +6285,10 @@ run(function()
         Max = 120,
         Default = 60,
         Suffix = 'hz'
+    })
+    Unpatch = Killaura:CreateToggle({
+        Name = 'Unpatch',
+        Tooltip = 'Anticheat unpatch method.\nOff (default): sends a hashed attack packet on the position-only validation path.\nOn: routes each hit through the game\'s own sword swing (swingSwordAtMouse) so the packet is built exactly like a real click - the deepest unpatch. Reach follows the Attack range slider.'
     })
     FastHits = Killaura:CreateToggle({
 	Name = 'Fast Hits',
