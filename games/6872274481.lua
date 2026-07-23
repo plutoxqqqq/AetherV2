@@ -59,6 +59,13 @@ local lplr = playersService.LocalPlayer
 local assetfunction = getcustomasset
 
 local vape = shared.vape
+-- 'Exploits' category safety net. The `new`, `newer` and `old` GUI themes create a real
+-- Exploits tab; any other theme (e.g. `rise`, which has an unusual category layout) won't,
+-- so we alias Exploits -> Blatant there. This guarantees `vape.Categories.Exploits` is
+-- always a valid category, so the exploit modules below never get skipped for indexing nil.
+if vape.Categories and not vape.Categories.Exploits then
+	vape.Categories.Exploits = vape.Categories.Blatant
+end
 local entitylib = vape.Libraries.entity
 local targetinfo = vape.Libraries.targetinfo
 local sessioninfo = vape.Libraries.sessioninfo
@@ -910,6 +917,27 @@ run(function()
 		end
 	})
 	getgenv().bedwars = bedwars
+	-- BedWars packet-integrity: the position vectors inside an attack `validate` payload
+	-- must be wrapped by the game's own RemoteHashUtil.prepareHashVector3, which folds in
+	-- the rolling session key the server re-checks. A hand-built {value = vec} carries no
+	-- hash, so the server accepts a short grace burst and then throttles the stream (the
+	-- "hits a few times then stops until you leave range" symptom). We grab the real
+	-- function once, pcall-guarded so a moved module path can never break loading, and
+	-- fall back to the raw table only when it is genuinely unavailable.
+	do
+		local ok, util = pcall(function()
+			return require(replicatedStorage.TS['remote-hash']['remote-hash-util']).RemoteHashUtil
+		end)
+		local hashfn = ok and util and util.prepareHashVector3
+		bedwars.prepareHashVector3 = function(vec)
+			if typeof(vec) ~= 'Vector3' then return vec end
+			if hashfn then
+				local good, res = pcall(hashfn, vec)
+				if good and res ~= nil then return res end
+			end
+			return {value = vec}
+		end
+	end
 	store.enchants = setmetatable({}, {
 		__index = function(self, plr)
 			return {
@@ -1116,6 +1144,20 @@ run(function()
 								return (select(2, whitelist:get(plr)))
 							end)
 							if ok and not targetable then return end
+						end
+
+						-- Hash the final position vectors with the game's own util so every
+						-- packet validates and the anti-cheat never throttles the stream. Done
+						-- here, after any reach extension above, so we hash the value we send.
+						-- Both fields are wrapped exactly as the game does it; when the util is
+						-- unavailable this degrades to the previous raw {value = vec} behaviour.
+						if bedwars.prepareHashVector3 and validate then
+							if validate.selfPosition and typeof(validate.selfPosition.value) == 'Vector3' then
+								validate.selfPosition = bedwars.prepareHashVector3(validate.selfPosition.value)
+							end
+							if validate.targetPosition and typeof(validate.targetPosition.value) == 'Vector3' then
+								validate.targetPosition = bedwars.prepareHashVector3(validate.targetPosition.value)
+							end
 						end
 
 						return call:SendToServer(attackTable, ...)
@@ -4438,7 +4480,7 @@ run(function()
         old_hook, old_enablePhysics, old_deflate = nil, nil, nil
     end
 
-    BalloonDisabler = vape.Categories.Utility:CreateModule({
+    BalloonDisabler = vape.Categories.Exploits:CreateModule({
         Name = 'BalloonDisabler',
         Function = function(callback)
             if callback then
@@ -4490,6 +4532,194 @@ run(function()
                 end
             end
         end
+    })
+end)
+
+-- Krystal Disabler (ported from the BedFight module). Krystal (the GlacialSkater kit) skates
+-- on momentum; the server periodically corrects the client, which reads as a lagback. We hook
+-- the controller's own updateMomentum so momentum is always reported maxed, and suppress the
+-- local CFrame/Velocity correction listeners so the skate never snaps back. Fails gracefully
+-- (notif + untoggle) if this game doesn't expose the Krystal controller.
+run(function()
+    local KrystalDisabler
+    local oldUpdateMomentum
+    local momentumRemote
+    local patchedSignals = setmetatable({}, {__mode = 'k'})
+    local targetMomentum = 9e9
+
+    local function getController()
+        return bedwars and bedwars.GlacialSkaterController
+    end
+
+    local function setKrystalMomentum(controller)
+        controller = controller or getController()
+        if not controller then return end
+        controller.momentum = targetMomentum
+        controller.lastMomentumReport = targetMomentum
+        if momentumRemote then
+            pcall(function()
+                momentumRemote:SendToServer({momentumValue = targetMomentum})
+            end)
+        end
+    end
+
+    local function patchMovementSignal(signal)
+        if not signal or not getconnections or not hookfunction then return end
+        for _, connection in getconnections(signal) do
+            local func = connection and connection.Function
+            if func and not patchedSignals[func] then
+                patchedSignals[func] = true
+                pcall(hookfunction, func, function() end)
+            end
+        end
+    end
+
+    local function patchCharacter(character)
+        local root = character and character.RootPart
+        if not root then return end
+        patchMovementSignal(root:GetPropertyChangedSignal('CFrame'))
+        patchMovementSignal(root:GetPropertyChangedSignal('Velocity'))
+        patchMovementSignal(root:GetPropertyChangedSignal('AssemblyLinearVelocity'))
+    end
+
+    KrystalDisabler = vape.Categories.Exploits:CreateModule({
+        Name = 'Krystal Disabler',
+        Function = function(callback)
+            local controller = getController()
+            if callback then
+                if not controller or type(controller.updateMomentum) ~= 'function' then
+                    notif('Krystal Disabler', 'Krystal controller is unavailable.', 5, 'warning')
+                    KrystalDisabler:Toggle()
+                    return
+                end
+
+                momentumRemote = bedwars.Client and bedwars.Client:Get('MomentumUpdate')
+                if not oldUpdateMomentum then
+                    oldUpdateMomentum = controller.updateMomentum
+                    controller.updateMomentum = function(self, ...)
+                        local result = oldUpdateMomentum(self, ...)
+                        setKrystalMomentum(self)
+                        return result
+                    end
+                end
+
+                KrystalDisabler:Clean(entitylib.Events.LocalAdded:Connect(patchCharacter))
+                if entitylib.isAlive then
+                    patchCharacter(entitylib.character)
+                end
+                setKrystalMomentum(controller)
+                pcall(controller.updateMomentum, controller)
+            else
+                if controller and oldUpdateMomentum then
+                    controller.updateMomentum = oldUpdateMomentum
+                end
+                oldUpdateMomentum = nil
+                momentumRemote = nil
+            end
+        end,
+        Tooltip = 'Removes Krystal lagbacks: keeps momentum reported maxed and suppresses the local movement-correction listeners so the skate never snaps back.'
+    })
+end)
+
+-- Infinite Sigrid. Ride the Sigrid kit's elk indefinitely. Two layers, neither of which spams
+-- a remote every frame the way the naive version does:
+--   1. Best-effort: auto-discover the elk/Sigrid kit controller and no-op its local dismount
+--      so the client never voluntarily leaves the mount (the Krystal-Disabler philosophy).
+--      Purely opportunistic - a wrong guess can't error anything and the re-assert below still
+--      carries the module on its own.
+--   2. Reliable: while the elk kit is equipped, re-fire the ElkKitMounted remote at a
+--      rate-limited, user-tunable cadence (default a few times a second) so the mount stays
+--      refreshed at a plausible packet rate instead of ~60x/sec.
+run(function()
+    local InfiniteSigrid
+    local RefreshRate
+    local KIT = 'elk_master'
+    local mountRemote
+    local hookController, hookMethod, hookOld
+
+    -- Names/methods to probe for the elk controller. bedwars[<name>] resolves through the
+    -- Knit.Controllers proxy, so an unknown name just yields nil (guarded); nothing breaks.
+    local CONTROLLER_NAMES = {'ElkController', 'ElkKitController', 'ElkMasterController', 'SigridController', 'ReindeerController', 'ElkMountController'}
+    local DISMOUNT_METHODS = {'dismount', 'unmount', 'onDismount', 'endRide', 'stopRiding', 'despawnElk', 'removeElk', 'onElkDismount'}
+
+    local function findController()
+        for _, name in CONTROLLER_NAMES do
+            local ok, controller = pcall(function() return bedwars[name] end)
+            if ok and type(controller) == 'table' then
+                return controller
+            end
+        end
+        return nil
+    end
+
+    local function hookDismount()
+        local controller = findController()
+        if not controller then return end
+        for _, m in DISMOUNT_METHODS do
+            local ok, fn = pcall(function() return controller[m] end)
+            if ok and type(fn) == 'function' then
+                hookController, hookMethod, hookOld = controller, m, fn
+                controller[m] = function(...)
+                    -- Swallow the local dismount while the module is on; restored on toggle-off.
+                    if InfiniteSigrid.Enabled then return end
+                    return hookOld(...)
+                end
+                return
+            end
+        end
+    end
+
+    local function restoreHook()
+        if hookController and hookMethod and hookOld then
+            pcall(function() hookController[hookMethod] = hookOld end)
+        end
+        hookController, hookMethod, hookOld = nil, nil, nil
+    end
+
+    InfiniteSigrid = vape.Categories.Exploits:CreateModule({
+        Name = 'InfiniteSigrid',
+        Function = function(callback)
+            if callback then
+                if not mountRemote then
+                    pcall(function()
+                        mountRemote = bedwars.Client and bedwars.Client:Get('ElkKitMounted')
+                    end)
+                end
+                if not mountRemote then
+                    notif('InfiniteSigrid', 'Elk mount remote unavailable.', 5, 'warning')
+                    InfiniteSigrid:Toggle()
+                    return
+                end
+
+                hookDismount()
+
+                task.spawn(function()
+                    local lastAssert = 0
+                    repeat
+                        if entitylib.isAlive and store.equippedKit == KIT then
+                            local rate = RefreshRate and RefreshRate.Value or 0.4
+                            if (tick() - lastAssert) >= rate then
+                                lastAssert = tick()
+                                pcall(function() mountRemote:SendToServer() end)
+                            end
+                        end
+                        task.wait()
+                    until not InfiniteSigrid.Enabled
+                end)
+            else
+                restoreHook()
+            end
+        end,
+        Tooltip = 'Ride the Sigrid elk forever. Suppresses the local dismount when the elk controller is found and re-asserts the mount at a rate-limited cadence, instead of spamming the mount remote every frame like the naive version.'
+    })
+    RefreshRate = InfiniteSigrid:CreateSlider({
+        Name = 'Refresh rate',
+        Min = 0.1,
+        Max = 2,
+        Default = 0.4,
+        Decimal = 100,
+        Suffix = ' s',
+        Tooltip = 'How often the mount is re-asserted. Lower = more resilient but more packets; raise it if the anticheat still flags you.'
     })
 end)
 
@@ -5589,6 +5819,7 @@ run(function()
 
     local FastHits
     local Legit
+    local Unpatch
     local FireRate
     local Whitelist
     local FireRates = {}
@@ -5716,6 +5947,9 @@ run(function()
                 end
 
                 local swingCooldown, switchCooldown, lastSwing, targetIndex = tick(), tick(), 0, 0
+                -- Original sword-region constant, saved the first time 'Unpatch' widens it so we
+                -- can hand it straight back on toggle-off (never leave normal clicks with reach).
+                local savedRegion
                 local lastShot, projectileIndex = tick(), 0
                 local lastHit = 0
                 repeat
@@ -5790,22 +6024,38 @@ run(function()
                                         store.attackReachUpdate = tick() + 1
                                         swingCooldown = tick()
 
-                                        -- BedWars patched the forged-raycast attack path (server now
-                                        -- validates cameraPosition/cursorDirection against a real ray).
-                                        -- New method: send an empty raycast so validation falls back to
-                                        -- the position-only path, matching the still-working Reach module
-                                        -- (bedwars.Client:Get('SwordHit')) in this same file. selfPosition
-                                        -- stays reach-extended via `pos`, so range/hit behaviour is unchanged.
-                                        AttackRemote:SendToServer({
-                                            weapon = sword.tool,
-                                            chargedAttack = {chargeRatio = 0},
-                                            entityInstance = v.Character,
-                                            validate = {
-                                                raycast = {},
-                                                targetPosition = {value = actualRoot.Position},
-                                                selfPosition = {value = pos}
-                                            }
-                                        })
+                                        if Unpatch.Enabled then
+                                            -- Deep unpatch: rather than hand-forge the packet, let the game's
+                                            -- own sword swing build and send it, so the hash, attack sequence
+                                            -- and CPS state are exactly what a real click produces - nothing
+                                            -- for the anticheat to single out. Reach comes from momentarily
+                                            -- widening the game's own sword-region constant to our range; the
+                                            -- game's CPS check naturally rate-limits any redundant swings.
+                                            pcall(function()
+                                                if savedRegion == nil then
+                                                    local ok, cur = pcall(debug.getconstant, bedwars.SwordController.swingSwordInRegion, 6)
+                                                    savedRegion = (ok and type(cur) == 'number') and cur or 3.8
+                                                end
+                                                debug.setconstant(bedwars.SwordController.swingSwordInRegion, 6, math.max(AttackRange.Value, 3.8) / 3)
+                                                bedwars.SwordController:swingSwordAtMouse()
+                                            end)
+                                        else
+                                            -- Default: empty raycast puts the server on the position-only
+                                            -- validation path; selfPosition/targetPosition are hashed for us
+                                            -- by the central AttackEntity hook (bedwars.prepareHashVector3)
+                                            -- before the packet leaves. selfPosition stays reach-extended via
+                                            -- `pos`, so range/hit behaviour is unchanged.
+                                            AttackRemote:SendToServer({
+                                                weapon = sword.tool,
+                                                chargedAttack = {chargeRatio = 0},
+                                                entityInstance = v.Character,
+                                                validate = {
+                                                    raycast = {},
+                                                    targetPosition = {value = actualRoot.Position},
+                                                    selfPosition = {value = pos}
+                                                }
+                                            })
+                                        end
 
                                         if FastHits.Enabled and tick() > lastShot and not entitylib.Wallcheck(entitylib.character.RootPart.Position, actualRoot.Position, {gameCamera, lplr.Character, v.Character}) then
                                             local projectiles = getProjectiles()
@@ -5929,6 +6179,15 @@ run(function()
 
                     task.wait()
                 until not Killaura.Enabled
+
+                -- Hand the sword region back exactly as we found it so normal clicks never
+                -- keep the 'Unpatch' reach after Killaura is turned off.
+                if savedRegion ~= nil then
+                    pcall(function()
+                        debug.setconstant(bedwars.SwordController.swingSwordInRegion, 6, savedRegion)
+                    end)
+                    savedRegion = nil
+                end
             else
                 store.KillauraTarget = nil
                 for _, v in Boxes do
@@ -6026,6 +6285,10 @@ run(function()
         Max = 120,
         Default = 60,
         Suffix = 'hz'
+    })
+    Unpatch = Killaura:CreateToggle({
+        Name = 'Unpatch',
+        Tooltip = 'Anticheat unpatch method.\nOff (default): sends a hashed attack packet on the position-only validation path.\nOn: routes each hit through the game\'s own sword swing (swingSwordAtMouse) so the packet is built exactly like a real click - the deepest unpatch. Reach follows the Attack range slider.'
     })
     FastHits = Killaura:CreateToggle({
 	Name = 'Fast Hits',
@@ -14444,7 +14707,8 @@ run(function()
                 local _, spos = nearestShop()
                 if spos then travelTo(function() return spos end, 10, false, true) end
             end
-            repeat task.wait() until store.shopLoaded or not AutoWin.Enabled
+            local shopWait = tick() + 8
+            repeat task.wait() until store.shopLoaded or tick() > shopWait or not AutoWin.Enabled or not entitylib.isAlive
             buyWoolHere(target)
         end
         return woolCount() > 0
@@ -14629,12 +14893,46 @@ run(function()
         local deadline = tick() + 90
         local flyY
         local lastPos, stuckSince = nil, tick()
+        -- Progress toward the target (not raw movement): a wall bounce that nudges us
+        -- forward and back each cycle still counts as "no progress", so we bail on a real
+        -- stall instead of grinding uselessly until the 90s deadline.
+        local bestDist, lastProgress = math.huge, tick()
+        local lastSafePos            -- last spot we stood on solid ground (void bailout)
+        local rootGoneSince          -- when the live root first went missing this stretch
+        -- When a trip has to abort while we're out over a gap, drop back onto the last
+        -- solid ground we recorded instead of leaving the character hovering to fall to
+        -- its death. Teleport mode only (Walk mode recovers via Return Home); always
+        -- returns false so callers can `return bailToSafeGround(...)` directly.
+        local function bailToSafeGround(overVoid)
+            if overVoid and lastSafePos and not isWalk() then
+                local liveRoot = myRoot()
+                if liveRoot then
+                    liveRoot.CFrame = CFrame.new(lastSafePos)
+                    liveRoot.AssemblyLinearVelocity = Vector3.zero
+                end
+            end
+            return false
+        end
         while AutoWin.Enabled and tick() < deadline do
             if not entitylib.isAlive then return false end
-            -- Never fight an AntiDeath dodge: if the root is parked, wait it out.
-            if store.rootpart then task.wait() continue end
+            -- Never fight an AntiDeath dodge: if the root is parked, wait it out - but
+            -- don't spin here forever if something leaves it parked (bounded safety net).
+            if store.rootpart then
+                if tick() - lastProgress > 15 then return false end
+                task.wait()
+                continue
+            end
             local root, char = myRoot()
-            if not root then task.wait() return false end
+            if not root then
+                -- A one-frame nil root (a respawn / character swap) must not abort the
+                -- whole trip. Wait briefly for it to come back; only give up if it stays
+                -- gone (a real death, which the caller's ensureAlive handles).
+                rootGoneSince = rootGoneSince or tick()
+                if tick() - rootGoneSince > 1.5 then return false end
+                task.wait()
+                continue
+            end
+            rootGoneSince = nil
             local target = getTarget()
             if not target then return false end
 
@@ -14645,6 +14943,12 @@ run(function()
             local flat = (target - pos) * Vector3.new(1, 0, 1)
             local dist = flat.Magnitude
             if dist <= stopRange then return true end
+            -- Only real progress toward the target resets the stall timer.
+            if dist < bestDist - 1 then
+                bestDist, lastProgress = dist, tick()
+            elseif tick() - lastProgress > 10 then
+                return bailToSafeGround(flyY ~= nil)
+            end
             local hip = char.HipHeight or 3
             local dir = dist > 0 and flat.Unit or root.CFrame.LookVector
             local maxStep = math.min(HopDistance.Value, dist)
@@ -14673,6 +14977,7 @@ run(function()
             if reach >= 2 and reachY then
                 -- Solid ground ahead.
                 flyY = nil
+                lastSafePos = pos          -- remember safe footing for the void bailout
                 local foot = pos + dir * reach
                 if isWalk() then
                     local stepUp = reachY - (pos.Y - hip)
@@ -14696,7 +15001,11 @@ run(function()
                 else
                     flyY = nil
                     local newFootY = doBridge(root, dir, footY, target, hip, noRestock)
-                    if not newFootY then return false end
+                    if not newFootY then
+                        -- Out of blocks over a gap: recover onto solid ground instead of
+                        -- being left to fall (we're definitely over a void here).
+                        return bailToSafeGround(true)
+                    end
                     flyY = newFootY
                 end
             end
@@ -14770,6 +15079,10 @@ run(function()
         repeat task.wait(0.2) until entitylib.isAlive or not AutoWin.Enabled
         if not (AutoWin.Enabled and entitylib.isAlive) then return false end
         task.wait(0.4)
+        -- Re-check after the settle wait: if the user turned AutoWin off during it, do
+        -- NOT re-drive the modules - cleanup() has already restored them and re-enabling
+        -- here would leave Killaura/Breaker stuck on.
+        if not (AutoWin.Enabled and entitylib.isAlive) then return false end
         driveModule('Breaker', true, 'Break Bed')
         driveModule('Killaura', true)
         if userAntiDeath then
