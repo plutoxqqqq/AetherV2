@@ -3500,32 +3500,37 @@ run(function()
         return workspace:Blockcast(root.CFrame, Vector3.new(3, 3, 3), Vector3.new(0, castDistance, 0), rayCheck)
     end
 
-    -- TP mode. The old implementation dipped below the lowest block and held
-    -- there for several frames "so the server registers the hop" - but the area
-    -- under the map is the void kill zone, so the hold either did nothing or
-    -- got the player killed, which is why TP mode never worked. Instead, step
-    -- straight down to the ground in short hops with the vertical velocity
-    -- pinned to zero: every hop stays inside the server's teleport tolerance
-    -- and there is no impact velocity left to convert into fall damage when we
-    -- settle on the surface.
+    -- TP mode. Drop straight down to touch the ground with zero velocity for just long enough
+    -- that the server registers a grounded, no-fall landing (which clears its fall tracking),
+    -- then snap right back to the airborne spot we came from. Because the touch has no impact
+    -- speed there is nothing to convert into damage, and the reset means the fall accumulated so
+    -- far is wiped - so when we really land later there is no built-up drop left to hurt us. The
+    -- loop calls this while we're falling fast, keeping the fall perpetually reset.
     local function tpNoFall(root, character)
-        local ground = getGround(root, character, 500)
+        local ground = getGround(root, character, 1500)
         if not ground then return end
 
-        local old = root.CFrame
+        -- Remember the airborne position + motion so we can resume it exactly afterwards.
+        local savedCFrame = root.CFrame
+        local savedVel = root.AssemblyLinearVelocity
         local clearance = (character.HipHeight or 2) + (root.Size.Y * 0.5)
-        local targetY = ground.Position.Y + clearance + 0.5
-        local y = old.Y
+        local touchCFrame = CFrame.new(savedCFrame.X, ground.Position.Y + clearance + 0.1, savedCFrame.Z) * savedCFrame.Rotation
 
-        while y - targetY > 12 do
-            y -= 12
-            root.CFrame = CFrame.new(old.X, y, old.Z) * old.Rotation
-            root.AssemblyLinearVelocity *= Vector3.new(1, 0, 1)
+        -- Sit on the ground (velocity pinned to zero, position held) only until the landing
+        -- registers - FloorMaterial leaving Air - capped so we never linger and fall for real.
+        local deadline = tick() + 0.15
+        repeat
+            root.CFrame = touchCFrame
+            root.AssemblyLinearVelocity = Vector3.zero
             task.wait()
-            if not NoFall.Enabled or not entitylib.isAlive then return end
+            if not NoFall.Enabled or not entitylib.isAlive or not root.Parent then return true end
+        until (character.Humanoid and character.Humanoid.FloorMaterial ~= Enum.Material.Air) or tick() > deadline
+
+        -- Back to the exact airborne spot and motion, with the fall counter now reset.
+        if root.Parent then
+            root.CFrame = savedCFrame
+            root.AssemblyLinearVelocity = savedVel
         end
-        root.CFrame = CFrame.new(old.X, targetY, old.Z) * old.Rotation
-        root.AssemblyLinearVelocity *= Vector3.new(1, 0, 1)
         return true
     end
 
@@ -3817,34 +3822,20 @@ run(function()
                     local character, root, humanoid = validCharacter()
                     if character then
                         if Mode.Value == 'Blatant' then
-                            -- Blatant nofall via the Humanoid state machine rather than any
-                            -- of the patched routes. While we are dropping fast we put the
-                            -- Humanoid into PlatformStand and disable its Freefall/Landed
-                            -- states. In that mode the humanoid stops evaluating ground
-                            -- contact (FloorMaterial stays Air) and never runs the
-                            -- Freefall -> Landed transition, so BedWars' FallDamageController
-                            -- never detects a landing and never reports the ground hit to the
-                            -- server. We release it the moment the body has physically settled,
-                            -- by which point the velocity is harmless. No velocity/gravity
-                            -- edits, no packet spoofing, no forcing the Landed state.
-                            if root.AssemblyLinearVelocity.Y <= -(MinVelocity and MinVelocity.Value or 60) then
-                                pcall(function()
-                                    humanoid:SetStateEnabled(Enum.HumanoidStateType.Freefall, false)
-                                    humanoid:SetStateEnabled(Enum.HumanoidStateType.Landed, false)
-                                    humanoid:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
-                                    humanoid.PlatformStand = true
-                                end)
-                                blatantHeld = true
-                                waitDelay = 0.03
-                            elseif blatantHeld then
-                                pcall(function()
-                                    humanoid.PlatformStand = false
-                                    humanoid:SetStateEnabled(Enum.HumanoidStateType.Freefall, true)
-                                    humanoid:SetStateEnabled(Enum.HumanoidStateType.Landed, true)
-                                    humanoid:SetStateEnabled(Enum.HumanoidStateType.FallingDown, true)
-                                end)
-                                blatantHeld = false
-                            end
+                            -- Blatant nofall through BedWars' own fall-damage controller. The
+                            -- FallDamageController keeps an `additionalRegisteredVelocity` offset that
+                            -- it folds into your velocity when it registers a landing - the game itself
+                            -- uses it so launcher / boost speed isn't miscounted as a fall. We drive
+                            -- that offset to more than cancel our downward speed, so the fall the
+                            -- controller registers is never damaging. It scales with the real fall so
+                            -- it stays a plausible value, and is reset to 0 on disable. Source-level:
+                            -- no Humanoid-state flip, no GroundHit packet spoof, no velocity/gravity
+                            -- edit, no teleport.
+                            pcall(function()
+                                bedwars.FallDamageController.additionalRegisteredVelocity = math.max(-root.AssemblyLinearVelocity.Y + 50, 50)
+                            end)
+                            blatantHeld = true
+                            waitDelay = 0.02
                         elseif humanoid.FloorMaterial ~= Enum.Material.Air then
                             usedPearl = false
                         elseif Mode.Value == 'Legit' then
@@ -3864,7 +3855,9 @@ run(function()
                             end
                         elseif Mode.Value == 'TP' and root.AssemblyLinearVelocity.Y <= -(MinVelocity and MinVelocity.Value or 60) then
                             if tpNoFall(root, character) then
-                                waitDelay = 0.18
+                                -- Short gap so the next touch resets the fall again before enough
+                                -- distance builds back up to hurt on the real landing.
+                                waitDelay = 0.03
                             end
                         end
                     end
@@ -3879,22 +3872,16 @@ run(function()
                 lastZephyrJump = 0
                 zephyrFired = false
                 fallAnchorY = nil
-                -- Always hand control back to the humanoid if we were holding it for Blatant.
+                -- Always hand the fall-damage controller's offset back to normal if Blatant drove it.
                 if blatantHeld then
-                    local character = entitylib.character
-                    if character and character.Humanoid then
-                        pcall(function()
-                            character.Humanoid.PlatformStand = false
-                            character.Humanoid:SetStateEnabled(Enum.HumanoidStateType.Freefall, true)
-                            character.Humanoid:SetStateEnabled(Enum.HumanoidStateType.Landed, true)
-                            character.Humanoid:SetStateEnabled(Enum.HumanoidStateType.FallingDown, true)
-                        end)
-                    end
+                    pcall(function()
+                        bedwars.FallDamageController.additionalRegisteredVelocity = 0
+                    end)
                     blatantHeld = false
                 end
             end
         end,
-        Tooltip = 'Prevents fall damage. Legit uses clutch methods; Blatant neutralises the client fall-damage reporter via the Humanoid state machine; TP hops below the map.'
+        Tooltip = 'Prevents fall damage. Legit uses clutch methods; TP briefly touches the ground to reset the fall then snaps back to your airborne spot; Blatant drives the game\'s own FallDamageController offset so the registered fall is never damaging.'
     })
     Mode = NoFall:CreateDropdown({
         Name = 'Mode',
@@ -4601,60 +4588,66 @@ run(function()
     })
 end)
 
--- Infinite Sigrid. Ride the Sigrid kit's elk indefinitely. Instead of the naive version's
--- every-frame ElkKitMounted spam (which the anticheat flags on packet rate), this re-asserts
--- the mount at a rate-limited, user-tunable cadence while the elk kit is equipped. Kept
--- deliberately hook-free: an earlier build tried to auto-discover the elk controller and no-op
--- its dismount, but guessing controller/method names was unreliable and didn't always restore
--- cleanly on disable. The re-assert alone keeps you mounted and has nothing to tear down.
-run(function()
-    local InfiniteSigrid
-    local RefreshRate
-    local KIT = 'elk_master'
-    local mountRemote
+-- (InfiniteSigrid removed. Re-asserting the ElkKitMounted remote to sustain the ride locked the
+-- player server-side - you moved locally but stayed pinned for everyone else and could be hit.
+-- A correct version needs the elk kit controller's real dismount/duration internals, which we
+-- can't see from the repo, so the module is pulled rather than shipped broken and harmful.)
 
-    InfiniteSigrid = vape.Categories.Exploits:CreateModule({
-        Name = 'InfiniteSigrid',
+-- AntiLagback. During a ping spike your movement stops reaching the server for a moment; when it
+-- catches up it rubber-bands you back to where it last saw you. We track a slow ping baseline and,
+-- once per spike, nudge the RootPart forward along your current movement direction by roughly the
+-- distance you'd have covered during the extra latency (scaled by Strength, hard-capped at 12
+-- studs), so the server's catch-up lands you on your path instead of behind it. Purely client-side
+-- and bounded, so it can never fling you across the map.
+run(function()
+    local AntiLagback
+    local Strength
+
+    AntiLagback = vape.Categories.Exploits:CreateModule({
+        Name = 'AntiLagback',
         Function = function(callback)
             if callback then
-                if not mountRemote then
-                    pcall(function()
-                        mountRemote = bedwars.Client and bedwars.Client:Get('ElkKitMounted')
-                    end)
-                end
-                if not mountRemote then
-                    notif('InfiniteSigrid', 'Elk mount remote unavailable.', 5, 'warning')
-                    InfiniteSigrid:Toggle()
-                    return
-                end
+                local baseline = lplr:GetNetworkPing()
+                local nudged = false
+                AntiLagback:Clean(runService.PreSimulation:Connect(function(dt)
+                    if not entitylib.isAlive then return end
+                    local root = entitylib.character and entitylib.character.RootPart
+                    if not root then return end
 
-                task.spawn(function()
-                    local lastAssert = 0
-                    repeat
-                        if entitylib.isAlive and store.equippedKit == KIT then
-                            local rate = RefreshRate and RefreshRate.Value or 0.4
-                            if (tick() - lastAssert) >= rate then
-                                lastAssert = tick()
-                                pcall(function() mountRemote:SendToServer() end)
+                    local ping = lplr:GetNetworkPing()
+                    -- Baseline follows the calm ping: drops to it instantly, rises toward it slowly,
+                    -- so a sudden jump above the baseline reads as a spike worth compensating for.
+                    if ping < baseline then
+                        baseline = ping
+                    else
+                        baseline += (ping - baseline) * math.clamp(dt * 0.6, 0, 1)
+                    end
+                    local spike = ping - baseline
+
+                    if spike > 0.03 then
+                        if not nudged then
+                            local hvel = root.AssemblyLinearVelocity * Vector3.new(1, 0, 1)
+                            if hvel.Magnitude > 2 then
+                                local lead = math.clamp(hvel.Magnitude * spike * (Strength and Strength.Value or 1), 0, 12)
+                                root.CFrame += hvel.Unit * lead
                             end
+                            nudged = true
                         end
-                        task.wait()
-                    until not InfiniteSigrid.Enabled
-                end)
+                    else
+                        nudged = false
+                    end
+                end))
             end
-            -- Nothing to tear down on disable: the loop above stops itself the moment the
-            -- module is turned off (its `until not InfiniteSigrid.Enabled` guard).
         end,
-        Tooltip = 'Ride the Sigrid elk forever. Re-asserts the mount at a rate-limited cadence while the elk kit is equipped, instead of spamming the mount remote every frame like the naive version.'
+        Tooltip = 'Nudges you forward client-side during ping spikes so you don\'t get slammed back once the server catches up.'
     })
-    RefreshRate = InfiniteSigrid:CreateSlider({
-        Name = 'Refresh rate',
-        Min = 0.1,
-        Max = 2,
-        Default = 0.4,
+    Strength = AntiLagback:CreateSlider({
+        Name = 'Strength',
+        Min = 0,
+        Max = 3,
+        Default = 1,
         Decimal = 100,
-        Suffix = ' s',
-        Tooltip = 'How often the mount is re-asserted. Lower = more resilient but more packets; raise it if the anticheat still flags you.'
+        Tooltip = 'How far to lead your position during a spike. Raise if you still get pulled back, lower if it over-shoots.'
     })
 end)
 
