@@ -917,27 +917,6 @@ run(function()
 		end
 	})
 	getgenv().bedwars = bedwars
-	-- BedWars packet-integrity: the position vectors inside an attack `validate` payload
-	-- must be wrapped by the game's own RemoteHashUtil.prepareHashVector3, which folds in
-	-- the rolling session key the server re-checks. A hand-built {value = vec} carries no
-	-- hash, so the server accepts a short grace burst and then throttles the stream (the
-	-- "hits a few times then stops until you leave range" symptom). We grab the real
-	-- function once, pcall-guarded so a moved module path can never break loading, and
-	-- fall back to the raw table only when it is genuinely unavailable.
-	do
-		local ok, util = pcall(function()
-			return require(replicatedStorage.TS['remote-hash']['remote-hash-util']).RemoteHashUtil
-		end)
-		local hashfn = ok and util and util.prepareHashVector3
-		bedwars.prepareHashVector3 = function(vec)
-			if typeof(vec) ~= 'Vector3' then return vec end
-			if hashfn then
-				local good, res = pcall(hashfn, vec)
-				if good and res ~= nil then return res end
-			end
-			return {value = vec}
-		end
-	end
 	store.enchants = setmetatable({}, {
 		__index = function(self, plr)
 			return {
@@ -1144,20 +1123,6 @@ run(function()
 								return (select(2, whitelist:get(plr)))
 							end)
 							if ok and not targetable then return end
-						end
-
-						-- Hash the final position vectors with the game's own util so every
-						-- packet validates and the anti-cheat never throttles the stream. Done
-						-- here, after any reach extension above, so we hash the value we send.
-						-- Both fields are wrapped exactly as the game does it; when the util is
-						-- unavailable this degrades to the previous raw {value = vec} behaviour.
-						if bedwars.prepareHashVector3 and validate then
-							if validate.selfPosition and typeof(validate.selfPosition.value) == 'Vector3' then
-								validate.selfPosition = bedwars.prepareHashVector3(validate.selfPosition.value)
-							end
-							if validate.targetPosition and typeof(validate.targetPosition.value) == 'Vector3' then
-								validate.targetPosition = bedwars.prepareHashVector3(validate.targetPosition.value)
-							end
 						end
 
 						return call:SendToServer(attackTable, ...)
@@ -3535,32 +3500,37 @@ run(function()
         return workspace:Blockcast(root.CFrame, Vector3.new(3, 3, 3), Vector3.new(0, castDistance, 0), rayCheck)
     end
 
-    -- TP mode. The old implementation dipped below the lowest block and held
-    -- there for several frames "so the server registers the hop" - but the area
-    -- under the map is the void kill zone, so the hold either did nothing or
-    -- got the player killed, which is why TP mode never worked. Instead, step
-    -- straight down to the ground in short hops with the vertical velocity
-    -- pinned to zero: every hop stays inside the server's teleport tolerance
-    -- and there is no impact velocity left to convert into fall damage when we
-    -- settle on the surface.
+    -- TP mode. Drop straight down to touch the ground with zero velocity for just long enough
+    -- that the server registers a grounded, no-fall landing (which clears its fall tracking),
+    -- then snap right back to the airborne spot we came from. Because the touch has no impact
+    -- speed there is nothing to convert into damage, and the reset means the fall accumulated so
+    -- far is wiped - so when we really land later there is no built-up drop left to hurt us. The
+    -- loop calls this while we're falling fast, keeping the fall perpetually reset.
     local function tpNoFall(root, character)
-        local ground = getGround(root, character, 500)
+        local ground = getGround(root, character, 1500)
         if not ground then return end
 
-        local old = root.CFrame
+        -- Remember the airborne position + motion so we can resume it exactly afterwards.
+        local savedCFrame = root.CFrame
+        local savedVel = root.AssemblyLinearVelocity
         local clearance = (character.HipHeight or 2) + (root.Size.Y * 0.5)
-        local targetY = ground.Position.Y + clearance + 0.5
-        local y = old.Y
+        local touchCFrame = CFrame.new(savedCFrame.X, ground.Position.Y + clearance + 0.1, savedCFrame.Z) * savedCFrame.Rotation
 
-        while y - targetY > 12 do
-            y -= 12
-            root.CFrame = CFrame.new(old.X, y, old.Z) * old.Rotation
-            root.AssemblyLinearVelocity *= Vector3.new(1, 0, 1)
+        -- Sit on the ground (velocity pinned to zero, position held) only until the landing
+        -- registers - FloorMaterial leaving Air - capped so we never linger and fall for real.
+        local deadline = tick() + 0.15
+        repeat
+            root.CFrame = touchCFrame
+            root.AssemblyLinearVelocity = Vector3.zero
             task.wait()
-            if not NoFall.Enabled or not entitylib.isAlive then return end
+            if not NoFall.Enabled or not entitylib.isAlive or not root.Parent then return true end
+        until (character.Humanoid and character.Humanoid.FloorMaterial ~= Enum.Material.Air) or tick() > deadline
+
+        -- Back to the exact airborne spot and motion, with the fall counter now reset.
+        if root.Parent then
+            root.CFrame = savedCFrame
+            root.AssemblyLinearVelocity = savedVel
         end
-        root.CFrame = CFrame.new(old.X, targetY, old.Z) * old.Rotation
-        root.AssemblyLinearVelocity *= Vector3.new(1, 0, 1)
         return true
     end
 
@@ -3852,34 +3822,20 @@ run(function()
                     local character, root, humanoid = validCharacter()
                     if character then
                         if Mode.Value == 'Blatant' then
-                            -- Blatant nofall via the Humanoid state machine rather than any
-                            -- of the patched routes. While we are dropping fast we put the
-                            -- Humanoid into PlatformStand and disable its Freefall/Landed
-                            -- states. In that mode the humanoid stops evaluating ground
-                            -- contact (FloorMaterial stays Air) and never runs the
-                            -- Freefall -> Landed transition, so BedWars' FallDamageController
-                            -- never detects a landing and never reports the ground hit to the
-                            -- server. We release it the moment the body has physically settled,
-                            -- by which point the velocity is harmless. No velocity/gravity
-                            -- edits, no packet spoofing, no forcing the Landed state.
-                            if root.AssemblyLinearVelocity.Y <= -(MinVelocity and MinVelocity.Value or 60) then
-                                pcall(function()
-                                    humanoid:SetStateEnabled(Enum.HumanoidStateType.Freefall, false)
-                                    humanoid:SetStateEnabled(Enum.HumanoidStateType.Landed, false)
-                                    humanoid:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
-                                    humanoid.PlatformStand = true
-                                end)
-                                blatantHeld = true
-                                waitDelay = 0.03
-                            elseif blatantHeld then
-                                pcall(function()
-                                    humanoid.PlatformStand = false
-                                    humanoid:SetStateEnabled(Enum.HumanoidStateType.Freefall, true)
-                                    humanoid:SetStateEnabled(Enum.HumanoidStateType.Landed, true)
-                                    humanoid:SetStateEnabled(Enum.HumanoidStateType.FallingDown, true)
-                                end)
-                                blatantHeld = false
-                            end
+                            -- Blatant nofall through BedWars' own fall-damage controller. The
+                            -- FallDamageController keeps an `additionalRegisteredVelocity` offset that
+                            -- it folds into your velocity when it registers a landing - the game itself
+                            -- uses it so launcher / boost speed isn't miscounted as a fall. We drive
+                            -- that offset to more than cancel our downward speed, so the fall the
+                            -- controller registers is never damaging. It scales with the real fall so
+                            -- it stays a plausible value, and is reset to 0 on disable. Source-level:
+                            -- no Humanoid-state flip, no GroundHit packet spoof, no velocity/gravity
+                            -- edit, no teleport.
+                            pcall(function()
+                                bedwars.FallDamageController.additionalRegisteredVelocity = math.max(-root.AssemblyLinearVelocity.Y + 50, 50)
+                            end)
+                            blatantHeld = true
+                            waitDelay = 0.02
                         elseif humanoid.FloorMaterial ~= Enum.Material.Air then
                             usedPearl = false
                         elseif Mode.Value == 'Legit' then
@@ -3899,7 +3855,9 @@ run(function()
                             end
                         elseif Mode.Value == 'TP' and root.AssemblyLinearVelocity.Y <= -(MinVelocity and MinVelocity.Value or 60) then
                             if tpNoFall(root, character) then
-                                waitDelay = 0.18
+                                -- Short gap so the next touch resets the fall again before enough
+                                -- distance builds back up to hurt on the real landing.
+                                waitDelay = 0.03
                             end
                         end
                     end
@@ -3914,22 +3872,16 @@ run(function()
                 lastZephyrJump = 0
                 zephyrFired = false
                 fallAnchorY = nil
-                -- Always hand control back to the humanoid if we were holding it for Blatant.
+                -- Always hand the fall-damage controller's offset back to normal if Blatant drove it.
                 if blatantHeld then
-                    local character = entitylib.character
-                    if character and character.Humanoid then
-                        pcall(function()
-                            character.Humanoid.PlatformStand = false
-                            character.Humanoid:SetStateEnabled(Enum.HumanoidStateType.Freefall, true)
-                            character.Humanoid:SetStateEnabled(Enum.HumanoidStateType.Landed, true)
-                            character.Humanoid:SetStateEnabled(Enum.HumanoidStateType.FallingDown, true)
-                        end)
-                    end
+                    pcall(function()
+                        bedwars.FallDamageController.additionalRegisteredVelocity = 0
+                    end)
                     blatantHeld = false
                 end
             end
         end,
-        Tooltip = 'Prevents fall damage. Legit uses clutch methods; Blatant neutralises the client fall-damage reporter via the Humanoid state machine; TP hops below the map.'
+        Tooltip = 'Prevents fall damage. Legit uses clutch methods; TP briefly touches the ground to reset the fall then snaps back to your airborne spot; Blatant drives the game\'s own FallDamageController offset so the registered fall is never damaging.'
     })
     Mode = NoFall:CreateDropdown({
         Name = 'Mode',
@@ -4567,11 +4519,25 @@ run(function()
         if not signal or not getconnections or not hookfunction then return end
         for _, connection in getconnections(signal) do
             local func = connection and connection.Function
-            if func and not patchedSignals[func] then
-                patchedSignals[func] = true
-                pcall(hookfunction, func, function() end)
+            if func and patchedSignals[func] == nil then
+                -- Keep the original hookfunction returns so we can restore it on toggle-off.
+                -- Store `false` if the hook itself failed, so cleanup never tries to restore
+                -- something we never actually replaced.
+                local ok, original = pcall(hookfunction, func, function() end)
+                patchedSignals[func] = (ok and original) or false
             end
         end
+    end
+
+    -- Undo every movement-signal hook we installed, handing each listener its original
+    -- function back so the client's correction listeners work normally again after disable.
+    local function restoreSignals()
+        for func, original in pairs(patchedSignals) do
+            if type(original) == 'function' then
+                pcall(hookfunction, func, original)
+            end
+        end
+        table.clear(patchedSignals)
     end
 
     local function patchCharacter(character)
@@ -4615,111 +4581,73 @@ run(function()
                 end
                 oldUpdateMomentum = nil
                 momentumRemote = nil
+                restoreSignals()
             end
         end,
         Tooltip = 'Removes Krystal lagbacks: keeps momentum reported maxed and suppresses the local movement-correction listeners so the skate never snaps back.'
     })
 end)
 
--- Infinite Sigrid. Ride the Sigrid kit's elk indefinitely. Two layers, neither of which spams
--- a remote every frame the way the naive version does:
---   1. Best-effort: auto-discover the elk/Sigrid kit controller and no-op its local dismount
---      so the client never voluntarily leaves the mount (the Krystal-Disabler philosophy).
---      Purely opportunistic - a wrong guess can't error anything and the re-assert below still
---      carries the module on its own.
---   2. Reliable: while the elk kit is equipped, re-fire the ElkKitMounted remote at a
---      rate-limited, user-tunable cadence (default a few times a second) so the mount stays
---      refreshed at a plausible packet rate instead of ~60x/sec.
+-- (InfiniteSigrid removed. Re-asserting the ElkKitMounted remote to sustain the ride locked the
+-- player server-side - you moved locally but stayed pinned for everyone else and could be hit.
+-- A correct version needs the elk kit controller's real dismount/duration internals, which we
+-- can't see from the repo, so the module is pulled rather than shipped broken and harmful.)
+
+-- AntiLagback. During a ping spike your movement stops reaching the server for a moment; when it
+-- catches up it rubber-bands you back to where it last saw you. We track a slow ping baseline and,
+-- once per spike, nudge the RootPart forward along your current movement direction by roughly the
+-- distance you'd have covered during the extra latency (scaled by Strength, hard-capped at 12
+-- studs), so the server's catch-up lands you on your path instead of behind it. Purely client-side
+-- and bounded, so it can never fling you across the map.
 run(function()
-    local InfiniteSigrid
-    local RefreshRate
-    local KIT = 'elk_master'
-    local mountRemote
-    local hookController, hookMethod, hookOld
+    local AntiLagback
+    local Strength
 
-    -- Names/methods to probe for the elk controller. bedwars[<name>] resolves through the
-    -- Knit.Controllers proxy, so an unknown name just yields nil (guarded); nothing breaks.
-    local CONTROLLER_NAMES = {'ElkController', 'ElkKitController', 'ElkMasterController', 'SigridController', 'ReindeerController', 'ElkMountController'}
-    local DISMOUNT_METHODS = {'dismount', 'unmount', 'onDismount', 'endRide', 'stopRiding', 'despawnElk', 'removeElk', 'onElkDismount'}
-
-    local function findController()
-        for _, name in CONTROLLER_NAMES do
-            local ok, controller = pcall(function() return bedwars[name] end)
-            if ok and type(controller) == 'table' then
-                return controller
-            end
-        end
-        return nil
-    end
-
-    local function hookDismount()
-        local controller = findController()
-        if not controller then return end
-        for _, m in DISMOUNT_METHODS do
-            local ok, fn = pcall(function() return controller[m] end)
-            if ok and type(fn) == 'function' then
-                hookController, hookMethod, hookOld = controller, m, fn
-                controller[m] = function(...)
-                    -- Swallow the local dismount while the module is on; restored on toggle-off.
-                    if InfiniteSigrid.Enabled then return end
-                    return hookOld(...)
-                end
-                return
-            end
-        end
-    end
-
-    local function restoreHook()
-        if hookController and hookMethod and hookOld then
-            pcall(function() hookController[hookMethod] = hookOld end)
-        end
-        hookController, hookMethod, hookOld = nil, nil, nil
-    end
-
-    InfiniteSigrid = vape.Categories.Exploits:CreateModule({
-        Name = 'InfiniteSigrid',
+    AntiLagback = vape.Categories.Exploits:CreateModule({
+        Name = 'AntiLagback',
         Function = function(callback)
             if callback then
-                if not mountRemote then
-                    pcall(function()
-                        mountRemote = bedwars.Client and bedwars.Client:Get('ElkKitMounted')
-                    end)
-                end
-                if not mountRemote then
-                    notif('InfiniteSigrid', 'Elk mount remote unavailable.', 5, 'warning')
-                    InfiniteSigrid:Toggle()
-                    return
-                end
+                local baseline = lplr:GetNetworkPing()
+                local nudged = false
+                AntiLagback:Clean(runService.PreSimulation:Connect(function(dt)
+                    if not entitylib.isAlive then return end
+                    local root = entitylib.character and entitylib.character.RootPart
+                    if not root then return end
 
-                hookDismount()
+                    local ping = lplr:GetNetworkPing()
+                    -- Baseline follows the calm ping: drops to it instantly, rises toward it slowly,
+                    -- so a sudden jump above the baseline reads as a spike worth compensating for.
+                    if ping < baseline then
+                        baseline = ping
+                    else
+                        baseline += (ping - baseline) * math.clamp(dt * 0.6, 0, 1)
+                    end
+                    local spike = ping - baseline
 
-                task.spawn(function()
-                    local lastAssert = 0
-                    repeat
-                        if entitylib.isAlive and store.equippedKit == KIT then
-                            local rate = RefreshRate and RefreshRate.Value or 0.4
-                            if (tick() - lastAssert) >= rate then
-                                lastAssert = tick()
-                                pcall(function() mountRemote:SendToServer() end)
+                    if spike > 0.03 then
+                        if not nudged then
+                            local hvel = root.AssemblyLinearVelocity * Vector3.new(1, 0, 1)
+                            if hvel.Magnitude > 2 then
+                                local lead = math.clamp(hvel.Magnitude * spike * (Strength and Strength.Value or 1), 0, 12)
+                                root.CFrame += hvel.Unit * lead
                             end
+                            nudged = true
                         end
-                        task.wait()
-                    until not InfiniteSigrid.Enabled
-                end)
-            else
-                restoreHook()
+                    else
+                        nudged = false
+                    end
+                end))
             end
         end,
-        Tooltip = 'Ride the Sigrid elk forever. Suppresses the local dismount when the elk controller is found and re-asserts the mount at a rate-limited cadence, instead of spamming the mount remote every frame like the naive version.'
+        Tooltip = 'Nudges you forward client-side during ping spikes so you don\'t get slammed back once the server catches up.'
     })
-    RefreshRate = InfiniteSigrid:CreateSlider({
-        Name = 'Refresh rate',
-        Min = 0.1,
-        Max = 2,
-        Default = 0.4,
+    Strength = AntiLagback:CreateSlider({
+        Name = 'Strength',
+        Min = 0,
+        Max = 3,
+        Default = 1,
         Decimal = 100,
-        Suffix = ' s',
-        Tooltip = 'How often the mount is re-asserted. Lower = more resilient but more packets; raise it if the anticheat still flags you.'
+        Tooltip = 'How far to lead your position during a spike. Raise if you still get pulled back, lower if it over-shoots.'
     })
 end)
 
@@ -5947,9 +5875,6 @@ run(function()
                 end
 
                 local swingCooldown, switchCooldown, lastSwing, targetIndex = tick(), tick(), 0, 0
-                -- Original sword-region constant, saved the first time 'Unpatch' widens it so we
-                -- can hand it straight back on toggle-off (never leave normal clicks with reach).
-                local savedRegion
                 local lastShot, projectileIndex = tick(), 0
                 local lastHit = 0
                 repeat
@@ -6024,37 +5949,33 @@ run(function()
                                         store.attackReachUpdate = tick() + 1
                                         swingCooldown = tick()
 
+                                        local payload = {
+                                            weapon = sword.tool,
+                                            chargedAttack = {chargeRatio = 0},
+                                            entityInstance = v.Character,
+                                            validate = {
+                                                raycast = {},
+                                                targetPosition = {value = actualRoot.Position},
+                                                selfPosition = {value = pos}
+                                            }
+                                        }
                                         if Unpatch.Enabled then
-                                            -- Deep unpatch: rather than hand-forge the packet, let the game's
-                                            -- own sword swing build and send it, so the hash, attack sequence
-                                            -- and CPS state are exactly what a real click produces - nothing
-                                            -- for the anticheat to single out. Reach comes from momentarily
-                                            -- widening the game's own sword-region constant to our range; the
-                                            -- game's CPS check naturally rate-limits any redundant swings.
-                                            pcall(function()
-                                                if savedRegion == nil then
-                                                    local ok, cur = pcall(debug.getconstant, bedwars.SwordController.swingSwordInRegion, 6)
-                                                    savedRegion = (ok and type(cur) == 'number') and cur or 3.8
-                                                end
-                                                debug.setconstant(bedwars.SwordController.swingSwordInRegion, 6, math.max(AttackRange.Value, 3.8) / 3)
-                                                bedwars.SwordController:swingSwordAtMouse()
+                                            -- Deeper unpatch (experimental): hand the request to the game's own
+                                            -- send wrapper (SwordController.sendServerRequest) rather than firing
+                                            -- the raw remote, so any validation/processing the game applies to a
+                                            -- genuine attack is applied here too. Aim-independent. If the call
+                                            -- errors (e.g. a signature mismatch) we fall straight back to the raw
+                                            -- send, so Unpatch is never worse than the default.
+                                            local sent = pcall(function()
+                                                bedwars.SwordController:sendServerRequest(payload)
                                             end)
+                                            if not sent then
+                                                AttackRemote:SendToServer(payload)
+                                            end
                                         else
-                                            -- Default: empty raycast puts the server on the position-only
-                                            -- validation path; selfPosition/targetPosition are hashed for us
-                                            -- by the central AttackEntity hook (bedwars.prepareHashVector3)
-                                            -- before the packet leaves. selfPosition stays reach-extended via
-                                            -- `pos`, so range/hit behaviour is unchanged.
-                                            AttackRemote:SendToServer({
-                                                weapon = sword.tool,
-                                                chargedAttack = {chargeRatio = 0},
-                                                entityInstance = v.Character,
-                                                validate = {
-                                                    raycast = {},
-                                                    targetPosition = {value = actualRoot.Position},
-                                                    selfPosition = {value = pos}
-                                                }
-                                            })
+                                            -- Default: send the plain packet on the position-only validation path
+                                            -- (empty raycast). selfPosition stays reach-extended via `pos`.
+                                            AttackRemote:SendToServer(payload)
                                         end
 
                                         if FastHits.Enabled and tick() > lastShot and not entitylib.Wallcheck(entitylib.character.RootPart.Position, actualRoot.Position, {gameCamera, lplr.Character, v.Character}) then
@@ -6179,15 +6100,6 @@ run(function()
 
                     task.wait()
                 until not Killaura.Enabled
-
-                -- Hand the sword region back exactly as we found it so normal clicks never
-                -- keep the 'Unpatch' reach after Killaura is turned off.
-                if savedRegion ~= nil then
-                    pcall(function()
-                        debug.setconstant(bedwars.SwordController.swingSwordInRegion, 6, savedRegion)
-                    end)
-                    savedRegion = nil
-                end
             else
                 store.KillauraTarget = nil
                 for _, v in Boxes do
@@ -6288,7 +6200,7 @@ run(function()
     })
     Unpatch = Killaura:CreateToggle({
         Name = 'Unpatch',
-        Tooltip = 'Anticheat unpatch method.\nOff (default): sends a hashed attack packet on the position-only validation path.\nOn: routes each hit through the game\'s own sword swing (swingSwordAtMouse) so the packet is built exactly like a real click - the deepest unpatch. Reach follows the Attack range slider.'
+        Tooltip = 'Anticheat unpatch method.\nOff (default): sends the plain attack packet on the position-only validation path (the baseline method).\nOn (experimental): routes each hit through the game\'s own send wrapper (sendServerRequest) so any processing the game applies to a real attack is applied too. Falls back to the default send if that call fails.'
     })
     FastHits = Killaura:CreateToggle({
 	Name = 'Fast Hits',
