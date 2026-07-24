@@ -23753,69 +23753,59 @@ run(function()
 	local StepEnabled = false
 	local lastStepTime = 0
 
-	local function getHighestPoint(startPos, maxBlocks)
+	local function getStepHeight(startPos, maxBlocks)
 		maxBlocks = math.clamp(maxBlocks or 3, 1, 8)
 		local blockHeight = 3
-		local highestY = startPos.Y
+		local highestValidY = startPos.Y
 		
 		for i = 1, maxBlocks do
-			local checkPos = Vector3.new(
-				math.floor(startPos.X / 3) * 3,
-				startPos.Y + (i * blockHeight),
-				math.floor(startPos.Z / 3) * 3
-			)
+			local checkPos = Vector3.new(math.floor(startPos.X / 3) * 3, startPos.Y + (i * blockHeight), math.floor(startPos.Z / 3) * 3)
 			local block = getPlacedBlock(checkPos)
 			if not block then
-				break
+				return highestValidY + 3.5
 			end
-			highestY = checkPos.Y + blockHeight
+			highestValidY = checkPos.Y + blockHeight
 		end
 		
-		return highestY + 3.5
+		local nextCheck = Vector3.new(math.floor(startPos.X / 3) * 3, startPos.Y + ((maxBlocks + 1) * blockHeight), math.floor(startPos.Z / 3) * 3)
+		if getPlacedBlock(nextCheck) then
+			return nil
+		end
+		
+		return highestValidY + 3.5
 	end
 
 	local function isHittingWall(rootPart)
 		if not rootPart then return false end
-		
 		local moveDir = rootPart.Velocity * Vector3.new(1, 0, 1)
 		if moveDir.Magnitude < 2 then return false end
-		
-		local rayDir = moveDir.Unit * 3.5
+		local rayDir = moveDir.Unit * 3.2
 		local rayParams = RaycastParams.new()
 		rayParams.FilterDescendantsInstances = {lplr.Character}
 		rayParams.FilterType = Enum.RaycastFilterType.Exclude
-		
 		local result = workspace:Raycast(rootPart.Position + Vector3.new(0, 2, 0), rayDir, rayParams)
 		return result ~= nil
 	end
 
-	Step = vape.Categories.Blatant:CreateModule({
+	Step = vape.Categories.Movement:CreateModule({
 		Name = 'Step',
 		Tooltip = 'Steps up walls',
 		Function = function(callback)
 			StepEnabled = callback
 			lastStepTime = 0
-			
 			if callback then
 				Step:Clean(runService.Heartbeat:Connect(function()
 					if not entitylib.isAlive or not StepEnabled then return end
-					if tick() - lastStepTime < 0.3 then return end -- Anti-spam
-					
+					if tick() - lastStepTime < 0.35 then return end
 					local rootPart = entitylib.character.RootPart
 					if not rootPart then return end
-					
 					if isHittingWall(rootPart) then
-						local currentY = rootPart.Position.Y
-						local targetY = getHighestPoint(rootPart.Position, Blocks.Value)
-						
-						if targetY > currentY + 3 then
+						local targetY = getStepHeight(rootPart.Position, Blocks.Value)
+						if targetY and targetY > rootPart.Position.Y + 3 then
 							lastStepTime = tick()
-							
-							-- **True teleport**
 							local newPos = Vector3.new(rootPart.Position.X, targetY, rootPart.Position.Z)
-							
 							rootPart.CFrame = CFrame.new(newPos) * CFrame.Angles(0, rootPart.CFrame.Rotation.Y, 0)
-							rootPart.Velocity = Vector3.new(rootPart.Velocity.X * 0.4, 10, rootPart.Velocity.Z * 0.4)
+							rootPart.Velocity = Vector3.new(rootPart.Velocity.X * 0.3, 12, rootPart.Velocity.Z * 0.3)
 						end
 					end
 				end))
