@@ -23743,20 +23743,27 @@ run(function()
 end)
 
 
+-- ===
+-- yeah ill put some of my own modules here
+-- ===
 
 run(function()
 	local Step
 	local Blocks
 	local StepEnabled = false
+	local lastStepTime = 0
 
-	-- Helper to get the highest point above a position within block limit
 	local function getHighestPoint(startPos, maxBlocks)
-		maxBlocks = maxBlocks or 5
-		local blockHeight = 3 -- BedWars block size
+		maxBlocks = math.clamp(maxBlocks or 3, 1, 8)
+		local blockHeight = 3
 		local highestY = startPos.Y
 		
 		for i = 1, maxBlocks do
-			local checkPos = startPos + Vector3.new(0, i * blockHeight, 0)
+			local checkPos = Vector3.new(
+				math.floor(startPos.X / 3) * 3,
+				startPos.Y + (i * blockHeight),
+				math.floor(startPos.Z / 3) * 3
+			)
 			local block = getPlacedBlock(checkPos)
 			if not block then
 				break
@@ -23764,51 +23771,51 @@ run(function()
 			highestY = checkPos.Y + blockHeight
 		end
 		
-		return highestY + 3 -- Add player height offset
+		return highestY + 3.5
 	end
 
-	-- Check for wall in movement direction
 	local function isHittingWall(rootPart)
 		if not rootPart then return false end
 		
 		local moveDir = rootPart.Velocity * Vector3.new(1, 0, 1)
-		if moveDir.Magnitude < 1 then return false end
+		if moveDir.Magnitude < 2 then return false end
 		
-		local rayDir = moveDir.Unit * 4 -- Short forward ray
+		local rayDir = moveDir.Unit * 3.5
 		local rayParams = RaycastParams.new()
 		rayParams.FilterDescendantsInstances = {lplr.Character}
 		rayParams.FilterType = Enum.RaycastFilterType.Exclude
 		
-		local result = workspace:Raycast(rootPart.Position, rayDir, rayParams)
+		local result = workspace:Raycast(rootPart.Position + Vector3.new(0, 2, 0), rayDir, rayParams)
 		return result ~= nil
 	end
 
 	Step = vape.Categories.Blatant:CreateModule({
 		Name = 'Step',
-		Tooltip = 'Automatically steps up walls by teleporting to the top (uses Spider detection logic)',
+		Tooltip = 'Steps up walls',
 		Function = function(callback)
 			StepEnabled = callback
+			lastStepTime = 0
 			
 			if callback then
 				Step:Clean(runService.Heartbeat:Connect(function()
 					if not entitylib.isAlive or not StepEnabled then return end
+					if tick() - lastStepTime < 0.3 then return end -- Anti-spam
 					
 					local rootPart = entitylib.character.RootPart
 					if not rootPart then return end
 					
-					-- Only trigger when hitting a wall and moving forward (Spider-like detection)
 					if isHittingWall(rootPart) then
 						local currentY = rootPart.Position.Y
 						local targetY = getHighestPoint(rootPart.Position, Blocks.Value)
 						
-						if targetY > currentY + 2 then -- Only step if there's meaningful height gain
-							-- Teleport to top
-							local newPos = rootPart.Position
-							newPos = Vector3.new(newPos.X, targetY, newPos.Z)
+						if targetY > currentY + 3 then
+							lastStepTime = tick()
 							
-							-- Preserve momentum somewhat
-							rootPart.CFrame = CFrame.new(newPos, newPos + rootPart.CFrame.LookVector)
-							rootPart.Velocity = Vector3.new(rootPart.Velocity.X, 0, rootPart.Velocity.Z)
+							-- **True teleport**
+							local newPos = Vector3.new(rootPart.Position.X, targetY, rootPart.Position.Z)
+							
+							rootPart.CFrame = CFrame.new(newPos) * CFrame.Angles(0, rootPart.CFrame.Rotation.Y, 0)
+							rootPart.Velocity = Vector3.new(rootPart.Velocity.X * 0.4, 10, rootPart.Velocity.Z * 0.4)
 						end
 					end
 				end))
@@ -23819,9 +23826,9 @@ run(function()
 	Blocks = Step:CreateSlider({
 		Name = 'Blocks',
 		Min = 1,
-		Max = 10,
+		Max = 8,
 		Default = 3,
 		Suffix = ' blocks',
-		Tooltip = 'Maximum blocks to step up'
+		Tooltip = 'Maximum blocks high it will step'
 	})
 end)
