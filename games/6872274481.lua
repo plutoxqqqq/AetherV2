@@ -5777,8 +5777,6 @@ run(function()
     local AirChance
     local SwingTime
     local Hitreg
-    local Dynamic
-    local Sync = {}
     local UpdateRate
     local Attackable
     local AngleSlider
@@ -6004,7 +6002,7 @@ run(function()
                                 if delta.Magnitude > AttackRange.Value then continue end
 
                                 local actualRoot = v.Character.PrimaryPart
-                                if actualRoot and (not Sync.Enabled or (tick() - swingCooldown >= SwingTime.Value)) and (v.Humanoid.FloorMaterial ~= Enum.Material.Air or math.random(1, 100) < AirChance.Value) then
+                                if actualRoot and (v.Humanoid.FloorMaterial ~= Enum.Material.Air or math.random(1, 100) < AirChance.Value) then
                                     if UpdateRate.Value >= 120 or (tick() - lastHit) >= (1 / UpdateRate.Value) then
                                         lastHit = tick()
 
@@ -6256,11 +6254,6 @@ run(function()
         Default = 0.11,
         Suffix = 'seconds'
     })
-    Sync = Killaura:CreateToggle({
-        Name = 'Sync with hitreg',
-        Darker = true,
-        Tooltip = 'Syncs the hitreg with swing time'
-    })
     UpdateRate = Killaura:CreateSlider({
         Name = 'Update rate',
         Min = 1,
@@ -6333,10 +6326,6 @@ run(function()
     Sort = Killaura:CreateDropdown({
         Name = 'Target Mode',
         List = methods
-    })
-    Dynamic = Killaura:CreateToggle({
-        Name = 'Dynamic hits',
-        Tooltip = 'Calculates your hitreg depending on your distance'
     })
     Mouse = Killaura:CreateToggle({Name = 'Require mouse down'})
     Swing = Killaura:CreateToggle({Name = 'No Swing'})
@@ -6695,6 +6684,15 @@ run(function()
             frictionTable.LongJump = callback or nil
             updateVelocity()
             if callback then
+                -- Limit to items: only engage from a long-jump item you're HOLDING. Without one
+                -- the driver below would hold you frozen in place waiting for a jump that can never
+                -- come (the module's idle state pins your velocity), so turn straight back off.
+                if LimitItems and LimitItems.Enabled and not (store.hand and store.hand.tool and LongJumpMethods[store.hand.tool.Name]) then
+                    frictionTable.LongJump = nil
+                    updateVelocity()
+                    notif('LongJump', 'Hold a long-jump item to use it (Limit to items is on).', 4)
+                    return task.spawn(function() if LongJump.Enabled then LongJump:Toggle() end end)
+                end
                 LongJump:Clean(vapeEvents.EntityDamageEvent.Event:Connect(function(damageTable)
                     -- Limit to items: the knockback (Heatseeker) boost isn't item-driven, so skip it.
                     if LimitItems and LimitItems.Enabled then return end
@@ -6748,15 +6746,18 @@ run(function()
                     end
                 end))
 
-                if store.hand and LongJumpMethods[store.hand.tool.Name] then
+                if store.hand and store.hand.tool and LongJumpMethods[store.hand.tool.Name] then
                     task.spawn(LongJumpMethods[store.hand.tool.Name], getItem(store.hand.tool.Name), start, (CameraDir.Enabled and gameCamera or entitylib.character.RootPart).CFrame.LookVector)
                     return
                 end
 
+                -- Limit to items: a held item was already required above, so never fall through to
+                -- the inventory/kit scan (which is what would otherwise fire a kit-based jump).
+                if LimitItems and LimitItems.Enabled then return end
+
                 for i, v in LongJumpMethods do
                     local item = getItem(i)
-                    -- Limit to items: only fire from an actual inventory item, never a kit match.
-                    if item or (store.equippedKit == i and not (LimitItems and LimitItems.Enabled)) then
+                    if item or store.equippedKit == i then
                         task.spawn(v, item, start, (CameraDir.Enabled and gameCamera or entitylib.character.RootPart).CFrame.LookVector)
                         break
                     end
@@ -6786,142 +6787,100 @@ run(function()
     })
     LimitItems = LongJump:CreateToggle({
         Name = 'Limit to items',
-        Tooltip = 'Only long-jumps from an actual long-jump item you have (dao, jade hammer, void axe, cannon, tnt, grappling hook, etc.) - never from a kit match or the knockback Heatseeker boost.'
+        Tooltip = 'Only long-jumps from a long-jump item you are holding (dao, jade hammer, void axe, cannon, tnt, grappling hook, etc.) - never from a kit ability or the knockback Heatseeker boost. If you enable it without holding one, LongJump turns itself back off instead of freezing you.'
     })
 end)
 
 run(function()
-    -- Kit-ability "Extenders". Each watches for its kit's mobility ability firing (via the same
-    -- AbilityController API LongJump uses) and, for a short window afterwards, holds your forward
-    -- speed a little higher so the dash / jump / teleport carries you a set number of studs
-    -- further. One factory so all four share identical, bounded, well-tested logic.
-    local function equippedKit()
-        local k = store.equippedKit
-        if k == nil or k == '' then k = lplr:GetAttribute('PlayingAsKit') end
-        return k and string.lower(tostring(k)) or ''
-    end
+    -- Extender: one module for every kit mobility ability. It watches the AbilityController
+    -- cooldown edge (the same API LongJump uses) for any of the kit dash / jump / teleport
+    -- abilities firing, then briefly holds your forward speed higher so the move carries you
+    -- further. No kit gate - it acts purely on the ability actually being used, so it can never
+    -- be blocked by a mismatched kit id (which is what stopped the old per-kit modules).
+    local Extender
+    local Distance
 
-    local function makeExtender(cfg)
-        local Module, Distance
-        local boostUntil, boostDir, boostSpeed = 0, nil, 0
-        local prevReady = {}
-        local prevHoriz = 0
+    -- Every ability we can catch: Jade hammer jump, Void Regent / Void Axe jump, the Yuzi (and
+    -- any) dao dash, and the Elektra teleport. canUseAbility only ever edges for one you actually
+    -- own and use, so listing them all together is safe.
+    local ABILITIES = {'jade_hammer_jump', 'void_axe_jump', 'dash', 'elektra_tp', 'ELEKTRA_TP'}
+    local DURATION = 0.55
+    local SAMPLE = 0.08
 
-        local function beginBoost(root)
-            local vel = root.AssemblyLinearVelocity
-            local horiz = Vector3.new(vel.X, 0, vel.Z)
-            boostSpeed = horiz.Magnitude + Distance.Value
-            if horiz.Magnitude > 4 then
-                boostDir = horiz.Unit
-            else
-                -- Teleports leave you with little horizontal speed, so fall back to where you're
-                -- aiming and nudge you that way instead.
-                local look = (gameCamera and gameCamera.CFrame.LookVector) or root.CFrame.LookVector
-                look = Vector3.new(look.X, 0, look.Z)
-                boostDir = look.Magnitude > 0 and look.Unit or nil
-            end
-            boostUntil = tick() + cfg.duration
+    local prevReady = {}
+    local boostUntil, sampleUntil, basePeak, boostDir = 0, 0, 0, nil
+
+    local function beginBoost(root)
+        boostUntil = tick() + DURATION
+        sampleUntil = tick() + SAMPLE
+        local vel = root.AssemblyLinearVelocity
+        local horiz = Vector3.new(vel.X, 0, vel.Z)
+        basePeak = horiz.Magnitude
+        if horiz.Magnitude > 4 then
+            boostDir = horiz.Unit
+        else
+            -- Teleports leave you with little horizontal speed, so aim the nudge where you're looking.
+            local look = (gameCamera and gameCamera.CFrame.LookVector) or root.CFrame.LookVector
+            look = Vector3.new(look.X, 0, look.Z)
+            boostDir = look.Magnitude > 0 and look.Unit or nil
         end
-
-        Module = vape.Categories.Blatant:CreateModule({
-            Name = cfg.Name,
-            Function = function(callback)
-                if callback then
-                    table.clear(prevReady)
-                    boostUntil, boostDir, boostSpeed, prevHoriz = 0, nil, 0, 0
-                    Module:Clean(runService.PreSimulation:Connect(function()
-                        if not entitylib.isAlive then prevHoriz = 0 return end
-                        local root = entitylib.character.RootPart
-                        if not root or not isnetworkowner(root) then prevHoriz = 0 return end
-
-                        local vel = root.AssemblyLinearVelocity
-                        local horizMag = Vector3.new(vel.X, 0, vel.Z).Magnitude
-                        local onKit = equippedKit():find(cfg.kit) ~= nil
-
-                        -- Primary detection: the ability just went on cooldown (ready -> not ready),
-                        -- i.e. it was activated this instant.
-                        for _, ab in cfg.abilities do
-                            local ok, ready = pcall(function() return bedwars.AbilityController:canUseAbility(ab) end)
-                            ready = (ok and ready) and true or false
-                            if prevReady[ab] == nil then prevReady[ab] = ready end
-                            if prevReady[ab] and not ready and (onKit or not cfg.requireKit) then
-                                beginBoost(root)
-                            end
-                            prevReady[ab] = ready
-                        end
-
-                        -- Fallback (only while this kit is equipped): a sudden forward burst of speed
-                        -- toward where you're aiming is the ability firing, even if its id differs.
-                        if onKit and boostUntil <= tick() and (horizMag - prevHoriz) > cfg.spike then
-                            local look = (gameCamera and gameCamera.CFrame.LookVector) or root.CFrame.LookVector
-                            look = Vector3.new(look.X, 0, look.Z)
-                            local hv = Vector3.new(vel.X, 0, vel.Z)
-                            if look.Magnitude > 0 and hv.Magnitude > 0 and hv.Unit:Dot(look.Unit) > 0.5 then
-                                beginBoost(root)
-                            end
-                        end
-                        prevHoriz = horizMag
-
-                        -- Extend: hold at least the boosted speed along the travel direction for the
-                        -- window, preserving vertical motion so jumps/gravity are untouched.
-                        if boostUntil > tick() and boostDir then
-                            local v = root.AssemblyLinearVelocity
-                            local hz = Vector3.new(v.X, 0, v.Z)
-                            local dir = hz.Magnitude > 4 and hz.Unit or boostDir
-                            local speed = math.max(hz.Magnitude, boostSpeed)
-                            local target = dir * speed
-                            root.AssemblyLinearVelocity = Vector3.new(target.X, v.Y, target.Z)
-                        end
-                    end))
-                else
-                    boostUntil, boostDir, boostSpeed, prevHoriz = 0, nil, 0, 0
-                    table.clear(prevReady)
-                end
-            end,
-            Tooltip = cfg.Tooltip
-        })
-        Distance = Module:CreateSlider({
-            Name = 'Extra Distance',
-            Min = 1,
-            Max = 60,
-            Default = 15,
-            Suffix = ' studs',
-            Tooltip = 'How much extra forward speed to hold during the ability so it carries you further. Higher = a longer dash / jump / teleport.'
-        })
     end
 
-    makeExtender({
-        Name = 'ElektraExtender',
-        kit = 'elektra',
-        abilities = {'elektra_tp', 'ELEKTRA_TP'},
-        duration = 0.5,
-        spike = 30,
-        Tooltip = 'Extends the Elektra teleport - boosts you forward as the ability fires so it reaches further.'
+    Extender = vape.Categories.Blatant:CreateModule({
+        Name = 'Extender',
+        Function = function(callback)
+            if callback then
+                table.clear(prevReady)
+                boostUntil, sampleUntil, basePeak, boostDir = 0, 0, 0, nil
+                Extender:Clean(runService.PreSimulation:Connect(function()
+                    if not entitylib.isAlive then return end
+                    local root = entitylib.character.RootPart
+                    if not root or not isnetworkowner(root) then return end
+
+                    -- Detect any kit mobility ability going ready -> on cooldown (it was just used).
+                    for _, ab in ABILITIES do
+                        local ok, ready = pcall(function() return bedwars.AbilityController:canUseAbility(ab) end)
+                        ready = (ok and ready) and true or false
+                        if prevReady[ab] == nil then prevReady[ab] = ready end
+                        if prevReady[ab] and not ready then
+                            beginBoost(root)
+                        end
+                        prevReady[ab] = ready
+                    end
+
+                    if boostUntil > tick() and boostDir then
+                        local vel = root.AssemblyLinearVelocity
+                        local horiz = Vector3.new(vel.X, 0, vel.Z)
+                        local dir = horiz.Magnitude > 4 and horiz.Unit or boostDir
+                        if tick() < sampleUntil then
+                            -- Sampling phase: learn the ability's own peak speed WITHOUT boosting
+                            -- (the cooldown edge fires a beat before the dash velocity lands, so the
+                            -- speed right at the edge is too low to measure against). Sampling first
+                            -- also stops the boost feeding back into its own baseline.
+                            basePeak = math.max(basePeak, horiz.Magnitude)
+                        else
+                            -- Boost phase: hold at the sampled peak plus the extra distance so the
+                            -- dash / jump / teleport keeps carrying you instead of decaying.
+                            local speed = math.max(horiz.Magnitude, basePeak + Distance.Value)
+                            local target = dir * speed
+                            root.AssemblyLinearVelocity = Vector3.new(target.X, vel.Y, target.Z)
+                        end
+                    end
+                end))
+            else
+                boostUntil, sampleUntil, basePeak, boostDir = 0, 0, 0, nil
+                table.clear(prevReady)
+            end
+        end,
+        Tooltip = 'Extends your kit\'s mobility ability. Detects the Jade hammer jump, Void Regent / Void Axe jump, Yuzi dao dash or Elektra teleport firing and holds your speed up so it carries you further.'
     })
-    makeExtender({
-        Name = 'JadeExtender',
-        kit = 'jade',
-        abilities = {'jade_hammer_jump'},
-        duration = 0.5,
-        spike = 30,
-        Tooltip = 'Extends the Jade hammer jump - boosts you as it fires so it carries you further.'
-    })
-    makeExtender({
-        Name = 'YuziExtender',
-        kit = 'yuzi',
-        abilities = {'dash'},
-        requireKit = true,
-        duration = 0.5,
-        spike = 30,
-        Tooltip = 'Extends the Yuzi dao dash - boosts you as it fires so it carries you further.'
-    })
-    makeExtender({
-        Name = 'VoidRegentExtender',
-        kit = 'regent',
-        abilities = {'void_axe_jump'},
-        duration = 0.5,
-        spike = 30,
-        Tooltip = 'Extends the Void Regent (Void Axe) dash - boosts you as it fires so it carries you further.'
+    Distance = Extender:CreateSlider({
+        Name = 'Extra Distance',
+        Min = 1,
+        Max = 80,
+        Default = 20,
+        Suffix = ' studs',
+        Tooltip = 'How much extra forward speed to hold during the ability so it carries you further.'
     })
 end)
 
