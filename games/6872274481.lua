@@ -66,6 +66,13 @@ local vape = shared.vape
 if vape.Categories and not vape.Categories.Exploits then
 	vape.Categories.Exploits = vape.Categories.Blatant
 end
+-- 'Visuals' category safety net (same idea as Exploits above). The `new` and `newer` themes
+-- have a real Visuals tab, but `old` and `rise` don't - so alias Visuals -> Render there, which
+-- every theme has. Without this, moving a module to Visuals (e.g. ChillLighting) would make it,
+-- and the other Visuals modules, silently disappear on those themes.
+if vape.Categories and not vape.Categories.Visuals then
+	vape.Categories.Visuals = vape.Categories.Render
+end
 local entitylib = vape.Libraries.entity
 local targetinfo = vape.Libraries.targetinfo
 local sessioninfo = vape.Libraries.sessioninfo
@@ -1549,6 +1556,17 @@ run(function()
 			mapname = store.map.Name
 			mapname = string.gsub(string.split(mapname, '_')[2] or mapname, '-', '') or 'Blank'
 			if store.map then
+				-- Block/terrain-only raycast filter shared by the ground/clear-space checks in
+				-- TP Aura, AntiFall and other movement modules. It Includes only the map world
+				-- (islands, generators and the placed-Blocks folder), so every one of those casts
+				-- hits solid geometry and never a player/NPC. Without this it was left nil, which
+				-- made casts collide with characters - e.g. TP Aura's target-facing clear check hit
+				-- the target itself and rejected every teleport spot, so the module did nothing.
+				local blockRay = RaycastParams.new()
+				blockRay.FilterType = Enum.RaycastFilterType.Include
+				blockRay.FilterDescendantsInstances = {store.map}
+				blockRay.RespectCanCollide = true
+				store.blockRaycast = blockRay
 				vape:Clean(store.map.Blocks.ChildAdded:Connect(function(v) -- bedwars game is so bad bro 😭 how did you even break this event
 					task.delay(0, function()
 						if v:GetAttribute('Block') and (v:GetAttribute('PlacedByUserId') or 0) ~= 0 then
@@ -3218,7 +3236,9 @@ run(function()
         if tick() < clutchUntil or not entitylib.isAlive then return end
         local wool, amount = getWool()
         if not wool or (amount or 0) < 1 then return end
-        clutchUntil = tick() + 0.6
+        -- Short debounce so a bridge that doesn't quite catch is retried promptly instead of
+        -- leaving the player falling for over half a second before the next attempt.
+        clutchUntil = tick() + 0.3
 
         local root = entitylib.character.RootPart
         local origin = root.Position
@@ -3261,10 +3281,10 @@ run(function()
             for s = steps, 0, -1 do
                 if not AntiFall.Enabled then break end
                 placeAt(Vector3.new(origin.X, placeY, origin.Z) + wallDir * (s * 3))
-                -- Lay the bridge as fast as the placement remote allows; a 0.05s per-block
-                -- wait meant a long bridge from a far wall (or during a fast fall) simply
-                -- could not finish before the player passed the catch height.
-                task.wait(0.02)
+                -- Lay the bridge as fast as the placement remote allows; a long bridge from a
+                -- far wall (or during a fast fall) has to finish before the player passes the
+                -- catch height, so keep the per-block spacing minimal.
+                task.wait(0.01)
             end
         else
             -- No wall in range: best-effort direct placement beneath us.
@@ -3371,7 +3391,7 @@ run(function()
                     -- Bias the lead generously and add the current ping - blocks placed early
                     -- over the void simply wait at the catch level, so an early trigger is
                     -- harmless while a late one is a death.
-                    local BASE_CLUTCH_LEAD = 1.0
+                    local BASE_CLUTCH_LEAD = 1.3
                     AntiFall:Clean(runService.Heartbeat:Connect(function()
                         if Mode.Value ~= 'Clutch' or not entitylib.isAlive then return end
                         if not AntiFallPart or not AntiFallPart.Parent then return end
@@ -3387,20 +3407,26 @@ run(function()
                         local catchY = AntiFallPart.Position.Y + (AntiFallPart.Size.Y * 0.5) + 3
                         local dist = root.Position.Y - catchY
                         if dist <= 0 then return end -- already at/below the catch level
-                        -- Real ground or blocks in the fall path stop us first; only clutch
-                        -- when the drop below is clear all the way down to the barrier so we
-                        -- don't waste wool bridging over solid ground.
-                        rayCheck.FilterDescendantsInstances = {gameCamera, lplr.Character, AntiFallPart}
-                        rayCheck.CollisionGroup = root.CollisionGroup
-                        if workspace:Raycast(root.Position, Vector3.new(0, -(dist + 3), 0), rayCheck) then return end
-                        -- Accurate free-fall time to the catch height (accounts for gravity,
-                        -- not just current speed) so the trigger fires the same lead ahead
-                        -- regardless of how fast we're already moving.
+                        -- Accurate free-fall time to the catch height (accounts for gravity, not
+                        -- just current speed) so the trigger fires the same lead ahead regardless
+                        -- of how fast we're already moving.
                         local u = -vy
                         local timeToCatch = (math.sqrt((u * u) + (2 * workspace.Gravity * dist)) - u) / workspace.Gravity
-                        if timeToCatch <= CLUTCH_LEAD then
-                            task.spawn(clutchToWall)
-                        end
+                        if timeToCatch > CLUTCH_LEAD then return end
+                        -- Only clutch when we're genuinely going to land in the void. Probe the
+                        -- column below where we'll ACTUALLY be at catch time, following our
+                        -- horizontal drift. A straight-down probe (the old check) was wrong both
+                        -- ways: running off a ledge toward a lower platform still bridged because
+                        -- the down-ray hit the platform we were leaving (false alarm), and a
+                        -- glancing block in the straight-down column suppressed the early clutch so
+                        -- only the last-moment Touched net caught us (the "very slow" catch). If
+                        -- there's solid footing where we're headed, no void catch is needed.
+                        rayCheck.FilterDescendantsInstances = {gameCamera, lplr.Character, AntiFallPart}
+                        rayCheck.CollisionGroup = root.CollisionGroup
+                        local horiz = Vector3.new(root.AssemblyLinearVelocity.X, 0, root.AssemblyLinearVelocity.Z)
+                        local landing = root.Position + horiz * math.min(timeToCatch, 2)
+                        if workspace:Raycast(Vector3.new(landing.X, root.Position.Y, landing.Z), Vector3.new(0, -(dist + 6), 0), rayCheck) then return end
+                        task.spawn(clutchToWall)
                     end))
                 end
             else
@@ -3507,24 +3533,46 @@ run(function()
     -- far is wiped - so when we really land later there is no built-up drop left to hurt us. The
     -- loop calls this while we're falling fast, keeping the fall perpetually reset.
     local function tpNoFall(root, character)
+        updateRay(root)
+        -- Find the ground below us. Prefer the box cast (tolerant of thin/edge blocks); fall
+        -- back to a plain long ray so a missed box cast never leaves TP mode doing nothing.
+        local groundY
         local ground = getGround(root, character, 1500)
-        if not ground then return end
+        if ground then
+            groundY = ground.Position.Y
+        else
+            local ray = workspace:Raycast(root.Position, Vector3.new(0, -3000, 0), rayCheck)
+            if not ray then return end
+            groundY = ray.Position.Y
+        end
 
         -- Remember the airborne position + motion so we can resume it exactly afterwards.
+        local humanoid = character.Humanoid
         local savedCFrame = root.CFrame
         local savedVel = root.AssemblyLinearVelocity
-        local clearance = (character.HipHeight or 2) + (root.Size.Y * 0.5)
-        local touchCFrame = CFrame.new(savedCFrame.X, ground.Position.Y + clearance + 0.1, savedCFrame.Z) * savedCFrame.Rotation
+        local clearance = (character.HipHeight or (humanoid and humanoid.HipHeight) or 2) + (root.Size.Y * 0.5)
+        local touchCFrame = CFrame.new(savedCFrame.X, groundY + clearance + 0.05, savedCFrame.Z) * savedCFrame.Rotation
 
-        -- Sit on the ground (velocity pinned to zero, position held) only until the landing
-        -- registers - FloorMaterial leaving Air - capped so we never linger and fall for real.
-        local deadline = tick() + 0.15
+        -- Sit on the ground (velocity pinned to zero, landed state forced) until the landing
+        -- registers AND has been held long enough to actually replicate to the server - a
+        -- single-frame touch was the reason this "did nothing" before, because the server never
+        -- sampled us grounded. Capped so we never linger and fall for real.
+        local started = tick()
+        local minHold, maxHold = 0.09, 0.28
+        local landed = false
         repeat
             root.CFrame = touchCFrame
             root.AssemblyLinearVelocity = Vector3.zero
+            if humanoid then
+                pcall(function()
+                    humanoid:ChangeState(Enum.HumanoidStateType.Landed)
+                    humanoid:ChangeState(Enum.HumanoidStateType.Running)
+                end)
+            end
             task.wait()
             if not NoFall.Enabled or not entitylib.isAlive or not root.Parent then return true end
-        until (character.Humanoid and character.Humanoid.FloorMaterial ~= Enum.Material.Air) or tick() > deadline
+            if humanoid and humanoid.FloorMaterial ~= Enum.Material.Air then landed = true end
+        until (landed and (tick() - started) >= minHold) or (tick() - started) >= maxHold
 
         -- Back to the exact airborne spot and motion, with the fall counter now reset.
         if root.Parent then
@@ -3822,20 +3870,35 @@ run(function()
                     local character, root, humanoid = validCharacter()
                     if character then
                         if Mode.Value == 'Blatant' then
-                            -- Blatant nofall through BedWars' own fall-damage controller. The
-                            -- FallDamageController keeps an `additionalRegisteredVelocity` offset that
-                            -- it folds into your velocity when it registers a landing - the game itself
-                            -- uses it so launcher / boost speed isn't miscounted as a fall. We drive
-                            -- that offset to more than cancel our downward speed, so the fall the
-                            -- controller registers is never damaging. It scales with the real fall so
-                            -- it stays a plausible value, and is reset to 0 on disable. Source-level:
-                            -- no Humanoid-state flip, no GroundHit packet spoof, no velocity/gravity
-                            -- edit, no teleport.
+                            -- Blatant nofall: a simple, robust combination of the popular methods so it
+                            -- works regardless of how this build validates a fall. We keep the game's own
+                            -- FallDamageController offset cancelled (source-level, honoured on builds that
+                            -- read it) and - the part that actually guarantees it - bleed the drop off to a
+                            -- harmless speed the instant before touchdown while forcing a Landed state, so a
+                            -- velocity/position-validated fall registers as a soft, non-damaging landing.
+                            -- The offset is reset to 0 on disable.
+                            local vy = root.AssemblyLinearVelocity.Y
                             pcall(function()
-                                bedwars.FallDamageController.additionalRegisteredVelocity = math.max(-root.AssemblyLinearVelocity.Y + 50, 50)
+                                bedwars.FallDamageController.additionalRegisteredVelocity = math.max(-vy + 60, 60)
                             end)
                             blatantHeld = true
-                            waitDelay = 0.02
+                            if vy < -1 then
+                                local ground = getGround(root, character, 80)
+                                local dropLeft = ground and (root.Position.Y - ground.Position.Y) or math.huge
+                                if dropLeft <= 10 then
+                                    -- Touchdown imminent: cancel the impact and register a soft landing.
+                                    root.AssemblyLinearVelocity = Vector3.new(root.AssemblyLinearVelocity.X, math.max(vy, -10), root.AssemblyLinearVelocity.Z)
+                                    pcall(function()
+                                        humanoid:ChangeState(Enum.HumanoidStateType.Landed)
+                                        humanoid:ChangeState(Enum.HumanoidStateType.Running)
+                                    end)
+                                    waitDelay = 0.02
+                                else
+                                    waitDelay = 0.03
+                                end
+                            else
+                                waitDelay = 0.03
+                            end
                         elseif humanoid.FloorMaterial ~= Enum.Material.Air then
                             usedPearl = false
                         elseif Mode.Value == 'Legit' then
@@ -3881,7 +3944,7 @@ run(function()
                 end
             end
         end,
-        Tooltip = 'Prevents fall damage. Legit uses clutch methods; TP briefly touches the ground to reset the fall then snaps back to your airborne spot; Blatant drives the game\'s own FallDamageController offset so the registered fall is never damaging.'
+        Tooltip = 'Prevents fall damage. Legit uses clutch methods; TP briefly touches the ground to reset the fall then snaps back to your airborne spot; Blatant cancels the drop into a soft landing (velocity cancel + landed-state spoof) so the fall is never damaging.'
     })
     Mode = NoFall:CreateDropdown({
         Name = 'Mode',
@@ -3893,7 +3956,7 @@ run(function()
                 NoFall:Toggle()
             end
         end,
-        Tooltip = 'Legit uses a fixed clutch order: blocks, telepearls, then tools (enable Zephyr to jump-cancel the fall with the Zephyr/WindWalker kit instead). Blatant cancels fall velocity repeatedly. TP teleports below the map then back to ground.'
+        Tooltip = 'Legit uses a fixed clutch order: blocks, telepearls, then tools (enable Zephyr to jump-cancel the fall with the Zephyr/WindWalker kit instead). Blatant softens the landing right before touchdown so no damage registers. TP quickly touches the floor to reset the fall, then resumes your airborne position.'
     })
     MinVelocity = NoFall:CreateSlider({
         Name = 'Minimum Velocity',
@@ -4314,7 +4377,7 @@ end)
 run(function()
     local ChillLighting
     local oldAmbient, oldOutdoor
-    ChillLighting = vape.Categories.Render:CreateModule({
+    ChillLighting = vape.Categories.Visuals:CreateModule({
         Name = 'ChillLighting',
         Function = function(callback)
             if callback then
@@ -4372,48 +4435,34 @@ end)
 
 run(function()
     local BoostAirJump
+    local Boost
     BoostAirJump = vape.Categories.Blatant:CreateModule({
         Name = 'BoostAirJump',
         Function = function(callback)
             if callback then
                 repeat
-                    if entitylib.isAlive then
+                    -- Only boost while the player is actually holding jump (space / gamepad A)
+                    -- and not typing in a text box, so it stops floating you up on its own.
+                    if entitylib.isAlive and not inputService:GetFocusedTextBox()
+                        and (inputService:IsKeyDown(Enum.KeyCode.Space) or inputService:IsKeyDown(Enum.KeyCode.ButtonA)) then
                         local root = entitylib.character.RootPart
-                        root.AssemblyLinearVelocity = root.AssemblyLinearVelocity + Vector3.new(0, 35, 0)
+                        if root then
+                            root.AssemblyLinearVelocity = root.AssemblyLinearVelocity + Vector3.new(0, Boost and Boost.Value or 35, 0)
+                        end
                     end
                     task.wait(0.1)
                 until not BoostAirJump.Enabled
             end
         end,
-        Tooltip = 'Adds upward velocity to bypass jump-height detection'
+        Tooltip = 'Adds upward velocity while you hold jump/space to bypass jump-height detection'
     })
-end)
-
-run(function()
-    local BedTPv2
-    BedTPv2 = vape.Categories.Blatant:CreateModule({
-        Name = 'BedTPv2',
-        Function = function(callback)
-            if callback then
-                local myteam = lplr:GetAttribute('Team')
-                repeat
-                    if entitylib.isAlive then
-                        local enemybed
-                        for _, v in workspace:GetChildren() do
-                            if v.Name == 'bed' and v:GetAttribute('Team') and v:GetAttribute('Team') ~= myteam then
-                                enemybed = v
-                                break
-                            end
-                        end
-                        if enemybed and enemybed.Parent == workspace then
-                            entitylib.character.RootPart.CFrame = enemybed.CFrame + Vector3.new(0, 5, 0)
-                        end
-                    end
-                    task.wait(0.1)
-                until not BedTPv2.Enabled
-            end
-        end,
-        Tooltip = 'Teleports to the enemy bed'
+    Boost = BoostAirJump:CreateSlider({
+        Name = 'Boost',
+        Min = 5,
+        Max = 60,
+        Default = 35,
+        Suffix = ' studs/s',
+        Tooltip = 'Upward velocity added each tick while jump is held.'
     })
 end)
 
@@ -4593,61 +4642,78 @@ end)
 -- A correct version needs the elk kit controller's real dismount/duration internals, which we
 -- can't see from the repo, so the module is pulled rather than shipped broken and harmful.)
 
--- AntiLagback. During a ping spike your movement stops reaching the server for a moment; when it
--- catches up it rubber-bands you back to where it last saw you. We track a slow ping baseline and,
--- once per spike, nudge the RootPart forward along your current movement direction by roughly the
--- distance you'd have covered during the extra latency (scaled by Strength, hard-capped at 12
--- studs), so the server's catch-up lands you on your path instead of behind it. Purely client-side
--- and bounded, so it can never fling you across the map.
+-- AntiLagback. A lagback is the server rubber-banding you: after a lost/late movement packet it
+-- snaps your character backward to the last position it acknowledged. That shows up client-side as a
+-- large single-frame position jump AGAINST the direction you were travelling (normal movement only
+-- ever changes your position by a fraction of a stud per frame). We watch for exactly that - a
+-- backward jump bigger than Sensitivity but smaller than Max Correction (so real teleports/pearls/
+-- respawns are left alone) - and immediately restore the position we had before the yank, advanced
+-- by one frame of expected travel so you stay on your path instead of getting slammed back.
 run(function()
     local AntiLagback
-    local Strength
+    local Sensitivity
+    local MaxCorrect
 
     AntiLagback = vape.Categories.Exploits:CreateModule({
         Name = 'AntiLagback',
         Function = function(callback)
             if callback then
-                local baseline = lplr:GetNetworkPing()
-                local nudged = false
-                AntiLagback:Clean(runService.PreSimulation:Connect(function(dt)
-                    if not entitylib.isAlive then return end
+                local lastPos, lastVel
+                -- Heartbeat runs after physics/replication, so `pos` already reflects any server
+                -- correction applied this frame - the moment we can see (and undo) a lagback.
+                AntiLagback:Clean(runService.Heartbeat:Connect(function(dt)
+                    if not entitylib.isAlive then
+                        lastPos, lastVel = nil, nil
+                        return
+                    end
                     local root = entitylib.character and entitylib.character.RootPart
-                    if not root then return end
-
-                    local ping = lplr:GetNetworkPing()
-                    -- Baseline follows the calm ping: drops to it instantly, rises toward it slowly,
-                    -- so a sudden jump above the baseline reads as a spike worth compensating for.
-                    if ping < baseline then
-                        baseline = ping
-                    else
-                        baseline += (ping - baseline) * math.clamp(dt * 0.6, 0, 1)
+                    if not root or not root.Parent then
+                        lastPos, lastVel = nil, nil
+                        return
                     end
-                    local spike = ping - baseline
 
-                    if spike > 0.03 then
-                        if not nudged then
-                            local hvel = root.AssemblyLinearVelocity * Vector3.new(1, 0, 1)
-                            if hvel.Magnitude > 2 then
-                                local lead = math.clamp(hvel.Magnitude * spike * (Strength and Strength.Value or 1), 0, 12)
-                                root.CFrame += hvel.Unit * lead
+                    local pos = root.Position
+                    if lastPos and lastVel then
+                        local hvel = lastVel * Vector3.new(1, 0, 1)
+                        -- A standing player never suffers a lagback worth correcting; only react
+                        -- while we were genuinely moving last frame.
+                        if hvel.Magnitude > 6 then
+                            local dir = hvel.Unit
+                            local moved = (pos - lastPos) * Vector3.new(1, 0, 1)
+                            -- How far we travelled BACKWARD along our own heading this frame.
+                            local backward = -(moved:Dot(dir))
+                            if backward > (Sensitivity and Sensitivity.Value or 6) and backward < (MaxCorrect and MaxCorrect.Value or 80) then
+                                -- Undo the pullback: return to where we were, advanced by roughly
+                                -- one frame of the travel we should have made, and keep our
+                                -- horizontal momentum so movement stays smooth.
+                                local restore = lastPos + hvel * dt
+                                root.CFrame += (restore - pos)
+                                root.AssemblyLinearVelocity = Vector3.new(lastVel.X, root.AssemblyLinearVelocity.Y, lastVel.Z)
+                                pos = restore
                             end
-                            nudged = true
                         end
-                    else
-                        nudged = false
                     end
+                    lastPos, lastVel = pos, root.AssemblyLinearVelocity
                 end))
             end
         end,
-        Tooltip = 'Nudges you forward client-side during ping spikes so you don\'t get slammed back once the server catches up.'
+        Tooltip = 'Detects a server rubber-band (a sudden backward yank against your movement) and instantly restores your position so the lagback never lands.'
     })
-    Strength = AntiLagback:CreateSlider({
-        Name = 'Strength',
-        Min = 0,
-        Max = 3,
-        Default = 1,
-        Decimal = 100,
-        Tooltip = 'How far to lead your position during a spike. Raise if you still get pulled back, lower if it over-shoots.'
+    Sensitivity = AntiLagback:CreateSlider({
+        Name = 'Sensitivity',
+        Min = 3,
+        Max = 30,
+        Default = 6,
+        Suffix = ' studs',
+        Tooltip = 'A single-frame backward jump larger than this (against your movement) counts as a lagback and is undone. Lower catches smaller pulls; raise if normal movement ever gets corrected.'
+    })
+    MaxCorrect = AntiLagback:CreateSlider({
+        Name = 'Max Correction',
+        Min = 20,
+        Max = 150,
+        Default = 80,
+        Suffix = ' studs',
+        Tooltip = 'Backward jumps larger than this are treated as real teleports/pearls/respawns and left alone.'
     })
 end)
 
@@ -5959,23 +6025,27 @@ run(function()
                                                 selfPosition = {value = pos}
                                             }
                                         }
-                                        if Unpatch.Enabled then
-                                            -- Deeper unpatch (experimental): hand the request to the game's own
-                                            -- send wrapper (SwordController.sendServerRequest) rather than firing
-                                            -- the raw remote, so any validation/processing the game applies to a
-                                            -- genuine attack is applied here too. Aim-independent. If the call
-                                            -- errors (e.g. a signature mismatch) we fall straight back to the raw
-                                            -- send, so Unpatch is never worse than the default.
-                                            local sent = pcall(function()
-                                                bedwars.SwordController:sendServerRequest(payload)
-                                            end)
-                                            if not sent then
+                                        -- HitReg: send each hit this many times so the server is more
+                                        -- likely to register it (1 = default single packet, up to 36).
+                                        for _ = 1, math.clamp(Hitreg and Hitreg.Value or 1, 1, 36) do
+                                            if Unpatch.Enabled then
+                                                -- Deeper unpatch (experimental): hand the request to the game's own
+                                                -- send wrapper (SwordController.sendServerRequest) rather than firing
+                                                -- the raw remote, so any validation/processing the game applies to a
+                                                -- genuine attack is applied here too. Aim-independent. If the call
+                                                -- errors (e.g. a signature mismatch) we fall straight back to the raw
+                                                -- send, so Unpatch is never worse than the default.
+                                                local sent = pcall(function()
+                                                    bedwars.SwordController:sendServerRequest(payload)
+                                                end)
+                                                if not sent then
+                                                    AttackRemote:SendToServer(payload)
+                                                end
+                                            else
+                                                -- Default: send the plain packet on the position-only validation path
+                                                -- (empty raycast). selfPosition stays reach-extended via `pos`.
                                                 AttackRemote:SendToServer(payload)
                                             end
-                                        else
-                                            -- Default: send the plain packet on the position-only validation path
-                                            -- (empty raycast). selfPosition stays reach-extended via `pos`.
-                                            AttackRemote:SendToServer(payload)
                                         end
 
                                         if FastHits.Enabled and tick() > lastShot and not entitylib.Wallcheck(entitylib.character.RootPart.Position, actualRoot.Position, {gameCamera, lplr.Character, v.Character}) then
@@ -6197,6 +6267,13 @@ run(function()
         Max = 120,
         Default = 60,
         Suffix = 'hz'
+    })
+    Hitreg = Killaura:CreateSlider({
+        Name = 'HitReg',
+        Min = 1,
+        Max = 36,
+        Default = 1,
+        Tooltip = 'How many times each hit is sent to the server. Higher forces the hit to register more reliably (more attack packets per hit).'
     })
     Unpatch = Killaura:CreateToggle({
         Name = 'Unpatch',
@@ -6479,6 +6556,7 @@ end)
 run(function()
     local Value
     local CameraDir
+    local LimitItems
     local start
     local JumpTick, JumpSpeed, Direction = tick(), 0
     local projectileRemote = {InvokeServer = function() end}
@@ -6618,6 +6696,8 @@ run(function()
             updateVelocity()
             if callback then
                 LongJump:Clean(vapeEvents.EntityDamageEvent.Event:Connect(function(damageTable)
+                    -- Limit to items: the knockback (Heatseeker) boost isn't item-driven, so skip it.
+                    if LimitItems and LimitItems.Enabled then return end
                     if damageTable.entityInstance == lplr.Character and damageTable.fromEntity == lplr.Character and (not damageTable.knockbackMultiplier or not damageTable.knockbackMultiplier.disabled) then
                         local knockbackBoost = bedwars.KnockbackUtil.calculateKnockbackVelocity(Vector3.one, 1, {
                             vertical = 0,
@@ -6675,7 +6755,8 @@ run(function()
 
                 for i, v in LongJumpMethods do
                     local item = getItem(i)
-                    if item or store.equippedKit == i then
+                    -- Limit to items: only fire from an actual inventory item, never a kit match.
+                    if item or (store.equippedKit == i and not (LimitItems and LimitItems.Enabled)) then
                         task.spawn(v, item, start, (CameraDir.Enabled and gameCamera or entitylib.character.RootPart).CFrame.LookVector)
                         break
                     end
@@ -6702,6 +6783,145 @@ run(function()
     })
     CameraDir = LongJump:CreateToggle({
         Name = 'Camera Direction'
+    })
+    LimitItems = LongJump:CreateToggle({
+        Name = 'Limit to items',
+        Tooltip = 'Only long-jumps from an actual long-jump item you have (dao, jade hammer, void axe, cannon, tnt, grappling hook, etc.) - never from a kit match or the knockback Heatseeker boost.'
+    })
+end)
+
+run(function()
+    -- Kit-ability "Extenders". Each watches for its kit's mobility ability firing (via the same
+    -- AbilityController API LongJump uses) and, for a short window afterwards, holds your forward
+    -- speed a little higher so the dash / jump / teleport carries you a set number of studs
+    -- further. One factory so all four share identical, bounded, well-tested logic.
+    local function equippedKit()
+        local k = store.equippedKit
+        if k == nil or k == '' then k = lplr:GetAttribute('PlayingAsKit') end
+        return k and string.lower(tostring(k)) or ''
+    end
+
+    local function makeExtender(cfg)
+        local Module, Distance
+        local boostUntil, boostDir, boostSpeed = 0, nil, 0
+        local prevReady = {}
+        local prevHoriz = 0
+
+        local function beginBoost(root)
+            local vel = root.AssemblyLinearVelocity
+            local horiz = Vector3.new(vel.X, 0, vel.Z)
+            boostSpeed = horiz.Magnitude + Distance.Value
+            if horiz.Magnitude > 4 then
+                boostDir = horiz.Unit
+            else
+                -- Teleports leave you with little horizontal speed, so fall back to where you're
+                -- aiming and nudge you that way instead.
+                local look = (gameCamera and gameCamera.CFrame.LookVector) or root.CFrame.LookVector
+                look = Vector3.new(look.X, 0, look.Z)
+                boostDir = look.Magnitude > 0 and look.Unit or nil
+            end
+            boostUntil = tick() + cfg.duration
+        end
+
+        Module = vape.Categories.Blatant:CreateModule({
+            Name = cfg.Name,
+            Function = function(callback)
+                if callback then
+                    table.clear(prevReady)
+                    boostUntil, boostDir, boostSpeed, prevHoriz = 0, nil, 0, 0
+                    Module:Clean(runService.PreSimulation:Connect(function()
+                        if not entitylib.isAlive then prevHoriz = 0 return end
+                        local root = entitylib.character.RootPart
+                        if not root or not isnetworkowner(root) then prevHoriz = 0 return end
+
+                        local vel = root.AssemblyLinearVelocity
+                        local horizMag = Vector3.new(vel.X, 0, vel.Z).Magnitude
+                        local onKit = equippedKit():find(cfg.kit) ~= nil
+
+                        -- Primary detection: the ability just went on cooldown (ready -> not ready),
+                        -- i.e. it was activated this instant.
+                        for _, ab in cfg.abilities do
+                            local ok, ready = pcall(function() return bedwars.AbilityController:canUseAbility(ab) end)
+                            ready = (ok and ready) and true or false
+                            if prevReady[ab] == nil then prevReady[ab] = ready end
+                            if prevReady[ab] and not ready and (onKit or not cfg.requireKit) then
+                                beginBoost(root)
+                            end
+                            prevReady[ab] = ready
+                        end
+
+                        -- Fallback (only while this kit is equipped): a sudden forward burst of speed
+                        -- toward where you're aiming is the ability firing, even if its id differs.
+                        if onKit and boostUntil <= tick() and (horizMag - prevHoriz) > cfg.spike then
+                            local look = (gameCamera and gameCamera.CFrame.LookVector) or root.CFrame.LookVector
+                            look = Vector3.new(look.X, 0, look.Z)
+                            local hv = Vector3.new(vel.X, 0, vel.Z)
+                            if look.Magnitude > 0 and hv.Magnitude > 0 and hv.Unit:Dot(look.Unit) > 0.5 then
+                                beginBoost(root)
+                            end
+                        end
+                        prevHoriz = horizMag
+
+                        -- Extend: hold at least the boosted speed along the travel direction for the
+                        -- window, preserving vertical motion so jumps/gravity are untouched.
+                        if boostUntil > tick() and boostDir then
+                            local v = root.AssemblyLinearVelocity
+                            local hz = Vector3.new(v.X, 0, v.Z)
+                            local dir = hz.Magnitude > 4 and hz.Unit or boostDir
+                            local speed = math.max(hz.Magnitude, boostSpeed)
+                            local target = dir * speed
+                            root.AssemblyLinearVelocity = Vector3.new(target.X, v.Y, target.Z)
+                        end
+                    end))
+                else
+                    boostUntil, boostDir, boostSpeed, prevHoriz = 0, nil, 0, 0
+                    table.clear(prevReady)
+                end
+            end,
+            Tooltip = cfg.Tooltip
+        })
+        Distance = Module:CreateSlider({
+            Name = 'Extra Distance',
+            Min = 1,
+            Max = 60,
+            Default = 15,
+            Suffix = ' studs',
+            Tooltip = 'How much extra forward speed to hold during the ability so it carries you further. Higher = a longer dash / jump / teleport.'
+        })
+    end
+
+    makeExtender({
+        Name = 'ElektraExtender',
+        kit = 'elektra',
+        abilities = {'elektra_tp', 'ELEKTRA_TP'},
+        duration = 0.5,
+        spike = 30,
+        Tooltip = 'Extends the Elektra teleport - boosts you forward as the ability fires so it reaches further.'
+    })
+    makeExtender({
+        Name = 'JadeExtender',
+        kit = 'jade',
+        abilities = {'jade_hammer_jump'},
+        duration = 0.5,
+        spike = 30,
+        Tooltip = 'Extends the Jade hammer jump - boosts you as it fires so it carries you further.'
+    })
+    makeExtender({
+        Name = 'YuziExtender',
+        kit = 'yuzi',
+        abilities = {'dash'},
+        requireKit = true,
+        duration = 0.5,
+        spike = 30,
+        Tooltip = 'Extends the Yuzi dao dash - boosts you as it fires so it carries you further.'
+    })
+    makeExtender({
+        Name = 'VoidRegentExtender',
+        kit = 'regent',
+        abilities = {'void_axe_jump'},
+        duration = 0.5,
+        spike = 30,
+        Tooltip = 'Extends the Void Regent (Void Axe) dash - boosts you as it fires so it carries you further.'
     })
 end)
 
@@ -14282,7 +14502,10 @@ run(function()
     local KillPlayers
     local Notify
 
-    local SPEED_CAP = 23
+    local SPEED_CAP = 30
+    -- Original humanoid WalkSpeed, captured the first time Walk mode drives it up to the
+    -- Travel Speed, so it can be handed back exactly when AutoWin stops.
+    local savedWalkSpeed
 
     local virtualInputManager = cloneref(game:GetService('VirtualInputManager'))
 
@@ -14694,6 +14917,14 @@ run(function()
         local _, char = myRoot()
         local hum = char and char.Humanoid
         if not hum then task.wait(0.05) return end
+        -- Drive the walk at the Travel Speed slider. Before this, Walk mode moved at the
+        -- humanoid's own WalkSpeed (so the slider did nothing and it crawled at the base
+        -- speed - "walking too slow"). Capture the original once so cleanup can restore it.
+        if savedWalkSpeed == nil then savedWalkSpeed = hum.WalkSpeed end
+        local want = math.max(effSpeed(), 12)
+        if math.abs(hum.WalkSpeed - want) > 0.1 then
+            pcall(function() hum.WalkSpeed = want end)
+        end
         hum:MoveTo(waypoint)
         if jump then hum.Jump = true end
         local ws = hum.WalkSpeed
@@ -15107,6 +15338,13 @@ run(function()
     ----------------------------------------------------------------------------
     local function cleanup()
         travelDepth = 0
+        -- Hand the humanoid's WalkSpeed back to whatever it was before Walk mode drove it up.
+        if savedWalkSpeed ~= nil then
+            local _, char = myRoot()
+            local hum = char and char.Humanoid
+            if hum then pcall(function() hum.WalkSpeed = savedWalkSpeed end) end
+            savedWalkSpeed = nil
+        end
         restoreModule('Breaker', 'Break Bed')
         restoreModule('Killaura')
         local m = getModule('AntiDeath')
@@ -15167,18 +15405,18 @@ run(function()
     Speed = AutoWin:CreateSlider({
         Name = 'Travel Speed',
         Min = 10,
-        Max = 23,
-        Default = 18,
+        Max = 30,
+        Default = 22,
         Suffix = ' st/s',
-        Tooltip = 'Effective travel speed. Each hop is paced so you never exceed this - kept under 23 st/s (a normal sprint) so the movement anti-cheat has nothing to flag. Lower it if you still get flagged.'
+        Tooltip = 'Effective travel speed. In Walk mode this now actually drives your WalkSpeed (it used to be ignored, so walking crawled at the base speed); in Teleport mode each hop is paced so you never exceed it. Keep it near a normal sprint (~23) if you want to stay under the movement anti-cheat; raise for speed at the cost of being more obvious.'
     })
     HopDistance = AutoWin:CreateSlider({
         Name = 'Hop Distance',
         Min = 4,
-        Max = 12,
-        Default = 10,
+        Max = 20,
+        Default = 16,
         Suffix = ' studs',
-        Tooltip = 'How far each teleport / fly hop moves you. Pacing still caps the effective speed at the Travel Speed value.'
+        Tooltip = 'Teleport mode: how far each hop moves you. Bigger hops mean fewer, less frequent teleports (less blinking) to cover the same ground. Pacing still caps the effective speed at the Travel Speed value.'
     })
     FlyWindow = AutoWin:CreateSlider({
         Name = 'Fly Window',
