@@ -23741,3 +23741,87 @@ run(function()
 		Tooltip = 'koli shit'
 	})
 end)
+
+
+
+run(function()
+	local Step
+	local Blocks
+	local StepEnabled = false
+
+	-- Helper to get the highest point above a position within block limit
+	local function getHighestPoint(startPos, maxBlocks)
+		maxBlocks = maxBlocks or 5
+		local blockHeight = 3 -- BedWars block size
+		local highestY = startPos.Y
+		
+		for i = 1, maxBlocks do
+			local checkPos = startPos + Vector3.new(0, i * blockHeight, 0)
+			local block = getPlacedBlock(checkPos)
+			if not block then
+				break
+			end
+			highestY = checkPos.Y + blockHeight
+		end
+		
+		return highestY + 3 -- Add player height offset
+	end
+
+	-- Check for wall in movement direction
+	local function isHittingWall(rootPart)
+		if not rootPart then return false end
+		
+		local moveDir = rootPart.Velocity * Vector3.new(1, 0, 1)
+		if moveDir.Magnitude < 1 then return false end
+		
+		local rayDir = moveDir.Unit * 4 -- Short forward ray
+		local rayParams = RaycastParams.new()
+		rayParams.FilterDescendantsInstances = {lplr.Character}
+		rayParams.FilterType = Enum.RaycastFilterType.Exclude
+		
+		local result = workspace:Raycast(rootPart.Position, rayDir, rayParams)
+		return result ~= nil
+	end
+
+	Step = vape.Categories.Blatant:CreateModule({
+		Name = 'Step',
+		Tooltip = 'Automatically steps up walls by teleporting to the top (uses Spider detection logic)',
+		Function = function(callback)
+			StepEnabled = callback
+			
+			if callback then
+				Step:Clean(runService.Heartbeat:Connect(function()
+					if not entitylib.isAlive or not StepEnabled then return end
+					
+					local rootPart = entitylib.character.RootPart
+					if not rootPart then return end
+					
+					-- Only trigger when hitting a wall and moving forward (Spider-like detection)
+					if isHittingWall(rootPart) then
+						local currentY = rootPart.Position.Y
+						local targetY = getHighestPoint(rootPart.Position, Blocks.Value)
+						
+						if targetY > currentY + 2 then -- Only step if there's meaningful height gain
+							-- Teleport to top
+							local newPos = rootPart.Position
+							newPos = Vector3.new(newPos.X, targetY, newPos.Z)
+							
+							-- Preserve momentum somewhat
+							rootPart.CFrame = CFrame.new(newPos, newPos + rootPart.CFrame.LookVector)
+							rootPart.Velocity = Vector3.new(rootPart.Velocity.X, 0, rootPart.Velocity.Z)
+						end
+					end
+				end))
+			end
+		end
+	})
+
+	Blocks = Step:CreateSlider({
+		Name = 'Blocks',
+		Min = 1,
+		Max = 10,
+		Default = 3,
+		Suffix = ' blocks',
+		Tooltip = 'Maximum blocks to step up'
+	})
+end)
