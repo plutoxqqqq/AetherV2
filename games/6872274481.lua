@@ -3236,7 +3236,9 @@ run(function()
         if tick() < clutchUntil or not entitylib.isAlive then return end
         local wool, amount = getWool()
         if not wool or (amount or 0) < 1 then return end
-        clutchUntil = tick() + 0.6
+        -- Short debounce so a bridge that doesn't quite catch is retried promptly instead of
+        -- leaving the player falling for over half a second before the next attempt.
+        clutchUntil = tick() + 0.3
 
         local root = entitylib.character.RootPart
         local origin = root.Position
@@ -3279,10 +3281,10 @@ run(function()
             for s = steps, 0, -1 do
                 if not AntiFall.Enabled then break end
                 placeAt(Vector3.new(origin.X, placeY, origin.Z) + wallDir * (s * 3))
-                -- Lay the bridge as fast as the placement remote allows; a 0.05s per-block
-                -- wait meant a long bridge from a far wall (or during a fast fall) simply
-                -- could not finish before the player passed the catch height.
-                task.wait(0.02)
+                -- Lay the bridge as fast as the placement remote allows; a long bridge from a
+                -- far wall (or during a fast fall) has to finish before the player passes the
+                -- catch height, so keep the per-block spacing minimal.
+                task.wait(0.01)
             end
         else
             -- No wall in range: best-effort direct placement beneath us.
@@ -3389,7 +3391,7 @@ run(function()
                     -- Bias the lead generously and add the current ping - blocks placed early
                     -- over the void simply wait at the catch level, so an early trigger is
                     -- harmless while a late one is a death.
-                    local BASE_CLUTCH_LEAD = 1.0
+                    local BASE_CLUTCH_LEAD = 1.3
                     AntiFall:Clean(runService.Heartbeat:Connect(function()
                         if Mode.Value ~= 'Clutch' or not entitylib.isAlive then return end
                         if not AntiFallPart or not AntiFallPart.Parent then return end
@@ -3405,20 +3407,26 @@ run(function()
                         local catchY = AntiFallPart.Position.Y + (AntiFallPart.Size.Y * 0.5) + 3
                         local dist = root.Position.Y - catchY
                         if dist <= 0 then return end -- already at/below the catch level
-                        -- Real ground or blocks in the fall path stop us first; only clutch
-                        -- when the drop below is clear all the way down to the barrier so we
-                        -- don't waste wool bridging over solid ground.
-                        rayCheck.FilterDescendantsInstances = {gameCamera, lplr.Character, AntiFallPart}
-                        rayCheck.CollisionGroup = root.CollisionGroup
-                        if workspace:Raycast(root.Position, Vector3.new(0, -(dist + 3), 0), rayCheck) then return end
-                        -- Accurate free-fall time to the catch height (accounts for gravity,
-                        -- not just current speed) so the trigger fires the same lead ahead
-                        -- regardless of how fast we're already moving.
+                        -- Accurate free-fall time to the catch height (accounts for gravity, not
+                        -- just current speed) so the trigger fires the same lead ahead regardless
+                        -- of how fast we're already moving.
                         local u = -vy
                         local timeToCatch = (math.sqrt((u * u) + (2 * workspace.Gravity * dist)) - u) / workspace.Gravity
-                        if timeToCatch <= CLUTCH_LEAD then
-                            task.spawn(clutchToWall)
-                        end
+                        if timeToCatch > CLUTCH_LEAD then return end
+                        -- Only clutch when we're genuinely going to land in the void. Probe the
+                        -- column below where we'll ACTUALLY be at catch time, following our
+                        -- horizontal drift. A straight-down probe (the old check) was wrong both
+                        -- ways: running off a ledge toward a lower platform still bridged because
+                        -- the down-ray hit the platform we were leaving (false alarm), and a
+                        -- glancing block in the straight-down column suppressed the early clutch so
+                        -- only the last-moment Touched net caught us (the "very slow" catch). If
+                        -- there's solid footing where we're headed, no void catch is needed.
+                        rayCheck.FilterDescendantsInstances = {gameCamera, lplr.Character, AntiFallPart}
+                        rayCheck.CollisionGroup = root.CollisionGroup
+                        local horiz = Vector3.new(root.AssemblyLinearVelocity.X, 0, root.AssemblyLinearVelocity.Z)
+                        local landing = root.Position + horiz * math.min(timeToCatch, 2)
+                        if workspace:Raycast(Vector3.new(landing.X, root.Position.Y, landing.Z), Vector3.new(0, -(dist + 6), 0), rayCheck) then return end
+                        task.spawn(clutchToWall)
                     end))
                 end
             else
@@ -6548,6 +6556,7 @@ end)
 run(function()
     local Value
     local CameraDir
+    local LimitItems
     local start
     local JumpTick, JumpSpeed, Direction = tick(), 0
     local projectileRemote = {InvokeServer = function() end}
@@ -6687,6 +6696,8 @@ run(function()
             updateVelocity()
             if callback then
                 LongJump:Clean(vapeEvents.EntityDamageEvent.Event:Connect(function(damageTable)
+                    -- Limit to items: the knockback (Heatseeker) boost isn't item-driven, so skip it.
+                    if LimitItems and LimitItems.Enabled then return end
                     if damageTable.entityInstance == lplr.Character and damageTable.fromEntity == lplr.Character and (not damageTable.knockbackMultiplier or not damageTable.knockbackMultiplier.disabled) then
                         local knockbackBoost = bedwars.KnockbackUtil.calculateKnockbackVelocity(Vector3.one, 1, {
                             vertical = 0,
@@ -6744,7 +6755,8 @@ run(function()
 
                 for i, v in LongJumpMethods do
                     local item = getItem(i)
-                    if item or store.equippedKit == i then
+                    -- Limit to items: only fire from an actual inventory item, never a kit match.
+                    if item or (store.equippedKit == i and not (LimitItems and LimitItems.Enabled)) then
                         task.spawn(v, item, start, (CameraDir.Enabled and gameCamera or entitylib.character.RootPart).CFrame.LookVector)
                         break
                     end
@@ -6771,6 +6783,145 @@ run(function()
     })
     CameraDir = LongJump:CreateToggle({
         Name = 'Camera Direction'
+    })
+    LimitItems = LongJump:CreateToggle({
+        Name = 'Limit to items',
+        Tooltip = 'Only long-jumps from an actual long-jump item you have (dao, jade hammer, void axe, cannon, tnt, grappling hook, etc.) - never from a kit match or the knockback Heatseeker boost.'
+    })
+end)
+
+run(function()
+    -- Kit-ability "Extenders". Each watches for its kit's mobility ability firing (via the same
+    -- AbilityController API LongJump uses) and, for a short window afterwards, holds your forward
+    -- speed a little higher so the dash / jump / teleport carries you a set number of studs
+    -- further. One factory so all four share identical, bounded, well-tested logic.
+    local function equippedKit()
+        local k = store.equippedKit
+        if k == nil or k == '' then k = lplr:GetAttribute('PlayingAsKit') end
+        return k and string.lower(tostring(k)) or ''
+    end
+
+    local function makeExtender(cfg)
+        local Module, Distance
+        local boostUntil, boostDir, boostSpeed = 0, nil, 0
+        local prevReady = {}
+        local prevHoriz = 0
+
+        local function beginBoost(root)
+            local vel = root.AssemblyLinearVelocity
+            local horiz = Vector3.new(vel.X, 0, vel.Z)
+            boostSpeed = horiz.Magnitude + Distance.Value
+            if horiz.Magnitude > 4 then
+                boostDir = horiz.Unit
+            else
+                -- Teleports leave you with little horizontal speed, so fall back to where you're
+                -- aiming and nudge you that way instead.
+                local look = (gameCamera and gameCamera.CFrame.LookVector) or root.CFrame.LookVector
+                look = Vector3.new(look.X, 0, look.Z)
+                boostDir = look.Magnitude > 0 and look.Unit or nil
+            end
+            boostUntil = tick() + cfg.duration
+        end
+
+        Module = vape.Categories.Blatant:CreateModule({
+            Name = cfg.Name,
+            Function = function(callback)
+                if callback then
+                    table.clear(prevReady)
+                    boostUntil, boostDir, boostSpeed, prevHoriz = 0, nil, 0, 0
+                    Module:Clean(runService.PreSimulation:Connect(function()
+                        if not entitylib.isAlive then prevHoriz = 0 return end
+                        local root = entitylib.character.RootPart
+                        if not root or not isnetworkowner(root) then prevHoriz = 0 return end
+
+                        local vel = root.AssemblyLinearVelocity
+                        local horizMag = Vector3.new(vel.X, 0, vel.Z).Magnitude
+                        local onKit = equippedKit():find(cfg.kit) ~= nil
+
+                        -- Primary detection: the ability just went on cooldown (ready -> not ready),
+                        -- i.e. it was activated this instant.
+                        for _, ab in cfg.abilities do
+                            local ok, ready = pcall(function() return bedwars.AbilityController:canUseAbility(ab) end)
+                            ready = (ok and ready) and true or false
+                            if prevReady[ab] == nil then prevReady[ab] = ready end
+                            if prevReady[ab] and not ready and (onKit or not cfg.requireKit) then
+                                beginBoost(root)
+                            end
+                            prevReady[ab] = ready
+                        end
+
+                        -- Fallback (only while this kit is equipped): a sudden forward burst of speed
+                        -- toward where you're aiming is the ability firing, even if its id differs.
+                        if onKit and boostUntil <= tick() and (horizMag - prevHoriz) > cfg.spike then
+                            local look = (gameCamera and gameCamera.CFrame.LookVector) or root.CFrame.LookVector
+                            look = Vector3.new(look.X, 0, look.Z)
+                            local hv = Vector3.new(vel.X, 0, vel.Z)
+                            if look.Magnitude > 0 and hv.Magnitude > 0 and hv.Unit:Dot(look.Unit) > 0.5 then
+                                beginBoost(root)
+                            end
+                        end
+                        prevHoriz = horizMag
+
+                        -- Extend: hold at least the boosted speed along the travel direction for the
+                        -- window, preserving vertical motion so jumps/gravity are untouched.
+                        if boostUntil > tick() and boostDir then
+                            local v = root.AssemblyLinearVelocity
+                            local hz = Vector3.new(v.X, 0, v.Z)
+                            local dir = hz.Magnitude > 4 and hz.Unit or boostDir
+                            local speed = math.max(hz.Magnitude, boostSpeed)
+                            local target = dir * speed
+                            root.AssemblyLinearVelocity = Vector3.new(target.X, v.Y, target.Z)
+                        end
+                    end))
+                else
+                    boostUntil, boostDir, boostSpeed, prevHoriz = 0, nil, 0, 0
+                    table.clear(prevReady)
+                end
+            end,
+            Tooltip = cfg.Tooltip
+        })
+        Distance = Module:CreateSlider({
+            Name = 'Extra Distance',
+            Min = 1,
+            Max = 60,
+            Default = 15,
+            Suffix = ' studs',
+            Tooltip = 'How much extra forward speed to hold during the ability so it carries you further. Higher = a longer dash / jump / teleport.'
+        })
+    end
+
+    makeExtender({
+        Name = 'ElektraExtender',
+        kit = 'elektra',
+        abilities = {'elektra_tp', 'ELEKTRA_TP'},
+        duration = 0.5,
+        spike = 30,
+        Tooltip = 'Extends the Elektra teleport - boosts you forward as the ability fires so it reaches further.'
+    })
+    makeExtender({
+        Name = 'JadeExtender',
+        kit = 'jade',
+        abilities = {'jade_hammer_jump'},
+        duration = 0.5,
+        spike = 30,
+        Tooltip = 'Extends the Jade hammer jump - boosts you as it fires so it carries you further.'
+    })
+    makeExtender({
+        Name = 'YuziExtender',
+        kit = 'yuzi',
+        abilities = {'dash'},
+        requireKit = true,
+        duration = 0.5,
+        spike = 30,
+        Tooltip = 'Extends the Yuzi dao dash - boosts you as it fires so it carries you further.'
+    })
+    makeExtender({
+        Name = 'VoidRegentExtender',
+        kit = 'regent',
+        abilities = {'void_axe_jump'},
+        duration = 0.5,
+        spike = 30,
+        Tooltip = 'Extends the Void Regent (Void Axe) dash - boosts you as it fires so it carries you further.'
     })
 end)
 
