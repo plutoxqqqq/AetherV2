@@ -3916,11 +3916,23 @@ run(function()
                             if not zephyred then
                                 legitClutch(root, humanoid, ground)
                             end
-                        elseif Mode.Value == 'TP' and root.AssemblyLinearVelocity.Y <= -(MinVelocity and MinVelocity.Value or 60) then
-                            if tpNoFall(root, character) then
-                                -- Short gap so the next touch resets the fall again before enough
-                                -- distance builds back up to hurt on the real landing.
-                                waitDelay = 0.03
+                        elseif Mode.Value == 'TP' then
+                            -- Belt-and-suspenders: keep the game's registered fall velocity
+                            -- cancelled the whole time TP mode is airborne, so fall damage is
+                            -- neutralised even when a teleport touch doesn't replicate a grounded
+                            -- state in time - which is why TP could look like it "did nothing".
+                            -- Reset to 0 on disable via the blatantHeld flag below.
+                            local vy = root.AssemblyLinearVelocity.Y
+                            pcall(function()
+                                bedwars.FallDamageController.additionalRegisteredVelocity = math.max(-vy + 60, 60)
+                            end)
+                            blatantHeld = true
+                            if vy <= -(MinVelocity and MinVelocity.Value or 60) then
+                                if tpNoFall(root, character) then
+                                    -- Short gap so the next touch resets the fall again before enough
+                                    -- distance builds back up to hurt on the real landing.
+                                    waitDelay = 0.03
+                                end
                             end
                         end
                     end
@@ -4642,6 +4654,73 @@ end)
 -- A correct version needs the elk kit controller's real dismount/duration internals, which we
 -- can't see from the repo, so the module is pulled rather than shipped broken and harmful.)
 
+-- AutoBuildUp: towers you straight up. While you hold jump and are off the ground it drops a
+-- block under your feet near the jump apex so you land on it and rise a block each hop
+-- (scaffold-style). The item limit keeps some blocks in reserve so it never towers you out of
+-- your whole stack. Placement mirrors the proven NoFall block clutch.
+run(function()
+    local AutoBuildUp
+    local LimitItems
+    local KeepAmount
+    local lastPlace = 0
+
+    AutoBuildUp = vape.Categories.Blatant:CreateModule({
+        Name = 'AutoBuildUp',
+        Function = function(callback)
+            if callback then
+                lastPlace = 0
+                AutoBuildUp:Clean(runService.Heartbeat:Connect(function()
+                    if not entitylib.isAlive then return end
+                    local character = entitylib.character
+                    local root = character and character.RootPart
+                    local humanoid = character and character.Humanoid
+                    if not root or not humanoid then return end
+
+                    -- Only while jumping upward off the ground.
+                    if humanoid.FloorMaterial ~= Enum.Material.Air then return end
+                    local holdingJump = humanoid.Jump
+                        or inputService:IsKeyDown(Enum.KeyCode.Space)
+                        or inputService:IsKeyDown(Enum.KeyCode.ButtonA)
+                    if not holdingJump then return end
+                    -- Wait for the apex (about to fall) so the block lands under your feet
+                    -- instead of clipping into you on the way up.
+                    if root.AssemblyLinearVelocity.Y > 6 then return end
+                    if tick() - lastPlace < 0.1 then return end
+
+                    local wool, amount = getWool()
+                    if not wool then return end
+                    -- Item limit: stop once we're down to the reserve amount so you never
+                    -- tower with your entire stack.
+                    if LimitItems.Enabled and (amount or 0) <= KeepAmount.Value then return end
+
+                    local placePosition = bedwars.BlockController:getBlockPosition(root.Position - Vector3.new(0, 4, 0)) * 3
+                    if getPlacedBlock(placePosition) then return end
+                    if bedwars.placeBlock(placePosition, wool) then
+                        lastPlace = tick()
+                    end
+                end))
+            end
+        end,
+        Tooltip = 'Towers you straight up: while you hold jump off the ground it places a block under your feet near the apex so you rise a block each jump (scaffold-style). Use the item limit to keep some blocks in reserve.'
+    })
+    LimitItems = AutoBuildUp:CreateToggle({
+        Name = 'Limit items',
+        Default = true,
+        Tooltip = 'Stops building once your blocks drop to the reserve below, so you never tower away your entire stack.'
+    })
+    KeepAmount = AutoBuildUp:CreateSlider({
+        Name = 'Keep in reserve',
+        Min = 0,
+        Max = 64,
+        Default = 8,
+        Suffix = function(val)
+            return val == 1 and ' block' or ' blocks'
+        end,
+        Tooltip = 'How many blocks to keep. AutoBuildUp stops placing once you have this many left.'
+    })
+end)
+
+
 -- AntiLagback. A lagback is the server rubber-banding you: after a lost/late movement packet it
 -- snaps your character backward to the last position it acknowledged. That shows up client-side as a
 -- large single-frame position jump AGAINST the direction you were travelling (normal movement only
@@ -4658,25 +4737,28 @@ run(function()
         Name = 'AntiLagback',
         Function = function(callback)
             if callback then
-                local lastPos, lastVel
+                local lastPos, lastMoveVel
                 -- Heartbeat runs after physics/replication, so `pos` already reflects any server
                 -- correction applied this frame - the moment we can see (and undo) a lagback.
                 AntiLagback:Clean(runService.Heartbeat:Connect(function(dt)
                     if not entitylib.isAlive then
-                        lastPos, lastVel = nil, nil
+                        lastPos, lastMoveVel = nil, nil
                         return
                     end
                     local root = entitylib.character and entitylib.character.RootPart
                     if not root or not root.Parent then
-                        lastPos, lastVel = nil, nil
+                        lastPos, lastMoveVel = nil, nil
                         return
                     end
 
                     local pos = root.Position
-                    if lastPos and lastVel then
-                        local hvel = lastVel * Vector3.new(1, 0, 1)
-                        -- A standing player never suffers a lagback worth correcting; only react
-                        -- while we were genuinely moving last frame.
+                    -- Use the last velocity we were GENUINELY moving at, not simply last
+                    -- frame's - a lagback commonly zeroes your velocity as it yanks you, and
+                    -- reading that zero blinded the detector on every frame after the first
+                    -- (so a multi-frame yank was only ever half-undone). Keeping the last real
+                    -- movement velocity lets us keep undoing the pull until it stops.
+                    if lastPos and lastMoveVel then
+                        local hvel = lastMoveVel * Vector3.new(1, 0, 1)
                         if hvel.Magnitude > 6 then
                             local dir = hvel.Unit
                             local moved = (pos - lastPos) * Vector3.new(1, 0, 1)
@@ -4684,16 +4766,22 @@ run(function()
                             local backward = -(moved:Dot(dir))
                             if backward > (Sensitivity and Sensitivity.Value or 6) and backward < (MaxCorrect and MaxCorrect.Value or 80) then
                                 -- Undo the pullback: return to where we were, advanced by roughly
-                                -- one frame of the travel we should have made, and keep our
-                                -- horizontal momentum so movement stays smooth.
+                                -- one frame of the travel we should have made, and restore our
+                                -- horizontal momentum (which the server likely just killed).
                                 local restore = lastPos + hvel * dt
                                 root.CFrame += (restore - pos)
-                                root.AssemblyLinearVelocity = Vector3.new(lastVel.X, root.AssemblyLinearVelocity.Y, lastVel.Z)
+                                root.AssemblyLinearVelocity = Vector3.new(lastMoveVel.X, root.AssemblyLinearVelocity.Y, lastMoveVel.Z)
                                 pos = restore
                             end
                         end
                     end
-                    lastPos, lastVel = pos, root.AssemblyLinearVelocity
+                    lastPos = pos
+                    -- Only refresh the remembered heading while we're actually moving, so a
+                    -- brief server-forced stop doesn't erase the direction we need to recover.
+                    local hnow = root.AssemblyLinearVelocity * Vector3.new(1, 0, 1)
+                    if hnow.Magnitude > 6 then
+                        lastMoveVel = root.AssemblyLinearVelocity
+                    end
                 end))
             end
         end,
@@ -6809,6 +6897,7 @@ run(function()
 
     local prevReady = {}
     local boostUntil, sampleUntil, basePeak, boostDir = 0, 0, 0, nil
+    local prevSpeed = 0
 
     local function beginBoost(root)
         boostUntil = tick() + DURATION
@@ -6832,6 +6921,7 @@ run(function()
             if callback then
                 table.clear(prevReady)
                 boostUntil, sampleUntil, basePeak, boostDir = 0, 0, 0, nil
+                prevSpeed = 0
                 Extender:Clean(runService.PreSimulation:Connect(function()
                     if not entitylib.isAlive then return end
                     local root = entitylib.character.RootPart
@@ -6847,6 +6937,17 @@ run(function()
                         end
                         prevReady[ab] = ready
                     end
+
+                    -- Fallback trigger: a dash / jump slams your horizontal speed far above
+                    -- normal running in a single frame. Catch that spike directly so the
+                    -- extender still fires even when the cooldown API doesn't edge for this
+                    -- kit/build (which is why "none of the extenders worked"). Gated high
+                    -- enough that ordinary sprinting never trips it.
+                    local horizSpeed = Vector3.new(root.AssemblyLinearVelocity.X, 0, root.AssemblyLinearVelocity.Z).Magnitude
+                    if boostUntil <= tick() and horizSpeed > 55 and horizSpeed > prevSpeed + 22 then
+                        beginBoost(root)
+                    end
+                    prevSpeed = horizSpeed
 
                     if boostUntil > tick() and boostDir then
                         local vel = root.AssemblyLinearVelocity
@@ -12792,9 +12893,31 @@ end)
 run(function()
     local AutoToxic
     local GG
+    local Delay
     local TrollTriggers
     local trollCooldown = 0
     local Toggles, Lists, said, dead = {}, {}, {}
+
+    -- Actually push a line to chat. Split out so both the message picker below and
+    -- the match-end "gg" can share the Delay slider: when Delay > 0 the send is
+    -- deferred that many seconds (the message is still chosen now, so the
+    -- no-repeat logic is unaffected).
+    local function doSend(text)
+        if not text or text == '' then return end
+        local wait = Delay and Delay.Value or 0
+        local function push()
+            if textChatService.ChatVersion == Enum.ChatVersion.TextChatService then
+                textChatService.ChatInputBarConfiguration.TargetTextChannel:SendAsync(text)
+            else
+                replicatedStorage.DefaultChatSystemChatEvents.SayMessageRequest:FireServer(text, 'All')
+            end
+        end
+        if wait > 0 then
+            task.delay(wait, function() pcall(push) end)
+        else
+            push()
+        end
+    end
 
     local function sendMessage(name, obj, default)
         local tab = Lists[name].ListEnabled
@@ -12809,11 +12932,7 @@ run(function()
         said[name] = custommsg
 
         custommsg = custommsg and custommsg:gsub('<obj>', obj or '') or ''
-        if textChatService.ChatVersion == Enum.ChatVersion.TextChatService then
-            textChatService.ChatInputBarConfiguration.TargetTextChannel:SendAsync(custommsg)
-        else
-            replicatedStorage.DefaultChatSystemChatEvents.SayMessageRequest:FireServer(custommsg, 'All')
-        end
+        doSend(custommsg)
     end
 
     AutoToxic = vape.Categories.Utility:CreateModule({
@@ -12845,11 +12964,7 @@ run(function()
                 end))
                 AutoToxic:Clean(vapeEvents.MatchEndEvent.Event:Connect(function(winstuff)
                     if GG.Enabled then
-                        if textChatService.ChatVersion == Enum.ChatVersion.TextChatService then
-                            textChatService.ChatInputBarConfiguration.TargetTextChannel:SendAsync('gg')
-                        else
-                            replicatedStorage.DefaultChatSystemChatEvents.SayMessageRequest:FireServer('gg', 'All')
-                        end
+                        doSend('gg')
                     end
 
                     local myTeam = bedwars.Store:getState().Game.myTeam
@@ -12897,6 +13012,15 @@ run(function()
     GG = AutoToxic:CreateToggle({
         Name = 'AutoGG',
         Default = true
+    })
+    Delay = AutoToxic:CreateSlider({
+        Name = 'Delay',
+        Min = 0,
+        Max = 10,
+        Default = 0,
+        Decimal = 10,
+        Suffix = 's',
+        Tooltip = 'Waits this long after the triggering action before sending the message (0 = instant). Applies to every AutoToxic line, including AutoGG.'
     })
     for _, v in {'Kill', 'Death', 'Bed', 'BedDestroyed', 'Win'} do
         Toggles[v] = AutoToxic:CreateToggle({
