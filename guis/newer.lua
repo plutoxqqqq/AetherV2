@@ -199,7 +199,7 @@ local nexus = {
 		Max = 6,
 		Sound = false
 	},
-	OpenAnim = 'Pop',
+	OpenAnim = 'Cascade',
 	SoundsEnabled = false,
 	SoundVolume = 0.5,
 	PlaySound = function() end,
@@ -11946,8 +11946,9 @@ do
 	})
 	windowspane:CreateDropdown({
 		Name = 'Open animation',
-		List = {'Pop', 'Fade', 'None'},
-		Tooltip = 'How windows enter when the GUI opens',
+		List = {'Cascade', 'Pop', 'Fade', 'None'},
+		Default = 'Cascade',
+		Tooltip = 'How windows enter when the GUI opens.\nCascade staggers them in one after another.',
 		Function = function(val)
 			nexus.OpenAnim = val
 		end
@@ -12057,25 +12058,65 @@ do
 	mainapi:Clean(clickgui:GetPropertyChangedSignal('Visible'):Connect(function()
 		nexus.PlaySound('open')
 		if not clickgui.Visible or nexus.OpenAnim == 'None' then return end
+		-- Cascade sorts the visible windows left-to-right / top-to-bottom and pops
+		-- them in one after another for a "menu unfolding" entrance.
+		local cascadeIndex = 0
+		local ordered = {}
 		for _, v in mainapi.Categories do
 			local win = v.Object
 			if v.Type == 'Overlay' or typeof(win) ~= 'Instance' or not win.Visible then continue end
-			if nexus.OpenAnim == 'Pop' then
+			table.insert(ordered, win)
+		end
+		if nexus.OpenAnim == 'Cascade' then
+			table.sort(ordered, function(a, b)
+				local pa, pb = a.AbsolutePosition, b.AbsolutePosition
+				if math.abs(pa.X - pb.X) > 24 then
+					return pa.X < pb.X
+				end
+				return pa.Y < pb.Y
+			end)
+		end
+		for _, win in ordered do
+			local function pop()
 				local openscale = win:FindFirstChild('NexusOpenScale')
 				if not openscale then
 					openscale = Instance.new('UIScale')
 					openscale.Name = 'NexusOpenScale'
 					openscale.Parent = win
 				end
-				openscale.Scale = 0.92
-				tweenService:Create(openscale, TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+				openscale.Scale = 0.9
+				tweenService:Create(openscale, TweenInfo.new(0.28, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
 					Scale = 1
 				}):Play()
+			end
+			if nexus.OpenAnim == 'Pop' then
+				pop()
 			elseif nexus.OpenAnim == 'Fade' then
 				win.BackgroundTransparency = 1
 				tween:Tween(win, TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
 					BackgroundTransparency = uipallet.Glass
 				})
+			elseif nexus.OpenAnim == 'Cascade' then
+				-- Staggered: each window waits a touch longer than the last, but
+				-- bail if the menu was closed again before this one's turn.
+				local myDelay = cascadeIndex * 0.045
+				cascadeIndex += 1
+				local openscale = win:FindFirstChild('NexusOpenScale')
+				if not openscale then
+					openscale = Instance.new('UIScale')
+					openscale.Name = 'NexusOpenScale'
+					openscale.Parent = win
+				end
+				openscale.Scale = 0.86
+				task.delay(myDelay, function()
+					if clickgui.Visible and win.Visible then
+						tweenService:Create(openscale, TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+							Scale = 1
+						}):Play()
+					elseif openscale then
+						openscale.Scale = 1
+					end
+				end)
 			end
 		end
 	end))
@@ -12420,6 +12461,661 @@ do
 		end
 	})
 	refresh(true)
+end
+
+--[[
+	=====================================================================
+	Visual feature pack (v5.3) - flashy, user-facing GUI additions.
+
+	Runs once, after the whole GUI is built, and is entirely self-contained
+	(no backend contracts touched). Three headline features - a Spotlight
+	command palette, one-click Theme presets and a staggered open cascade -
+	plus a cluster of smaller visible touches (per-category enabled counts,
+	a live enabled counter, enable glow rings, accent-tinted scrollbars, a
+	breathing window edge, per-category open pops and a collapse-all button).
+	=====================================================================
+]]
+do
+	local function accent()
+		return Color3.fromHSV(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value)
+	end
+	-- ScreenGui is ZIndexBehavior.Global, so raise a whole overlay above the rest.
+	local function raiseZ(root, z)
+		root.ZIndex = z
+		for _, d in root:GetDescendants() do
+			if d:IsA('GuiObject') then
+				d.ZIndex = z
+			end
+		end
+	end
+
+	-- Smoothly cross-fades the whole GUI accent to a target HSV (used by the
+	-- theme presets). Steps SetValue so every module retints along the way.
+	local recolorThread
+	local function smoothAccent(th, ts, tv)
+		if recolorThread then
+			pcall(task.cancel, recolorThread)
+			recolorThread = nil
+		end
+		if mainapi.GUIColor.Rainbow then
+			pcall(function() mainapi.GUIColor:Toggle() end)
+		end
+		local sh, ss, sv = mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value
+		recolorThread = task.spawn(function()
+			for i = 1, 12 do
+				local a = i / 12
+				pcall(function()
+					mainapi.GUIColor:SetValue(sh + (th - sh) * a, ss + (ts - ss) * a, sv + (tv - sv) * a)
+				end)
+				task.wait()
+			end
+			recolorThread = nil
+		end)
+	end
+
+	-- One-shot accent ring that swells off a module row when it turns on.
+	local function enableGlow(row)
+		if typeof(row) ~= 'Instance' or not row.Parent then return end
+		local old = row:FindFirstChild('EnableGlow')
+		if old then old:Destroy() end
+		local ring = Instance.new('UIStroke')
+		ring.Name = 'EnableGlow'
+		ring.Color = accent()
+		ring.Thickness = 1
+		ring.Transparency = 0.2
+		ring.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+		ring.Parent = row
+		tweenService:Create(ring, TweenInfo.new(0.45, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+			Transparency = 1,
+			Thickness = 6
+		}):Play()
+		task.delay(0.5, function() ring:Destroy() end)
+	end
+
+	-- =====================================================================
+	-- MASSIVE 1 - Spotlight command palette (type to toggle any module)
+	-- =====================================================================
+	local spotOpen = false
+	local spotRows, firstMatch = {}, nil
+
+	local spotBackdrop = Instance.new('TextButton')
+	spotBackdrop.Name = 'NexusSpotlight'
+	spotBackdrop.Size = UDim2.fromScale(1, 1)
+	spotBackdrop.BackgroundColor3 = Color3.new(0, 0, 0)
+	spotBackdrop.BackgroundTransparency = 1
+	spotBackdrop.AutoButtonColor = false
+	spotBackdrop.Text = ''
+	spotBackdrop.Visible = false
+	spotBackdrop.Parent = scaledgui
+
+	local spotCard = Instance.new('TextButton')
+	spotCard.Name = 'Card'
+	spotCard.Size = UDim2.fromOffset(400, 380)
+	spotCard.Position = UDim2.fromScale(0.5, 0.42)
+	spotCard.AnchorPoint = Vector2.new(0.5, 0.5)
+	spotCard.BackgroundColor3 = uipallet.Main
+	spotCard.BackgroundTransparency = 0.02
+	spotCard.AutoButtonColor = false
+	spotCard.Text = ''
+	spotCard.Parent = spotBackdrop
+	addCorner(spotCard, UDim.new(0, 12))
+	local spotStroke = Instance.new('UIStroke')
+	spotStroke.Color = accent()
+	spotStroke.Thickness = 1
+	spotStroke.Transparency = 0.4
+	spotStroke.Parent = spotCard
+	local spotScale = Instance.new('UIScale')
+	spotScale.Parent = spotCard
+
+	local spotIcon = Instance.new('ImageLabel')
+	spotIcon.Size = UDim2.fromOffset(16, 16)
+	spotIcon.Position = UDim2.fromOffset(16, 17)
+	spotIcon.BackgroundTransparency = 1
+	spotIcon.Image = getcustomasset('aetherv2/assets/new/search.png')
+	spotIcon.ImageColor3 = accent()
+	spotIcon.Parent = spotCard
+	local spotSearch = Instance.new('TextBox')
+	spotSearch.Size = UDim2.new(1, -50, 0, 50)
+	spotSearch.Position = UDim2.fromOffset(42, 0)
+	spotSearch.BackgroundTransparency = 1
+	spotSearch.Text = ''
+	spotSearch.PlaceholderText = 'Toggle a module...'
+	spotSearch.PlaceholderColor3 = color.Dark(uipallet.Text, 0.5)
+	spotSearch.TextXAlignment = Enum.TextXAlignment.Left
+	spotSearch.TextColor3 = uipallet.Text
+	spotSearch.TextSize = 16
+	spotSearch.FontFace = uipallet.FontSemiBold
+	spotSearch.ClearTextOnFocus = false
+	spotSearch.Parent = spotCard
+	local spotHint = Instance.new('TextLabel')
+	spotHint.Size = UDim2.fromOffset(120, 16)
+	spotHint.Position = UDim2.new(1, -128, 0, 17)
+	spotHint.BackgroundTransparency = 1
+	spotHint.Text = 'Enter toggles top'
+	spotHint.TextXAlignment = Enum.TextXAlignment.Right
+	spotHint.TextColor3 = color.Dark(uipallet.Text, 0.5)
+	spotHint.TextSize = 10
+	spotHint.FontFace = uipallet.Font
+	spotHint.Parent = spotCard
+	local spotDivider = Instance.new('Frame')
+	spotDivider.Size = UDim2.new(1, -24, 0, 1)
+	spotDivider.Position = UDim2.fromOffset(12, 50)
+	spotDivider.BackgroundColor3 = Color3.new(1, 1, 1)
+	spotDivider.BackgroundTransparency = 0.9
+	spotDivider.BorderSizePixel = 0
+	spotDivider.Parent = spotCard
+	local spotResults = Instance.new('ScrollingFrame')
+	spotResults.Name = 'Results'
+	spotResults.Size = UDim2.new(1, -8, 1, -60)
+	spotResults.Position = UDim2.fromOffset(4, 56)
+	spotResults.BackgroundTransparency = 1
+	spotResults.BorderSizePixel = 0
+	spotResults.ScrollBarThickness = 3
+	spotResults.ScrollBarImageColor3 = accent()
+	spotResults.ScrollBarImageTransparency = 0.5
+	spotResults.CanvasSize = UDim2.new()
+	spotResults.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	spotResults.Parent = spotCard
+	local spotList = Instance.new('UIListLayout')
+	spotList.SortOrder = Enum.SortOrder.LayoutOrder
+	spotList.Padding = UDim.new(0, 2)
+	spotList.Parent = spotResults
+
+	local function refreshSpot(query)
+		for _, r in spotRows do r:Destroy() end
+		table.clear(spotRows)
+		firstMatch = nil
+		query = (query or ''):lower()
+		local matches = {}
+		for name, m in mainapi.Modules do
+			if query == '' or name:lower():find(query, 1, true) then
+				table.insert(matches, m)
+			end
+		end
+		table.sort(matches, function(a, b) return a.Name < b.Name end)
+		firstMatch = matches[1]
+		for i, m in matches do
+			if i > 80 then break end
+			local row = Instance.new('TextButton')
+			row.Name = m.Name
+			row.Size = UDim2.new(1, 0, 0, 30)
+			row.BackgroundColor3 = Color3.new(1, 1, 1)
+			row.BackgroundTransparency = 1
+			row.AutoButtonColor = false
+			row.Text = ''
+			row.LayoutOrder = i
+			row.Parent = spotResults
+			addCorner(row, UDim.new(0, 6))
+			local dot = Instance.new('Frame')
+			dot.Name = 'Dot'
+			dot.Size = UDim2.fromOffset(7, 7)
+			dot.Position = UDim2.new(0, 14, 0.5, -3)
+			dot.BorderSizePixel = 0
+			dot.BackgroundColor3 = m.Enabled and accent() or color.Light(uipallet.Main, 0.22)
+			dot.Parent = row
+			addCorner(dot, UDim.new(1, 0))
+			local nm = Instance.new('TextLabel')
+			nm.Size = UDim2.new(1, -130, 1, 0)
+			nm.Position = UDim2.fromOffset(30, 0)
+			nm.BackgroundTransparency = 1
+			nm.Text = m.Name
+			nm.TextXAlignment = Enum.TextXAlignment.Left
+			nm.TextColor3 = color.Dark(uipallet.Text, 0.1)
+			nm.TextSize = 13
+			nm.FontFace = uipallet.Font
+			nm.Parent = row
+			local cat = Instance.new('TextLabel')
+			cat.Size = UDim2.new(0, 96, 1, 0)
+			cat.Position = UDim2.new(1, -104, 0, 0)
+			cat.BackgroundTransparency = 1
+			cat.Text = m.Category or ''
+			cat.TextXAlignment = Enum.TextXAlignment.Right
+			cat.TextColor3 = color.Dark(uipallet.Text, 0.5)
+			cat.TextSize = 11
+			cat.FontFace = uipallet.Font
+			cat.Parent = row
+			row.MouseEnter:Connect(function()
+				tween:Tween(row, uipallet.Tween, {BackgroundTransparency = 0.94})
+			end)
+			row.MouseLeave:Connect(function()
+				tween:Tween(row, uipallet.Tween, {BackgroundTransparency = 1})
+			end)
+			row.MouseButton1Click:Connect(function()
+				m:Toggle()
+				dot.BackgroundColor3 = m.Enabled and accent() or color.Light(uipallet.Main, 0.22)
+				task.defer(function()
+					if spotOpen then spotSearch:CaptureFocus() end
+				end)
+			end)
+			table.insert(spotRows, row)
+		end
+		spotHint.Visible = firstMatch ~= nil
+		-- Rows are built after the card was raised, so lift the fresh ones too
+		-- (ZIndexBehavior.Global means each needs its own high ZIndex).
+		if spotOpen then
+			raiseZ(spotResults, 41)
+		end
+	end
+
+	local function openSpot()
+		if spotOpen then return end
+		spotOpen = true
+		raiseZ(spotBackdrop, 40)
+		raiseZ(spotCard, 41)
+		spotStroke.Color = accent()
+		spotIcon.ImageColor3 = accent()
+		spotBackdrop.Visible = true
+		spotBackdrop.BackgroundTransparency = 1
+		tween:Tween(spotBackdrop, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {BackgroundTransparency = 0.45})
+		spotScale.Scale = 0.92
+		tweenService:Create(spotScale, TweenInfo.new(0.28, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Scale = 1}):Play()
+		spotSearch.Text = ''
+		refreshSpot('')
+		task.defer(function() spotSearch:CaptureFocus() end)
+	end
+	local function closeSpot()
+		if not spotOpen then return end
+		spotOpen = false
+		pcall(function() spotSearch:ReleaseFocus() end)
+		tween:Tween(spotBackdrop, TweenInfo.new(0.18, Enum.EasingStyle.Quad), {BackgroundTransparency = 1})
+		task.delay(0.2, function()
+			if not spotOpen then spotBackdrop.Visible = false end
+		end)
+	end
+	mainapi.OpenSpotlight = openSpot
+
+	spotBackdrop.MouseButton1Click:Connect(closeSpot)
+	spotSearch:GetPropertyChangedSignal('Text'):Connect(function()
+		refreshSpot(spotSearch.Text)
+	end)
+	spotSearch.FocusLost:Connect(function(enter)
+		if enter and firstMatch then
+			firstMatch:Toggle()
+			refreshSpot(spotSearch.Text)
+			task.defer(function()
+				if spotOpen then spotSearch:CaptureFocus() end
+			end)
+		end
+	end)
+	-- Backquote (`) toggles Spotlight from anywhere the GUI isn't capturing text.
+	mainapi:Clean(inputService.InputBegan:Connect(function(input, processed)
+		if processed then return end
+		if input.KeyCode == Enum.KeyCode.Backquote and not inputService:GetFocusedTextBox() then
+			if spotOpen then closeSpot() else openSpot() end
+		elseif input.KeyCode == Enum.KeyCode.Escape and spotOpen then
+			closeSpot()
+		end
+	end))
+
+	-- =====================================================================
+	-- MASSIVE 2 - Theme presets (one click recolours the whole GUI)
+	-- =====================================================================
+	local themePresets = {
+		{Name = 'Ocean', H = 0.58, S = 0.72, V = 1.00},
+		{Name = 'Sunset', H = 0.035, S = 0.78, V = 1.00},
+		{Name = 'Grape', H = 0.78, S = 0.60, V = 1.00},
+		{Name = 'Matrix', H = 0.34, S = 0.82, V = 0.95},
+		{Name = 'Rose', H = 0.94, S = 0.55, V = 1.00},
+		{Name = 'Gold', H = 0.12, S = 0.82, V = 1.00},
+		{Name = 'Mono', H = 0.60, S = 0.05, V = 0.95}
+	}
+
+	local themeOpen = false
+	local themePopover = Instance.new('Frame')
+	themePopover.Name = 'NexusThemes'
+	themePopover.Size = UDim2.fromOffset(180, 20 + (#themePresets + 1) * 30 + 10)
+	themePopover.Position = UDim2.new(1, -60, 0, 60)
+	themePopover.AnchorPoint = Vector2.new(1, 0)
+	themePopover.BackgroundColor3 = uipallet.Main
+	themePopover.BackgroundTransparency = 0.02
+	themePopover.BorderSizePixel = 0
+	themePopover.Visible = false
+	themePopover.Parent = clickgui
+	addCorner(themePopover, UDim.new(0, 10))
+	local themeStroke = Instance.new('UIStroke')
+	themeStroke.Color = Color3.new(1, 1, 1)
+	themeStroke.Transparency = 0.9
+	themeStroke.Parent = themePopover
+	local themeTitle = Instance.new('TextLabel')
+	themeTitle.Size = UDim2.new(1, -20, 0, 20)
+	themeTitle.Position = UDim2.fromOffset(12, 6)
+	themeTitle.BackgroundTransparency = 1
+	themeTitle.Text = 'THEMES'
+	themeTitle.TextXAlignment = Enum.TextXAlignment.Left
+	themeTitle.TextColor3 = color.Dark(uipallet.Text, 0.4)
+	themeTitle.TextSize = 10
+	themeTitle.FontFace = uipallet.FontSemiBold
+	themeTitle.Parent = themePopover
+	local themeScale = Instance.new('UIScale')
+	themeScale.Parent = themePopover
+	-- Rows live in their own body frame so the title stays put (a UIListLayout on
+	-- the popover itself would sweep the title into the row flow).
+	local themeBody = Instance.new('Frame')
+	themeBody.Name = 'Body'
+	themeBody.Size = UDim2.new(1, 0, 1, -28)
+	themeBody.Position = UDim2.fromOffset(0, 26)
+	themeBody.BackgroundTransparency = 1
+	themeBody.Parent = themePopover
+
+	local function themeRow(labelText, swatchColor, layout, onClick)
+		local row = Instance.new('TextButton')
+		row.Size = UDim2.new(1, -12, 0, 28)
+		row.Position = UDim2.fromOffset(6, 0)
+		row.BackgroundColor3 = Color3.new(1, 1, 1)
+		row.BackgroundTransparency = 1
+		row.AutoButtonColor = false
+		row.Text = ''
+		row.LayoutOrder = layout
+		row.Parent = themeBody
+		addCorner(row, UDim.new(0, 6))
+		local chip = Instance.new('Frame')
+		chip.Size = UDim2.fromOffset(16, 16)
+		chip.Position = UDim2.new(0, 8, 0.5, -8)
+		chip.BackgroundColor3 = swatchColor
+		chip.BorderSizePixel = 0
+		chip.Parent = row
+		addCorner(chip, UDim.new(1, 0))
+		local lbl = Instance.new('TextLabel')
+		lbl.Size = UDim2.new(1, -36, 1, 0)
+		lbl.Position = UDim2.fromOffset(32, 0)
+		lbl.BackgroundTransparency = 1
+		lbl.Text = labelText
+		lbl.TextXAlignment = Enum.TextXAlignment.Left
+		lbl.TextColor3 = color.Dark(uipallet.Text, 0.12)
+		lbl.TextSize = 13
+		lbl.FontFace = uipallet.Font
+		lbl.Parent = row
+		row.MouseEnter:Connect(function()
+			tween:Tween(row, uipallet.Tween, {BackgroundTransparency = 0.92})
+		end)
+		row.MouseLeave:Connect(function()
+			tween:Tween(row, uipallet.Tween, {BackgroundTransparency = 1})
+		end)
+		row.MouseButton1Click:Connect(onClick)
+		return chip
+	end
+	local themeLayout = Instance.new('UIListLayout')
+	themeLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	themeLayout.Padding = UDim.new(0, 2)
+	themeLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+	themeLayout.Parent = themeBody
+	for i, preset in themePresets do
+		themeRow(preset.Name, Color3.fromHSV(preset.H, preset.S, preset.V), i, function()
+			smoothAccent(preset.H, preset.S, preset.V)
+		end)
+	end
+	-- Rainbow row toggles the accent cycle.
+	themeRow('Rainbow', Color3.fromRGB(232, 96, 152), #themePresets + 1, function()
+		pcall(function() mainapi.GUIColor:Toggle() end)
+	end)
+
+	-- =====================================================================
+	-- Toolbar (top-right): Spotlight / Themes / Collapse-all + live counter
+	-- =====================================================================
+	local toolbar = Instance.new('Frame')
+	toolbar.Name = 'NexusToolbar'
+	toolbar.Size = UDim2.fromOffset(38, 10)
+	toolbar.AutomaticSize = Enum.AutomaticSize.Y
+	toolbar.Position = UDim2.new(1, -12, 0, 60)
+	toolbar.AnchorPoint = Vector2.new(1, 0)
+	toolbar.BackgroundTransparency = 1
+	toolbar.Parent = clickgui
+	local toolbarList = Instance.new('UIListLayout')
+	toolbarList.SortOrder = Enum.SortOrder.LayoutOrder
+	toolbarList.Padding = UDim.new(0, 8)
+	toolbarList.HorizontalAlignment = Enum.HorizontalAlignment.Center
+	toolbarList.Parent = toolbar
+
+	-- Live "N enabled" chip.
+	local enabledChip = Instance.new('TextLabel')
+	enabledChip.Name = 'EnabledChip'
+	enabledChip.Size = UDim2.fromOffset(38, 20)
+	enabledChip.LayoutOrder = 0
+	enabledChip.BackgroundColor3 = accent()
+	enabledChip.Text = '0'
+	enabledChip.TextColor3 = Color3.new(0.06, 0.06, 0.06)
+	enabledChip.TextSize = 11
+	enabledChip.FontFace = uipallet.FontSemiBold
+	enabledChip.Visible = false
+	enabledChip.ZIndex = 8
+	enabledChip.Parent = toolbar
+	addCorner(enabledChip, UDim.new(0, 6))
+	addTooltip(enabledChip, 'Modules currently enabled')
+
+	local function makeToolButton(order, iconAsset, glyph, tip)
+		local btn = Instance.new('TextButton')
+		btn.Name = 'Tool'..order
+		btn.Size = UDim2.fromOffset(38, 38)
+		btn.LayoutOrder = order
+		btn.BackgroundColor3 = uipallet.Main
+		btn.AutoButtonColor = false
+		btn.Text = ''
+		btn.ZIndex = 8
+		btn.Parent = toolbar
+		-- Keep the glass backdrop just under the button face (windows sit at ZIndex
+		-- 1, so a default-ZIndex blur would vanish behind them).
+		local blur = addBlur(btn)
+		blur.ZIndex = 7
+		addCorner(btn, UDim.new(0, 10))
+		addTooltip(btn, tip)
+		local content
+		if iconAsset then
+			content = Instance.new('ImageLabel')
+			content.Size = UDim2.fromOffset(16, 16)
+			content.Image = getcustomasset(iconAsset)
+			content.ImageColor3 = color.Light(uipallet.Main, 0.5)
+			content.BackgroundTransparency = 1
+		else
+			content = Instance.new('Frame')
+			content.Size = UDim2.fromOffset(16, 16)
+			content.BackgroundColor3 = accent()
+			addCorner(content, UDim.new(1, 0))
+		end
+		content.Name = 'Icon'
+		content.Position = UDim2.fromOffset(11, 11)
+		content.ZIndex = 9
+		content.Parent = btn
+		if glyph then
+			local g = Instance.new('TextLabel')
+			g.Size = UDim2.fromScale(1, 1)
+			g.BackgroundTransparency = 1
+			g.Text = glyph
+			g.TextColor3 = color.Light(uipallet.Main, 0.5)
+			g.TextSize = 18
+			g.FontFace = uipallet.FontSemiBold
+			g.ZIndex = 9
+			g.Parent = btn
+			content = g
+		end
+		btn.MouseEnter:Connect(function()
+			tween:Tween(btn, uipallet.Tween, {BackgroundColor3 = color.Light(uipallet.Main, 0.05)})
+		end)
+		btn.MouseLeave:Connect(function()
+			tween:Tween(btn, uipallet.Tween, {BackgroundColor3 = uipallet.Main})
+		end)
+		return btn, content
+	end
+
+	local spotBtn = makeToolButton(1, 'aetherv2/assets/new/search.png', nil, 'Spotlight - quick toggle any module (`)')
+	spotBtn.MouseButton1Click:Connect(function()
+		if spotOpen then closeSpot() else openSpot() end
+	end)
+	local themeBtn, themeSwatch = makeToolButton(2, nil, nil, 'Themes - recolour the GUI')
+	themeBtn.MouseButton1Click:Connect(function()
+		themeOpen = not themeOpen
+		if themeOpen then
+			raiseZ(themePopover, 12)
+			themeStroke.Color = accent()
+			themePopover.Visible = true
+			themeScale.Scale = 0.9
+			tweenService:Create(themeScale, TweenInfo.new(0.24, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Scale = 1}):Play()
+		else
+			themePopover.Visible = false
+		end
+	end)
+	local collapseBtn, collapseIcon = makeToolButton(3, 'aetherv2/assets/new/expandup.png', nil, 'Collapse / expand all categories')
+	collapseBtn.MouseButton1Click:Connect(function()
+		local anyExpanded = false
+		for _, cat in mainapi.Categories do
+			if cat.Type == 'Category' and cat.Expanded then
+				anyExpanded = true
+				break
+			end
+		end
+		for _, cat in mainapi.Categories do
+			if cat.Type == 'Category' and typeof(cat.Object) == 'Instance' and cat.Object.Visible then
+				if anyExpanded and cat.Expanded then
+					cat:Expand()
+				elseif not anyExpanded and not cat.Expanded then
+					cat:Expand()
+				end
+			end
+		end
+		tweenService:Create(collapseIcon, uipallet.Tween, {Rotation = anyExpanded and 0 or 180}):Play()
+	end)
+
+	-- =====================================================================
+	-- Minor touches: per-category counts, glow, scrollbar tint, breathing edge
+	-- =====================================================================
+	local catBadges = {}
+	for cname, cat in mainapi.Categories do
+		if cat.Type == 'Category' and cat.Button and typeof(cat.Button.Object) == 'Instance' then
+			local badge = Instance.new('TextLabel')
+			badge.Name = 'EnabledCount'
+			badge.Size = UDim2.fromOffset(16, 16)
+			badge.Position = UDim2.new(1, -34, 0.5, 0)
+			badge.AnchorPoint = Vector2.new(1, 0.5)
+			badge.BackgroundColor3 = accent()
+			badge.Text = '0'
+			badge.TextColor3 = Color3.new(0.06, 0.06, 0.06)
+			badge.TextSize = 10
+			badge.FontFace = uipallet.FontSemiBold
+			badge.Visible = false
+			badge.ZIndex = 4
+			badge.Parent = cat.Button.Object
+			addCorner(badge, UDim.new(1, 0))
+			catBadges[cname] = badge
+		end
+	end
+
+	local refreshQueued = false
+	local function refreshCounts()
+		local totals, total = {}, 0
+		for _, m in mainapi.Modules do
+			if m.Enabled then
+				totals[m.Category] = (totals[m.Category] or 0) + 1
+				total += 1
+			end
+		end
+		local a = accent()
+		for cname, badge in catBadges do
+			local c = totals[cname] or 0
+			badge.Text = tostring(c)
+			badge.Visible = c > 0
+			badge.BackgroundColor3 = a
+		end
+		enabledChip.Text = tostring(total)
+		enabledChip.Visible = total > 0
+		enabledChip.BackgroundColor3 = a
+		if themeSwatch then themeSwatch.BackgroundColor3 = a end
+	end
+	local function scheduleRefresh()
+		if refreshQueued then return end
+		refreshQueued = true
+		task.defer(function()
+			refreshQueued = false
+			pcall(refreshCounts)
+		end)
+	end
+
+	-- Wrap every module's Toggle so enabling flashes a glow ring and both the
+	-- per-category and global counters stay live - covers clicks AND keybinds.
+	for _, m in mainapi.Modules do
+		local origToggle = m.Toggle
+		m.Toggle = function(self, ...)
+			local before = self.Enabled
+			origToggle(self, ...)
+			if self.Enabled and not before then
+				enableGlow(self.Object)
+			end
+			scheduleRefresh()
+		end
+	end
+
+	-- Accent-tinted scrollbars everywhere.
+	local function tintScrolls()
+		local a = accent()
+		for _, d in scaledgui:GetDescendants() do
+			if d:IsA('ScrollingFrame') then
+				d.ScrollBarImageColor3 = a
+			end
+		end
+	end
+
+	-- Per-category window "pop" when a category is switched on while the menu is
+	-- already open (the whole-GUI open uses its own cascade below).
+	for _, cat in mainapi.Categories do
+		if cat.Type == 'Category' and typeof(cat.Object) == 'Instance' then
+			local win = cat.Object
+			win:GetPropertyChangedSignal('Visible'):Connect(function()
+				if win.Visible and clickgui.Visible then
+					local sc = win:FindFirstChild('NexusPopScale')
+					if not sc then
+						sc = Instance.new('UIScale')
+						sc.Name = 'NexusPopScale'
+						sc.Parent = win
+					end
+					sc.Scale = 0.9
+					tweenService:Create(sc, TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Scale = 1}):Play()
+				end
+			end)
+		end
+	end
+
+	-- Breathing accent edge on the main GUI window.
+	local mainWindow = mainapi.Categories.Main and mainapi.Categories.Main.Object
+	if typeof(mainWindow) == 'Instance' then
+		local breathe = Instance.new('UIStroke')
+		breathe.Name = 'NexusBreathe'
+		breathe.Color = accent()
+		breathe.Thickness = 1.2
+		breathe.Transparency = 0.55
+		breathe.Parent = mainWindow
+		task.spawn(function()
+			while mainWindow.Parent do
+				breathe.Color = accent()
+				tweenService:Create(breathe, TweenInfo.new(1.5, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {Transparency = 0.85}):Play()
+				task.wait(1.5)
+				breathe.Color = accent()
+				tweenService:Create(breathe, TweenInfo.new(1.5, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {Transparency = 0.55}):Play()
+				task.wait(1.5)
+			end
+		end)
+	end
+
+	-- Closing the menu dismisses the Spotlight (it lives on the scaled root, not
+	-- inside the menu) and the theme popover, so nothing lingers over the game.
+	mainapi:Clean(clickgui:GetPropertyChangedSignal('Visible'):Connect(function()
+		if not clickgui.Visible then
+			if spotOpen then closeSpot() end
+			if themeOpen then
+				themeOpen = false
+				themePopover.Visible = false
+			end
+		end
+	end))
+
+	-- Prime everything + keep accents in sync a moment after any theme change.
+	task.defer(function()
+		pcall(refreshCounts)
+		pcall(tintScrolls)
+	end)
+	mainapi.RefreshVisualPack = function()
+		pcall(refreshCounts)
+		pcall(tintScrolls)
+		spotStroke.Color = accent()
+		spotIcon.ImageColor3 = accent()
+	end
 end
 
 return mainapi
