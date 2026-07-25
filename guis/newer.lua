@@ -1,50 +1,34 @@
 --[[
-	AetherV2 "Nexus" GUI (newer.lua) - v5.0
+	AetherV2 "Nexus" GUI (newer.lua) - v6.0 "Onyx"
 
-	A glass-morphism redesign of the AetherV2 interface. Fully compatible with
-	the existing AetherV2 backend: same asset table, keybind system, module API
+	A clean, dark re-chrome of the AetherV2 interface. Fully compatible with the
+	existing AetherV2 backend: same asset table, keybind system, module API
 	(CreateCategory / CreateModule / CreateToggle / CreateSlider / ...), config
 	save & load format, and overlay system as guis/new.lua.
 
-	Visual language:
-	 - Deep navy/charcoal base (#0E1117 / #1A1F2A) with a single muted accent
-	   (#4A8DFF by default, adjustable via the GUI Theme slider).
-	 - Frosted glass panels: sliced blur.png backdrops + translucent surfaces
-	   (see uipallet.Glass and the glass registry inside addBlur).
-	 - Clean sans-serif typography (Gotham), 8px corner radius, soft shadows.
+	Visual language (v6 redesign):
+	 - Near-black "Onyx" base (#0C0D12) with a faint cool tint; crisp off-white
+	   text. A single live accent (the GUI Theme colour) drives everything.
+	 - Modules render as flat dark list items: enabling one lights a left accent
+	   bar + accent label instead of flooding the whole row (gradient rainbow mode
+	   still uses the classic full fill). A short glow ring pulses on enable.
+	 - Windows are frosted-glass cards with a 10px radius and a faint hairline
+	   edge (addWindowStroke) so they read as defined panels on the dark backdrop.
+	 - New category windows fan out across a lattice instead of stacking, so every
+	   category is reachable the moment it is opened.
 	 - 0.16s Quad/Out micro-interactions everywhere (uipallet.Tween).
 
-	Nexus additions on top of the classic API:
-	 - Stats Dashboard  : live counters + last-10-games history graph
-	                      (mainapi.Stats, persisted to aetherv2/profiles/stats.json).
-	 - Plugin system    : mainapi:RegisterPlugin(name, pluginTable) lets third
-	                      parties add categories, overlays and stat types.
-	                      Files in aetherv2/plugins/*.lua are auto-loaded.
-	 - Theme Editor     : real-time glass intensity, font face and base theme
-	                      adjustment (Settings -> Theme).
+	Kept from the previous build:
+	 - Plugin system    : mainapi:RegisterPlugin(name, pluginTable) + auto-loaded
+	                      aetherv2/plugins/*.lua.
+	 - Spotlight (`)    : quick command palette to toggle any module.
+	 - Theme presets    : one-click accent swatches; with "Recolour modules with
+	                      theme" on they also retint module colours (Killaura target
+	                      boxes, ESP, tracers, particles, ...).
+	 - Watermark / Keybind HUD overlays, favourites polish, notifications.
 
-	New in v5.1 - deep interface customisation (see mainapi.Nexus):
-	 - Custom hover     : selectable hover style (Underline / Outline /
-	                      Brighten / None), intensity, lift (scale pop), hover
-	                      sounds and click pulses on every control
-	                      (Settings -> Interface).
-	 - Custom positioning: window dragging gains edge + window-to-window
-	                      snapping with alignment guides, grid snapping, drag
-	                      smoothing, keep-on-screen clamping and a window lock,
-	                      plus tile/cascade arrangement and named layouts saved
-	                      to aetherv2/profiles/layouts.json (Settings -> Windows).
-	 - Custom settings  : live corner radius, animation speed + easing style,
-	                      tooltip delay/anchoring, UI sound pack with volume,
-	                      window open animation, and notification position /
-	                      duration / stack size / sound (Settings ->
-	                      Interface, Windows and Notifications).
-	 - Watermark        : pinnable overlay with FPS, ping and clock segments
-	                      (Overlays -> Watermark).
-	 - Keybind HUD      : pinnable overlay listing bound modules and their
-	                      keys, live enabled highlighting (Overlays -> Keybinds).
-	 - Favourites polish: the star chip, gold border trim and pulse ring are
-	                      fully animated (hover scale, fade in/out, swelling
-	                      ring) and share one gold accent.
+	Removed in v6: the Aether Neo overhaul engine and the Theme / Interface /
+	Windows settings-clutter panes (their machinery falls back to sane defaults).
 ]]
 local license = ... or {}
 local mainapi = {
@@ -68,7 +52,7 @@ local mainapi = {
 	Scale = {Value = 1},
 	ThreadFix = setthreadidentity and true or false,
 	ToggleNotifications = {},
-	Version = '5.1',
+	Version = '6.0',
 	ToggleMode = {Value = 'Toggle'},
 	Windows = {}
 }
@@ -101,16 +85,19 @@ local tween = {
 	tweenstwo = {}
 }
 local uipallet = {
-	-- Nexus palette: deep navy base (#0E1117), soft blue-grey text. Surfaces are
-	-- derived from Main via color.Light/Dark so #1A1F2A appears as raised cards.
-	Main = Color3.fromRGB(14, 17, 23),
-	Text = Color3.fromRGB(214, 220, 232),
+	-- Nexus v6 "Onyx" palette. Near-black ink surface with a faint cool tint
+	-- (#0C0D12), crisp off-white text. Raised cards/rows are derived from Main via
+	-- color.Light/Dark. Rows read as flat dark list items; the live accent shows as
+	-- a left bar + text on enabled modules and a hairline under window headers,
+	-- rather than the old full-row highlight.
+	Main = Color3.fromRGB(12, 13, 18),
+	Text = Color3.fromRGB(226, 230, 240),
 	Font = Font.fromEnum(Enum.Font.Gotham),
 	FontSemiBold = Font.fromEnum(Enum.Font.Gotham, Enum.FontWeight.SemiBold),
 	Tween = TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
 	-- Glass-morphism levels: transparency applied to blurred panels (windows,
-	-- tooltips, notifications). Adjustable live from Settings -> Theme.
-	Glass = 0.15
+	-- tooltips, notifications).
+	Glass = 0.12
 }
 -- Every panel that addBlur() frosts is registered here so the Theme editor can
 -- retune glass intensity in real time. Weak keys let destroyed panels collect.
@@ -316,7 +303,7 @@ end
 -- Corners created with the default radius are registered (weakly, so
 -- destroyed ones collect) and can be retuned live from Settings -> Interface.
 local cornerRegistry = setmetatable({}, {__mode = 'k'})
-local cornerRadius = 8
+local cornerRadius = 10
 
 local function addCorner(parent, radius)
 	local corner = Instance.new('UICorner')
@@ -327,6 +314,20 @@ local function addCorner(parent, radius)
 	end
 
 	return corner
+end
+
+-- v6 re-chrome: a faint hairline edge so windows read as defined cards against the
+-- near-black backdrop. Theme-independent (a low-opacity white border), so it never
+-- fights the accent. Applied to the main window, category windows and overlays.
+local function addWindowStroke(parent, transparency)
+	local stroke = Instance.new('UIStroke')
+	stroke.Name = 'EdgeStroke'
+	stroke.Color = Color3.fromRGB(255, 255, 255)
+	stroke.Transparency = transparency or 0.9
+	stroke.Thickness = 1
+	stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	stroke.Parent = parent
+	return stroke
 end
 
 local function addCloseButton(parent, offset)
@@ -3282,6 +3283,7 @@ function mainapi:CreateGUI()
 	window.Parent = clickgui
 	addBlur(window)
 	addCorner(window)
+	addWindowStroke(window)
 	makeDraggable(window)
 	local logo = Instance.new('ImageLabel')
 	logo.Name = 'VapeLogo'
@@ -4626,6 +4628,7 @@ function mainapi:CreateCategory(categorysettings)
 	window.Parent = clickgui
 	addBlur(window)
 	addCorner(window)
+	addWindowStroke(window)
 	makeDraggable(window)
 	local icon = Instance.new('ImageLabel')
 	icon.Name = 'Icon'
@@ -4726,6 +4729,21 @@ function mainapi:CreateCategory(categorysettings)
 		modulebutton.TextSize = 14
 		modulebutton.FontFace = uipallet.Font
 		modulebutton.Parent = children
+		-- v6 redesign: a left accent bar that lights up in the theme colour when the
+		-- module is on. The row itself stays a flat dark surface (a subtle raised
+		-- tint) instead of the old full-accent highlight, so on/off reads as a clean
+		-- list item with an accent edge + accent label.
+		local accentbar = Instance.new('Frame')
+		accentbar.Name = 'AccentBar'
+		accentbar.Size = UDim2.fromOffset(3, 22)
+		accentbar.Position = UDim2.new(0, 6, 0.5, 0)
+		accentbar.AnchorPoint = Vector2.new(0, 0.5)
+		accentbar.BackgroundColor3 = Color3.fromHSV(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value)
+		accentbar.BorderSizePixel = 0
+		accentbar.BackgroundTransparency = 1
+		accentbar.Visible = false
+		accentbar.Parent = modulebutton
+		addCorner(accentbar, UDim.new(1, 0))
 		local indicatorholder = Instance.new('Frame')
 		indicatorholder.Parent = modulebutton
 		indicatorholder.Size = UDim2.fromOffset(0, 21)
@@ -5121,25 +5139,49 @@ function mainapi:CreateCategory(categorysettings)
 
 			local bgColor, txtColor
 			if moduleapi.Enabled then
-				bgColor = rainbow and Color3.fromHSV(mainapi:Color((mainapi.GUIColor.Hue - (moduleapi.Index * 0.025)) % 1)) or Color3.fromHSV(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value)
-				txtColor = mainapi.GUIColor.Rainbow and Color3.new(0.19, 0.19, 0.19) or mainapi:TextColor(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value)
 				gradient.Enabled = rainbow and mainapi.RainbowMode.Value == 'Gradient'
 				if gradient.Enabled then
+					-- Gradient rainbow keeps the classic full-row fill.
 					bgColor = Color3.new(1, 1, 1)
+					txtColor = Color3.new(0.19, 0.19, 0.19)
 					gradient.Color = ColorSequence.new({
 						ColorSequenceKeypoint.new(0, Color3.fromHSV(mainapi:Color((mainapi.GUIColor.Hue - (moduleapi.Index * 0.025)) % 1))),
 						ColorSequenceKeypoint.new(1, Color3.fromHSV(mainapi:Color((mainapi.GUIColor.Hue - ((moduleapi.Index + 1) * 0.025)) % 1)))
 					})
+					accentbar.Visible = false
+					dots.ImageColor3 = txtColor
+					bindicon.ImageColor3 = txtColor
+					bindtext.TextColor3 = txtColor
+				else
+					-- v6 list-item style: dark row + bright accent bar + accent label
+					-- (replaces the old full-accent highlight).
+					local h, s, v = mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value
+					if rainbow then
+						h, s, v = mainapi:Color((mainapi.GUIColor.Hue - (moduleapi.Index * 0.025)) % 1)
+					end
+					-- Force a readable value/sat so even a dark accent stands out on the row.
+					local accent = Color3.fromHSV(h, math.clamp(s, 0, 0.9), math.max(v, 0.82))
+					bgColor = color.Light(uipallet.Main, 0.05)
+					txtColor = accent
+					accentbar.BackgroundColor3 = accent
+					accentbar.Visible = true
+					if animate then
+						accentbar.BackgroundTransparency = 1
+						tween:Tween(accentbar, uipallet.Tween, {BackgroundTransparency = 0})
+					else
+						accentbar.BackgroundTransparency = 0
+					end
+					dots.ImageColor3 = accent
+					bindicon.ImageColor3 = accent
+					bindtext.TextColor3 = accent
 				end
-				dots.ImageColor3 = txtColor
-				bindicon.ImageColor3 = txtColor
-				bindtext.TextColor3 = txtColor
 			else
 				txtColor = (hovered or settingsOpen) and uipallet.Text or color.Dark(uipallet.Text, 0.16)
 				bgColor = hardPatched and color.Dark(uipallet.Main, 0.04) or ((hovered or settingsOpen) and color.Light(uipallet.Main, 0.02) or uipallet.Main)
 				dots.ImageColor3 = color.Light(uipallet.Main, 0.37)
 				bindicon.ImageColor3 = color.Dark(uipallet.Text, 0.43)
 				bindtext.TextColor3 = color.Dark(uipallet.Text, 0.43)
+				accentbar.Visible = false
 			end
 
 			-- Fade the toggle colour between on/off on genuine state changes so
@@ -5818,6 +5860,7 @@ function mainapi:CreateOverlay(categorysettings)
 	window.Parent = scaledgui
 	local blur = addBlur(window)
 	addCorner(window)
+	addWindowStroke(window)
 	makeDraggable(window)
 	local icon = Instance.new('ImageLabel')
 	icon.Name = 'Icon'
@@ -6054,6 +6097,7 @@ function mainapi:CreateCategoryList(categorysettings)
 	window.Parent = clickgui
 	addBlur(window)
 	addCorner(window)
+	addWindowStroke(window)
 	makeDraggable(window)
 	local icon = Instance.new('ImageLabel')
 	icon.Name = 'Icon'
@@ -9923,12 +9967,11 @@ end))
 --[[
 	=========================================================================
 	 NEXUS ADDITIONS
-	 Everything below this line is new in the Nexus (v5.0) redesign:
-	  1. Theme Editor       (Settings -> Theme)
-	  2. Stats Dashboard    (Overlays -> Stats Dashboard, mainapi.Stats)
-	  3. Plugin system      (mainapi:RegisterPlugin + aetherv2/plugins/)
-	 All features reuse the existing component/overlay/save systems, so they
-	 persist through the same profile files as every other option.
+	 Extension point kept from the Nexus redesign:
+	  * Plugin system      (mainapi:RegisterPlugin + aetherv2/plugins/)
+	 It reuses the existing component/overlay/save systems, so plugins persist
+	 through the same profile files as every other option. (The old Theme Editor
+	 and Stats Dashboard were removed in the v6 declutter.)
 	=========================================================================
 ]]
 
