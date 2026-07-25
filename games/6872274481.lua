@@ -4663,21 +4663,22 @@ end)
 -- A correct version needs the elk kit controller's real dismount/duration internals, which we
 -- can't see from the repo, so the module is pulled rather than shipped broken and harmful.)
 
--- AutoBuildUp: towers you straight up. While you hold jump and are off the ground it drops a
--- block under your feet near the jump apex so you land on it and rise a block each hop
--- (scaffold-style). The item limit keeps some blocks in reserve so it never towers you out of
--- your whole stack. Placement mirrors the proven NoFall block clutch.
+-- AutoBuildUp: towers you straight up. While you hold jump it fills the block-cell directly
+-- beneath your feet - every cell as you rise, driven by position rather than a timer/apex - so
+-- you build a gapless pillar and keep climbing as fast as you go up. The item limit keeps some
+-- blocks in reserve so it never towers you out of your whole stack. Placement mirrors the
+-- NoFall block clutch.
 run(function()
     local AutoBuildUp
     local LimitItems
     local KeepAmount
-    local lastPlace = 0
+    local lastPlacePos
 
     AutoBuildUp = vape.Categories.Blatant:CreateModule({
         Name = 'AutoBuildUp',
         Function = function(callback)
             if callback then
-                lastPlace = 0
+                lastPlacePos = nil
                 AutoBuildUp:Clean(runService.Heartbeat:Connect(function()
                     if not entitylib.isAlive then return end
                     local character = entitylib.character
@@ -4685,16 +4686,11 @@ run(function()
                     local humanoid = character and character.Humanoid
                     if not root or not humanoid then return end
 
-                    -- Only while jumping upward off the ground.
-                    if humanoid.FloorMaterial ~= Enum.Material.Air then return end
+                    -- Only while you're holding jump - that's the intent to tower up.
                     local holdingJump = humanoid.Jump
                         or inputService:IsKeyDown(Enum.KeyCode.Space)
                         or inputService:IsKeyDown(Enum.KeyCode.ButtonA)
                     if not holdingJump then return end
-                    -- Wait for the apex (about to fall) so the block lands under your feet
-                    -- instead of clipping into you on the way up.
-                    if root.AssemblyLinearVelocity.Y > 6 then return end
-                    if tick() - lastPlace < 0.1 then return end
 
                     local wool, amount = getWool()
                     if not wool then return end
@@ -4702,10 +4698,15 @@ run(function()
                     -- tower with your entire stack.
                     if LimitItems.Enabled and (amount or 0) <= KeepAmount.Value then return end
 
+                    -- Fill the cell directly beneath your feet - every cell as you rise, not one
+                    -- per jump/second. getPlacedBlock skips cells that already hold a block (real
+                    -- ground included, so nothing happens while grounded); lastPlacePos stops us
+                    -- re-sending the same cell before the placement round-trips back.
                     local placePosition = bedwars.BlockController:getBlockPosition(root.Position - Vector3.new(0, 4, 0)) * 3
+                    if placePosition == lastPlacePos then return end
                     if getPlacedBlock(placePosition) then return end
                     if bedwars.placeBlock(placePosition, wool) then
-                        lastPlace = tick()
+                        lastPlacePos = placePosition
                     end
                 end))
             end
@@ -12915,17 +12916,20 @@ run(function()
 						if tick() > start then
 							for _, data in getProjectiles() do
 								if (FireRate[data[1].itemType] or 0) < tick() then
-									local hotbar, old = getHotbar(data[1].tool), store.hand.tool and getHotbar(store.hand.tool) or 0
-									if hotbar and old and hotbarSwitch(hotbar) then
-										local ignore = vape.Modules['Silent Aura'].Enabled or not inputService.MouseEnabled
+									-- Remember the slot we're holding (the sword) so we always return to it,
+									-- then hop to the projectile's slot.
+									local hotbar = getHotbar(data[1].tool)
+									local old = store.inventory.hotbarSlot
+									if hotbar and hotbarSwitch(hotbar) then
 										task.wait(Delay.Value)
-										shootFunc()
-										if vape.Modules['Auto Clicker'].Enabled and not ignore then
-											task.delay(runService.PostSimulation:Wait(), mouse1press)
-										end
+										-- Fire through the projectile remote (shootFunc's ignore path), NOT
+										-- mouse1click: a single click never charges a bow, so the old path
+										-- swapped weapons and launched nothing. pcall so a failed shot can
+										-- never skip the switch-back below.
+										pcall(shootFunc, true)
 										task.wait(Delay.Value)
 										FireRate[data[1].itemType] = tick() + (data[4].fireDelaySec + Rate:GetRandomValue())
-										hotbarSwitch(old)
+										hotbarSwitch(old) -- always switch back to what we were holding
 										task.wait(Next.Value)
 										if (tick() - bedwars.SwordController.lastSwing) > 0.29 then
 											break
