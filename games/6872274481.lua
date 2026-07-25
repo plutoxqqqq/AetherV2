@@ -2595,6 +2595,7 @@ run(function()
     local SilentAim
     local SwingTime
     local Perfect
+    local FaceTarget
 
     local Show
     local Targetcolor
@@ -2690,7 +2691,10 @@ run(function()
                 local lastattacked = tick()
 
                 SilentAura:Clean(runService.PostSimulation:Connect(function(dt)
-                    if entitylib.isAlive and tick() - lastfound < 0.5 then
+                    -- Face target off: never rotate the body or move the camera toward the
+                    -- target - fall through to restoring AutoRotate. Hits still land because
+                    -- the attack below is computed from positions, not from where we face.
+                    if entitylib.isAlive and tick() - lastfound < 0.5 and FaceTarget.Enabled then
                         targetinfo.Targets[lastent] = tick() + 0.5
                         entitylib.character.Humanoid.AutoRotate = not SilentAim.Enabled
                         local cframe, speed = findAim(gameCamera.CFrame, lastent, dt, foundat)
@@ -2872,6 +2876,11 @@ run(function()
         Function = function(callback)
             Area.Object.Visible = not callback
         end,
+    })
+    FaceTarget = SilentAura:CreateToggle({
+        Name = 'Face target',
+        Tooltip = 'On (default): automatically turn to face the target (rotates your body with Silent Aim, or moves your camera without it).\nOff: never turn toward the target - your view/body is left alone. Hits still land for targets within Max angle, since they are computed from positions rather than from precise aim.',
+        Default = true,
     })
     Show = SilentAura:CreateToggle({
         Name = 'Show target',
@@ -5898,6 +5907,61 @@ run(function()
 	projectileRemote = bedwars.Client:Get(remotes.FireProjectile).instance
     end)
 
+    -- ===== Native swing (game-built attack packet) =====
+    -- Every hand-forged AttackEntity payload has been patched: whether the raycast is
+    -- empty, fully filled in, hashed, or routed through sendServerRequest, the server
+    -- re-validates the ray + positions against a rolling per-packet token and drops
+    -- anything the client assembled itself. The one attack the server always trusts is
+    -- the one the GAME builds for a genuine click. So the Native hit method drives the
+    -- game's own SwordController:swingSwordAtMouse and transparently redirects the ray it
+    -- casts onto our target: the game then assembles, tokens and sends a real attack that
+    -- we never had to forge, which is indistinguishable from a legit hit to the anticheat.
+    local nativeTarget
+    local function redirectRay(_, origin, direction, params)
+        -- Called in place of the game's own raycast during a native swing. Ignore where
+        -- the cursor actually points and shoot a real ray from the game's origin straight
+        -- at our target, so a genuine RaycastResult on the target comes back (needs line
+        -- of sight, exactly like a real click would).
+        local t = nativeTarget
+        if t and t.RootPart and typeof(origin) == 'Vector3' then
+            local to = t.RootPart.Position - origin
+            if to.Magnitude > 0 then
+                local reach = typeof(direction) == 'Vector3' and direction.Magnitude or 0
+                direction = to.Unit * math.max(reach, to.Magnitude + 5)
+            end
+        end
+        return bedwars.QueryUtil:raycast(origin, direction, params)
+    end
+    -- Stand-in for whatever raycast provider swingSwordAtMouse currently uses (workspace
+    -- by default, QueryUtil once HitFix is on). It answers both the 'Raycast' and 'raycast'
+    -- method names so it works whichever the constant selects, and __index falls through to
+    -- QueryUtil for anything else the function reaches for.
+    local nativeProxy
+    local function getNativeProxy()
+        if not nativeProxy and bedwars.QueryUtil then
+            nativeProxy = setmetatable({raycast = redirectRay, Raycast = redirectRay}, {__index = bedwars.QueryUtil})
+        end
+        return nativeProxy
+    end
+    -- Fire a single native swing at `ent`. Returns true only when the game call actually
+    -- ran, so the caller can fall back to a raw send if native manipulation is unavailable
+    -- on this build (missing debug funcs, moved upvalue index, etc.).
+    local function nativeSwing(ent)
+        local proxy = getNativeProxy()
+        local swing = bedwars.SwordController and bedwars.SwordController.swingSwordAtMouse
+        if not proxy or not swing or not debug or not debug.setupvalue then return false end
+        nativeTarget = ent
+        local ok = pcall(function()
+            local old = debug.getupvalue(swing, 4)
+            debug.setupvalue(swing, 4, proxy)
+            local okCall = pcall(function() bedwars.SwordController:swingSwordAtMouse() end)
+            debug.setupvalue(swing, 4, old) -- always restore, even if the swing threw
+            if not okCall then error('native swing failed') end
+        end)
+        nativeTarget = nil
+        return ok
+    end
+
     local FastHits
     local Legit
     local Unpatch
@@ -6091,7 +6155,13 @@ run(function()
                                 if delta.Magnitude > AttackRange.Value then continue end
 
                                 local actualRoot = v.Character.PrimaryPart
-                                if actualRoot and (v.Humanoid.FloorMaterial ~= Enum.Material.Air or math.random(1, 100) < AirChance.Value) then
+                                -- Swing Time hit method paces one clean hit per swing-time window so the
+                                -- server sees a legit sword cadence instead of a 60hz stream; HitReg leaves
+                                -- this open and leans on Update rate + packet repeats instead. swingCooldown
+                                -- is refreshed on every landed hit below, so this is the gap since the last one.
+                                local usingSwingTime = HitMethod and HitMethod.Value == 'Swing Time'
+                                local swingGate = (not usingSwingTime) or (tick() - swingCooldown) >= SwingTime.Value
+                                if actualRoot and swingGate and (v.Humanoid.FloorMaterial ~= Enum.Material.Air or math.random(1, 100) < AirChance.Value) then
                                     if UpdateRate.Value >= 120 or (tick() - lastHit) >= (1 / UpdateRate.Value) then
                                         lastHit = tick()
 
@@ -6107,38 +6177,48 @@ run(function()
                                             chargedAttack = {chargeRatio = 0},
                                             entityInstance = v.Character,
                                             validate = {
-                                                raycast = {},
+                                                -- A valid ray (from our position `pos` straight at the target)
+                                                -- rather than the old empty {}: the server re-casts this and drops
+                                                -- the hit if it misses, which is what killed the empty-raycast path.
+                                                -- Used by the HitReg / Swing Time forged fallbacks below; the Native
+                                                -- method ignores this payload and lets the game build its own.
+                                                raycast = {
+                                                    cameraPosition = {value = pos},
+                                                    cursorDirection = {value = dir},
+                                                },
                                                 targetPosition = {value = actualRoot.Position},
                                                 selfPosition = {value = pos}
                                             }
                                         }
                                         -- Hit method decides how the hit is delivered:
-                                        --   HitReg     - spam the packet this many times (1-36) so the
-                                        --                server is more likely to register it.
-                                        --   Swing Time - send a single clean packet and lean on the swing
-                                        --                pacing (Swing time slider) for legitimacy instead.
-                                        local sendCount = 1
-                                        if not HitMethod or HitMethod.Value == 'HitReg' then
-                                            sendCount = math.clamp(Hitreg and Hitreg.Value or 1, 1, 36)
-                                        end
-                                        for _ = 1, sendCount do
-                                            if Unpatch.Enabled then
-                                                -- Deeper unpatch (experimental): hand the request to the game's own
-                                                -- send wrapper (SwordController.sendServerRequest) rather than firing
-                                                -- the raw remote, so any validation/processing the game applies to a
-                                                -- genuine attack is applied here too. Aim-independent. If the call
-                                                -- errors (e.g. a signature mismatch) we fall straight back to the raw
-                                                -- send, so Unpatch is never worse than the default.
-                                                local sent = pcall(function()
-                                                    bedwars.SwordController:sendServerRequest(payload)
-                                                end)
-                                                if not sent then
+                                        --   Native     - drives the game's own swing so the packet is game-built
+                                        --                and server-trusted (the actual unpatch). Falls back to a
+                                        --                raw send if native manipulation isn't available.
+                                        --   HitReg     - forged packet sent Hitreg.Value times (1-36) to fight
+                                        --                packet loss / cooldown edges.
+                                        --   Swing Time - one forged packet, paced by the Swing time slider so the
+                                        --                cadence matches a legit sword (gated above).
+                                        local method = HitMethod and HitMethod.Value or 'Native'
+                                        if method == 'Native' then
+                                            if not nativeSwing(v) then
+                                                AttackRemote:SendToServer(payload)
+                                            end
+                                        else
+                                            local sendCount = method == 'HitReg' and math.clamp(Hitreg and Hitreg.Value or 1, 1, 36) or 1
+                                            for _ = 1, sendCount do
+                                                if Unpatch.Enabled then
+                                                    -- Experimental: hand the request to the game's own send wrapper
+                                                    -- (SwordController.sendServerRequest). Falls back to the raw remote
+                                                    -- if the call errors, so Unpatch is never worse than the default.
+                                                    local sent = pcall(function()
+                                                        bedwars.SwordController:sendServerRequest(payload)
+                                                    end)
+                                                    if not sent then
+                                                        AttackRemote:SendToServer(payload)
+                                                    end
+                                                else
                                                     AttackRemote:SendToServer(payload)
                                                 end
-                                            else
-                                                -- Default: send the plain packet on the position-only validation path
-                                                -- (empty raycast). selfPosition stays reach-extended via `pos`.
-                                                AttackRemote:SendToServer(payload)
                                             end
                                         end
 
@@ -6344,8 +6424,9 @@ run(function()
     })
     HitMethod = Killaura:CreateDropdown({
         Name = 'Hit method',
-        List = {'HitReg', 'Swing Time'},
-        Tooltip = 'Chooses how each hit is delivered.\nHitReg - spams the hit as several attack packets (HitReg slider) to force it to register.\nSwing Time - sends one clean packet per hit and paces by the Swing time slider instead.',
+        List = {'Native', 'HitReg', 'Swing Time'},
+        Default = 'Native',
+        Tooltip = 'Chooses how each hit is delivered.\nNative - drives the game\'s own swing so the packet is built and signed by the game itself (the real unpatch - the anticheat can\'t tell it from a legit click). Needs line of sight; reach follows the Reach module.\nHitReg - forged packet sent several times (HitReg slider) to punch through packet loss.\nSwing Time - one forged packet, paced by the Swing time slider so the cadence looks like a real sword.',
         Function = function(val)
             -- Show only the slider that the chosen method actually uses.
             pcall(function()
@@ -6384,7 +6465,7 @@ run(function()
     end)
     Unpatch = Killaura:CreateToggle({
         Name = 'Unpatch',
-        Tooltip = 'Anticheat unpatch method.\nOff (default): sends the plain attack packet on the position-only validation path (the baseline method).\nOn (experimental): routes each hit through the game\'s own send wrapper (sendServerRequest) so any processing the game applies to a real attack is applied too. Falls back to the default send if that call fails.'
+        Tooltip = 'Only affects the HitReg / Swing Time (forged) methods - the Native method is already the unpatch.\nOff: send the forged packet on the raw AttackEntity remote.\nOn (experimental): route each forged hit through the game\'s own send wrapper (sendServerRequest) so any processing the game applies to a real attack is applied too. Falls back to the raw send if that call fails.'
     })
     FastHits = Killaura:CreateToggle({
 	Name = 'Fast Hits',
