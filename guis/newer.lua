@@ -199,7 +199,7 @@ local nexus = {
 		Max = 6,
 		Sound = false
 	},
-	OpenAnim = 'Cascade',
+	OpenAnim = 'Pop',
 	SoundsEnabled = false,
 	SoundVolume = 0.5,
 	PlaySound = function() end,
@@ -5318,18 +5318,6 @@ function mainapi:CreateCategory(categorysettings)
 				label.TextSize = 10
 				label.FontFace = uipallet.FontSemiBold
 				label.Parent = header
-				-- Count badge: how many settings live under this header.
-				local count = Instance.new('TextLabel')
-				count.Name = 'Count'
-				count.Size = UDim2.fromOffset(20, 14)
-				count.Position = UDim2.new(1, -30, 0.5, -7)
-				count.BackgroundColor3 = color.Light(uipallet.Main, 0.06)
-				count.Text = tostring(#records)
-				count.TextColor3 = color.Dark(uipallet.Text, 0.4)
-				count.TextSize = 10
-				count.FontFace = uipallet.Font
-				count.Parent = header
-				addCorner(count, UDim.new(0, 4))
 
 				local container = Instance.new('Frame')
 				container.Name = title..'SubGroup'
@@ -5410,87 +5398,8 @@ function mainapi:CreateCategory(categorysettings)
 				header.MouseButton1Click:Connect(function()
 					groupApi.SetOpen(not open, true)
 				end)
-				-- Right-click a header to expand / collapse ALL groups at once.
-				header.MouseButton2Click:Connect(function()
-					local anyClosed = false
-					for _, g in subGroups do
-						if not g.Open then
-							anyClosed = true
-							break
-						end
-					end
-					for _, g in subGroups do
-						g.SetOpen(anyClosed, true)
-					end
-				end)
-
-				groupApi.Container = container
-				groupApi.SetVisible = function(state)
-					header.Visible = state
-					container.Visible = state
-				end
 				groupApi.SetOpen(open, false)
 				table.insert(subGroups, groupApi)
-			end
-
-			-- ---- Per-module settings filter (major) --------------------------------
-			-- On heavy panels, a small filter box that live-narrows the visible
-			-- sub-categories: groups whose title or any setting name matches the
-			-- query stay (and auto-expand); the rest hide. Only toggles the header /
-			-- container visibility it owns, never an option's own Visible, so it
-			-- can't fight a module's conditional show/hide logic.
-			if #optionRecords >= 12 then
-				local filter = Instance.new('TextBox')
-				filter.Name = 'SettingsFilter'
-				filter.Size = UDim2.new(1, 0, 0, 28)
-				filter.LayoutOrder = -1000
-				filter.BackgroundColor3 = color.Dark(uipallet.Main, 0.04)
-				filter.BorderSizePixel = 0
-				filter.Text = ''
-				filter.PlaceholderText = 'Filter settings...'
-				filter.PlaceholderColor3 = color.Dark(uipallet.Text, 0.5)
-				filter.TextXAlignment = Enum.TextXAlignment.Left
-				filter.TextColor3 = uipallet.Text
-				filter.TextSize = 12
-				filter.FontFace = uipallet.Font
-				filter.ClearTextOnFocus = false
-				filter.Parent = modulechildren
-				local ficon = Instance.new('ImageLabel')
-				ficon.Size = UDim2.fromOffset(12, 12)
-				ficon.Position = UDim2.new(1, -22, 0.5, -6)
-				ficon.BackgroundTransparency = 1
-				ficon.Image = getcustomasset('aetherv2/assets/new/search.png')
-				ficon.ImageColor3 = color.Light(uipallet.Main, 0.37)
-				ficon.Parent = filter
-				-- Pad the typed text so it clears the icon and left edge.
-				local fpad = Instance.new('UIPadding')
-				fpad.PaddingLeft = UDim.new(0, 10)
-				fpad.PaddingRight = UDim.new(0, 26)
-				fpad.Parent = filter
-				filter:GetPropertyChangedSignal('Text'):Connect(function()
-					local query = filter.Text:lower():gsub('^%s+', '')
-					if query == '' then
-						-- Restore every group to its remembered open state.
-						for _, g in subGroups do
-							g.SetVisible(true)
-							g.SetOpen(subGroupMemory[moduleapi.Name..'|'..g.Title] or false, false, true)
-						end
-						return
-					end
-					for _, g in subGroups do
-						local match = g.Title:lower():find(query, 1, true) ~= nil
-						if not match then
-							for _, rec in g.Records do
-								if rec.name and rec.name:lower():find(query, 1, true) then
-									match = true
-									break
-								end
-							end
-						end
-						g.SetVisible(match)
-						g.SetOpen(match, false, true)
-					end
-				end)
 			end
 		end
 		moduleapi.BuildSubCategories = buildSubCategories
@@ -11946,9 +11855,8 @@ do
 	})
 	windowspane:CreateDropdown({
 		Name = 'Open animation',
-		List = {'Cascade', 'Pop', 'Fade', 'None'},
-		Default = 'Cascade',
-		Tooltip = 'How windows enter when the GUI opens.\nCascade staggers them in one after another.',
+		List = {'Pop', 'Fade', 'None'},
+		Tooltip = 'How windows enter when the GUI opens',
 		Function = function(val)
 			nexus.OpenAnim = val
 		end
@@ -12058,65 +11966,25 @@ do
 	mainapi:Clean(clickgui:GetPropertyChangedSignal('Visible'):Connect(function()
 		nexus.PlaySound('open')
 		if not clickgui.Visible or nexus.OpenAnim == 'None' then return end
-		-- Cascade sorts the visible windows left-to-right / top-to-bottom and pops
-		-- them in one after another for a "menu unfolding" entrance.
-		local cascadeIndex = 0
-		local ordered = {}
 		for _, v in mainapi.Categories do
 			local win = v.Object
 			if v.Type == 'Overlay' or typeof(win) ~= 'Instance' or not win.Visible then continue end
-			table.insert(ordered, win)
-		end
-		if nexus.OpenAnim == 'Cascade' then
-			table.sort(ordered, function(a, b)
-				local pa, pb = a.AbsolutePosition, b.AbsolutePosition
-				if math.abs(pa.X - pb.X) > 24 then
-					return pa.X < pb.X
-				end
-				return pa.Y < pb.Y
-			end)
-		end
-		for _, win in ordered do
-			local function pop()
+			if nexus.OpenAnim == 'Pop' then
 				local openscale = win:FindFirstChild('NexusOpenScale')
 				if not openscale then
 					openscale = Instance.new('UIScale')
 					openscale.Name = 'NexusOpenScale'
 					openscale.Parent = win
 				end
-				openscale.Scale = 0.9
-				tweenService:Create(openscale, TweenInfo.new(0.28, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+				openscale.Scale = 0.92
+				tweenService:Create(openscale, TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
 					Scale = 1
 				}):Play()
-			end
-			if nexus.OpenAnim == 'Pop' then
-				pop()
 			elseif nexus.OpenAnim == 'Fade' then
 				win.BackgroundTransparency = 1
 				tween:Tween(win, TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
 					BackgroundTransparency = uipallet.Glass
 				})
-			elseif nexus.OpenAnim == 'Cascade' then
-				-- Staggered: each window waits a touch longer than the last, but
-				-- bail if the menu was closed again before this one's turn.
-				local myDelay = cascadeIndex * 0.045
-				cascadeIndex += 1
-				local openscale = win:FindFirstChild('NexusOpenScale')
-				if not openscale then
-					openscale = Instance.new('UIScale')
-					openscale.Name = 'NexusOpenScale'
-					openscale.Parent = win
-				end
-				openscale.Scale = 0.86
-				task.delay(myDelay, function()
-					if clickgui.Visible and win.Visible then
-						tweenService:Create(openscale, TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
-							Scale = 1
-						}):Play()
-					elseif openscale then
-						openscale.Scale = 1
-					end
-				end)
 			end
 		end
 	end))
@@ -12491,6 +12359,21 @@ do
 
 	-- Smoothly cross-fades the whole GUI accent to a target HSV (used by the
 	-- theme presets). Steps SetValue so every module retints along the way.
+	-- Pushes the theme colour onto every module colour picker that supports one
+	-- (e.g. Killaura's Show target). Colour pickers left on Rainbow are skipped so
+	-- their cycle isn't clobbered.
+	local function applyThemeToModules(h, s, v)
+		for _, m in mainapi.Modules do
+			if type(m.Options) == 'table' then
+				for _, opt in m.Options do
+					if type(opt) == 'table' and opt.Type == 'ColorSlider' and not opt.Rainbow and opt.SetValue then
+						pcall(opt.SetValue, opt, h, s, v)
+					end
+				end
+			end
+		end
+	end
+
 	local recolorThread
 	local function smoothAccent(th, ts, tv)
 		if recolorThread then
@@ -12500,6 +12383,8 @@ do
 		if mainapi.GUIColor.Rainbow then
 			pcall(function() mainapi.GUIColor:Toggle() end)
 		end
+		-- Module colours snap to the theme up front while the GUI accent cross-fades.
+		applyThemeToModules(th, ts, tv)
 		local sh, ss, sv = mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value
 		recolorThread = task.spawn(function()
 			for i = 1, 12 do
@@ -12866,22 +12751,6 @@ do
 	toolbarList.HorizontalAlignment = Enum.HorizontalAlignment.Center
 	toolbarList.Parent = toolbar
 
-	-- Live "N enabled" chip.
-	local enabledChip = Instance.new('TextLabel')
-	enabledChip.Name = 'EnabledChip'
-	enabledChip.Size = UDim2.fromOffset(38, 20)
-	enabledChip.LayoutOrder = 0
-	enabledChip.BackgroundColor3 = accent()
-	enabledChip.Text = '0'
-	enabledChip.TextColor3 = Color3.new(0.06, 0.06, 0.06)
-	enabledChip.TextSize = 11
-	enabledChip.FontFace = uipallet.FontSemiBold
-	enabledChip.Visible = false
-	enabledChip.ZIndex = 8
-	enabledChip.Parent = toolbar
-	addCorner(enabledChip, UDim.new(0, 6))
-	addTooltip(enabledChip, 'Modules currently enabled')
-
 	local function makeToolButton(order, iconAsset, glyph, tip)
 		local btn = Instance.new('TextButton')
 		btn.Name = 'Tool'..order
@@ -12953,83 +12822,9 @@ do
 			themePopover.Visible = false
 		end
 	end)
-	local collapseBtn, collapseIcon = makeToolButton(3, 'aetherv2/assets/new/expandup.png', nil, 'Collapse / expand all categories')
-	collapseBtn.MouseButton1Click:Connect(function()
-		local anyExpanded = false
-		for _, cat in mainapi.Categories do
-			if cat.Type == 'Category' and cat.Expanded then
-				anyExpanded = true
-				break
-			end
-		end
-		for _, cat in mainapi.Categories do
-			if cat.Type == 'Category' and typeof(cat.Object) == 'Instance' and cat.Object.Visible then
-				if anyExpanded and cat.Expanded then
-					cat:Expand()
-				elseif not anyExpanded and not cat.Expanded then
-					cat:Expand()
-				end
-			end
-		end
-		tweenService:Create(collapseIcon, uipallet.Tween, {Rotation = anyExpanded and 0 or 180}):Play()
-	end)
 
-	-- =====================================================================
-	-- Minor touches: per-category counts, glow, scrollbar tint, breathing edge
-	-- =====================================================================
-	local catBadges = {}
-	for cname, cat in mainapi.Categories do
-		if cat.Type == 'Category' and cat.Button and typeof(cat.Button.Object) == 'Instance' then
-			local badge = Instance.new('TextLabel')
-			badge.Name = 'EnabledCount'
-			badge.Size = UDim2.fromOffset(16, 16)
-			badge.Position = UDim2.new(1, -34, 0.5, 0)
-			badge.AnchorPoint = Vector2.new(1, 0.5)
-			badge.BackgroundColor3 = accent()
-			badge.Text = '0'
-			badge.TextColor3 = Color3.new(0.06, 0.06, 0.06)
-			badge.TextSize = 10
-			badge.FontFace = uipallet.FontSemiBold
-			badge.Visible = false
-			badge.ZIndex = 4
-			badge.Parent = cat.Button.Object
-			addCorner(badge, UDim.new(1, 0))
-			catBadges[cname] = badge
-		end
-	end
-
-	local refreshQueued = false
-	local function refreshCounts()
-		local totals, total = {}, 0
-		for _, m in mainapi.Modules do
-			if m.Enabled then
-				totals[m.Category] = (totals[m.Category] or 0) + 1
-				total += 1
-			end
-		end
-		local a = accent()
-		for cname, badge in catBadges do
-			local c = totals[cname] or 0
-			badge.Text = tostring(c)
-			badge.Visible = c > 0
-			badge.BackgroundColor3 = a
-		end
-		enabledChip.Text = tostring(total)
-		enabledChip.Visible = total > 0
-		enabledChip.BackgroundColor3 = a
-		if themeSwatch then themeSwatch.BackgroundColor3 = a end
-	end
-	local function scheduleRefresh()
-		if refreshQueued then return end
-		refreshQueued = true
-		task.defer(function()
-			refreshQueued = false
-			pcall(refreshCounts)
-		end)
-	end
-
-	-- Wrap every module's Toggle so enabling flashes a glow ring and both the
-	-- per-category and global counters stay live - covers clicks AND keybinds.
+	-- Enabling a module flashes an accent glow ring (glow effect kept), covering
+	-- both clicks and keybind toggles.
 	for _, m in mainapi.Modules do
 		local origToggle = m.Toggle
 		m.Toggle = function(self, ...)
@@ -13038,41 +12833,10 @@ do
 			if self.Enabled and not before then
 				enableGlow(self.Object)
 			end
-			scheduleRefresh()
 		end
 	end
 
-	-- Accent-tinted scrollbars everywhere.
-	local function tintScrolls()
-		local a = accent()
-		for _, d in scaledgui:GetDescendants() do
-			if d:IsA('ScrollingFrame') then
-				d.ScrollBarImageColor3 = a
-			end
-		end
-	end
-
-	-- Per-category window "pop" when a category is switched on while the menu is
-	-- already open (the whole-GUI open uses its own cascade below).
-	for _, cat in mainapi.Categories do
-		if cat.Type == 'Category' and typeof(cat.Object) == 'Instance' then
-			local win = cat.Object
-			win:GetPropertyChangedSignal('Visible'):Connect(function()
-				if win.Visible and clickgui.Visible then
-					local sc = win:FindFirstChild('NexusPopScale')
-					if not sc then
-						sc = Instance.new('UIScale')
-						sc.Name = 'NexusPopScale'
-						sc.Parent = win
-					end
-					sc.Scale = 0.9
-					tweenService:Create(sc, TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Scale = 1}):Play()
-				end
-			end)
-		end
-	end
-
-	-- Breathing accent edge on the main GUI window.
+	-- Breathing accent edge on the main GUI window (glow effect kept).
 	local mainWindow = mainapi.Categories.Main and mainapi.Categories.Main.Object
 	if typeof(mainWindow) == 'Instance' then
 		local breathe = Instance.new('UIStroke')
@@ -13104,18 +12868,6 @@ do
 			end
 		end
 	end))
-
-	-- Prime everything + keep accents in sync a moment after any theme change.
-	task.defer(function()
-		pcall(refreshCounts)
-		pcall(tintScrolls)
-	end)
-	mainapi.RefreshVisualPack = function()
-		pcall(refreshCounts)
-		pcall(tintScrolls)
-		spotStroke.Color = accent()
-		spotIcon.ImageColor3 = accent()
-	end
 end
 
 return mainapi
