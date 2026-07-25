@@ -5865,6 +5865,7 @@ run(function()
     local AirChance
     local SwingTime
     local Hitreg
+    local HitMethod
     local UpdateRate
     local Attackable
     local AngleSlider
@@ -6111,9 +6112,16 @@ run(function()
                                                 selfPosition = {value = pos}
                                             }
                                         }
-                                        -- HitReg: send each hit this many times so the server is more
-                                        -- likely to register it (1 = default single packet, up to 36).
-                                        for _ = 1, math.clamp(Hitreg and Hitreg.Value or 1, 1, 36) do
+                                        -- Hit method decides how the hit is delivered:
+                                        --   HitReg     - spam the packet this many times (1-36) so the
+                                        --                server is more likely to register it.
+                                        --   Swing Time - send a single clean packet and lean on the swing
+                                        --                pacing (Swing time slider) for legitimacy instead.
+                                        local sendCount = 1
+                                        if not HitMethod or HitMethod.Value == 'HitReg' then
+                                            sendCount = math.clamp(Hitreg and Hitreg.Value or 1, 1, 36)
+                                        end
+                                        for _ = 1, sendCount do
                                             if Unpatch.Enabled then
                                                 -- Deeper unpatch (experimental): hand the request to the game's own
                                                 -- send wrapper (SwordController.sendServerRequest) rather than firing
@@ -6334,6 +6342,18 @@ run(function()
 	Default = 100,
 	Suffix = '%'
     })
+    HitMethod = Killaura:CreateDropdown({
+        Name = 'Hit method',
+        List = {'HitReg', 'Swing Time'},
+        Tooltip = 'Chooses how each hit is delivered.\nHitReg - spams the hit as several attack packets (HitReg slider) to force it to register.\nSwing Time - sends one clean packet per hit and paces by the Swing time slider instead.',
+        Function = function(val)
+            -- Show only the slider that the chosen method actually uses.
+            pcall(function()
+                if Hitreg and Hitreg.Object then Hitreg.Object.Visible = val == 'HitReg' end
+                if SwingTime and SwingTime.Object then SwingTime.Object.Visible = val == 'Swing Time' end
+            end)
+        end
+    })
     SwingTime = Killaura:CreateSlider({
         Name = 'Swing time',
         Min = 0,
@@ -6354,8 +6374,14 @@ run(function()
         Min = 1,
         Max = 36,
         Default = 1,
-        Tooltip = 'How many times each hit is sent to the server. Higher forces the hit to register more reliably (more attack packets per hit).'
+        Tooltip = 'How many times each hit is sent to the server. Higher forces the hit to register more reliably (more attack packets per hit). Only used when Hit method is HitReg.'
     })
+    -- Apply the initial Hit method visibility now that both sliders exist (the
+    -- dropdown is created above them, so its own Function couldn't reach them yet).
+    pcall(function()
+        if Hitreg.Object then Hitreg.Object.Visible = HitMethod.Value == 'HitReg' end
+        if SwingTime.Object then SwingTime.Object.Visible = HitMethod.Value == 'Swing Time' end
+    end)
     Unpatch = Killaura:CreateToggle({
         Name = 'Unpatch',
         Tooltip = 'Anticheat unpatch method.\nOff (default): sends the plain attack packet on the position-only validation path (the baseline method).\nOn (experimental): routes each hit through the game\'s own send wrapper (sendServerRequest) so any processing the game applies to a real attack is applied too. Falls back to the default send if that call fails.'
