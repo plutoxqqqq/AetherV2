@@ -7,7 +7,20 @@ local function isWhitelisted()
 	return tostring(globalenv.whitelist or license.Whitelist or '') == acceptedWhitelistKey
 end
 repeat task.wait() until game:IsLoaded()
-if shared.vape then shared.vape:Uninject() end
+-- If an AetherV2 instance is already injected, fully destroy it before loading
+-- this one. Running the loadstring again is a valid "reinject" - it must tear
+-- the old GUI down first, or two instances fight over input/GUI and the new one
+-- appears not to load. Uninject is wrapped so even a half-broken old instance
+-- (whose own teardown errors) still gets its GUI destroyed and the shared
+-- handles cleared, so the fresh load always has a clean slate.
+if shared.vape then
+	local old = shared.vape
+	pcall(function() old:Uninject() end)
+	if type(old) == 'table' and typeof(old.gui) == 'Instance' then
+		pcall(function() old.gui:Destroy() end)
+	end
+	shared.vape = nil
+end
 
 local vape
 local compile = loadstring
