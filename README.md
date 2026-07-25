@@ -1,5 +1,5 @@
 > [!WARNING]
-Skidded with GPT 5.5 and Opus 4.8
+Skidded with GPT 5.5, Opus 4.8, and Fable 5
 
 # AetherV2
 
