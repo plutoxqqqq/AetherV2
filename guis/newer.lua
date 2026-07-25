@@ -1,50 +1,34 @@
 --[[
-	AetherV2 "Nexus" GUI (newer.lua) - v5.0
+	AetherV2 "Nexus" GUI (newer.lua) - v6.0 "Onyx"
 
-	A glass-morphism redesign of the AetherV2 interface. Fully compatible with
-	the existing AetherV2 backend: same asset table, keybind system, module API
+	A clean, dark re-chrome of the AetherV2 interface. Fully compatible with the
+	existing AetherV2 backend: same asset table, keybind system, module API
 	(CreateCategory / CreateModule / CreateToggle / CreateSlider / ...), config
 	save & load format, and overlay system as guis/new.lua.
 
-	Visual language:
-	 - Deep navy/charcoal base (#0E1117 / #1A1F2A) with a single muted accent
-	   (#4A8DFF by default, adjustable via the GUI Theme slider).
-	 - Frosted glass panels: sliced blur.png backdrops + translucent surfaces
-	   (see uipallet.Glass and the glass registry inside addBlur).
-	 - Clean sans-serif typography (Gotham), 8px corner radius, soft shadows.
+	Visual language (v6 redesign):
+	 - Near-black "Onyx" base (#0C0D12) with a faint cool tint; crisp off-white
+	   text. A single live accent (the GUI Theme colour) drives everything.
+	 - Modules render as flat dark list items: enabling one lights a left accent
+	   bar + accent label instead of flooding the whole row (gradient rainbow mode
+	   still uses the classic full fill). A short glow ring pulses on enable.
+	 - Windows are frosted-glass cards with a 10px radius and a faint hairline
+	   edge (addWindowStroke) so they read as defined panels on the dark backdrop.
+	 - New category windows fan out across a lattice instead of stacking, so every
+	   category is reachable the moment it is opened.
 	 - 0.16s Quad/Out micro-interactions everywhere (uipallet.Tween).
 
-	Nexus additions on top of the classic API:
-	 - Stats Dashboard  : live counters + last-10-games history graph
-	                      (mainapi.Stats, persisted to aetherv2/profiles/stats.json).
-	 - Plugin system    : mainapi:RegisterPlugin(name, pluginTable) lets third
-	                      parties add categories, overlays and stat types.
-	                      Files in aetherv2/plugins/*.lua are auto-loaded.
-	 - Theme Editor     : real-time glass intensity, font face and base theme
-	                      adjustment (Settings -> Theme).
+	Kept from the previous build:
+	 - Plugin system    : mainapi:RegisterPlugin(name, pluginTable) + auto-loaded
+	                      aetherv2/plugins/*.lua.
+	 - Spotlight (`)    : quick command palette to toggle any module.
+	 - Theme presets    : one-click accent swatches; with "Recolour modules with
+	                      theme" on they also retint module colours (Killaura target
+	                      boxes, ESP, tracers, particles, ...).
+	 - Watermark / Keybind HUD overlays, favourites polish, notifications.
 
-	New in v5.1 - deep interface customisation (see mainapi.Nexus):
-	 - Custom hover     : selectable hover style (Underline / Outline /
-	                      Brighten / None), intensity, lift (scale pop), hover
-	                      sounds and click pulses on every control
-	                      (Settings -> Interface).
-	 - Custom positioning: window dragging gains edge + window-to-window
-	                      snapping with alignment guides, grid snapping, drag
-	                      smoothing, keep-on-screen clamping and a window lock,
-	                      plus tile/cascade arrangement and named layouts saved
-	                      to aetherv2/profiles/layouts.json (Settings -> Windows).
-	 - Custom settings  : live corner radius, animation speed + easing style,
-	                      tooltip delay/anchoring, UI sound pack with volume,
-	                      window open animation, and notification position /
-	                      duration / stack size / sound (Settings ->
-	                      Interface, Windows and Notifications).
-	 - Watermark        : pinnable overlay with FPS, ping and clock segments
-	                      (Overlays -> Watermark).
-	 - Keybind HUD      : pinnable overlay listing bound modules and their
-	                      keys, live enabled highlighting (Overlays -> Keybinds).
-	 - Favourites polish: the star chip, gold border trim and pulse ring are
-	                      fully animated (hover scale, fade in/out, swelling
-	                      ring) and share one gold accent.
+	Removed in v6: the Aether Neo overhaul engine and the Theme / Interface /
+	Windows settings-clutter panes (their machinery falls back to sane defaults).
 ]]
 local license = ... or {}
 local mainapi = {
@@ -68,7 +52,7 @@ local mainapi = {
 	Scale = {Value = 1},
 	ThreadFix = setthreadidentity and true or false,
 	ToggleNotifications = {},
-	Version = '5.1',
+	Version = '6.0',
 	ToggleMode = {Value = 'Toggle'},
 	Windows = {}
 }
@@ -101,16 +85,19 @@ local tween = {
 	tweenstwo = {}
 }
 local uipallet = {
-	-- Nexus palette: deep navy base (#0E1117), soft blue-grey text. Surfaces are
-	-- derived from Main via color.Light/Dark so #1A1F2A appears as raised cards.
-	Main = Color3.fromRGB(14, 17, 23),
-	Text = Color3.fromRGB(214, 220, 232),
+	-- Nexus v6 "Onyx" palette. Near-black ink surface with a faint cool tint
+	-- (#0C0D12), crisp off-white text. Raised cards/rows are derived from Main via
+	-- color.Light/Dark. Rows read as flat dark list items; the live accent shows as
+	-- a left bar + text on enabled modules and a hairline under window headers,
+	-- rather than the old full-row highlight.
+	Main = Color3.fromRGB(12, 13, 18),
+	Text = Color3.fromRGB(226, 230, 240),
 	Font = Font.fromEnum(Enum.Font.Gotham),
 	FontSemiBold = Font.fromEnum(Enum.Font.Gotham, Enum.FontWeight.SemiBold),
 	Tween = TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
 	-- Glass-morphism levels: transparency applied to blurred panels (windows,
-	-- tooltips, notifications). Adjustable live from Settings -> Theme.
-	Glass = 0.15
+	-- tooltips, notifications).
+	Glass = 0.12
 }
 -- Every panel that addBlur() frosts is registered here so the Theme editor can
 -- retune glass intensity in real time. Weak keys let destroyed panels collect.
@@ -316,7 +303,7 @@ end
 -- Corners created with the default radius are registered (weakly, so
 -- destroyed ones collect) and can be retuned live from Settings -> Interface.
 local cornerRegistry = setmetatable({}, {__mode = 'k'})
-local cornerRadius = 8
+local cornerRadius = 10
 
 local function addCorner(parent, radius)
 	local corner = Instance.new('UICorner')
@@ -327,6 +314,20 @@ local function addCorner(parent, radius)
 	end
 
 	return corner
+end
+
+-- v6 re-chrome: a faint hairline edge so windows read as defined cards against the
+-- near-black backdrop. Theme-independent (a low-opacity white border), so it never
+-- fights the accent. Applied to the main window, category windows and overlays.
+local function addWindowStroke(parent, transparency)
+	local stroke = Instance.new('UIStroke')
+	stroke.Name = 'EdgeStroke'
+	stroke.Color = Color3.fromRGB(255, 255, 255)
+	stroke.Transparency = transparency or 0.9
+	stroke.Thickness = 1
+	stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	stroke.Parent = parent
+	return stroke
 end
 
 local function addCloseButton(parent, offset)
@@ -3282,6 +3283,7 @@ function mainapi:CreateGUI()
 	window.Parent = clickgui
 	addBlur(window)
 	addCorner(window)
+	addWindowStroke(window)
 	makeDraggable(window)
 	local logo = Instance.new('ImageLabel')
 	logo.Name = 'VapeLogo'
@@ -4603,10 +4605,22 @@ function mainapi:CreateCategory(categorysettings)
 		Expanded = false
 	}
 
+	-- Spread new category windows across a lattice instead of stacking every one
+	-- at the same spot. Previously every category defaulted to (236, 60), so
+	-- opening several piled them on top of each other and the ones underneath
+	-- looked like they "wouldn't open". Slot 0 is the main window (6, 60); each
+	-- category takes the next lattice cell (8 columns, wrapping to a second row),
+	-- matching the "Sort GUI" layout. A saved profile position still overrides
+	-- this on load, so arranged layouts are untouched.
+	mainapi.CategorySlot = (mainapi.CategorySlot or 0) + 1
+	local slot = mainapi.CategorySlot
+	local defaultX = 6 + (slot % 8) * 230
+	local defaultY = 60 + (slot >= 8 and 360 or 0)
+
 	local window = Instance.new('TextButton')
 	window.Name = categorysettings.Name..'Category'
 	window.Size = UDim2.fromOffset(220, 41)
-	window.Position = UDim2.fromOffset(236, 60)
+	window.Position = UDim2.fromOffset(defaultX, defaultY)
 	window.BackgroundColor3 = uipallet.Main
 	window.AutoButtonColor = false
 	window.Visible = false
@@ -4614,6 +4628,7 @@ function mainapi:CreateCategory(categorysettings)
 	window.Parent = clickgui
 	addBlur(window)
 	addCorner(window)
+	addWindowStroke(window)
 	makeDraggable(window)
 	local icon = Instance.new('ImageLabel')
 	icon.Name = 'Icon'
@@ -4714,6 +4729,21 @@ function mainapi:CreateCategory(categorysettings)
 		modulebutton.TextSize = 14
 		modulebutton.FontFace = uipallet.Font
 		modulebutton.Parent = children
+		-- v6 redesign: a left accent bar that lights up in the theme colour when the
+		-- module is on. The row itself stays a flat dark surface (a subtle raised
+		-- tint) instead of the old full-accent highlight, so on/off reads as a clean
+		-- list item with an accent edge + accent label.
+		local accentbar = Instance.new('Frame')
+		accentbar.Name = 'AccentBar'
+		accentbar.Size = UDim2.fromOffset(3, 22)
+		accentbar.Position = UDim2.new(0, 6, 0.5, 0)
+		accentbar.AnchorPoint = Vector2.new(0, 0.5)
+		accentbar.BackgroundColor3 = Color3.fromHSV(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value)
+		accentbar.BorderSizePixel = 0
+		accentbar.BackgroundTransparency = 1
+		accentbar.Visible = false
+		accentbar.Parent = modulebutton
+		addCorner(accentbar, UDim.new(1, 0))
 		local indicatorholder = Instance.new('Frame')
 		indicatorholder.Parent = modulebutton
 		indicatorholder.Size = UDim2.fromOffset(0, 21)
@@ -5109,25 +5139,49 @@ function mainapi:CreateCategory(categorysettings)
 
 			local bgColor, txtColor
 			if moduleapi.Enabled then
-				bgColor = rainbow and Color3.fromHSV(mainapi:Color((mainapi.GUIColor.Hue - (moduleapi.Index * 0.025)) % 1)) or Color3.fromHSV(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value)
-				txtColor = mainapi.GUIColor.Rainbow and Color3.new(0.19, 0.19, 0.19) or mainapi:TextColor(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value)
 				gradient.Enabled = rainbow and mainapi.RainbowMode.Value == 'Gradient'
 				if gradient.Enabled then
+					-- Gradient rainbow keeps the classic full-row fill.
 					bgColor = Color3.new(1, 1, 1)
+					txtColor = Color3.new(0.19, 0.19, 0.19)
 					gradient.Color = ColorSequence.new({
 						ColorSequenceKeypoint.new(0, Color3.fromHSV(mainapi:Color((mainapi.GUIColor.Hue - (moduleapi.Index * 0.025)) % 1))),
 						ColorSequenceKeypoint.new(1, Color3.fromHSV(mainapi:Color((mainapi.GUIColor.Hue - ((moduleapi.Index + 1) * 0.025)) % 1)))
 					})
+					accentbar.Visible = false
+					dots.ImageColor3 = txtColor
+					bindicon.ImageColor3 = txtColor
+					bindtext.TextColor3 = txtColor
+				else
+					-- v6 list-item style: dark row + bright accent bar + accent label
+					-- (replaces the old full-accent highlight).
+					local h, s, v = mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value
+					if rainbow then
+						h, s, v = mainapi:Color((mainapi.GUIColor.Hue - (moduleapi.Index * 0.025)) % 1)
+					end
+					-- Force a readable value/sat so even a dark accent stands out on the row.
+					local accent = Color3.fromHSV(h, math.clamp(s, 0, 0.9), math.max(v, 0.82))
+					bgColor = color.Light(uipallet.Main, 0.05)
+					txtColor = accent
+					accentbar.BackgroundColor3 = accent
+					accentbar.Visible = true
+					if animate then
+						accentbar.BackgroundTransparency = 1
+						tween:Tween(accentbar, uipallet.Tween, {BackgroundTransparency = 0})
+					else
+						accentbar.BackgroundTransparency = 0
+					end
+					dots.ImageColor3 = accent
+					bindicon.ImageColor3 = accent
+					bindtext.TextColor3 = accent
 				end
-				dots.ImageColor3 = txtColor
-				bindicon.ImageColor3 = txtColor
-				bindtext.TextColor3 = txtColor
 			else
 				txtColor = (hovered or settingsOpen) and uipallet.Text or color.Dark(uipallet.Text, 0.16)
 				bgColor = hardPatched and color.Dark(uipallet.Main, 0.04) or ((hovered or settingsOpen) and color.Light(uipallet.Main, 0.02) or uipallet.Main)
 				dots.ImageColor3 = color.Light(uipallet.Main, 0.37)
 				bindicon.ImageColor3 = color.Dark(uipallet.Text, 0.43)
 				bindtext.TextColor3 = color.Dark(uipallet.Text, 0.43)
+				accentbar.Visible = false
 			end
 
 			-- Fade the toggle colour between on/off on genuine state changes so
@@ -5806,6 +5860,7 @@ function mainapi:CreateOverlay(categorysettings)
 	window.Parent = scaledgui
 	local blur = addBlur(window)
 	addCorner(window)
+	addWindowStroke(window)
 	makeDraggable(window)
 	local icon = Instance.new('ImageLabel')
 	icon.Name = 'Icon'
@@ -6042,6 +6097,7 @@ function mainapi:CreateCategoryList(categorysettings)
 	window.Parent = clickgui
 	addBlur(window)
 	addCorner(window)
+	addWindowStroke(window)
 	makeDraggable(window)
 	local icon = Instance.new('ImageLabel')
 	icon.Name = 'Icon'
@@ -7944,21 +8000,26 @@ function mainapi:SaveOptions(object, savedoptions)
 end
 
 function mainapi:Uninject()
-	mainapi:Save()
+	-- Hardened teardown. Every step is wrapped so a single erroring module/toggle
+	-- can never abort the uninject partway and leave a half-alive GUI behind -
+	-- that was why "Self destruct" (and re-injecting, which uninjects the old
+	-- instance first) sometimes did nothing. The GUI is always destroyed and the
+	-- shared handles always cleared, whatever any individual step does.
+	pcall(function() mainapi:Save() end)
 	mainapi.Loaded = nil
 	for _, v in self.Modules do
 		if v.Enabled then
-			v:Toggle()
+			pcall(function() v:Toggle() end)
 		end
 	end
 	for _, v in self.Legit.Modules do
 		if v.Enabled then
-			v:Toggle()
+			pcall(function() v:Toggle() end)
 		end
 	end
 	for _, v in self.Categories do
 		if v.Type == 'Overlay' and v.Button.Enabled then
-			v.Button:Toggle()
+			pcall(function() v.Button:Toggle() end)
 		end
 	end
 	for _, v in mainapi.Connections do
@@ -7967,14 +8028,16 @@ function mainapi:Uninject()
 		end)
 	end
 	if mainapi.ThreadFix then
-		setthreadidentity(8)
-		clickgui.Visible = false
-		mainapi:BlurCheck()
+		pcall(function()
+			setthreadidentity(8)
+			clickgui.Visible = false
+			mainapi:BlurCheck()
+		end)
 	end
-	mainapi.gui:ClearAllChildren()
-	mainapi.gui:Destroy()
-	table.clear(mainapi.Libraries)
-	loopClean(mainapi)
+	pcall(function() mainapi.gui:ClearAllChildren() end)
+	pcall(function() mainapi.gui:Destroy() end)
+	pcall(function() table.clear(mainapi.Libraries) end)
+	pcall(function() loopClean(mainapi) end)
 	shared.vape = nil
 	shared.vapereload = nil
 	shared.VapeIndependent = nil
@@ -8540,1163 +8603,6 @@ mainapi:CreateSearch()
 mainapi.Categories.Main:CreateOverlayBar()
 mainapi.Categories.Main:CreateSettingsDivider()
 
-local overhaul = {}
-do
-	--[[
-		Aether Neo - full GUI redesign engine.
-
-		This is not a category-border pass. When enabled it swaps the entire
-		interface into a new visual language, the way a theme mode would: an
-		animated multi-layer stage backdrop (gradient wash, drifting aurora
-		orbs, parallax grid, rising particles, top glow and vignette), fully
-		re-chromed windows (layered surface gradients, glass, accent header
-		bars, side rails, outer glow and breathing strokes), redesigned module
-		cards with live accent bars and hover elevation, restyled controls
-		(sliders, toggles, inputs, dropdowns, buttons, scrollbars, dividers),
-		restyled overlays / notifications / tooltip, a live command dock
-		(brand, FPS, ping, active-module count, clock and a skin switcher),
-		and a set of switchable skins.
-
-		Everything is additive or reversible: original properties are recorded
-		before they are touched and every generated instance is tracked, so
-		Revert() restores Nexus byte-for-byte. Newly created descendants are
-		styled on the fly, so windows opened after the toggle look native.
-	]]
-
-	local players = cloneref(game:GetService('Players'))
-	local localPlayer = players.LocalPlayer
-
-	local neo = {
-		Active = false,
-		SkinName = 'Nebula',
-		Root = nil,
-		Dock = nil,
-		Fps = 60,
-		Clock = 0,
-		StatClock = 0,
-		Connections = {},
-		Hovered = setmetatable({}, {__mode = 'k'}),
-		Original = setmetatable({}, {__mode = 'k'}),
-		Styled = setmetatable({}, {__mode = 'k'}),
-		Generated = setmetatable({}, {__mode = 'k'}),
-		Windows = setmetatable({}, {__mode = 'k'}),
-		Orbs = {},
-		Particles = {},
-		GridV = {},
-		GridH = {},
-		Chips = {},
-		Motion = {}
-	}
-
-	------------------------------------------------------------------
-	-- Skins
-	------------------------------------------------------------------
-	-- Each skin defines the neutral surface palette; the live accent is always
-	-- taken from the GUI Theme colour so skins and accent compose.
-	local skins = {
-		Nebula = {
-			Title = 'NEBULA',
-			Stage = {Color3.fromRGB(6, 8, 18), Color3.fromRGB(14, 19, 40), Color3.fromRGB(3, 4, 11)},
-			Window = Color3.fromRGB(12, 15, 28),
-			WindowTop = Color3.fromRGB(30, 38, 66),
-			WindowBottom = Color3.fromRGB(7, 9, 18),
-			Card = Color3.fromRGB(22, 27, 46),
-			CardTop = Color3.fromRGB(31, 39, 64),
-			CardBottom = Color3.fromRGB(15, 19, 34),
-			Input = Color3.fromRGB(8, 11, 21),
-			Button = Color3.fromRGB(26, 32, 52),
-			Dock = Color3.fromRGB(10, 13, 24),
-			Text = Color3.fromRGB(236, 241, 253),
-			SubText = Color3.fromRGB(150, 162, 197),
-			Muted = Color3.fromRGB(118, 130, 166),
-			Grid = Color3.fromRGB(64, 86, 158),
-			AccentMix = 0.0
-		},
-		Obsidian = {
-			Title = 'OBSIDIAN',
-			Stage = {Color3.fromRGB(9, 9, 12), Color3.fromRGB(20, 20, 26), Color3.fromRGB(4, 4, 6)},
-			Window = Color3.fromRGB(17, 17, 21),
-			WindowTop = Color3.fromRGB(36, 36, 44),
-			WindowBottom = Color3.fromRGB(10, 10, 13),
-			Card = Color3.fromRGB(26, 26, 32),
-			CardTop = Color3.fromRGB(35, 35, 43),
-			CardBottom = Color3.fromRGB(18, 18, 23),
-			Input = Color3.fromRGB(11, 11, 14),
-			Button = Color3.fromRGB(30, 30, 37),
-			Dock = Color3.fromRGB(14, 14, 18),
-			Text = Color3.fromRGB(240, 240, 244),
-			SubText = Color3.fromRGB(158, 158, 168),
-			Muted = Color3.fromRGB(120, 120, 130),
-			Grid = Color3.fromRGB(120, 120, 140),
-			AccentMix = -0.05
-		},
-		Aurora = {
-			Title = 'AURORA',
-			Stage = {Color3.fromRGB(6, 16, 20), Color3.fromRGB(10, 30, 40), Color3.fromRGB(3, 8, 11)},
-			Window = Color3.fromRGB(10, 20, 26),
-			WindowTop = Color3.fromRGB(22, 48, 58),
-			WindowBottom = Color3.fromRGB(6, 12, 16),
-			Card = Color3.fromRGB(16, 32, 40),
-			CardTop = Color3.fromRGB(24, 46, 56),
-			CardBottom = Color3.fromRGB(12, 24, 30),
-			Input = Color3.fromRGB(7, 15, 19),
-			Button = Color3.fromRGB(20, 40, 50),
-			Dock = Color3.fromRGB(9, 19, 24),
-			Text = Color3.fromRGB(232, 248, 250),
-			SubText = Color3.fromRGB(140, 186, 194),
-			Muted = Color3.fromRGB(108, 150, 158),
-			Grid = Color3.fromRGB(70, 160, 170),
-			AccentMix = 0.06
-		},
-		Sunset = {
-			Title = 'SUNSET',
-			Stage = {Color3.fromRGB(20, 8, 16), Color3.fromRGB(40, 16, 30), Color3.fromRGB(9, 3, 7)},
-			Window = Color3.fromRGB(24, 12, 20),
-			WindowTop = Color3.fromRGB(52, 26, 42),
-			WindowBottom = Color3.fromRGB(14, 7, 12),
-			Card = Color3.fromRGB(36, 18, 30),
-			CardTop = Color3.fromRGB(50, 26, 42),
-			CardBottom = Color3.fromRGB(24, 12, 20),
-			Input = Color3.fromRGB(16, 8, 13),
-			Button = Color3.fromRGB(44, 22, 36),
-			Dock = Color3.fromRGB(22, 11, 18),
-			Text = Color3.fromRGB(252, 238, 244),
-			SubText = Color3.fromRGB(200, 158, 178),
-			Muted = Color3.fromRGB(168, 126, 146),
-			Grid = Color3.fromRGB(190, 96, 130),
-			AccentMix = 0.02
-		}
-	}
-	local skinOrder = {'Nebula', 'Obsidian', 'Aurora', 'Sunset'}
-
-	local function skin()
-		return skins[neo.SkinName] or skins.Nebula
-	end
-
-	------------------------------------------------------------------
-	-- Colour helpers
-	------------------------------------------------------------------
-	local WHITE = Color3.new(1, 1, 1)
-	local BLACK = Color3.new(0, 0, 0)
-
-	local function mix(a, b, t)
-		return Color3.new(a.R + (b.R - a.R) * t, a.G + (b.G - a.G) * t, a.B + (b.B - a.B) * t)
-	end
-
-	-- Positive amt lifts toward white, negative sinks toward black.
-	local function shade(c, amt)
-		if amt >= 0 then
-			return mix(c, WHITE, amt)
-		end
-		return mix(c, BLACK, -amt)
-	end
-
-	local function accentColor(offset, satBoost, valBoost)
-		local guiColor = mainapi.GUIColor
-		local hue, sat, val = guiColor.Hue % 1, math.clamp(guiColor.Sat, 0, 1), math.clamp(guiColor.Value, 0, 1)
-		if guiColor.Rainbow then
-			hue, sat, val = mainapi:Color((hue + (offset or 0)) % 1)
-		end
-		return Color3.fromHSV((hue + (offset or 0)) % 1, math.clamp(sat + (satBoost or 0), 0, 1), math.clamp(val + (valBoost or 0), 0, 1))
-	end
-
-	-- Surface tinted slightly toward the live accent, so skins pick up the theme.
-	local function surface(c)
-		local m = skin().AccentMix
-		if m and m ~= 0 then
-			return mix(c, accentColor(0, -0.35, m < 0 and 0 or -0.1), math.abs(m))
-		end
-		return c
-	end
-
-	local function asset(path)
-		local ok, res = pcall(getcustomasset, path)
-		return ok and res or ''
-	end
-	local BLUR = asset('aetherv2/assets/new/blur.png')
-	local BLUR_SLICE = Rect.new(52, 31, 261, 502)
-
-	------------------------------------------------------------------
-	-- Instance memory + generation
-	------------------------------------------------------------------
-	local function remember(inst, prop)
-		if typeof(inst) ~= 'Instance' then return end
-		local props = neo.Original[inst]
-		if not props then
-			props = {}
-			neo.Original[inst] = props
-		end
-		if props[prop] == nil then
-			pcall(function()
-				props[prop] = inst[prop]
-			end)
-		end
-	end
-
-	local function setProp(inst, prop, value)
-		remember(inst, prop)
-		pcall(function()
-			inst[prop] = value
-		end)
-	end
-
-	local function make(className, props, parent)
-		local obj = Instance.new(className)
-		for prop, value in props or {} do
-			obj[prop] = value
-		end
-		if parent then
-			obj.Parent = parent
-		end
-		neo.Generated[obj] = true
-		return obj
-	end
-
-	local function isOverhaulObject(inst)
-		return neo.Generated[inst] or (typeof(inst) == 'Instance' and inst.Name:find('Neo') ~= nil)
-	end
-
-	------------------------------------------------------------------
-	-- Reusable child primitives (idempotent: reused across restyles)
-	------------------------------------------------------------------
-	local function ensureCorner(parent, radius)
-		local corner = parent:FindFirstChild('NeoCorner')
-		if not corner then
-			-- Reuse the object's own UICorner if it already has one, so we never
-			-- leave two competing corners on a card/button/input (and Revert
-			-- restores its remembered radius). Only generate one when needed.
-			local existing = parent:FindFirstChildOfClass('UICorner')
-			if existing then
-				remember(existing, 'CornerRadius')
-				existing.CornerRadius = UDim.new(0, radius)
-				return existing
-			end
-			corner = make('UICorner', {Name = 'NeoCorner'}, parent)
-		end
-		corner.CornerRadius = UDim.new(0, radius)
-		return corner
-	end
-
-	local function ensureStroke(parent, name, thickness, transparency, colour)
-		local line = parent:FindFirstChild(name)
-		if not line then
-			line = make('UIStroke', {Name = name, ApplyStrokeMode = Enum.ApplyStrokeMode.Border}, parent)
-		end
-		line.Thickness = thickness
-		line.Transparency = transparency
-		line.Color = colour or accentColor()
-		return line
-	end
-
-	local function ensureGradient(parent, name, rotation, colorSequence, transparency)
-		local grad = parent:FindFirstChild(name)
-		if not grad then
-			grad = make('UIGradient', {Name = name}, parent)
-		end
-		grad.Rotation = rotation
-		grad.Color = colorSequence
-		grad.Transparency = transparency or NumberSequence.new(0)
-		return grad
-	end
-
-	local function ensurePadding(parent, l, t, r, b)
-		local pad = parent:FindFirstChild('NeoPadding')
-		if not pad then
-			pad = make('UIPadding', {Name = 'NeoPadding'}, parent)
-		end
-		pad.PaddingLeft = UDim.new(0, l)
-		pad.PaddingTop = UDim.new(0, t or l)
-		pad.PaddingRight = UDim.new(0, r or l)
-		pad.PaddingBottom = UDim.new(0, b or t or l)
-		return pad
-	end
-
-	-- Soft blurred glow behind a parent (uses the sliced blur asset).
-	local function ensureGlow(parent, name, tint, transparency, spread, zoffset)
-		local glow = parent:FindFirstChild(name)
-		if not glow then
-			glow = make('ImageLabel', {
-				Name = name,
-				BackgroundTransparency = 1,
-				Image = BLUR,
-				ScaleType = Enum.ScaleType.Slice,
-				SliceCenter = BLUR_SLICE
-			}, parent)
-		end
-		spread = spread or 26
-		glow.Size = UDim2.new(1, spread * 2, 1, spread * 2)
-		glow.Position = UDim2.fromOffset(-spread, -spread)
-		glow.ImageColor3 = tint
-		glow.ImageTransparency = transparency
-		glow.ZIndex = math.max((parent.ZIndex or 1) + (zoffset or -1), 0)
-		return glow
-	end
-
-	------------------------------------------------------------------
-	-- Classification
-	------------------------------------------------------------------
-	local function isWindow(inst)
-		return inst
-			and inst:IsA('GuiObject')
-			and inst.Parent == clickgui
-			and not isOverhaulObject(inst)
-			and (inst:FindFirstChild('Blur') ~= nil or inst.Name:find('Category') or inst.Name:find('Overlay') or inst.Name == 'Search')
-	end
-
-	local function classify(inst)
-		local name = inst.Name:lower()
-		if isWindow(inst) then return 'Window' end
-		if inst:IsA('TextBox') or name:find('textbox') or name:find('search') then return 'Input' end
-		if name:find('dropdown') then return 'Dropdown' end
-		if name:find('slider') or name:find('guislider') or name:find('range') then return 'Slider' end
-		if name:find('toggle') or name:find('checkbox') or name:find('knob') then return 'Toggle' end
-		if name:find('divider') then return 'Divider' end
-		if name == 'scrollbar' or inst:IsA('ScrollingFrame') then return 'Scroll' end
-		if inst:IsA('ImageButton') then return 'IconButton' end
-		if inst:IsA('TextButton') then
-			local parent = inst.Parent
-			if name:find('module') or (parent and parent.Name:lower():find('children')) then
-				return 'ModuleCard'
-			end
-			return 'Button'
-		end
-		if inst:IsA('TextLabel') then return 'Label' end
-		if inst:IsA('Frame') then return 'Panel' end
-		return 'Other'
-	end
-
-	------------------------------------------------------------------
-	-- Typography
-	------------------------------------------------------------------
-	local function styleText(inst, class)
-		if not (inst:IsA('TextLabel') or inst:IsA('TextButton') or inst:IsA('TextBox')) then return end
-		local sk = skin()
-		setProp(inst, 'FontFace', (class == 'WindowTitle' or class == 'ModuleCard') and uipallet.FontSemiBold or uipallet.Font)
-		setProp(inst, 'TextColor3', class == 'Label' and sk.SubText or sk.Text)
-		if inst.TextSize < 13 then
-			setProp(inst, 'TextSize', 13)
-		end
-		if inst:IsA('TextBox') then
-			setProp(inst, 'PlaceholderColor3', sk.Muted)
-			setProp(inst, 'ClearTextOnFocus', false)
-		end
-	end
-
-	------------------------------------------------------------------
-	-- Hover interaction (elevation + glow), bound once per control
-	------------------------------------------------------------------
-	local function bindHover(inst, glowName)
-		if neo.Hovered[inst] or not (inst:IsA('GuiButton')) then return end
-		neo.Hovered[inst] = true
-		local enter = inst.MouseEnter:Connect(function()
-			if not neo.Active then return end
-			local stroke = inst:FindFirstChild('NeoCardStroke') or inst:FindFirstChild('NeoButtonStroke')
-			if stroke then
-				tween:Tween(stroke, uipallet.Tween, {Transparency = 0.15})
-			end
-			local glow = glowName and inst:FindFirstChild(glowName)
-			if glow then
-				tween:Tween(glow, uipallet.Tween, {ImageTransparency = 0.55})
-			end
-		end)
-		local leave = inst.MouseLeave:Connect(function()
-			if not neo.Active then return end
-			local stroke = inst:FindFirstChild('NeoCardStroke') or inst:FindFirstChild('NeoButtonStroke')
-			if stroke then
-				tween:Tween(stroke, uipallet.Tween, {Transparency = 0.62})
-			end
-			local glow = glowName and inst:FindFirstChild(glowName)
-			if glow then
-				tween:Tween(glow, uipallet.Tween, {ImageTransparency = 0.92})
-			end
-		end)
-		table.insert(neo.Connections, enter)
-		table.insert(neo.Connections, leave)
-	end
-
-	------------------------------------------------------------------
-	-- Window chrome
-	------------------------------------------------------------------
-	local function raiseChild(window, childName, zindex)
-		local child = window:FindFirstChild(childName)
-		if child and child:IsA('GuiObject') then
-			setProp(child, 'ZIndex', zindex)
-		end
-	end
-
-	local function addWindowChrome(window)
-		if neo.Windows[window] or isOverhaulObject(window) then return end
-		neo.Windows[window] = true
-		local sk = skin()
-
-		setProp(window, 'ClipsDescendants', false)
-		setProp(window, 'BackgroundColor3', surface(sk.Window))
-		setProp(window, 'BorderSizePixel', 0)
-		ensureCorner(window, 18)
-		ensureStroke(window, 'NeoWindowStroke', 1.5, 0.34)
-		ensureGradient(window, 'NeoWindowSurface', 90, ColorSequence.new({
-			ColorSequenceKeypoint.new(0, surface(sk.WindowTop)),
-			ColorSequenceKeypoint.new(0.5, surface(sk.Window)),
-			ColorSequenceKeypoint.new(1, surface(sk.WindowBottom))
-		}), NumberSequence.new({
-			NumberSequenceKeypoint.new(0, 0.04),
-			NumberSequenceKeypoint.new(1, 0.22)
-		}))
-		ensureGlow(window, 'NeoWindowGlow', accentColor(), 0.72, 30, -2)
-
-		-- Keep the window's own title/icon above the new header strip.
-		raiseChild(window, 'Title', (window.ZIndex or 1) + 4)
-		raiseChild(window, 'Icon', (window.ZIndex or 1) + 4)
-		raiseChild(window, 'Arrow', (window.ZIndex or 1) + 4)
-
-		-- Accent header strip, drawn behind the title (translucent so text is
-		-- always legible even if global ZIndex behaviour changes).
-		local header = window:FindFirstChild('NeoHeader')
-		if not header then
-			header = make('Frame', {
-				Name = 'NeoHeader',
-				BackgroundColor3 = accentColor(),
-				BackgroundTransparency = 0.5,
-				BorderSizePixel = 0,
-				Position = UDim2.fromOffset(6, 6),
-				Size = UDim2.new(1, -12, 0, 33),
-				ZIndex = math.max((window.ZIndex or 1), 1)
-			}, window)
-			make('UICorner', {Name = 'NeoCorner', CornerRadius = UDim.new(0, 14)}, header)
-			make('Frame', {
-				Name = 'NeoHeaderLine',
-				BackgroundColor3 = WHITE,
-				BackgroundTransparency = 0.72,
-				BorderSizePixel = 0,
-				Position = UDim2.fromOffset(12, 4),
-				Size = UDim2.new(1, -24, 0, 1),
-				ZIndex = header.ZIndex + 1
-			}, header)
-		end
-		ensureGradient(header, 'NeoHeaderGradient', 0, ColorSequence.new({
-			ColorSequenceKeypoint.new(0, accentColor(-0.05, 0.05, 0)),
-			ColorSequenceKeypoint.new(0.5, accentColor(0.02, 0.02, 0)),
-			ColorSequenceKeypoint.new(1, accentColor(0.1, 0.05, 0))
-		}), NumberSequence.new({
-			NumberSequenceKeypoint.new(0, 0.32),
-			NumberSequenceKeypoint.new(1, 0.62)
-		}))
-
-		-- Left accent rail down the body.
-		local rail = window:FindFirstChild('NeoRail')
-		if not rail then
-			rail = make('Frame', {
-				Name = 'NeoRail',
-				BackgroundColor3 = accentColor(),
-				BorderSizePixel = 0,
-				Position = UDim2.fromOffset(0, 46),
-				Size = UDim2.new(0, 3, 1, -58),
-				ZIndex = (window.ZIndex or 1) + 2
-			}, window)
-			make('UICorner', {Name = 'NeoCorner', CornerRadius = UDim.new(1, 0)}, rail)
-		end
-		ensureGradient(rail, 'NeoRailGradient', 90, ColorSequence.new(accentColor(-0.05), accentColor(0.12)), NumberSequence.new({
-			NumberSequenceKeypoint.new(0, 0),
-			NumberSequenceKeypoint.new(1, 0.5)
-		}))
-	end
-
-	------------------------------------------------------------------
-	-- Control styling
-	------------------------------------------------------------------
-	local function styleModuleCard(inst)
-		local sk = skin()
-		setProp(inst, 'AutoButtonColor', false)
-		setProp(inst, 'BorderSizePixel', 0)
-		setProp(inst, 'BackgroundColor3', surface(sk.Card))
-		setProp(inst, 'BackgroundTransparency', 0.03)
-		ensureCorner(inst, 13)
-		ensureStroke(inst, 'NeoCardStroke', 1, 0.62)
-		ensureGradient(inst, 'NeoCardGradient', 90, ColorSequence.new(surface(sk.CardTop), surface(sk.CardBottom)), NumberSequence.new(0.06))
-		-- Left status pill.
-		local pill = inst:FindFirstChild('NeoPill')
-		if not pill then
-			pill = make('Frame', {
-				Name = 'NeoPill',
-				BackgroundColor3 = accentColor(),
-				BorderSizePixel = 0,
-				AnchorPoint = Vector2.new(0, 0.5),
-				Position = UDim2.new(0, 4, 0.5, 0),
-				Size = UDim2.fromOffset(3, 20),
-				ZIndex = (inst.ZIndex or 1) + 1
-			}, inst)
-			make('UICorner', {Name = 'NeoCorner', CornerRadius = UDim.new(1, 0)}, pill)
-		end
-		ensureGlow(inst, 'NeoCardGlow', accentColor(), 0.92, 16, -1)
-		bindHover(inst, 'NeoCardGlow')
-	end
-
-	local function styleButton(inst)
-		local sk = skin()
-		setProp(inst, 'AutoButtonColor', false)
-		setProp(inst, 'BorderSizePixel', 0)
-		-- Only skin buttons that actually have a visible surface. Invisible
-		-- hit areas (the modal, arrow/close targets) stay untouched so we don't
-		-- paint stray squares over the interface.
-		if inst.BackgroundTransparency < 0.98 then
-			setProp(inst, 'BackgroundColor3', surface(sk.Button))
-			setProp(inst, 'BackgroundTransparency', math.min(inst.BackgroundTransparency, 0.16))
-			ensureCorner(inst, 11)
-			ensureStroke(inst, 'NeoButtonStroke', 1, 0.7)
-			bindHover(inst, nil)
-		end
-	end
-
-	local function styleInput(inst)
-		local sk = skin()
-		setProp(inst, 'BorderSizePixel', 0)
-		setProp(inst, 'BackgroundColor3', surface(sk.Input))
-		setProp(inst, 'BackgroundTransparency', 0.02)
-		ensureCorner(inst, 12)
-		ensureStroke(inst, 'NeoInputStroke', 1, 0.52)
-	end
-
-	local function styleControl(inst)
-		if not inst:IsA('GuiObject') then return end
-		setProp(inst, 'BorderSizePixel', 0)
-		-- Paint/outline only the visible track & knob; leave image-based slider
-		-- art (transparent background) alone apart from rounding.
-		if inst.BackgroundTransparency < 0.98 then
-			setProp(inst, 'BackgroundColor3', accentColor(0, -0.06, -0.04))
-			ensureCorner(inst, 99)
-			ensureStroke(inst, 'NeoControlStroke', 1, 0.6)
-		end
-	end
-
-	local function stylePanel(inst)
-		local sk = skin()
-		setProp(inst, 'BorderSizePixel', 0)
-		if inst.BackgroundTransparency < 1 then
-			setProp(inst, 'BackgroundColor3', surface(sk.Card))
-			setProp(inst, 'BackgroundTransparency', math.max(inst.BackgroundTransparency, 0.06))
-			ensureCorner(inst, 12)
-		end
-	end
-
-	local function styleScroll(inst)
-		setProp(inst, 'BorderSizePixel', 0)
-		if inst:IsA('ScrollingFrame') then
-			setProp(inst, 'ScrollBarThickness', 3)
-			setProp(inst, 'ScrollBarImageColor3', accentColor())
-			setProp(inst, 'ScrollBarImageTransparency', 0.4)
-		end
-	end
-
-	------------------------------------------------------------------
-	-- Master styler
-	------------------------------------------------------------------
-	local function styleObject(inst)
-		if not neo.Active or typeof(inst) ~= 'Instance' or not inst:IsA('GuiObject') or isOverhaulObject(inst) then return end
-		local ok = pcall(function()
-			local class = classify(inst)
-			neo.Styled[inst] = class
-			styleText(inst, class)
-
-			if class == 'Window' then
-				addWindowChrome(inst)
-			elseif class == 'ModuleCard' then
-				styleModuleCard(inst)
-			elseif class == 'Button' or class == 'IconButton' then
-				styleButton(inst)
-			elseif class == 'Input' or class == 'Dropdown' then
-				styleInput(inst)
-			elseif class == 'Slider' or class == 'Toggle' then
-				styleControl(inst)
-			elseif class == 'Scroll' then
-				styleScroll(inst)
-			elseif class == 'Panel' then
-				stylePanel(inst)
-			end
-		end)
-		if not ok and shared.VapeDeveloper then
-			warn('[AetherNeo] style failed on '..tostring(inst))
-		end
-	end
-
-	local function styleTree(root)
-		styleObject(root)
-		for _, child in root:GetDescendants() do
-			styleObject(child)
-		end
-	end
-
-	------------------------------------------------------------------
-	-- Backdrop stage
-	------------------------------------------------------------------
-	local function buildStage()
-		if neo.Root then return end
-		local sk = skin()
-		neo.Root = make('Frame', {
-			Name = 'NeoStage',
-			BackgroundColor3 = sk.Stage[1],
-			BackgroundTransparency = 0.12,
-			BorderSizePixel = 0,
-			Size = UDim2.fromScale(1, 1),
-			ZIndex = -50,
-			ClipsDescendants = true
-		}, clickgui)
-		ensureGradient(neo.Root, 'NeoStageGradient', 45, ColorSequence.new({
-			ColorSequenceKeypoint.new(0, sk.Stage[1]),
-			ColorSequenceKeypoint.new(0.5, sk.Stage[2]),
-			ColorSequenceKeypoint.new(1, sk.Stage[3])
-		}), NumberSequence.new(0))
-
-		-- Parallax grid.
-		local gridHolder = make('Frame', {
-			Name = 'NeoGrid',
-			BackgroundTransparency = 1,
-			Size = UDim2.fromScale(1, 1),
-			ZIndex = -49,
-			ClipsDescendants = true
-		}, neo.Root)
-		for i = 1, 20 do
-			neo.GridV[i] = make('Frame', {
-				Name = 'NeoGridV'..i,
-				BackgroundColor3 = sk.Grid,
-				BackgroundTransparency = 0.9,
-				BorderSizePixel = 0,
-				Size = UDim2.new(0, 1, 1, 0),
-				Position = UDim2.fromScale(i / 20, 0),
-				ZIndex = -49
-			}, gridHolder)
-		end
-		for i = 1, 12 do
-			neo.GridH[i] = make('Frame', {
-				Name = 'NeoGridH'..i,
-				BackgroundColor3 = sk.Grid,
-				BackgroundTransparency = 0.92,
-				BorderSizePixel = 0,
-				Size = UDim2.new(1, 0, 0, 1),
-				Position = UDim2.fromScale(0, i / 12),
-				ZIndex = -49
-			}, gridHolder)
-		end
-
-		-- Aurora orbs.
-		for i = 1, 10 do
-			local orb = make('Frame', {
-				Name = 'NeoAurora'..i,
-				AnchorPoint = Vector2.new(0.5, 0.5),
-				BackgroundColor3 = accentColor(i / 30, 0.04, 0),
-				BackgroundTransparency = 0.8,
-				BorderSizePixel = 0,
-				Position = UDim2.fromScale((i * 0.19) % 1, (i * 0.31) % 1),
-				Size = UDim2.fromOffset(240 + i * 22, 240 + i * 16),
-				ZIndex = -48
-			}, neo.Root)
-			make('UICorner', {Name = 'NeoCorner', CornerRadius = UDim.new(1, 0)}, orb)
-			ensureGradient(orb, 'NeoAuroraGradient', i * 21, ColorSequence.new(WHITE, accentColor(i / 18)), NumberSequence.new({
-				NumberSequenceKeypoint.new(0, 0.2),
-				NumberSequenceKeypoint.new(0.72, 0.82),
-				NumberSequenceKeypoint.new(1, 1)
-			}))
-			neo.Orbs[i] = {Object = orb, Seed = i, Speed = 0.03 + i * 0.004}
-		end
-
-		-- Rising particles.
-		for i = 1, 26 do
-			local dot = make('Frame', {
-				Name = 'NeoParticle'..i,
-				AnchorPoint = Vector2.new(0.5, 0.5),
-				BackgroundColor3 = accentColor(0, 0.1, 0.1),
-				BackgroundTransparency = 0.35 + (i % 5) * 0.1,
-				BorderSizePixel = 0,
-				Position = UDim2.fromScale((i * 0.137) % 1, (i * 0.221) % 1),
-				Size = UDim2.fromOffset(2 + (i % 3), 2 + (i % 3)),
-				ZIndex = -47
-			}, neo.Root)
-			make('UICorner', {Name = 'NeoCorner', CornerRadius = UDim.new(1, 0)}, dot)
-			neo.Particles[i] = {Object = dot, Seed = i * 0.61, Speed = 0.02 + (i % 6) * 0.006, Drift = (i % 2 == 0) and 1 or -1}
-		end
-
-		-- Top glow bar + vignette.
-		local topGlow = make('Frame', {
-			Name = 'NeoTopGlow',
-			BackgroundColor3 = accentColor(),
-			BackgroundTransparency = 0.86,
-			BorderSizePixel = 0,
-			Size = UDim2.new(1, 0, 0, 160),
-			ZIndex = -47
-		}, neo.Root)
-		ensureGradient(topGlow, 'NeoTopGlowGradient', 90, ColorSequence.new(accentColor(), sk.Stage[2]), NumberSequence.new({
-			NumberSequenceKeypoint.new(0, 0.55),
-			NumberSequenceKeypoint.new(1, 1)
-		}))
-		neo.TopGlow = topGlow
-
-		local vignette = make('Frame', {
-			Name = 'NeoVignette',
-			BackgroundColor3 = BLACK,
-			BackgroundTransparency = 1,
-			BorderSizePixel = 0,
-			AnchorPoint = Vector2.new(0.5, 1),
-			Position = UDim2.fromScale(0.5, 1),
-			Size = UDim2.new(1, 0, 0, 220),
-			ZIndex = -47
-		}, neo.Root)
-		ensureGradient(vignette, 'NeoVignetteGradient', 90, ColorSequence.new(BLACK, BLACK), NumberSequence.new({
-			NumberSequenceKeypoint.new(0, 1),
-			NumberSequenceKeypoint.new(1, 0.4)
-		}))
-	end
-
-	------------------------------------------------------------------
-	-- Command dock
-	------------------------------------------------------------------
-	local function makeChip(parent, key, label, order)
-		local chip = make('Frame', {
-			Name = 'NeoChip'..key,
-			BackgroundColor3 = shade(skin().Dock, 0.05),
-			BackgroundTransparency = 0.25,
-			BorderSizePixel = 0,
-			Size = UDim2.fromOffset(96, 34),
-			LayoutOrder = order,
-			ZIndex = 82
-		}, parent)
-		make('UICorner', {Name = 'NeoCorner', CornerRadius = UDim.new(0, 10)}, chip)
-		ensureStroke(chip, 'NeoChipStroke', 1, 0.7)
-		make('TextLabel', {
-			Name = 'Key',
-			BackgroundTransparency = 1,
-			FontFace = uipallet.Font,
-			Text = label,
-			TextColor3 = skin().Muted,
-			TextSize = 10,
-			TextXAlignment = Enum.TextXAlignment.Left,
-			Position = UDim2.fromOffset(10, 4),
-			Size = UDim2.new(1, -20, 0, 12),
-			ZIndex = 83
-		}, chip)
-		local value = make('TextLabel', {
-			Name = 'Value',
-			BackgroundTransparency = 1,
-			FontFace = uipallet.FontSemiBold,
-			Text = '--',
-			TextColor3 = skin().Text,
-			TextSize = 14,
-			TextXAlignment = Enum.TextXAlignment.Left,
-			Position = UDim2.fromOffset(10, 15),
-			Size = UDim2.new(1, -20, 0, 16),
-			ZIndex = 83
-		}, chip)
-		neo.Chips[key] = value
-		return chip
-	end
-
-	local function buildDock()
-		if neo.Dock then return end
-		local sk = skin()
-		neo.Dock = make('Frame', {
-			Name = 'NeoDock',
-			AnchorPoint = Vector2.new(0.5, 1),
-			BackgroundColor3 = surface(sk.Dock),
-			BackgroundTransparency = 0.08,
-			BorderSizePixel = 0,
-			Position = UDim2.new(0.5, 0, 1, -16),
-			Size = UDim2.fromOffset(640, 58),
-			ZIndex = 80
-		}, clickgui)
-		make('UICorner', {Name = 'NeoCorner', CornerRadius = UDim.new(0, 18)}, neo.Dock)
-		ensureStroke(neo.Dock, 'NeoDockStroke', 1.3, 0.35)
-		ensureGradient(neo.Dock, 'NeoDockGradient', 90, ColorSequence.new(shade(sk.Dock, 0.06), sk.Dock), NumberSequence.new(0.05))
-		ensureGlow(neo.Dock, 'NeoDockGlow', accentColor(), 0.72, 24, -1)
-
-		-- Brand mark.
-		local badge = make('Frame', {
-			Name = 'NeoBadge',
-			BackgroundColor3 = accentColor(),
-			BorderSizePixel = 0,
-			Position = UDim2.fromOffset(14, 14),
-			Size = UDim2.fromOffset(30, 30),
-			ZIndex = 82
-		}, neo.Dock)
-		make('UICorner', {Name = 'NeoCorner', CornerRadius = UDim.new(0, 9)}, badge)
-		ensureGradient(badge, 'NeoBadgeGradient', 45, ColorSequence.new(accentColor(-0.06, 0.05, 0.05), accentColor(0.08, 0, -0.05)), NumberSequence.new(0))
-		make('TextLabel', {
-			Name = 'Mark',
-			BackgroundTransparency = 1,
-			FontFace = uipallet.FontSemiBold,
-			Text = 'A',
-			TextColor3 = mainapi:TextColor(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value),
-			TextSize = 18,
-			ZIndex = 83,
-			Size = UDim2.fromScale(1, 1)
-		}, badge)
-		neo.Badge = badge
-
-		make('TextLabel', {
-			Name = 'NeoBrand',
-			BackgroundTransparency = 1,
-			FontFace = uipallet.FontSemiBold,
-			Text = 'AETHER NEO',
-			TextColor3 = sk.Text,
-			TextSize = 15,
-			TextXAlignment = Enum.TextXAlignment.Left,
-			Position = UDim2.fromOffset(52, 11),
-			Size = UDim2.fromOffset(150, 16),
-			ZIndex = 82
-		}, neo.Dock)
-		neo.DockSkin = make('TextLabel', {
-			Name = 'NeoBrandSub',
-			BackgroundTransparency = 1,
-			FontFace = uipallet.Font,
-			Text = sk.Title..' skin',
-			TextColor3 = sk.Muted,
-			TextSize = 11,
-			TextXAlignment = Enum.TextXAlignment.Left,
-			Position = UDim2.fromOffset(52, 30),
-			Size = UDim2.fromOffset(150, 14),
-			ZIndex = 82
-		}, neo.Dock)
-
-		-- Stat chips.
-		local chipHolder = make('Frame', {
-			Name = 'NeoChips',
-			BackgroundTransparency = 1,
-			AnchorPoint = Vector2.new(1, 0.5),
-			Position = UDim2.new(1, -58, 0.5, 0),
-			Size = UDim2.fromOffset(408, 34),
-			ZIndex = 82
-		}, neo.Dock)
-		make('UIListLayout', {
-			FillDirection = Enum.FillDirection.Horizontal,
-			HorizontalAlignment = Enum.HorizontalAlignment.Right,
-			VerticalAlignment = Enum.VerticalAlignment.Center,
-			Padding = UDim.new(0, 8),
-			SortOrder = Enum.SortOrder.LayoutOrder
-		}, chipHolder)
-		makeChip(chipHolder, 'Fps', 'FPS', 1)
-		makeChip(chipHolder, 'Ping', 'PING', 2)
-		makeChip(chipHolder, 'Modules', 'ACTIVE', 3)
-		makeChip(chipHolder, 'Time', 'TIME', 4)
-
-		-- Skin switcher button.
-		local switch = make('TextButton', {
-			Name = 'NeoSkinSwitch',
-			BackgroundColor3 = shade(sk.Dock, 0.08),
-			BackgroundTransparency = 0.15,
-			AutoButtonColor = false,
-			BorderSizePixel = 0,
-			Text = '',
-			AnchorPoint = Vector2.new(1, 0.5),
-			Position = UDim2.new(1, -14, 0.5, 0),
-			Size = UDim2.fromOffset(34, 34),
-			ZIndex = 82
-		}, neo.Dock)
-		make('UICorner', {Name = 'NeoCorner', CornerRadius = UDim.new(0, 10)}, switch)
-		ensureStroke(switch, 'NeoButtonStroke', 1, 0.55)
-		make('TextLabel', {
-			Name = 'Glyph',
-			BackgroundTransparency = 1,
-			FontFace = uipallet.FontSemiBold,
-			Text = '❖',
-			TextColor3 = accentColor(),
-			TextSize = 16,
-			Size = UDim2.fromScale(1, 1),
-			ZIndex = 83
-		}, switch)
-		table.insert(neo.Connections, switch.MouseButton1Click:Connect(function()
-			overhaul.CycleSkin()
-		end))
-		bindHover(switch, nil)
-	end
-
-	------------------------------------------------------------------
-	-- Global surfaces (corner radius + glass live values)
-	------------------------------------------------------------------
-	local function applyGlobalSurfaces()
-		neo.CornerRadius = cornerRadius
-		neo.Glass = uipallet.Glass
-		cornerRadius = 16
-		for corner in cornerRegistry do
-			if corner.Parent then
-				corner.CornerRadius = UDim.new(0, cornerRadius)
-			end
-		end
-		uipallet.Glass = 0.05
-		for panel in glassPanels do
-			if panel.Parent then
-				panel.BackgroundTransparency = uipallet.Glass
-			end
-		end
-	end
-
-	local function restoreGlobalSurfaces()
-		if neo.CornerRadius then
-			cornerRadius = neo.CornerRadius
-			for corner in cornerRegistry do
-				if corner.Parent then
-					corner.CornerRadius = UDim.new(0, cornerRadius)
-				end
-			end
-		end
-		if neo.Glass then
-			uipallet.Glass = neo.Glass
-			for panel in glassPanels do
-				if panel.Parent then
-					panel.BackgroundTransparency = uipallet.Glass
-				end
-			end
-		end
-		neo.CornerRadius = nil
-		neo.Glass = nil
-	end
-
-	-- Recolour the whole stage/dock/styled tree to the current skin without a
-	-- full teardown (used by the skin switcher).
-	local function applySkinColors()
-		local sk = skin()
-		if neo.Root then
-			neo.Root.BackgroundColor3 = sk.Stage[1]
-			local grad = neo.Root:FindFirstChild('NeoStageGradient')
-			if grad then
-				grad.Color = ColorSequence.new({
-					ColorSequenceKeypoint.new(0, sk.Stage[1]),
-					ColorSequenceKeypoint.new(0.5, sk.Stage[2]),
-					ColorSequenceKeypoint.new(1, sk.Stage[3])
-				})
-			end
-		end
-		for _, ln in neo.GridV do if ln.Parent then ln.BackgroundColor3 = sk.Grid end end
-		for _, ln in neo.GridH do if ln.Parent then ln.BackgroundColor3 = sk.Grid end end
-		if neo.Dock then
-			neo.Dock.BackgroundColor3 = surface(sk.Dock)
-			local brand = neo.Dock:FindFirstChild('NeoBrand')
-			if brand then brand.TextColor3 = sk.Text end
-			if neo.DockSkin then neo.DockSkin.Text = sk.Title..' skin' end
-		end
-		-- Window bodies are chromed once (guarded by neo.Windows), so recolour
-		-- their surfaces here directly rather than through addWindowChrome.
-		for w in neo.Windows do
-			if w.Parent then
-				w.BackgroundColor3 = surface(sk.Window)
-				local surf = w:FindFirstChild('NeoWindowSurface')
-				if surf then
-					surf.Color = ColorSequence.new({
-						ColorSequenceKeypoint.new(0, surface(sk.WindowTop)),
-						ColorSequenceKeypoint.new(0.5, surface(sk.Window)),
-						ColorSequenceKeypoint.new(1, surface(sk.WindowBottom))
-					})
-				end
-			end
-		end
-		styleTree(clickgui)
-	end
-
-	------------------------------------------------------------------
-	-- Animation loop
-	------------------------------------------------------------------
-	local function step(dt)
-		if not neo.Active then return end
-		local now = os.clock()
-		local accent = accentColor()
-
-		-- Window chrome pulse.
-		for inst in neo.Windows do
-			if inst.Parent then
-				local header = inst:FindFirstChild('NeoHeader')
-				if header then header.BackgroundColor3 = accent end
-				local stroke = inst:FindFirstChild('NeoWindowStroke')
-				if stroke then
-					stroke.Color = accent
-					stroke.Transparency = 0.3 + 0.14 * (0.5 + 0.5 * math.sin(now * 1.7))
-				end
-				local glow = inst:FindFirstChild('NeoWindowGlow')
-				if glow then glow.ImageColor3 = accent end
-				local rail = inst:FindFirstChild('NeoRail')
-				if rail then rail.BackgroundColor3 = accent end
-			end
-		end
-
-		-- Styled control strokes + pills.
-		for inst in neo.Styled do
-			if inst.Parent then
-				local stroke = inst:FindFirstChild('NeoControlStroke')
-				if stroke then stroke.Color = accent end
-				local pill = inst:FindFirstChild('NeoPill')
-				if pill then pill.BackgroundColor3 = accent end
-			end
-		end
-
-		-- Aurora orbs.
-		for _, item in neo.Orbs do
-			local orb = item.Object
-			if orb and orb.Parent then
-				orb.BackgroundColor3 = accentColor(item.Seed / 27, 0.04, 0)
-				orb.Position = UDim2.fromScale(
-					(0.5 + 0.38 * math.sin(now * item.Speed + item.Seed)) % 1,
-					(0.5 + 0.32 * math.cos(now * item.Speed * 0.9 + item.Seed)) % 1
-				)
-			end
-		end
-
-		-- Rising particles.
-		for _, item in neo.Particles do
-			local dot = item.Object
-			if dot and dot.Parent then
-				local y = (item.Seed + now * item.Speed) % 1
-				local x = (item.Seed * 0.7 + 0.03 * math.sin(now * 0.5 + item.Seed) * item.Drift) % 1
-				dot.Position = UDim2.fromScale(x, 1 - y)
-			end
-		end
-
-		-- Parallax grid drift.
-		local vDrift = (now * 0.01) % 0.05
-		for i, ln in neo.GridV do
-			if ln.Parent then
-				ln.Position = UDim2.fromScale(((i / 20) + vDrift) % 1, 0)
-			end
-		end
-		local hDrift = (now * 0.008) % 0.083
-		for i, ln in neo.GridH do
-			if ln.Parent then
-				ln.Position = UDim2.fromScale(0, ((i / 12) + hDrift) % 1)
-			end
-		end
-
-		if neo.TopGlow then
-			neo.TopGlow.BackgroundColor3 = accent
-		end
-		if neo.Badge then
-			neo.Badge.BackgroundColor3 = accent
-		end
-
-		-- Dock stats (throttled).
-		neo.Fps = neo.Fps * 0.9 + (1 / math.max(dt, 1 / 240)) * 0.1
-		neo.StatClock = neo.StatClock + dt
-		if neo.Dock then
-			local dockStroke = neo.Dock:FindFirstChild('NeoDockStroke')
-			if dockStroke then dockStroke.Color = accent end
-			local dockGlow = neo.Dock:FindFirstChild('NeoDockGlow')
-			if dockGlow then dockGlow.ImageColor3 = accent end
-		end
-		if neo.StatClock >= 0.25 then
-			neo.StatClock = 0
-			if neo.Chips.Fps then neo.Chips.Fps.Text = tostring(math.floor(neo.Fps + 0.5)) end
-			if neo.Chips.Ping then
-				local ping = 0
-				pcall(function() ping = math.floor(localPlayer:GetNetworkPing() * 1000) end)
-				neo.Chips.Ping.Text = ping..' ms'
-			end
-			if neo.Chips.Modules then
-				local count = 0
-				for _, m in mainapi.Modules do
-					if m.Enabled then count += 1 end
-				end
-				neo.Chips.Modules.Text = tostring(count)
-			end
-			if neo.Chips.Time then
-				neo.Chips.Time.Text = os.date('%H:%M:%S')
-			end
-		end
-	end
-
-	local function disconnectAll()
-		for _, conn in neo.Connections do
-			pcall(function() conn:Disconnect() end)
-		end
-		table.clear(neo.Connections)
-	end
-
-	------------------------------------------------------------------
-	-- Public API
-	------------------------------------------------------------------
-	function overhaul.Apply()
-		if neo.Active then return end
-		neo.Active = true
-		applyGlobalSurfaces()
-		buildStage()
-		buildDock()
-		styleTree(clickgui)
-		table.insert(neo.Connections, clickgui.ChildAdded:Connect(function(child)
-			task.defer(function()
-				if neo.Active then styleTree(child) end
-			end)
-		end))
-		table.insert(neo.Connections, clickgui.DescendantAdded:Connect(function(child)
-			task.defer(function()
-				if neo.Active then styleObject(child) end
-			end)
-		end))
-		table.insert(neo.Connections, runService.RenderStepped:Connect(function(dt)
-			local ok, err = pcall(step, dt)
-			if not ok and shared.VapeDeveloper then
-				warn('[AetherNeo] '..tostring(err))
-			end
-		end))
-		pcall(function()
-			mainapi:UpdateGUI(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value, true)
-		end)
-	end
-
-	function overhaul.Revert()
-		if not neo.Active then return end
-		neo.Active = false
-		disconnectAll()
-		for inst in neo.Generated do
-			if inst.Parent then
-				pcall(function() inst:Destroy() end)
-			end
-			neo.Generated[inst] = nil
-		end
-		for inst, props in neo.Original do
-			if inst.Parent then
-				for prop, value in props do
-					pcall(function()
-						inst[prop] = value
-					end)
-				end
-			end
-			neo.Original[inst] = nil
-		end
-		for inst in neo.Styled do neo.Styled[inst] = nil end
-		for inst in neo.Windows do neo.Windows[inst] = nil end
-		for inst in neo.Hovered do neo.Hovered[inst] = nil end
-		table.clear(neo.Orbs)
-		table.clear(neo.Particles)
-		table.clear(neo.GridV)
-		table.clear(neo.GridH)
-		table.clear(neo.Chips)
-		table.clear(neo.Motion)
-		neo.Root = nil
-		neo.Dock = nil
-		neo.TopGlow = nil
-		neo.Badge = nil
-		neo.DockSkin = nil
-		restoreGlobalSurfaces()
-	end
-
-	function overhaul.IsActive()
-		return neo.Active
-	end
-
-	function overhaul.SetSkin(name)
-		if not skins[name] then return end
-		neo.SkinName = name
-		if neo.Active then
-			pcall(applySkinColors)
-		end
-	end
-
-	function overhaul.CycleSkin()
-		local idx = table.find(skinOrder, neo.SkinName) or 1
-		overhaul.SetSkin(skinOrder[(idx % #skinOrder) + 1])
-	end
-
-	mainapi:Clean(function()
-		if neo.Active then
-			overhaul.Revert()
-		else
-			disconnectAll()
-		end
-	end)
-end
-mainapi.Overhaul = overhaul
 
 --[[
 	General Settings
@@ -9706,20 +8612,6 @@ local general = mainapi.Categories.Main:CreateSettingsPane({Name = 'General'})
 mainapi.MultiKeybind = general:CreateToggle({
 	Name = 'Enable Multi-Keybinding',
 	Tooltip = 'Allows multiple keys to be bound to a module (eg. G + H)'
-})
-general:CreateToggle({
-  Name = 'GUI Overhaul',
-  Tooltip = 'Aether Neo: a complete new-theme redesign of the whole GUI - animated multi-layer stage backdrop, re-chromed windows, module cards, redesigned controls, overlays, glass and typography, a live command dock (FPS / ping / active-module count / clock) and switchable skins. Toggle off to restore Nexus.',
-  Function = function(callback)
-    if callback then
-      overhaul.Apply()
-      pcall(function()
-        mainapi:CreateNotification('GUI Overhaul', 'Aether Neo is active: full GUI redesign with animated backdrop, re-chromed windows, cards, controls and a command dock. Click the ❖ on the dock to switch skins; toggle off in Settings > General to restore Nexus.', 6, 'info')
-      end)
-    else
-      overhaul.Revert()
-    end
-  end
 })
 general:CreateToggle({
 	Name = 'Disable Loading Screen',
@@ -9735,19 +8627,36 @@ general:CreateToggle({
 	Default = isfile('aetherv2/profiles/disableloading.txt') and readfile('aetherv2/profiles/disableloading.txt') == 'true',
 	Tooltip = 'Prevents AetherV2 from showing its startup loading screen.'
 })
+-- Reloads AetherV2 from scratch (shared by Reinject, Reset profile and the GUI
+-- type switcher). Deferred onto a fresh thread so the button/dropdown handler
+-- that triggered it returns BEFORE main.lua tears this instance down. Running the
+-- teardown re-entrantly - inside a handler that lives on the very GUI being
+-- destroyed - was unreliable and was a big part of why reinjecting and switching
+-- GUI types "did nothing".
+local function reloadAether()
+	task.spawn(function()
+		shared.vapereload = true
+		local ok, err = pcall(function()
+			if shared.VapeDeveloper then
+				loadstring(readfile('aetherv2/main.lua'), 'main')(license)
+			else
+				loadstring(game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..readfile('aetherv2/profiles/commit.txt')..'/main.lua', true), 'main')(license)
+			end
+		end)
+		if not ok then
+			warn('[AetherV2] reload failed:', err)
+		end
+	end)
+end
+
 general:CreateButton({
 	Name = 'Reset current profile',
 	Function = function()
-	mainapi.Save = function() end
+		mainapi.Save = function() end
 		if isfile(getConfigPath(mainapi.Profile)) and delfile then
 			delfile(getConfigPath(mainapi.Profile))
 		end
-		shared.vapereload = true
-		if shared.VapeDeveloper then
-			loadstring(readfile('aetherv2/main.lua'), 'main')(license)
-		else
-			loadstring(game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..readfile('aetherv2/profiles/commit.txt')..'/main.lua', true), 'main')(license)
-		end
+		reloadAether()
 	end,
 	Tooltip = 'This will set your profile to the default settings of Vape'
 })
@@ -9826,19 +8735,18 @@ exportButton = general:CreateButton({
 general:CreateButton({
 	Name = 'Self destruct',
 	Function = function()
-		mainapi:Uninject()
+		-- Deferred so this click handler (which lives on the GUI Uninject
+		-- destroys) returns before the teardown runs.
+		task.spawn(function()
+			mainapi:Uninject()
+		end)
 	end,
 	Tooltip = 'Removes vape from the current game'
 })
 general:CreateButton({
 	Name = 'Reinject',
 	Function = function()
-		shared.vapereload = true
-		if shared.VapeDeveloper then
-			loadstring(readfile('aetherv2/main.lua'), 'main')(license)
-		else
-			loadstring(game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..readfile('aetherv2/profiles/commit.txt')..'/main.lua', true), 'main')(license)
-		end
+		reloadAether()
 	end,
 	Tooltip = 'Reloads vape for debugging purposes'
 })
@@ -9949,6 +8857,10 @@ guipane:CreateDropdown({
 	List = inputService.TouchEnabled and {'newer', 'new', 'old'} or {'newer', 'new', 'old', 'rise'},
 	Function = function(val, mouse)
 		if mouse then
+			-- Only act on a genuine change - re-picking the current GUI should not
+			-- pointlessly tear everything down and reload.
+			local current = (isfile('aetherv2/profiles/gui.txt') and readfile('aetherv2/profiles/gui.txt'):gsub('%s+', '')) or 'newer'
+			if val == current then return end
 			-- Flush the current profile (accent colour, module states, window
 			-- positions, ...) to disk before we tear this GUI down and reload,
 			-- so nothing changed since the last save is lost across the switch.
@@ -9956,15 +8868,23 @@ guipane:CreateDropdown({
 				mainapi:Save(mainapi.Profile)
 			end)
 			writefile('aetherv2/profiles/gui.txt', val)
-			shared.vapereload = true
-			if shared.VapeDeveloper then
-				loadstring(readfile('aetherv2/main.lua'), 'main')(license)
-			else
-				loadstring(game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..readfile('aetherv2/profiles/commit.txt')..'/main.lua', true), 'main')(license)
-			end
+			-- Deferred reload (see reloadAether): running main.lua synchronously
+			-- inside this dropdown handler destroyed the GUI mid-callback, which is
+			-- why switching GUI types often did nothing.
+			reloadAether()
 		end
 	end,
 	Tooltip = 'newer - AetherV2 Nexus (glass-morphism)\nnew - The newest vape theme since v4.05\nold - The vape theme pre v4.05\nrise - Rise 6.0'
+})
+mainapi.ThemeModules = guipane:CreateToggle({
+	Name = 'Recolour modules with theme',
+	Default = true,
+	Tooltip = 'When on, changing the GUI Theme colour (or picking a theme preset) also recolours every module colour that supports it - Killaura target boxes, ESP, tracers, particles and so on. Turn off to give modules their own independent colours.',
+	Function = function(callback)
+		if callback and mainapi.ApplyThemeToModules then
+			mainapi:ApplyThemeToModules()
+		end
+	end
 })
 mainapi.ToggleMode = guipane:CreateDropdown({
 	Name = 'Keybind mode',
@@ -10064,10 +8984,53 @@ mainapi.ToggleNotifications = notifpane:CreateToggle({
 	Darker = true
 })
 
+-- Push the current GUI accent onto every module colour option that supports it,
+-- so picking a theme (preset or the slider below) also recolours module visuals:
+-- Killaura target boxes, ESP, tracers, particles, and so on. Colour options that
+-- are currently set to Rainbow, or explicitly flagged NoTheme, are left alone.
+-- Gated by the "Recolour modules with theme" setting.
+function mainapi:ApplyThemeToModules(h, s, v)
+	if not (self.ThemeModules and self.ThemeModules.Enabled) then return end
+	if not self.GUIColor then return end
+	h = h or self.GUIColor.Hue
+	s = s or self.GUIColor.Sat
+	v = v or self.GUIColor.Value
+	local function recolor(list)
+		if type(list) ~= 'table' then return end
+		for _, module in list do
+			if type(module) == 'table' and type(module.Options) == 'table' then
+				for _, opt in module.Options do
+					if type(opt) == 'table' and opt.Type == 'ColorSlider' and not opt.Rainbow and not opt.NoTheme and opt.SetValue then
+						pcall(function() opt:SetValue(h, s, v) end)
+					end
+				end
+			end
+		end
+	end
+	recolor(self.Modules)
+	if self.Legit then recolor(self.Legit.Modules) end
+end
+
+-- Debounced version: dragging the GUI Theme slider fires continuously, so
+-- coalesce to a single module recolour a moment after the last change instead of
+-- retinting every module every frame (which would stutter).
+local themeApplyToken = 0
+function mainapi:QueueThemeToModules(h, s, v)
+	if not (self.ThemeModules and self.ThemeModules.Enabled) then return end
+	themeApplyToken += 1
+	local myToken = themeApplyToken
+	task.delay(0.12, function()
+		if myToken == themeApplyToken then
+			mainapi:ApplyThemeToModules(h, s, v)
+		end
+	end)
+end
+
 mainapi.GUIColor = mainapi.Categories.Main:CreateGUISlider({
 	Name = 'GUI Theme',
 	Function = function(h, s, v)
 		mainapi:UpdateGUI(h, s, v, true)
+		mainapi:QueueThemeToModules(h, s, v)
 	end
 })
 mainapi.Categories.Main:CreateBind()
@@ -11004,483 +9967,15 @@ end))
 --[[
 	=========================================================================
 	 NEXUS ADDITIONS
-	 Everything below this line is new in the Nexus (v5.0) redesign:
-	  1. Theme Editor       (Settings -> Theme)
-	  2. Stats Dashboard    (Overlays -> Stats Dashboard, mainapi.Stats)
-	  3. Plugin system      (mainapi:RegisterPlugin + aetherv2/plugins/)
-	 All features reuse the existing component/overlay/save systems, so they
-	 persist through the same profile files as every other option.
+	 Extension point kept from the Nexus redesign:
+	  * Plugin system      (mainapi:RegisterPlugin + aetherv2/plugins/)
+	 It reuses the existing component/overlay/save systems, so plugins persist
+	 through the same profile files as every other option. (The old Theme Editor
+	 and Stats Dashboard were removed in the v6 declutter.)
 	=========================================================================
 ]]
 
---[[
-	Theme Editor
-	Live adjustment of the glass intensity and font face, plus base-theme
-	presets stored in aetherv2/profiles/color.txt (the same override file the
-	GUI has always read its palette from, so presets survive updates).
-]]
-do
-	local function readThemeOverrides()
-		return (isfile('aetherv2/profiles/color.txt') and loadJson('aetherv2/profiles/color.txt')) or {}
-	end
 
-	local function writeThemeOverrides(overrides)
-		pcall(writefile, 'aetherv2/profiles/color.txt', httpService:JSONEncode(overrides))
-	end
-
-	local themepane = mainapi.Categories.Main:CreateSettingsPane({Name = 'Theme'})
-
-	themepane:CreateSlider({
-		Name = 'Glass intensity',
-		Min = 0,
-		Max = 60,
-		Default = math.floor(uipallet.Glass * 100 + 0.5),
-		Suffix = '%',
-		Tooltip = 'How translucent the frosted panels are.\nApplies instantly to every glass surface, and is saved to your theme file so it persists.',
-		Function = function(val, mouse)
-			uipallet.Glass = val / 100
-			for panel in glassPanels do
-				if panel.Parent then
-					panel.BackgroundTransparency = uipallet.Glass
-				end
-			end
-			if mouse then
-				local overrides = readThemeOverrides()
-				overrides.Glass = uipallet.Glass
-				writeThemeOverrides(overrides)
-			end
-		end
-	})
-
-	local themeFonts = {
-		['Gotham'] = 'GothamSSm',
-		['Builder Sans'] = 'BuilderSans',
-		['Arial'] = 'Arial',
-		['Roboto'] = 'Roboto',
-		['Ubuntu'] = 'Ubuntu',
-		['Montserrat'] = 'Montserrat',
-		['Source Sans'] = 'SourceSansPro'
-	}
-	themepane:CreateDropdown({
-		Name = 'Font face',
-		List = {'Gotham', 'Builder Sans', 'Arial', 'Roboto', 'Ubuntu', 'Montserrat', 'Source Sans'},
-		Tooltip = 'Changes the interface font in real time.\nSaved to your theme file so it persists.',
-		Function = function(val, mouse)
-			local family = themeFonts[val]
-			if not family then return end
-			local suc = pcall(function()
-				local newfont = Font.new(string.format('rbxasset://fonts/families/%s.json', family))
-				uipallet.Font = newfont
-				uipallet.FontSemiBold = Font.new(newfont.Family, Enum.FontWeight.SemiBold)
-				fontsize.Font = newfont
-				for _, obj in gui:GetDescendants() do
-					if obj:IsA('TextLabel') or obj:IsA('TextButton') or obj:IsA('TextBox') then
-						obj.FontFace = Font.new(newfont.Family, obj.FontFace.Weight, obj.FontFace.Style)
-					end
-				end
-			end)
-			if suc and mouse then
-				local overrides = readThemeOverrides()
-				overrides.Font = family
-				writeThemeOverrides(overrides)
-			end
-		end
-	})
-
-	-- Base surface presets. Applying the base colour everywhere at runtime would
-	-- require rebuilding every derived colour, so presets are written to the
-	-- palette override file and picked up on the next inject.
-	local baseThemes = {
-		['Nexus Navy'] = {Main = {14, 17, 23}, Text = {214, 220, 232}},
-		['Charcoal'] = {Main = {26, 31, 42}, Text = {220, 224, 232}},
-		['Abyss'] = {Main = {9, 11, 16}, Text = {205, 212, 226}},
-		['Classic Dark'] = {Main = {26, 25, 26}, Text = {200, 200, 200}}
-	}
-	themepane:CreateDropdown({
-		Name = 'Base theme',
-		List = {'Nexus Navy', 'Charcoal', 'Abyss', 'Classic Dark'},
-		Tooltip = 'Base surface colours.\nSaved to your theme file - reinject to apply everywhere.',
-		Function = function(val, mouse)
-			if not mouse then return end
-			local preset = baseThemes[val]
-			if not preset then return end
-			local overrides = readThemeOverrides()
-			overrides.Main = preset.Main
-			overrides.Text = preset.Text
-			writeThemeOverrides(overrides)
-			mainapi:CreateNotification('Theme', 'Base theme "'..val..'" saved. Reinject to apply it everywhere.', 6, 'info')
-		end
-	})
-
-	themepane:CreateButton({
-		Name = 'Reset theme overrides',
-		Tooltip = 'Deletes aetherv2/profiles/color.txt so the default Nexus palette is used on the next inject.',
-		Function = function()
-			if isfile('aetherv2/profiles/color.txt') and delfile then
-				pcall(delfile, 'aetherv2/profiles/color.txt')
-			else
-				writeThemeOverrides({})
-			end
-			mainapi:CreateNotification('Theme', 'Theme overrides cleared. Reinject to restore the default palette.', 6, 'info')
-		end
-	})
-end
-
---[[
-	Stats Dashboard
-	mainapi.Stats tracks lifetime counters (persisted to
-	aetherv2/profiles/stats.json) plus a history of the last 10 games. Deaths
-	are tracked automatically; game modules and plugins feed the rest:
-	  vape.Stats:Increment('Kills')          -- also 'Beds', 'Final Kills', ...
-	  vape.Stats:RecordGame({Kills = 7, Won = true})
-	  vape.Stats:RegisterStat('Arrows')      -- plugins can add new stat types
-	The dashboard overlay renders everything live, including a mini bar graph
-	of kills across the last 10 recorded games.
-]]
-do
-	local statsPath = 'aetherv2/profiles/stats.json'
-	local stats = {
-		Data = {},
-		Session = {},
-		History = {},
-		Order = {'Kills', 'Deaths', 'Final Kills', 'Beds', 'Wins', 'Games'}
-	}
-	mainapi.Stats = stats
-
-	do
-		local saved = isfile(statsPath) and loadJson(statsPath) or nil
-		if type(saved) == 'table' then
-			stats.Data = type(saved.Data) == 'table' and saved.Data or {}
-			stats.History = type(saved.History) == 'table' and saved.History or {}
-		end
-	end
-	for _, name in stats.Order do
-		stats.Data[name] = tonumber(stats.Data[name]) or 0
-		stats.Session[name] = 0
-	end
-
-	local refreshUI = function() end
-	local saveQueued = false
-
-	function stats:SaveNow()
-		pcall(writefile, statsPath, httpService:JSONEncode({Data = self.Data, History = self.History}))
-	end
-
-	-- Debounced persistence so rapid increments (e.g. kill streaks) do not
-	-- hammer the disk; the dashboard itself still updates instantly.
-	function stats:Queue()
-		if saveQueued then return end
-		saveQueued = true
-		task.delay(2, function()
-			saveQueued = false
-			stats:SaveNow()
-		end)
-	end
-
-	function stats:Get(name)
-		return self.Data[name] or 0
-	end
-
-	function stats:Set(name, value)
-		self.Data[name] = tonumber(value) or 0
-		self:Queue()
-		refreshUI()
-	end
-
-	function stats:Increment(name, amount)
-		amount = tonumber(amount) or 1
-		self.Data[name] = (self.Data[name] or 0) + amount
-		self.Session[name] = (self.Session[name] or 0) + amount
-		self:Queue()
-		refreshUI()
-	end
-
-	function stats:GetFKDR()
-		return (self.Data['Final Kills'] or 0) / math.max(self.Data.Deaths or 0, 1)
-	end
-
-	-- Records a finished game into the history graph. Owns the Games/Wins
-	-- counters so callers only describe what happened.
-	function stats:RecordGame(entry)
-		entry = type(entry) == 'table' and entry or {}
-		table.insert(self.History, {
-			Kills = tonumber(entry.Kills) or self.Session.Kills or 0,
-			Won = entry.Won and true or false,
-			Time = os.time()
-		})
-		while #self.History > 10 do
-			table.remove(self.History, 1)
-		end
-		self.Data.Games = (self.Data.Games or 0) + 1
-		if entry.Won then
-			self.Data.Wins = (self.Data.Wins or 0) + 1
-		end
-		self.Session.Kills = 0
-		self:Queue()
-		refreshUI()
-	end
-
-	-- Automatic death tracking.
-	do
-		local lplr = cloneref(game:GetService('Players')).LocalPlayer
-		local function hookCharacter(char)
-			local hum = char:FindFirstChildOfClass('Humanoid') or char:WaitForChild('Humanoid', 10)
-			if hum then
-				hum.Died:Once(function()
-					stats:Increment('Deaths')
-				end)
-			end
-		end
-		mainapi:Clean(lplr.CharacterAdded:Connect(function(char)
-			task.spawn(hookCharacter, char)
-		end))
-		if lplr.Character then
-			task.spawn(hookCharacter, lplr.Character)
-		end
-	end
-
-	-- Dashboard overlay -----------------------------------------------------
-	local overlay = mainapi:CreateOverlay({
-		Name = 'Stats Dashboard',
-		Icon = getcustomasset('aetherv2/assets/new/radaricon.png'),
-		Size = UDim2.fromOffset(14, 14),
-		Position = UDim2.fromOffset(12, 13),
-		CategorySize = 220,
-		Color = true,
-		Function = function(callback)
-			if callback then
-				refreshUI()
-			end
-		end
-	})
-	local holder = overlay.Object.CustomChildren
-
-	local bg = Instance.new('Frame')
-	bg.Name = 'DashboardBkg'
-	bg.Size = UDim2.new(1, 0, 0, 100)
-	bg.BackgroundColor3 = uipallet.Main
-	bg.BorderSizePixel = 0
-	bg.Parent = holder
-	addBlur(bg)
-	addCorner(bg)
-
-	local tiles = {}
-	local graphTitle, graphFrame
-	local bars = {}
-
-	local function makeTile(name)
-		local tile = Instance.new('Frame')
-		tile.Name = name
-		tile.Size = UDim2.fromOffset(96, 44)
-		tile.BackgroundColor3 = color.Light(uipallet.Main, 0.03)
-		tile.BorderSizePixel = 0
-		tile.Parent = bg
-		addGlass(tile)
-		addCorner(tile)
-		local label = Instance.new('TextLabel')
-		label.Name = 'Label'
-		label.Size = UDim2.new(1, -12, 0, 14)
-		label.Position = UDim2.fromOffset(8, 5)
-		label.BackgroundTransparency = 1
-		label.Text = name:upper()
-		label.TextXAlignment = Enum.TextXAlignment.Left
-		label.TextTruncate = Enum.TextTruncate.AtEnd
-		label.TextColor3 = color.Dark(uipallet.Text, 0.25)
-		label.TextSize = 10
-		label.FontFace = uipallet.Font
-		label.Parent = tile
-		local value = Instance.new('TextLabel')
-		value.Name = 'Value'
-		value.Size = UDim2.new(1, -12, 0, 18)
-		value.Position = UDim2.fromOffset(8, 20)
-		value.BackgroundTransparency = 1
-		value.Text = '0'
-		value.TextXAlignment = Enum.TextXAlignment.Left
-		value.TextColor3 = uipallet.Text
-		value.TextSize = 16
-		value.FontFace = uipallet.FontSemiBold
-		value.Parent = tile
-		return {Object = tile, Value = value}
-	end
-
-	-- Lays the tile grid (2 columns) and graph out again; called whenever a
-	-- plugin registers a new stat type.
-	local function relayout()
-		local names = table.clone(stats.Order)
-		table.insert(names, 'FKDR')
-		table.insert(names, 'Win %')
-		for i, name in names do
-			local tile = tiles[name]
-			if not tile then
-				tile = makeTile(name)
-				tiles[name] = tile
-			end
-			local col = (i - 1) % 2
-			local row = math.floor((i - 1) / 2)
-			tile.Object.Position = UDim2.fromOffset(10 + col * 100, 8 + row * 48)
-		end
-		local rows = math.ceil(#names / 2)
-		local graphY = 8 + rows * 48 + 4
-		graphTitle.Position = UDim2.fromOffset(10, graphY)
-		graphFrame.Position = UDim2.fromOffset(10, graphY + 18)
-		bg.Size = UDim2.new(1, 0, 0, graphY + 18 + 54 + 10)
-	end
-
-	graphTitle = Instance.new('TextLabel')
-	graphTitle.Name = 'GraphTitle'
-	graphTitle.Size = UDim2.new(1, -20, 0, 14)
-	graphTitle.BackgroundTransparency = 1
-	graphTitle.Text = 'LAST 10 GAMES - KILLS'
-	graphTitle.TextXAlignment = Enum.TextXAlignment.Left
-	graphTitle.TextColor3 = color.Dark(uipallet.Text, 0.25)
-	graphTitle.TextSize = 10
-	graphTitle.FontFace = uipallet.Font
-	graphTitle.Parent = bg
-
-	graphFrame = Instance.new('Frame')
-	graphFrame.Name = 'Graph'
-	graphFrame.Size = UDim2.fromOffset(200, 54)
-	graphFrame.BackgroundColor3 = color.Light(uipallet.Main, 0.03)
-	graphFrame.BorderSizePixel = 0
-	graphFrame.Parent = bg
-	addGlass(graphFrame)
-	addCorner(graphFrame)
-
-	for i = 1, 10 do
-		local bar = Instance.new('Frame')
-		bar.Name = 'Bar'..i
-		bar.AnchorPoint = Vector2.new(0, 1)
-		bar.Position = UDim2.new(0, 4 + (i - 1) * 20, 1, -4)
-		bar.Size = UDim2.fromOffset(14, 2)
-		bar.BackgroundColor3 = color.Light(uipallet.Main, 0.12)
-		bar.BorderSizePixel = 0
-		bar.Parent = graphFrame
-		addCorner(bar, UDim.new(0, 3))
-		bars[i] = bar
-	end
-
-	refreshUI = function()
-		if mainapi.Loaded == nil then return end
-		for name, tile in tiles do
-			if name == 'FKDR' then
-				tile.Value.Text = string.format('%.2f', stats:GetFKDR())
-			elseif name == 'Win %' then
-				local games = stats.Data.Games or 0
-				tile.Value.Text = games > 0 and string.format('%d%%', math.floor((stats.Data.Wins or 0) / games * 100 + 0.5)) or '-'
-			else
-				tile.Value.Text = tostring(stats.Data[name] or 0)
-			end
-		end
-		local accent = Color3.fromHSV(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value)
-		local maxKills = 1
-		for _, entry in stats.History do
-			maxKills = math.max(maxKills, entry.Kills or 0)
-		end
-		for i = 1, 10 do
-			local entry = stats.History[#stats.History - 10 + i]
-			local bar = bars[i]
-			if entry then
-				local height = math.max(math.floor((entry.Kills or 0) / maxKills * 42), 2)
-				tween:Tween(bar, uipallet.Tween, {Size = UDim2.fromOffset(14, height)})
-				bar.BackgroundColor3 = entry.Won and accent or color.Light(uipallet.Main, 0.12)
-			else
-				bar.Size = UDim2.fromOffset(14, 2)
-				bar.BackgroundColor3 = color.Light(uipallet.Main, 0.08)
-			end
-		end
-	end
-	stats.Refresh = function()
-		refreshUI()
-	end
-
-	-- Plugin API: adds a brand-new counter tile to the dashboard.
-	function stats:RegisterStat(name)
-		if type(name) ~= 'string' or name == '' or table.find(self.Order, name) then return end
-		table.insert(self.Order, name)
-		self.Data[name] = tonumber(self.Data[name]) or 0
-		self.Session[name] = 0
-		relayout()
-		self:Queue()
-		refreshUI()
-	end
-
-	--[[
-		Session Info -> Stats Dashboard bridge (merge).
-		Game modules feed the classic "session info" panel through
-		vape.Libraries.sessioninfo:AddItem(name):Increment(). Rather than keep a
-		second, separate panel, that API is merged into the Stats Dashboard here:
-		every numeric session item becomes a dashboard stat, so the counters game
-		modules report (Kills, Beds, Wins, Games, Arrests, ...) surface on the one
-		unified dashboard. Computed/text items (a map name, a cheater list) don't
-		fit the numeric tile grid, so they are accepted but simply not shown - the
-		call never errors either way.
-	]]
-	do
-		local sessioninfo = {Items = {}}
-
-		function sessioninfo:AddItem(name, default, updateFunc, _show)
-			if type(name) ~= 'string' or name == '' then
-				-- Harmless stub so a malformed call can never break a module.
-				return {
-					Increment = function() end,
-					Set = function() end,
-					Get = function() return 0 end
-				}
-			end
-			if self.Items[name] then
-				return self.Items[name]
-			end
-
-			-- Plain counters (no provider function) become live dashboard tiles.
-			local numeric = updateFunc == nil and (type(default) == 'number' or default == nil)
-			if numeric then
-				stats:RegisterStat(name)
-			end
-
-			local item = {Name = name, Numeric = numeric}
-			function item:Increment(amount)
-				if numeric then
-					stats:Increment(name, tonumber(amount) or 1)
-				end
-			end
-			function item:Set(value)
-				if numeric then
-					stats:Set(name, value)
-				end
-			end
-			function item:Get()
-				return stats:Get(name)
-			end
-
-			-- A computed item polls its provider; only numeric results can feed a
-			-- tile, so text providers are polled harmlessly and ignored.
-			if type(updateFunc) == 'function' then
-				mainapi:Clean(task.spawn(function()
-					while mainapi.Loaded ~= nil do
-						local ok, value = pcall(updateFunc)
-						if ok and type(value) == 'number' then
-							stats:RegisterStat(name)
-							stats:Set(name, value)
-						end
-						task.wait(1)
-					end
-				end))
-			end
-
-			self.Items[name] = item
-			return item
-		end
-
-		-- Kept for API parity with the old session panel.
-		function sessioninfo:Remove() end
-		function sessioninfo:Clear() end
-
-		mainapi.Libraries.sessioninfo = sessioninfo
-	end
-
-	relayout()
-	refreshUI()
-end
 
 --[[
 	Plugin system
@@ -11576,551 +10071,8 @@ task.defer(function()
 	end
 end)
 
---[[
-	UI sound engine, click pulses and snap alignment guides.
-	Fills in the function slots stubbed on the nexus table now that the
-	ScreenGui exists. All of it is opt-in from Settings -> Interface.
-]]
-do
-	-- name -> {asset, playback speed, base volume}. Built-in rbxassets so no
-	-- downloads are needed; a missing asset just plays silence.
-	local soundDefs = {
-		click = {'rbxasset://sounds/clickfast.wav', 1, 0.4},
-		hover = {'rbxasset://sounds/clickfast.wav', 1.7, 0.1},
-		notify = {'rbxasset://sounds/electronicpingshort.wav', 1, 0.35},
-		snap = {'rbxasset://sounds/snap.mp3', 1.4, 0.2},
-		open = {'rbxasset://sounds/swoosh.wav', 1.2, 0.25}
-	}
-	local sounds = {}
-	local lastHover = 0
 
-	-- Build every Sound up front and preload the assets. Doing this lazily on the
-	-- first play was what made the first tick of each effect lag (the engine had
-	-- to fetch the asset mid-play); pre-created + preloaded instances fire
-	-- instantly and reliably from then on.
-	for name, def in soundDefs do
-		local sound = Instance.new('Sound')
-		sound.Name = 'Nexus'..name
-		sound.SoundId = def[1]
-		sound.PlaybackSpeed = def[2]
-		sound.Parent = gui
-		sounds[name] = sound
-	end
-	pcall(function()
-		local list = {}
-		for _, sound in sounds do
-			table.insert(list, sound)
-		end
-		cloneref(game:GetService('ContentProvider')):PreloadAsync(list)
-	end)
 
-	function nexus.PlaySound(name)
-		if not nexus.SoundsEnabled or nexus.SoundVolume <= 0 then return end
-		local def = soundDefs[name]
-		local sound = sounds[name]
-		if not def or not sound then return end
-		-- Hover ticks can fire many times a second while the cursor skims a list;
-		-- a short debounce stops them stacking into a buzzing, unreliable mush.
-		if name == 'hover' then
-			local now = os.clock()
-			if now - lastHover < 0.045 then return end
-			lastHover = now
-		end
-		sound.Volume = def[3] * nexus.SoundVolume * 2
-		-- Rewind before replaying so a still-playing instance restarts cleanly
-		-- instead of being ignored - the source of the "unreliable" drops.
-		sound.TimePosition = 0
-		pcall(sound.Play, sound)
-	end
-
-	local rippleLayer = Instance.new('Frame')
-	rippleLayer.Name = 'RippleLayer'
-	rippleLayer.Size = UDim2.fromScale(1, 1)
-	rippleLayer.BackgroundTransparency = 1
-	rippleLayer.ZIndex = 10
-	rippleLayer.Parent = scaledgui
-
-	-- Expanding accent circle at the cursor. Parented to a top-level layer so
-	-- no control needs ClipsDescendants flipped on.
-	function nexus.SpawnRipple()
-		local mouse = inputService:GetMouseLocation() / scale.Scale
-		local ripple = Instance.new('Frame')
-		ripple.Name = 'Ripple'
-		ripple.AnchorPoint = Vector2.new(0.5, 0.5)
-		ripple.Position = UDim2.fromOffset(mouse.X, mouse.Y)
-		ripple.Size = UDim2.fromOffset(6, 6)
-		ripple.BackgroundColor3 = Color3.fromHSV(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value)
-		ripple.BackgroundTransparency = 0.4
-		ripple.BorderSizePixel = 0
-		ripple.ZIndex = 10
-		ripple.Parent = rippleLayer
-		addCorner(ripple, UDim.new(1, 0))
-		tweenService:Create(ripple, TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-			Size = UDim2.fromOffset(56, 56),
-			BackgroundTransparency = 1
-		}):Play()
-		task.delay(0.4, function()
-			ripple:Destroy()
-		end)
-	end
-
-	local guideV = Instance.new('Frame')
-	guideV.Name = 'SnapGuideV'
-	guideV.Size = UDim2.new(0, 1, 1, 0)
-	guideV.BackgroundTransparency = 0.25
-	guideV.BorderSizePixel = 0
-	guideV.ZIndex = 9
-	guideV.Visible = false
-	guideV.Parent = scaledgui
-	local guideH = guideV:Clone()
-	guideH.Name = 'SnapGuideH'
-	guideH.Size = UDim2.new(1, 0, 0, 1)
-	guideH.Parent = scaledgui
-
-	function nexus.ShowGuides(x, y)
-		if not nexus.Drag.Guides then
-			x, y = nil, nil
-		end
-		local accent = Color3.fromHSV(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value)
-		guideV.Visible = x ~= nil
-		if x then
-			guideV.Position = UDim2.fromOffset(x, 0)
-			guideV.BackgroundColor3 = accent
-		end
-		guideH.Visible = y ~= nil
-		if y then
-			guideH.Position = UDim2.fromOffset(0, y)
-			guideH.BackgroundColor3 = accent
-		end
-	end
-
-	function nexus.HideGuides()
-		guideV.Visible = false
-		guideH.Visible = false
-	end
-end
-
---[[
-	Interface pane (Settings -> Interface)
-	Hover style/intensity/lift, click pulses, UI sounds, tooltip behaviour,
-	live corner radius and animation speed/easing. Everything persists through
-	the normal per-game GUI settings file like any other Main option.
-]]
-do
-	local interfacepane = mainapi.Categories.Main:CreateSettingsPane({Name = 'Interface'})
-
-	interfacepane:CreateDropdown({
-		Name = 'Hover style',
-		List = {'Underline', 'Outline', 'Brighten', 'None'},
-		Tooltip = 'How controls react to the cursor:\nUnderline - accent line grows from the centre\nOutline - accent border around the control\nBrighten - soft white wash\nNone - no extra effect',
-		Function = function(val)
-			nexus.Hover.Style = val
-		end
-	})
-	interfacepane:CreateSlider({
-		Name = 'Hover intensity',
-		Min = 10,
-		Max = 100,
-		Default = 100,
-		Suffix = '%',
-		Darker = true,
-		Tooltip = 'Strength of the selected hover effect',
-		Function = function(val)
-			nexus.Hover.Intensity = val / 100
-		end
-	})
-	interfacepane:CreateToggle({
-		Name = 'Hover lift',
-		Tooltip = 'Pops hovered controls up a touch (2% scale)',
-		Function = function(callback)
-			nexus.Hover.Lift = callback
-		end
-	})
-	interfacepane:CreateToggle({
-		Name = 'Click pulses',
-		Tooltip = 'Expanding accent pulse where you click',
-		Function = function(callback)
-			nexus.Hover.Pulse = callback
-		end
-	})
-	interfacepane:CreateToggle({
-		Name = 'UI sounds',
-		Tooltip = 'Click / notification / window-snap sounds.\nHover ticks have their own toggle below.',
-		Function = function(callback)
-			nexus.SoundsEnabled = callback
-		end
-	})
-	interfacepane:CreateSlider({
-		Name = 'UI volume',
-		Min = 0,
-		Max = 100,
-		Default = 50,
-		Suffix = '%',
-		Darker = true,
-		Function = function(val)
-			nexus.SoundVolume = val / 100
-		end
-	})
-	interfacepane:CreateToggle({
-		Name = 'Hover sounds',
-		Darker = true,
-		Tooltip = 'Soft tick when the cursor enters a control (needs UI sounds)',
-		Function = function(callback)
-			nexus.Hover.Sounds = callback
-		end
-	})
-	interfacepane:CreateSlider({
-		Name = 'Tooltip delay',
-		Min = 0,
-		Max = 1,
-		Decimal = 100,
-		Default = 0,
-		Suffix = 's',
-		Tooltip = 'How long the cursor must rest on a control before its tooltip opens',
-		Function = function(val)
-			nexus.Tooltip.Delay = val
-		end
-	})
-	interfacepane:CreateToggle({
-		Name = 'Tooltips follow cursor',
-		Default = true,
-		Darker = true,
-		Tooltip = 'Off - tooltips stay anchored where they opened',
-		Function = function(callback)
-			nexus.Tooltip.Follow = callback
-		end
-	})
-	interfacepane:CreateSlider({
-		Name = 'Corner radius',
-		Min = 0,
-		Max = 16,
-		Default = 8,
-		Suffix = 'px',
-		Tooltip = 'Roundness of windows and panels, applied live',
-		Function = function(val)
-			cornerRadius = val
-			for corner in cornerRegistry do
-				if corner.Parent then
-					corner.CornerRadius = UDim.new(0, val)
-				end
-			end
-		end
-	})
-
-	-- Animation speed / easing rebuild the shared TweenInfo every micro-
-	-- interaction in the GUI already reads from.
-	local animDuration, animEasing, animEnabled = 0.16, Enum.EasingStyle.Quad, true
-	local function rebuildTween()
-		uipallet.Tween = TweenInfo.new(animEnabled and animDuration or 0, animEasing, Enum.EasingDirection.Out)
-	end
-
-	interfacepane:CreateToggle({
-		Name = 'Animations',
-		Default = true,
-		Tooltip = 'Master switch for interface animations',
-		Function = function(callback)
-			animEnabled = callback
-			rebuildTween()
-		end
-	})
-	interfacepane:CreateSlider({
-		Name = 'Animation speed',
-		Min = 0.04,
-		Max = 0.4,
-		Decimal = 100,
-		Default = 0.16,
-		Suffix = 's',
-		Darker = true,
-		Tooltip = 'Duration of interface micro-animations',
-		Function = function(val)
-			animDuration = val
-			rebuildTween()
-		end
-	})
-	interfacepane:CreateDropdown({
-		Name = 'Easing style',
-		List = {'Quad', 'Sine', 'Exponential', 'Back', 'Elastic', 'Linear'},
-		Darker = true,
-		Tooltip = 'Easing curve used by interface animations',
-		Function = function(val)
-			local suc, style = pcall(function()
-				return Enum.EasingStyle[val]
-			end)
-			if suc and style then
-				animEasing = style
-				rebuildTween()
-			end
-		end
-	})
-end
-
---[[
-	Windows pane (Settings -> Windows)
-	Custom positioning: snapping, guides, clamping, locking, smoothing, window
-	open animation, one-click arrangement and named layouts persisted to
-	aetherv2/profiles/layouts.json.
-]]
-do
-	local windowspane = mainapi.Categories.Main:CreateSettingsPane({Name = 'Windows'})
-
-	windowspane:CreateToggle({
-		Name = 'Edge snapping',
-		Default = true,
-		Tooltip = 'Dragged windows stick to the screen edges and to the same column/row slots the Sort GUI button uses',
-		Function = function(callback)
-			nexus.Drag.EdgeSnap = callback
-		end
-	})
-	windowspane:CreateToggle({
-		Name = 'Window snapping',
-		Default = true,
-		Tooltip = 'Dragged windows align to the edges of other windows',
-		Function = function(callback)
-			nexus.Drag.WindowSnap = callback
-		end
-	})
-	windowspane:CreateSlider({
-		Name = 'Snap distance',
-		Min = 2,
-		Max = 32,
-		Default = 12,
-		Suffix = 'px',
-		Darker = true,
-		Function = function(val)
-			nexus.Drag.SnapDistance = val
-		end
-	})
-	windowspane:CreateToggle({
-		Name = 'Alignment guides',
-		Default = true,
-		Darker = true,
-		Tooltip = 'Accent lines along matched edges while snapping',
-		Function = function(callback)
-			nexus.Drag.Guides = callback
-		end
-	})
-	windowspane:CreateToggle({
-		Name = 'Grid snapping',
-		Tooltip = 'Dragged windows lock to a fixed grid\n(holding LeftShift still snaps to 3px, as always)',
-		Function = function(callback)
-			nexus.Drag.Grid = callback
-		end
-	})
-	windowspane:CreateSlider({
-		Name = 'Grid size',
-		Min = 8,
-		Max = 64,
-		Default = 24,
-		Suffix = 'px',
-		Darker = true,
-		Function = function(val)
-			nexus.Drag.GridSize = val
-		end
-	})
-	windowspane:CreateToggle({
-		Name = 'Keep windows on screen',
-		Default = true,
-		Tooltip = 'Windows cannot be dragged off the screen',
-		Function = function(callback)
-			nexus.Drag.Clamp = callback
-		end
-	})
-	windowspane:CreateToggle({
-		Name = 'Lock windows',
-		Tooltip = 'Freezes every window in place - dragging does nothing until unlocked',
-		Function = function(callback)
-			nexus.Drag.Lock = callback
-		end
-	})
-	windowspane:CreateSlider({
-		Name = 'Drag smoothing',
-		Min = 0,
-		Max = 0.3,
-		Decimal = 100,
-		Default = 0,
-		Suffix = 's',
-		Tooltip = 'Windows glide after the cursor instead of jumping.\n0 disables smoothing.',
-		Function = function(val)
-			nexus.Drag.Smoothing = val
-		end
-	})
-	windowspane:CreateDropdown({
-		Name = 'Open animation',
-		List = {'Cascade', 'Pop', 'Fade', 'None'},
-		Default = 'Cascade',
-		Tooltip = 'How windows enter when the GUI opens.\nCascade staggers them in one after another.',
-		Function = function(val)
-			nexus.OpenAnim = val
-		end
-	})
-
-	-- Auto-save positions + snap sound on drag release.
-	local autosave, savequeued = false, false
-	windowspane:CreateToggle({
-		Name = 'Auto-save positions',
-		Tooltip = 'Writes window positions to your profile a moment after you finish dragging',
-		Function = function(callback)
-			autosave = callback
-		end
-	})
-	function nexus.OnWindowMoved()
-		nexus.PlaySound('snap')
-		if autosave and mainapi.Loaded and not savequeued then
-			savequeued = true
-			task.delay(2, function()
-				savequeued = false
-				pcall(function()
-					mainapi:Save()
-				end)
-			end)
-		end
-	end
-
-	-- Named layouts: snapshot every window position (categories AND overlays)
-	-- under a name, apply or delete it later. Stored globally, not per game.
-	local layoutsPath = 'aetherv2/profiles/layouts.json'
-	local layouts = (isfile(layoutsPath) and loadJson(layoutsPath)) or {}
-	local layoutdrop
-
-	local function layoutNames()
-		local names = {}
-		for name in layouts do
-			table.insert(names, name)
-		end
-		table.sort(names)
-		return names
-	end
-
-	local namebox = windowspane:CreateTextBox({
-		Name = 'Layout name',
-		Placeholder = 'e.g. bedwars',
-		Tooltip = 'Name used by the Save window layout button'
-	})
-	windowspane:CreateButton({
-		Name = 'Save window layout',
-		Tooltip = 'Snapshots every window position under the name above',
-		Function = function()
-			local name = tostring(namebox.Value or ''):gsub('^%s*(.-)%s*$', '%1')
-			if name == '' then
-				name = os.date('layout %H-%M-%S')
-			end
-			local snapshot = {}
-			for i, v in mainapi.Categories do
-				if typeof(v.Object) == 'Instance' then
-					snapshot[i] = {X = v.Object.Position.X.Offset, Y = v.Object.Position.Y.Offset}
-				end
-			end
-			layouts[name] = snapshot
-			pcall(writefile, layoutsPath, httpService:JSONEncode(layouts))
-			layoutdrop:Change(layoutNames())
-			layoutdrop:SetValue(name)
-			mainapi:CreateNotification('Layouts', 'Saved window layout "'..name..'".', 4, 'info')
-		end
-	})
-	layoutdrop = windowspane:CreateDropdown({
-		Name = 'Saved layouts',
-		List = layoutNames(),
-		Darker = true,
-		Tooltip = 'Pick a layout for Apply / Delete below'
-	})
-	windowspane:CreateButton({
-		Name = 'Apply layout',
-		Darker = true,
-		Function = function()
-			local snapshot = layouts[layoutdrop.Value]
-			if not snapshot then
-				mainapi:CreateNotification('Layouts', 'No layout selected.', 4, 'warning')
-				return
-			end
-			for i, pos in snapshot do
-				local category = mainapi.Categories[i]
-				if category and typeof(category.Object) == 'Instance' and type(pos) == 'table' then
-					category.Object.Position = UDim2.fromOffset(tonumber(pos.X) or 6, tonumber(pos.Y) or 42)
-				end
-			end
-			nexus.PlaySound('snap')
-		end
-	})
-	windowspane:CreateButton({
-		Name = 'Delete layout',
-		Darker = true,
-		Function = function()
-			local name = layoutdrop.Value
-			if not layouts[name] then return end
-			layouts[name] = nil
-			pcall(writefile, layoutsPath, httpService:JSONEncode(layouts))
-			layoutdrop:Change(layoutNames())
-			mainapi:CreateNotification('Layouts', 'Deleted window layout "'..name..'".', 4, 'info')
-		end
-	})
-
-	-- Window open animation + whoosh when the GUI toggles.
-	mainapi:Clean(clickgui:GetPropertyChangedSignal('Visible'):Connect(function()
-		nexus.PlaySound('open')
-		if not clickgui.Visible or nexus.OpenAnim == 'None' then return end
-		-- Cascade sorts the visible windows left-to-right / top-to-bottom and pops
-		-- them in one after another for a "menu unfolding" entrance.
-		local cascadeIndex = 0
-		local ordered = {}
-		for _, v in mainapi.Categories do
-			local win = v.Object
-			if v.Type == 'Overlay' or typeof(win) ~= 'Instance' or not win.Visible then continue end
-			table.insert(ordered, win)
-		end
-		if nexus.OpenAnim == 'Cascade' then
-			table.sort(ordered, function(a, b)
-				local pa, pb = a.AbsolutePosition, b.AbsolutePosition
-				if math.abs(pa.X - pb.X) > 24 then
-					return pa.X < pb.X
-				end
-				return pa.Y < pb.Y
-			end)
-		end
-		for _, win in ordered do
-			local function pop()
-				local openscale = win:FindFirstChild('NexusOpenScale')
-				if not openscale then
-					openscale = Instance.new('UIScale')
-					openscale.Name = 'NexusOpenScale'
-					openscale.Parent = win
-				end
-				openscale.Scale = 0.9
-				tweenService:Create(openscale, TweenInfo.new(0.28, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
-					Scale = 1
-				}):Play()
-			end
-			if nexus.OpenAnim == 'Pop' then
-				pop()
-			elseif nexus.OpenAnim == 'Fade' then
-				win.BackgroundTransparency = 1
-				tween:Tween(win, TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-					BackgroundTransparency = uipallet.Glass
-				})
-			elseif nexus.OpenAnim == 'Cascade' then
-				-- Staggered: each window waits a touch longer than the last, but
-				-- bail if the menu was closed again before this one's turn.
-				local myDelay = cascadeIndex * 0.045
-				cascadeIndex += 1
-				local openscale = win:FindFirstChild('NexusOpenScale')
-				if not openscale then
-					openscale = Instance.new('UIScale')
-					openscale.Name = 'NexusOpenScale'
-					openscale.Parent = win
-				end
-				openscale.Scale = 0.86
-				task.delay(myDelay, function()
-					if clickgui.Visible and win.Visible then
-						tweenService:Create(openscale, TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
-							Scale = 1
-						}):Play()
-					elseif openscale then
-						openscale.Scale = 1
-					end
-				end)
-			end
-		end
-	end))
-end
 
 --[[
 	Notification customisation (Settings -> Notifications)
@@ -12510,6 +10462,9 @@ do
 				task.wait()
 			end
 			recolorThread = nil
+			-- Also drive the theme onto module colours (Killaura target boxes, ESP,
+			-- particles, ...) once the accent settles, if that setting is on.
+			pcall(function() mainapi:ApplyThemeToModules(th, ts, tv) end)
 		end)
 	end
 
@@ -12850,8 +10805,7 @@ do
 	end)
 
 	-- =====================================================================
-	-- Toolbar (top-right): Spotlight / Themes / Collapse-all + live counter
-	-- =====================================================================
+	-- Toolbar (top-right): Spotlight + Themes quick buttons.
 	local toolbar = Instance.new('Frame')
 	toolbar.Name = 'NexusToolbar'
 	toolbar.Size = UDim2.fromOffset(38, 10)
@@ -12866,22 +10820,6 @@ do
 	toolbarList.HorizontalAlignment = Enum.HorizontalAlignment.Center
 	toolbarList.Parent = toolbar
 
-	-- Live "N enabled" chip.
-	local enabledChip = Instance.new('TextLabel')
-	enabledChip.Name = 'EnabledChip'
-	enabledChip.Size = UDim2.fromOffset(38, 20)
-	enabledChip.LayoutOrder = 0
-	enabledChip.BackgroundColor3 = accent()
-	enabledChip.Text = '0'
-	enabledChip.TextColor3 = Color3.new(0.06, 0.06, 0.06)
-	enabledChip.TextSize = 11
-	enabledChip.FontFace = uipallet.FontSemiBold
-	enabledChip.Visible = false
-	enabledChip.ZIndex = 8
-	enabledChip.Parent = toolbar
-	addCorner(enabledChip, UDim.new(0, 6))
-	addTooltip(enabledChip, 'Modules currently enabled')
-
 	local function makeToolButton(order, iconAsset, glyph, tip)
 		local btn = Instance.new('TextButton')
 		btn.Name = 'Tool'..order
@@ -12892,8 +10830,6 @@ do
 		btn.Text = ''
 		btn.ZIndex = 8
 		btn.Parent = toolbar
-		-- Keep the glass backdrop just under the button face (windows sit at ZIndex
-		-- 1, so a default-ZIndex blur would vanish behind them).
 		local blur = addBlur(btn)
 		blur.ZIndex = 7
 		addCorner(btn, UDim.new(0, 10))
@@ -12953,83 +10889,9 @@ do
 			themePopover.Visible = false
 		end
 	end)
-	local collapseBtn, collapseIcon = makeToolButton(3, 'aetherv2/assets/new/expandup.png', nil, 'Collapse / expand all categories')
-	collapseBtn.MouseButton1Click:Connect(function()
-		local anyExpanded = false
-		for _, cat in mainapi.Categories do
-			if cat.Type == 'Category' and cat.Expanded then
-				anyExpanded = true
-				break
-			end
-		end
-		for _, cat in mainapi.Categories do
-			if cat.Type == 'Category' and typeof(cat.Object) == 'Instance' and cat.Object.Visible then
-				if anyExpanded and cat.Expanded then
-					cat:Expand()
-				elseif not anyExpanded and not cat.Expanded then
-					cat:Expand()
-				end
-			end
-		end
-		tweenService:Create(collapseIcon, uipallet.Tween, {Rotation = anyExpanded and 0 or 180}):Play()
-	end)
 
-	-- =====================================================================
-	-- Minor touches: per-category counts, glow, scrollbar tint, breathing edge
-	-- =====================================================================
-	local catBadges = {}
-	for cname, cat in mainapi.Categories do
-		if cat.Type == 'Category' and cat.Button and typeof(cat.Button.Object) == 'Instance' then
-			local badge = Instance.new('TextLabel')
-			badge.Name = 'EnabledCount'
-			badge.Size = UDim2.fromOffset(16, 16)
-			badge.Position = UDim2.new(1, -34, 0.5, 0)
-			badge.AnchorPoint = Vector2.new(1, 0.5)
-			badge.BackgroundColor3 = accent()
-			badge.Text = '0'
-			badge.TextColor3 = Color3.new(0.06, 0.06, 0.06)
-			badge.TextSize = 10
-			badge.FontFace = uipallet.FontSemiBold
-			badge.Visible = false
-			badge.ZIndex = 4
-			badge.Parent = cat.Button.Object
-			addCorner(badge, UDim.new(1, 0))
-			catBadges[cname] = badge
-		end
-	end
-
-	local refreshQueued = false
-	local function refreshCounts()
-		local totals, total = {}, 0
-		for _, m in mainapi.Modules do
-			if m.Enabled then
-				totals[m.Category] = (totals[m.Category] or 0) + 1
-				total += 1
-			end
-		end
-		local a = accent()
-		for cname, badge in catBadges do
-			local c = totals[cname] or 0
-			badge.Text = tostring(c)
-			badge.Visible = c > 0
-			badge.BackgroundColor3 = a
-		end
-		enabledChip.Text = tostring(total)
-		enabledChip.Visible = total > 0
-		enabledChip.BackgroundColor3 = a
-		if themeSwatch then themeSwatch.BackgroundColor3 = a end
-	end
-	local function scheduleRefresh()
-		if refreshQueued then return end
-		refreshQueued = true
-		task.defer(function()
-			refreshQueued = false
-			pcall(refreshCounts)
-		end)
-	end
-
-	-- Wrap every module's Toggle so enabling flashes a glow ring and both the
-	-- per-category and global counters stay live - covers clicks AND keybinds.
+	-- Glow ring: enabling a module (click OR keybind) flashes an accent ring off
+	-- its row. This is the only "small touch" kept from the old visual pack.
 	for _, m in mainapi.Modules do
 		local origToggle = m.Toggle
 		m.Toggle = function(self, ...)
@@ -13038,59 +10900,7 @@ do
 			if self.Enabled and not before then
 				enableGlow(self.Object)
 			end
-			scheduleRefresh()
 		end
-	end
-
-	-- Accent-tinted scrollbars everywhere.
-	local function tintScrolls()
-		local a = accent()
-		for _, d in scaledgui:GetDescendants() do
-			if d:IsA('ScrollingFrame') then
-				d.ScrollBarImageColor3 = a
-			end
-		end
-	end
-
-	-- Per-category window "pop" when a category is switched on while the menu is
-	-- already open (the whole-GUI open uses its own cascade below).
-	for _, cat in mainapi.Categories do
-		if cat.Type == 'Category' and typeof(cat.Object) == 'Instance' then
-			local win = cat.Object
-			win:GetPropertyChangedSignal('Visible'):Connect(function()
-				if win.Visible and clickgui.Visible then
-					local sc = win:FindFirstChild('NexusPopScale')
-					if not sc then
-						sc = Instance.new('UIScale')
-						sc.Name = 'NexusPopScale'
-						sc.Parent = win
-					end
-					sc.Scale = 0.9
-					tweenService:Create(sc, TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Scale = 1}):Play()
-				end
-			end)
-		end
-	end
-
-	-- Breathing accent edge on the main GUI window.
-	local mainWindow = mainapi.Categories.Main and mainapi.Categories.Main.Object
-	if typeof(mainWindow) == 'Instance' then
-		local breathe = Instance.new('UIStroke')
-		breathe.Name = 'NexusBreathe'
-		breathe.Color = accent()
-		breathe.Thickness = 1.2
-		breathe.Transparency = 0.55
-		breathe.Parent = mainWindow
-		task.spawn(function()
-			while mainWindow.Parent do
-				breathe.Color = accent()
-				tweenService:Create(breathe, TweenInfo.new(1.5, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {Transparency = 0.85}):Play()
-				task.wait(1.5)
-				breathe.Color = accent()
-				tweenService:Create(breathe, TweenInfo.new(1.5, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {Transparency = 0.55}):Play()
-				task.wait(1.5)
-			end
-		end)
 	end
 
 	-- Closing the menu dismisses the Spotlight (it lives on the scaled root, not
@@ -13105,17 +10915,40 @@ do
 		end
 	end))
 
-	-- Prime everything + keep accents in sync a moment after any theme change.
-	task.defer(function()
-		pcall(refreshCounts)
-		pcall(tintScrolls)
-	end)
+	-- Keep the spotlight/theme button accents in sync after a theme change.
 	mainapi.RefreshVisualPack = function()
-		pcall(refreshCounts)
-		pcall(tintScrolls)
-		spotStroke.Color = accent()
-		spotIcon.ImageColor3 = accent()
+		pcall(function()
+			if themeSwatch then themeSwatch.BackgroundColor3 = accent() end
+			spotStroke.Color = accent()
+			spotIcon.ImageColor3 = accent()
+		end)
 	end
+end
+
+-- Simple, reliable open animation. Every visible window pops from 0.94 -> 1 the
+-- instant the menu opens - no stagger and no per-window visibility gating, so
+-- every category pops the same way. (The old "Cascade" mode set every window to
+-- a shrunk scale up front and only tweened each back after a delayed, Visible-
+-- gated callback, which left some categories stuck small and others lagging -
+-- the "only some pop / some just stay" bug.)
+do
+	local openInfo = TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+	mainapi:Clean(clickgui:GetPropertyChangedSignal('Visible'):Connect(function()
+		if not clickgui.Visible then return end
+		for _, v in mainapi.Categories do
+			local win = v.Object
+			if v.Type ~= 'Overlay' and typeof(win) == 'Instance' and win.Visible then
+				local openscale = win:FindFirstChild('OpenScale')
+				if not openscale then
+					openscale = Instance.new('UIScale')
+					openscale.Name = 'OpenScale'
+					openscale.Parent = win
+				end
+				openscale.Scale = 0.94
+				tween:Tween(openscale, openInfo, {Scale = 1})
+			end
+		end
+	end))
 end
 
 return mainapi

@@ -11160,7 +11160,14 @@ run(function()
     									if hotbar and old and hotbarSwitch(hotbar) then
     										local ignore = vape.Modules['Silent Aura'].Enabled or not inputService.MouseEnabled
     										task.wait(Delay.Value)
-    										shootFunc()
+    										-- Fire via the projectile remote (shootFunc's `ignore` path) instead
+    										-- of a bare mouse click. AutoShoot swaps to a projectile source and
+    										-- fires it, but the default source is a bow/arrow that a single
+    										-- mouse1click never launches (it needs charge) - so calling
+    										-- shootFunc() with no argument just clicked and nothing shot. Passing
+    										-- true fires the projectile through the same remote the other shoot
+    										-- modules use, so it works for every weapon type.
+    										shootFunc(true)
     										if vape.Modules['Auto Clicker'].Enabled and not ignore then
     											task.delay(runService.PostSimulation:Wait(), mouse1press)
     										end
