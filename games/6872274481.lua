@@ -4714,7 +4714,7 @@ run(function()
         Tooltip = 'Towers you straight up: while you hold jump off the ground it places a block under your feet near the apex so you rise a block each jump (scaffold-style). Use the item limit to keep some blocks in reserve.'
     })
     LimitItems = AutoBuildUp:CreateToggle({
-        Name = 'Limit items',
+        Name = 'Limit to items',
         Default = true,
         Tooltip = 'Stops building once your blocks drop to the reserve below, so you never tower away your entire stack.'
     })
@@ -4740,6 +4740,7 @@ end)
 -- by one frame of expected travel so you stay on your path instead of getting slammed back.
 run(function()
     local AntiLagback
+    local Mode
     local Sensitivity
     local MaxCorrect
 
@@ -4775,13 +4776,35 @@ run(function()
                             -- How far we travelled BACKWARD along our own heading this frame.
                             local backward = -(moved:Dot(dir))
                             if backward > (Sensitivity and Sensitivity.Value or 6) and backward < (MaxCorrect and MaxCorrect.Value or 80) then
-                                -- Undo the pullback: return to where we were, advanced by roughly
-                                -- one frame of the travel we should have made, and restore our
-                                -- horizontal momentum (which the server likely just killed).
-                                local restore = lastPos + hvel * dt
-                                root.CFrame += (restore - pos)
-                                root.AssemblyLinearVelocity = Vector3.new(lastMoveVel.X, root.AssemblyLinearVelocity.Y, lastMoveVel.Z)
-                                pos = restore
+                                if Mode and Mode.Value == 'Nearest Land' then
+                                    -- Lagback detected: instead of fighting the rubber-band in
+                                    -- place, teleport onto the nearest solid block the instant it
+                                    -- starts so the yank can't drag us off an edge or into the void.
+                                    -- getNearGround returns the standing spot on the closest
+                                    -- exposed block (nil if none is within reach).
+                                    local land = getNearGround(10)
+                                    if land then
+                                        root.CFrame += (land - pos)
+                                        -- Kill the horizontal momentum carrying us off; keep the
+                                        -- vertical component so we settle onto the block.
+                                        root.AssemblyLinearVelocity = Vector3.new(0, root.AssemblyLinearVelocity.Y, 0)
+                                        pos = land
+                                    else
+                                        -- No land nearby - fall back to just undoing the pull.
+                                        local restore = lastPos + hvel * dt
+                                        root.CFrame += (restore - pos)
+                                        root.AssemblyLinearVelocity = Vector3.new(lastMoveVel.X, root.AssemblyLinearVelocity.Y, lastMoveVel.Z)
+                                        pos = restore
+                                    end
+                                else
+                                    -- Restore: return to where we were, advanced by roughly one
+                                    -- frame of the travel we should have made, and restore our
+                                    -- horizontal momentum (which the server likely just killed).
+                                    local restore = lastPos + hvel * dt
+                                    root.CFrame += (restore - pos)
+                                    root.AssemblyLinearVelocity = Vector3.new(lastMoveVel.X, root.AssemblyLinearVelocity.Y, lastMoveVel.Z)
+                                    pos = restore
+                                end
                             end
                         end
                     end
@@ -4795,7 +4818,13 @@ run(function()
                 end))
             end
         end,
-        Tooltip = 'Detects a server rubber-band (a sudden backward yank against your movement) and instantly restores your position so the lagback never lands.'
+        Tooltip = 'Detects a server rubber-band (a sudden backward yank against your movement). Restore puts you back on your path; Nearest Land teleports you onto the closest solid block the instant the lagback starts so it can never drop you into the void.'
+    })
+    Mode = AntiLagback:CreateDropdown({
+        Name = 'Mode',
+        List = {'Restore', 'Nearest Land'},
+        Default = 'Restore',
+        Tooltip = 'Restore - undo the rubber-band and keep you on your path.\nNearest Land - the instant a lagback is detected, teleport onto the nearest solid block so the yank cannot drop you into the void.'
     })
     Sensitivity = AntiLagback:CreateSlider({
         Name = 'Sensitivity',
@@ -12811,91 +12840,59 @@ run(function()
 
     local FireRate = {}
 
-    local function getAttackData()
-	local hand = store.hand
-	if not hand or not hand.tool then
+    local function shootFunc(data)
+	local item, ammo, projectile, source = data[1], data[2], data[3], data[4]
+	local projmeta = bedwars.ProjectileMeta[ammo]
+	if not projmeta then
 		return
 	end
+	local projSpeed = projmeta.launchVelocity
+	local gravity = projmeta.gravitationalAcceleration or 196.2
 
-	local meta = bedwars.ItemMeta[hand.tool.Name]
-	if not meta or not meta.projectileSource then
-		return
+	local selfpos = entitylib.character.RootPart.Position
+	local calc = selfpos + gameCamera.CFrame.LookVector * 50
+	local ent = entitylib.EntityPosition({
+		Part = 'RootPart',
+		Range = Range.Value,
+		Wallcheck = Targets.Walls.Enabled or nil,
+		Players = Targets.Players.Enabled,
+		NPCs = Targets.NPCs.Enabled,
+	})
+	if ent then
+		calc = prediction.SolveTrajectory(
+			selfpos,
+			projSpeed,
+			gravity,
+			ent.RootPart.Position,
+			ent.RootPart.Velocity,
+			workspace.Gravity,
+			ent.HipHeight,
+			ent.Jumping and 42.6 or nil,
+			nil,
+			nil,
+			lplr:GetNetworkPing()
+		) or calc
 	end
 
-	if (FireRate[hand.tool.Name] or 0) > tick() then
-		return
-	end
+	local dir = CFrame.lookAt(selfpos, calc).LookVector
+	local shootPosition, id = (CFrame.new(selfpos, calc) * CFrame.new(Vector3.new(-bedwars.BowConstantsTable.RelX, -bedwars.BowConstantsTable.RelY, -bedwars.BowConstantsTable.RelZ))).Position,
+		httpService:GenerateGUID(true)
 
-	local ammo = getAmmo(meta.projectileSource)
-	local frosty = hand.tool.Name:find('frost_staff')
-	if not ammo and not frosty then
-		return
-	end
-
-	if frosty then
-		ammo = hand.tool.Name:gsub('frost_staff', 'frosty_snowball')
-	end
-
-	local callback = canDebug and meta.projectileType or function(res)
-		return 'arrow'
-	end
-
-	return hand, meta, ammo, callback(ammo)
-    end
-
-    local function shootFunc(ignore)
-	if not inputService.MouseEnabled or ignore then
-		local proj, meta, ammo, projectile = getAttackData()
-
-		if proj then
-			local projmeta = bedwars.ProjectileMeta[ammo]
-			local projSpeed = projmeta.launchVelocity
-
-			local selfpos = entitylib.character.RootPart.Position
-			local calc = selfpos + gameCamera.CFrame.LookVector * 50
-			local ent = ignore and entitylib.EntityPosition({
-                    Part = 'RootPart',
-                    Range = 1000,
-                    Players = true,
-                    NPCs = true,
-                    Wallcheck = true,
-                }) or nil
-			if ent then
-				calc = prediction.SolveTrajectory(
-					selfpos,
-					projSpeed,
-					meta.gravitationalAcceleration or 196.2,
-					Vector3.new(ent.RootPart.Velocity.X, 0, ent.RootPart.Velocity.Z),
-					workspace.Gravity,
-					ent.HipHeight,
-					nil,
-					RaycastParams.new(),
-					nil,
-					lplr:GetNetworkPing()
-				)
-			end
-
-			local dir = CFrame.lookAt(selfpos, calc).LookVector
-			local shootPosition, id = (CFrame.new(selfpos, calc) * CFrame.new(Vector3.new(-bedwars.BowConstantsTable.RelX,-bedwars.BowConstantsTable.RelY,-bedwars.BowConstantsTable.RelZ))).Position,
-				httpService:GenerateGUID(true)
-
-			--bedwars.ProjectileController:createLocalProjectile(meta, ammo, projectile, shootPosition, id, dir * projSpeed, {drawDurationSeconds = 1})
-			bedwars.Client:Get(remotes.FireProjectile):CallServerAsync(proj.tool, ammo, projectile, shootPosition, selfpos, dir * projSpeed, id, {
-                    drawDurationSeconds = 1,
-                    shotId = httpService:GenerateGUID(false),
-                }, workspace:GetServerTimeNow() - 0.045):andThen(function(res)
-                    if res then
-                        res.Parent = replicatedStorage
-                    end
-                end)
-			local shoot = meta.projectileSource.launchSound
-			shoot = shoot and shoot[math.random(1, #shoot)] or nil
-			if shoot then
-				bedwars.SoundManager:playSound(shoot)
-			end
+	pcall(function()
+		bedwars.ProjectileController:createLocalProjectile(source, ammo, projectile, shootPosition, id, dir * projSpeed, {drawDurationSeconds = 1})
+	end)
+	bedwars.Client:Get(remotes.FireProjectile):CallServerAsync(item.tool, ammo, projectile, shootPosition, selfpos, dir * projSpeed, id, {
+		drawDurationSeconds = 1,
+		shotId = httpService:GenerateGUID(false),
+	}, workspace:GetServerTimeNow() - 0.045):andThen(function(res)
+		if res then
+			res.Parent = replicatedStorage
 		end
-	else
-		mouse1click()
+	end)
+	local shoot = source.launchSound
+	shoot = shoot and shoot[math.random(1, #shoot)] or nil
+	if shoot then
+		bedwars.SoundManager:playSound(shoot)
 	end
     end
 
@@ -12916,24 +12913,31 @@ run(function()
 						if tick() > start then
 							for _, data in getProjectiles() do
 								if (FireRate[data[1].itemType] or 0) < tick() then
-									-- Remember the slot we're holding (the sword) so we always return to it,
-									-- then hop to the projectile's slot.
+									-- Remember the weapon we're holding (the sword) so we always return to it.
+									local oldtool = store.hand and store.hand.tool
+									local oldhotbar = store.inventory.hotbarSlot
 									local hotbar = getHotbar(data[1].tool)
-									local old = store.inventory.hotbarSlot
-									if hotbar and hotbarSwitch(hotbar) then
-										task.wait(Delay.Value)
-										-- Fire through the projectile remote (shootFunc's ignore path), NOT
-										-- mouse1click: a single click never charges a bow, so the old path
-										-- swapped weapons and launched nothing. pcall so a failed shot can
-										-- never skip the switch-back below.
-										pcall(shootFunc, true)
-										task.wait(Delay.Value)
-										FireRate[data[1].itemType] = tick() + (data[4].fireDelaySec + Rate:GetRandomValue())
-										hotbarSwitch(old) -- always switch back to what we were holding
-										task.wait(Next.Value)
-										if (tick() - bedwars.SwordController.lastSwing) > 0.29 then
-											break
-										end
+									-- Equip the projectile server-side via switchItem (reliable) and visibly
+									-- swap the hotbar slot. The old path only did a visible hotbarSwitch then
+									-- read store.hand (not updated in time), so nothing ever fired.
+									switchItem(data[1].tool)
+									if hotbar then
+										pcall(hotbarSwitch, hotbar)
+									end
+									task.wait(Delay.Value)
+									-- Fire with the projectile data passed explicitly (never via store.hand).
+									-- pcall so a failed shot can never skip the switch-back below.
+									pcall(shootFunc, data)
+									FireRate[data[1].itemType] = tick() + (data[4].fireDelaySec + Rate:GetRandomValue())
+									task.wait(Delay.Value)
+									-- Always switch back to the weapon we were holding.
+									if oldtool then
+										switchItem(oldtool)
+									end
+									pcall(hotbarSwitch, oldhotbar)
+									task.wait(Next.Value)
+									if (tick() - bedwars.SwordController.lastSwing) > 0.29 then
+										break
 									end
 								end
 							end
