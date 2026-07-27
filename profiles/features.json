@@ -1,5 +1,5 @@
 {
-	"newModules": ["KrystalDisabler", "AntiLagback", "ProjectileDodger"],
-	"patchedModules": ["Invisible", "InfiniteRewards", "Killaura", "InfiniteShield", "ProjectileExploit"],
-	"updatedModules": ["BalloonDisabler", "Killaura", "AutoWin"]
+	"newModules": ["KrystalDisabler", "ProjectileDodger"],
+	"patchedModules": ["Invisible", "InfiniteRewards", "Killaura", "InfiniteShield", "ProjectileExploit"],	
+	"updatedModules": ["AntiLagback", "Killaura", "AutoWin"]
 }
