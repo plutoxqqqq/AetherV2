@@ -937,8 +937,71 @@ local function removeSavedConfig(name)
 	refreshConfigProfiles()
 	return true
 end
+--[[
+	profiles/features.json drives the little pills drawn on the right of each
+	module row. Expected shape:
+		{
+			"newModules": [...],
+			"patchedModules": [...],
+			"updatedModules": [...]
+		}
+	Each list becomes a tag ('NEW', 'PATCHED', 'UPDATED') on every module it
+	names. A bare array is still accepted and treated as newModules, which is
+	the format the file used before the three lists existed.
+
+	Names are matched loosely (case and separators ignored) so the file can say
+	'KrystalDisabler' for a module registered as 'Krystal Disabler'.
+]]
 downloadFile('aetherv2/profiles/features.json')
-local newModules = loadJson('aetherv2/profiles/features.json') or {}
+local featureLists = {
+	{Tag = 'new', Key = 'newModules'},
+	{Tag = 'updated', Key = 'updatedModules'},
+	{Tag = 'patched', Key = 'patchedModules'}
+}
+local featureTags = {}
+
+local function moduleTagKey(name)
+	return (tostring(name):lower():gsub('[^%a%d]', ''))
+end
+
+do
+	local data = loadJson('aetherv2/profiles/features.json') or {}
+	if #data > 0 then
+		data = {newModules = data}
+	end
+	for _, list in featureLists do
+		local names = data[list.Key]
+		if type(names) == 'table' then
+			for _, name in names do
+				if type(name) == 'string' and name ~= '' then
+					local key = moduleTagKey(name)
+					featureTags[key] = featureTags[key] or {}
+					table.insert(featureTags[key], list.Tag)
+				end
+			end
+		end
+	end
+end
+
+-- Appends the feature tags for a module onto its existing tag list, skipping
+-- any it already carries. 'patched' is dropped when the row is going to draw
+-- the red patch badge anyway, so the same word never shows up twice.
+local function applyFeatureTags(tags, name, hasPatchBadge)
+	for _, tag in featureTags[moduleTagKey(name)] or {} do
+		if not (hasPatchBadge and tag == 'patched') then
+			local duplicate = false
+			for _, existing in tags do
+				if type(existing) == 'string' and existing:lower() == tag then
+					duplicate = true
+					break
+				end
+			end
+			if not duplicate then
+				table.insert(tags, tag)
+			end
+		end
+	end
+end
 --[[
 	Custom positioning. Dragging honours the live settings in nexus.Drag
 	(Settings -> Windows): grid snapping, screen-edge and window-to-window
@@ -4763,9 +4826,7 @@ function mainapi:CreateCategory(categorysettings)
 
 		modulesettings.Tags = modulesettings.Tags or {}
 		pcall(function()
-			if table.find(newModules, moduleapi.Name) then
-				table.insert(modulesettings.Tags, 'new')
-			end
+			applyFeatureTags(modulesettings.Tags, moduleapi.Name, patchedReason or semiPatchedReason)
 			for i, tag in modulesettings.Tags do
 				tag = tag:upper()
 				local size = getfontsize(removeTags(tag), 12, uipallet.Font, Vector2.new(100000, 100000))
