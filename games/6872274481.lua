@@ -4665,14 +4665,33 @@ end)
 
 -- AutoBuildUp: towers you straight up. While you hold jump it fills the block-cell directly
 -- beneath your feet - every cell as you rise, driven by position rather than a timer/apex - so
--- you build a gapless pillar and keep climbing as fast as you go up. The item limit keeps some
--- blocks in reserve so it never towers you out of your whole stack. Placement mirrors the
+-- you build a gapless pillar and keep climbing as fast as you go up. Placement mirrors the
 -- NoFall block clutch.
 run(function()
     local AutoBuildUp
     local LimitItems
-    local KeepAmount
     local lastPlacePos
+
+    -- Which block to tower with. 'Limit to items' means exactly that: only the block that is
+    -- actually in your hand is used, so the module does nothing at all while you hold a sword,
+    -- a bow or anything else that isn't a block. With the toggle off we pick a block ourselves
+    -- (the held one first, then wool, then any block in the inventory).
+    local function getBuildBlock()
+        local hand = store.hand
+        if hand and hand.toolType == 'block' and hand.tool then
+            return hand.tool.Name
+        end
+        if LimitItems.Enabled then return nil end
+        local wool = getWool()
+        if wool then return wool end
+        for _, item in store.inventory.inventory.items do
+            local meta = bedwars.ItemMeta[item.itemType]
+            if meta and meta.block then
+                return item.itemType
+            end
+        end
+        return nil
+    end
 
     AutoBuildUp = vape.Categories.Blatant:CreateModule({
         Name = 'AutoBuildUp',
@@ -4690,149 +4709,264 @@ run(function()
                     local holdingJump = humanoid.Jump
                         or inputService:IsKeyDown(Enum.KeyCode.Space)
                         or inputService:IsKeyDown(Enum.KeyCode.ButtonA)
-                    if not holdingJump then return end
+                    if not holdingJump or inputService:GetFocusedTextBox() then return end
 
-                    local wool, amount = getWool()
-                    if not wool then return end
-                    -- Item limit: stop once we're down to the reserve amount so you never
-                    -- tower with your entire stack.
-                    if LimitItems.Enabled and (amount or 0) <= KeepAmount.Value then return end
+                    local block = getBuildBlock()
+                    if not block then return end
 
                     -- Fill the cell directly beneath your feet - every cell as you rise, not one
                     -- per jump/second. getPlacedBlock skips cells that already hold a block (real
                     -- ground included, so nothing happens while grounded); lastPlacePos stops us
                     -- re-sending the same cell before the placement round-trips back.
-                    local placePosition = bedwars.BlockController:getBlockPosition(root.Position - Vector3.new(0, 4, 0)) * 3
+                    local footY = root.Position.Y - ((character.HipHeight or 3) + 1.5)
+                    local placePosition = bedwars.BlockController:getBlockPosition(Vector3.new(root.Position.X, footY, root.Position.Z)) * 3
                     if placePosition == lastPlacePos then return end
                     if getPlacedBlock(placePosition) then return end
-                    if bedwars.placeBlock(placePosition, wool) then
+                    if bedwars.placeBlock(placePosition, block) then
                         lastPlacePos = placePosition
                     end
                 end))
             end
         end,
-        Tooltip = 'Towers you straight up: while you hold jump off the ground it places a block under your feet near the apex so you rise a block each jump (scaffold-style). Use the item limit to keep some blocks in reserve.'
+        Tooltip = 'Towers you straight up: while you hold jump it fills the block cell under your feet on every cell you rise through, so you climb a gapless pillar as fast as you can jump.'
     })
     LimitItems = AutoBuildUp:CreateToggle({
         Name = 'Limit to items',
-        Default = true,
-        Tooltip = 'Stops building once your blocks drop to the reserve below, so you never tower away your entire stack.'
-    })
-    KeepAmount = AutoBuildUp:CreateSlider({
-        Name = 'Keep in reserve',
-        Min = 0,
-        Max = 64,
-        Default = 8,
-        Suffix = function(val)
-            return val == 1 and ' block' or ' blocks'
-        end,
-        Tooltip = 'How many blocks to keep. AutoBuildUp stops placing once you have this many left.'
+        Tooltip = 'Only builds while you are holding blocks. Switch to a sword (or anything that is not a block) and towering stops until you hold blocks again.'
     })
 end)
 
 
--- AntiLagback. A lagback is the server rubber-banding you: after a lost/late movement packet it
--- snaps your character backward to the last position it acknowledged. That shows up client-side as a
--- large single-frame position jump AGAINST the direction you were travelling (normal movement only
--- ever changes your position by a fraction of a stud per frame). We watch for exactly that - a
--- backward jump bigger than Sensitivity but smaller than Max Correction (so real teleports/pearls/
--- respawns are left alone) - and immediately restore the position we had before the yank, advanced
--- by one frame of expected travel so you stay on your path instead of getting slammed back.
+-- AntiLagback. A lagback is the server rubber-banding you: after a rejected or late movement
+-- packet it snaps your character back onto the last position it acknowledged. Client-side that
+-- always looks the same - a single-frame position jump far larger than your own movement could
+-- ever produce, taking you BACKWARD: against the heading you were travelling on, straight down
+-- through the air, or onto a spot you were standing on a moment ago.
+--
+-- The previous version only ever looked at the horizontal component against the last movement
+-- heading, which left three holes that made it feel like it did nothing:
+--   * it needed >6 studs/s of horizontal speed, so a yank while standing still or while gliding
+--     straight down (fly/glide lagbacks) was invisible;
+--   * it corrected once per frame with no follow-through, so the rubber-band simply re-pulled you
+--     on the next frames and won;
+--   * it happily "corrected" AntiDeath, which parks your real root hundreds of studs under the
+--     map, and every respawn.
+-- This version tests against what physics actually allows, keeps a short trail of the positions
+-- you really occupied so a rewind is recognised from any direction, and holds the correction for
+-- a window so the whole multi-frame pull is undone instead of just its first frame.
 run(function()
     local AntiLagback
     local Mode
     local Sensitivity
     local MaxCorrect
+    local HoldTime
+    local Vertical
+    local Notify
 
     AntiLagback = vape.Categories.Exploits:CreateModule({
         Name = 'AntiLagback',
         Function = function(callback)
             if callback then
-                local lastPos, lastMoveVel
+                local history = {}                  -- rolling trail of positions we really held
+                local lastPos, lastVel, lastMoveVel, lastChar
+                local graceUntil = 0
+                -- Active correction. A lagback is normally several frames of pull, so once one is
+                -- detected we keep re-asserting our own position for HoldTime instead of undoing
+                -- a single frame and handing the fight back to the server.
+                local holdPos, holdVel, holdUntil, holdY = nil, nil, 0, false
+                local holdCount, lastYank, lastNotify = 0, 0, 0
+
+                local function reset()
+                    table.clear(history)
+                    lastPos, lastVel, lastMoveVel = nil, nil, nil
+                    lastChar = lplr.Character
+                    holdPos, holdVel, holdUntil, holdY = nil, nil, 0, false
+                    holdCount = 0
+                    -- Never judge the first frames after a respawn / character swap: the spawn
+                    -- itself is a huge legitimate jump.
+                    graceUntil = tick() + 0.75
+                end
+                reset()
+
                 -- Heartbeat runs after physics/replication, so `pos` already reflects any server
                 -- correction applied this frame - the moment we can see (and undo) a lagback.
                 AntiLagback:Clean(runService.Heartbeat:Connect(function(dt)
-                    if not entitylib.isAlive then
-                        lastPos, lastMoveVel = nil, nil
+                    -- AntiDeath parks the real root far below the map, and death/respawn swaps the
+                    -- character; both are legitimate teleports, not rubber-bands.
+                    if not entitylib.isAlive or store.rootpart or lastChar ~= lplr.Character then
+                        reset()
                         return
                     end
-                    local root = entitylib.character and entitylib.character.RootPart
+                    local character = entitylib.character
+                    local root = character and character.RootPart
                     if not root or not root.Parent then
-                        lastPos, lastMoveVel = nil, nil
+                        reset()
                         return
                     end
 
+                    dt = math.clamp(dt, 1 / 240, 0.2)
+                    local now = tick()
                     local pos = root.Position
-                    -- Use the last velocity we were GENUINELY moving at, not simply last
-                    -- frame's - a lagback commonly zeroes your velocity as it yanks you, and
-                    -- reading that zero blinded the detector on every frame after the first
-                    -- (so a multi-frame yank was only ever half-undone). Keeping the last real
-                    -- movement velocity lets us keep undoing the pull until it stops.
-                    if lastPos and lastMoveVel then
-                        local hvel = lastMoveVel * Vector3.new(1, 0, 1)
-                        if hvel.Magnitude > 6 then
-                            local dir = hvel.Unit
-                            local moved = (pos - lastPos) * Vector3.new(1, 0, 1)
-                            -- How far we travelled BACKWARD along our own heading this frame.
-                            local backward = -(moved:Dot(dir))
-                            if backward > (Sensitivity and Sensitivity.Value or 6) and backward < (MaxCorrect and MaxCorrect.Value or 80) then
-                                if Mode and Mode.Value == 'Nearest Land' then
-                                    -- Lagback detected: instead of fighting the rubber-band in
-                                    -- place, teleport onto the nearest solid block the instant it
-                                    -- starts so the yank can't drag us off an edge or into the void.
-                                    -- getNearGround returns the standing spot on the closest
-                                    -- exposed block (nil if none is within reach).
-                                    local land = getNearGround(10)
-                                    if land then
-                                        root.CFrame += (land - pos)
-                                        -- Kill the horizontal momentum carrying us off; keep the
-                                        -- vertical component so we settle onto the block.
-                                        root.AssemblyLinearVelocity = Vector3.new(0, root.AssemblyLinearVelocity.Y, 0)
-                                        pos = land
-                                    else
-                                        -- No land nearby - fall back to just undoing the pull.
-                                        local restore = lastPos + hvel * dt
-                                        root.CFrame += (restore - pos)
-                                        root.AssemblyLinearVelocity = Vector3.new(lastMoveVel.X, root.AssemblyLinearVelocity.Y, lastMoveVel.Z)
-                                        pos = restore
-                                    end
-                                else
-                                    -- Restore: return to where we were, advanced by roughly one
-                                    -- frame of the travel we should have made, and restore our
-                                    -- horizontal momentum (which the server likely just killed).
-                                    local restore = lastPos + hvel * dt
-                                    root.CFrame += (restore - pos)
-                                    root.AssemblyLinearVelocity = Vector3.new(lastMoveVel.X, root.AssemblyLinearVelocity.Y, lastMoveVel.Z)
-                                    pos = restore
+                    if not lastPos then
+                        lastPos, lastVel = pos, root.AssemblyLinearVelocity
+                        return
+                    end
+
+                    local sens = Sensitivity and Sensitivity.Value or 5
+                    local maxCorrect = MaxCorrect and MaxCorrect.Value or 80
+                    local moved = pos - lastPos
+                    local hMoved = moved * Vector3.new(1, 0, 1)
+                    local hVel = (lastVel or Vector3.zero) * Vector3.new(1, 0, 1)
+
+                    -- The furthest our own movement could have carried us this frame: the faster of
+                    -- the momentum we were already carrying and the speed the game says we can move
+                    -- at, plus slack for knockback, step-ups and stair snapping.
+                    local walk = 20
+                    pcall(function() walk = getSpeed() end)
+                    local allowance = math.max(hVel.Magnitude, walk) * dt + 1.5
+
+                    local yanked, yankY = false, false
+                    if now > graceUntil then
+                        -- 1. Dragged backward along the heading we were actually travelling on.
+                        local heading = (lastMoveVel or hVel) * Vector3.new(1, 0, 1)
+                        if heading.Magnitude > 4 then
+                            local backward = -(hMoved:Dot(heading.Unit))
+                            if backward > sens and backward < maxCorrect then
+                                yanked = true
+                            end
+                        end
+                        -- 2. Any physically impossible horizontal jump that put us back on ground we
+                        -- were standing on moments ago. This is what catches sideways pulls and
+                        -- yanks while stationary - cases the heading test above can never see -
+                        -- while leaving real teleports (pearls, /home, respawns) alone, because
+                        -- those land somewhere we have not just been.
+                        if not yanked and hMoved.Magnitude > allowance + sens and hMoved.Magnitude < maxCorrect then
+                            for i = #history, 1, -1 do
+                                local entry = history[i]
+                                if (now - entry.Time) > 0.1 and ((entry.Position - pos) * Vector3.new(1, 0, 1)).Magnitude < 3 then
+                                    yanked = true
+                                    break
                                 end
                             end
                         end
+                        -- 3. Vertical snap: the server slamming us down far harder than gravity
+                        -- could this frame. This is the fly/glide lagback the old detector missed
+                        -- entirely. Only a downward deviation counts (an upward one never hurts),
+                        -- and landing reads as a smaller-than-expected fall, so it can't false.
+                        if Vertical.Enabled then
+                            local expectedY = (lastVel and lastVel.Y or 0) * dt - (workspace.Gravity * dt * dt * 0.5)
+                            local downward = expectedY - moved.Y
+                            if downward > math.max(sens, 8) and downward < maxCorrect then
+                                yanked, yankY = true, true
+                            end
+                        end
                     end
-                    lastPos = pos
-                    -- Only refresh the remembered heading while we're actually moving, so a
-                    -- brief server-forced stop doesn't erase the direction we need to recover.
+
+                    if now - lastYank > 1 then
+                        holdCount = 0
+                    end
+
+                    if yanked then
+                        lastYank = now
+                        holdCount += 1
+                        -- Bail out of a fight we are losing: if the server keeps pulling for this
+                        -- many frames it means the correction is not a transient packet loss, and
+                        -- endlessly re-teleporting would only get us flung further.
+                        if holdCount <= 20 then
+                            local restore
+                            if Mode.Value == 'Nearest Land' then
+                                -- Put us on the nearest solid block the instant the yank starts, so
+                                -- the pull can never drag us off an edge or into the void.
+                                pcall(function() restore = getNearGround(10) end)
+                                holdY = restore ~= nil
+                            end
+                            if not restore then
+                                -- Restore where we were, advanced by the one frame of travel the
+                                -- server ate, so we stay on our path instead of stalling.
+                                restore = lastPos + hVel * dt
+                                holdY = yankY
+                                if not holdY then
+                                    restore = Vector3.new(restore.X, pos.Y, restore.Z)
+                                end
+                            end
+
+                            root.CFrame += (restore - pos)
+                            if Mode.Value == 'Restore' then
+                                -- The server usually kills your momentum as it yanks; hand it back
+                                -- so you keep moving instead of stopping dead.
+                                local keep = lastMoveVel or lastVel or Vector3.zero
+                                root.AssemblyLinearVelocity = Vector3.new(keep.X, root.AssemblyLinearVelocity.Y, keep.Z)
+                            else
+                                -- Nearest Land / Freeze: drop the horizontal momentum that was
+                                -- carrying us into trouble, keep the vertical so we settle.
+                                root.AssemblyLinearVelocity = Vector3.new(0, root.AssemblyLinearVelocity.Y, 0)
+                            end
+
+                            pos = restore
+                            holdPos, holdVel = restore, (Mode.Value == 'Restore' and (lastMoveVel or hVel) or Vector3.zero)
+                            holdUntil = now + (HoldTime and HoldTime.Value or 0.3)
+
+                            if Notify.Enabled and now - lastNotify > 1 then
+                                lastNotify = now
+                                notif('AntiLagback', 'Lagback corrected (' .. Mode.Value .. ')', 2)
+                            end
+                        end
+                    elseif holdPos and now < holdUntil then
+                        -- Inside the correction window: keep the rubber-band from dragging us back
+                        -- over the following frames. In Restore the anchor moves with whatever
+                        -- velocity we have now, so letting go of the keys still stops us; the other
+                        -- two modes deliberately pin us in place until the server settles.
+                        if Mode.Value == 'Restore' then
+                            local vel = root.AssemblyLinearVelocity * Vector3.new(1, 0, 1)
+                            if vel.Magnitude < 1 then
+                                vel = (holdVel or Vector3.zero) * Vector3.new(1, 0, 1)
+                            end
+                            holdPos += vel * dt
+                        end
+                        if not holdY then
+                            holdPos = Vector3.new(holdPos.X, pos.Y, holdPos.Z)
+                        end
+                        if (holdPos - pos).Magnitude > 1.5 then
+                            root.CFrame += (holdPos - pos)
+                            pos = holdPos
+                        else
+                            holdPos = pos
+                        end
+                    else
+                        holdPos = nil
+                    end
+
+                    lastPos, lastVel = pos, root.AssemblyLinearVelocity
+                    -- Only refresh the remembered heading while we're genuinely moving, so a brief
+                    -- server-forced stop doesn't erase the direction we need to recover along.
                     local hnow = root.AssemblyLinearVelocity * Vector3.new(1, 0, 1)
-                    if hnow.Magnitude > 6 then
+                    if hnow.Magnitude > 4 then
                         lastMoveVel = root.AssemblyLinearVelocity
+                    end
+
+                    table.insert(history, {Position = pos, Time = now})
+                    while history[1] and (#history > 60 or (now - history[1].Time) > 1.5) do
+                        table.remove(history, 1)
                     end
                 end))
             end
         end,
-        Tooltip = 'Detects a server rubber-band (a sudden backward yank against your movement). Restore puts you back on your path; Nearest Land teleports you onto the closest solid block the instant the lagback starts so it can never drop you into the void.'
+        Tooltip = 'Detects a server rubber-band (an impossible single-frame jump that takes you backward, sideways onto ground you just left, or straight down) and undoes it for a short window so the whole pull is cancelled, not just its first frame.\nRestore keeps you on your path, Nearest Land drops you on the closest solid block so a yank can never void you, Freeze holds you still until the server settles.'
     })
     Mode = AntiLagback:CreateDropdown({
         Name = 'Mode',
-        List = {'Restore', 'Nearest Land'},
+        List = {'Restore', 'Nearest Land', 'Freeze'},
         Default = 'Restore',
-        Tooltip = 'Restore - undo the rubber-band and keep you on your path.\nNearest Land - the instant a lagback is detected, teleport onto the nearest solid block so the yank cannot drop you into the void.'
+        Tooltip = 'Restore - undo the rubber-band and keep your momentum so you stay on your path.\nNearest Land - teleport onto the nearest solid block the instant a lagback starts, so it cannot drop you into the void.\nFreeze - hold you where you were with no momentum until the server stops pulling.'
     })
     Sensitivity = AntiLagback:CreateSlider({
         Name = 'Sensitivity',
-        Min = 3,
+        Min = 2,
         Max = 30,
-        Default = 6,
+        Default = 5,
+        Decimal = 10,
         Suffix = ' studs',
-        Tooltip = 'A single-frame backward jump larger than this (against your movement) counts as a lagback and is undone. Lower catches smaller pulls; raise if normal movement ever gets corrected.'
+        Tooltip = 'How far backward a single frame has to move you before it counts as a lagback. Lower catches smaller pulls; raise it if normal movement ever gets corrected.'
     })
     MaxCorrect = AntiLagback:CreateSlider({
         Name = 'Max Correction',
@@ -4840,7 +4974,25 @@ run(function()
         Max = 150,
         Default = 80,
         Suffix = ' studs',
-        Tooltip = 'Backward jumps larger than this are treated as real teleports/pearls/respawns and left alone.'
+        Tooltip = 'Jumps larger than this are treated as real teleports (pearls, going home, respawns) and left alone.'
+    })
+    HoldTime = AntiLagback:CreateSlider({
+        Name = 'Hold time',
+        Min = 0,
+        Max = 1,
+        Default = 0.3,
+        Decimal = 100,
+        Suffix = ' seconds',
+        Tooltip = 'How long to keep re-asserting your position after a lagback. A rubber-band lasts several frames, so undoing only the first one lets the server win - raise this if pulls still get through, lower it if the correction feels sticky.'
+    })
+    Vertical = AntiLagback:CreateToggle({
+        Name = 'Vertical pulls',
+        Default = true,
+        Tooltip = 'Also catch the server slamming you straight down (fly / glide / jump-boost lagbacks), not just horizontal yanks.'
+    })
+    Notify = AntiLagback:CreateToggle({
+        Name = 'Notifications',
+        Tooltip = 'Show a notification whenever a lagback is caught and corrected.'
     })
 end)
 
@@ -5937,64 +6089,261 @@ run(function()
 	projectileRemote = bedwars.Client:Get(remotes.FireProjectile).instance
     end)
 
-    -- ===== Native swing (game-built attack packet) =====
-    -- Every hand-forged AttackEntity payload has been patched: whether the raycast is
-    -- empty, fully filled in, hashed, or routed through sendServerRequest, the server
-    -- re-validates the ray + positions against a rolling per-packet token and drops
-    -- anything the client assembled itself. The one attack the server always trusts is
-    -- the one the GAME builds for a genuine click. So the Native hit method drives the
-    -- game's own SwordController:swingSwordAtMouse and transparently redirects the ray it
-    -- casts onto our target: the game then assembles, tokens and sends a real attack that
-    -- we never had to forge, which is indistinguishable from a legit hit to the anticheat.
-    local nativeTarget
-    local function redirectRay(_, origin, direction, params)
-        -- Called in place of the game's own raycast during a native swing. Ignore where
-        -- the cursor actually points and shoot a real ray from the game's origin straight
-        -- at our target, so a genuine RaycastResult on the target comes back (needs line
-        -- of sight, exactly like a real click would).
-        local t = nativeTarget
-        if t and t.RootPart and typeof(origin) == 'Vector3' then
-            local to = t.RootPart.Position - origin
-            if to.Magnitude > 0 then
-                local reach = typeof(direction) == 'Vector3' and direction.Magnitude or 0
-                direction = to.Unit * math.max(reach, to.Magnitude + 5)
+    -- ===== Hit delivery =====
+    -- A hand-forged AttackEntity payload is re-validated server-side: the ray is re-cast, the
+    -- reported selfPosition is checked against your replicated position and the weapon's attack
+    -- speed is enforced. The one packet the server never questions is the one the GAME builds for
+    -- a real click, so the native paths drive the game's own swing and let it assemble, sign and
+    -- send the attack for us.
+    --
+    -- Why none of the old methods landed: the native path called swingSwordAtMouse and reported
+    -- success whenever the CALL didn't error - but the game's own click-rate limiter silently
+    -- refuses to swing when asked faster than a human clicks, so most "native hits" sent nothing
+    -- at all and were never retried. It also assumed the raycast provider sat at upvalue 4 and
+    -- never checked the game's own sword-reach constant, and the forged paths blasted 60 packets a
+    -- second at a server that only accepts one per swing window.
+    --
+    -- So: every native attempt is now *verified* by counting the attack packets the game really
+    -- produced (via a wrapper on its own send function), the raycast provider is located by
+    -- searching the upvalues instead of guessing an index, the click limiter and sword-reach
+    -- constant are lifted for the duration of the swing, and anything the game refuses falls
+    -- through to a forged send rather than being counted as a hit.
+    local nativeSends = 0
+    local sendHook, oldSendRequest
+    local function hookSendRequest()
+        if sendHook then return true end
+        local controller = bedwars.SwordController
+        if not (controller and type(controller.sendServerRequest) == 'function') then return false end
+        oldSendRequest = controller.sendServerRequest
+        sendHook = function(...)
+            nativeSends += 1
+            return oldSendRequest(...)
+        end
+        controller.sendServerRequest = sendHook
+        return true
+    end
+    local function unhookSendRequest()
+        local controller = bedwars.SwordController
+        if sendHook and controller and controller.sendServerRequest == sendHook then
+            controller.sendServerRequest = oldSendRequest
+        end
+        sendHook, oldSendRequest = nil, nil
+    end
+
+    -- The raycast provider swingSwordAtMouse uses (workspace normally, QueryUtil once HitFix is
+    -- on) lives in an upvalue whose index moves between game builds, so find it by value.
+    local nativeRayIndex
+    local function findRayUpvalue(fn)
+        local values, count = {}, 0
+        for i = 1, 16 do
+            local ok, value = pcall(debug.getupvalue, fn, i)
+            if not ok then break end
+            values[i], count = value, i
+        end
+        -- Exact matches first: whichever of the two real providers is installed right now is the
+        -- one the function raycasts through.
+        for i = 1, count do
+            if values[i] == workspace or (bedwars.QueryUtil and values[i] == bedwars.QueryUtil) then
+                return i
             end
         end
-        return bedwars.QueryUtil:raycast(origin, direction, params)
-    end
-    -- Stand-in for whatever raycast provider swingSwordAtMouse currently uses (workspace
-    -- by default, QueryUtil once HitFix is on). It answers both the 'Raycast' and 'raycast'
-    -- method names so it works whichever the constant selects, and __index falls through to
-    -- QueryUtil for anything else the function reaches for.
-    local nativeProxy
-    local function getNativeProxy()
-        if not nativeProxy and bedwars.QueryUtil then
-            nativeProxy = setmetatable({raycast = redirectRay, Raycast = redirectRay}, {__index = bedwars.QueryUtil})
+        -- Otherwise take the first upvalue that quacks like a raycast provider.
+        for i = 1, count do
+            local isProvider = false
+            pcall(function()
+                isProvider = type(values[i]) == 'table' and (values[i].raycast ~= nil or values[i].Raycast ~= nil)
+            end)
+            if isProvider then return i end
         end
-        return nativeProxy
+        return nil
     end
-    -- Fire a single native swing at `ent`. Returns true only when the game call actually
-    -- ran, so the caller can fall back to a raw send if native manipulation is unavailable
-    -- on this build (missing debug funcs, moved upvalue index, etc.).
-    local function nativeSwing(ent)
-        local proxy = getNativeProxy()
-        local swing = bedwars.SwordController and bedwars.SwordController.swingSwordAtMouse
-        if not proxy or not swing or not debug or not debug.setupvalue then return false end
-        nativeTarget = ent
-        local ok = pcall(function()
-            local old = debug.getupvalue(swing, 4)
-            debug.setupvalue(swing, 4, proxy)
-            local okCall = pcall(function() bedwars.SwordController:swingSwordAtMouse() end)
-            debug.setupvalue(swing, 4, old) -- always restore, even if the swing threw
-            if not okCall then error('native swing failed') end
+
+    local nativeTarget, nativeRayReal
+    -- The real raycast, run for the game once we've bent the direction onto our target.
+    local function realRaycast(origin, direction, params)
+        local provider = nativeRayReal
+        local ok, res = pcall(function()
+            if provider and provider ~= workspace then
+                if provider.raycast then return provider:raycast(origin, direction, params) end
+                if provider.Raycast then return provider:Raycast(origin, direction, params) end
+            end
+            return workspace:Raycast(origin, direction, params)
         end)
-        nativeTarget = nil
+        return ok and res or nil
+    end
+    local function redirectRay(_, origin, direction, params)
+        -- Stands in for the game's raycast during a native swing: ignore where the cursor actually
+        -- points and cast a real ray from the game's own origin straight at our target, so a
+        -- genuine RaycastResult on it comes back (line of sight still required, exactly like a
+        -- real click).
+        local ent = nativeTarget
+        local part = ent and (ent.Character and ent.Character.PrimaryPart or ent.RootPart)
+        if part and typeof(origin) == 'Vector3' then
+            local to = part.Position - origin
+            if to.Magnitude > 0 then
+                local reach = typeof(direction) == 'Vector3' and direction.Magnitude or 0
+                direction = to.Unit * math.max(reach, to.Magnitude + 6)
+            end
+        end
+        return realRaycast(origin, direction, params)
+    end
+    -- Answers both the 'raycast' and 'Raycast' method names (the game picks one via a constant)
+    -- and falls through to the provider we replaced for anything else it reaches for.
+    local nativeProxy = setmetatable({raycast = redirectRay, Raycast = redirectRay}, {
+        __index = function(_, key)
+            local provider = nativeRayReal
+            if provider == nil then return nil end
+            local ok, value = pcall(function() return provider[key] end)
+            return ok and value or nil
+        end
+    })
+
+    -- Run `fn` with the game's click-rate limiter disabled. Without this the game just declines
+    -- to swing whenever we ask faster than a human clicks - the old code then reported a
+    -- successful native hit while nothing had been sent.
+    local function withoutClickLimit(fn)
+        local controller = bedwars.SwordController
+        local old = controller and controller.isClickingTooFast
+        if type(old) == 'function' then
+            controller.isClickingTooFast = function() return false end
+        end
+        local ok = pcall(fn)
+        if type(old) == 'function' then
+            controller.isClickingTooFast = old
+        end
         return ok
+    end
+
+    -- Drive one game-built swing at `ent`. Returns true ONLY if the game actually produced an
+    -- attack packet, so the caller can fall through instead of eating the hit.
+    local function nativeSwing(ent, distance)
+        local controller = bedwars.SwordController
+        local swing = controller and controller.swingSwordAtMouse
+        if type(swing) ~= 'function' then return false end
+        if not (debug and debug.getupvalue and debug.setupvalue) then return false end
+
+        if nativeRayIndex == nil then
+            nativeRayIndex = findRayUpvalue(swing) or false
+        end
+        if not nativeRayIndex then return false end
+
+        -- The game drops its own swing when the target is beyond the sword raycast distance, so
+        -- lift that constant for this call only and hand it straight back.
+        local combat = bedwars.CombatConstant
+        local oldReach = combat and combat.RAYCAST_SWORD_CHARACTER_DISTANCE or nil
+        if combat and oldReach and distance and (distance + 4) > oldReach then
+            combat.RAYCAST_SWORD_CHARACTER_DISTANCE = distance + 4
+        end
+
+        local before, provider = nativeSends, nil
+        pcall(function()
+            provider = debug.getupvalue(swing, nativeRayIndex)
+        end)
+        if provider ~= nil and provider ~= nativeProxy then
+            nativeRayReal = provider
+            local swapped = pcall(debug.setupvalue, swing, nativeRayIndex, nativeProxy)
+            if swapped then
+                nativeTarget = ent
+                withoutClickLimit(function()
+                    controller:swingSwordAtMouse()
+                end)
+                nativeTarget = nil
+                pcall(debug.setupvalue, swing, nativeRayIndex, provider)
+            end
+        end
+
+        if combat and oldReach then
+            combat.RAYCAST_SWORD_CHARACTER_DISTANCE = oldReach
+        end
+        return nativeSends > before
+    end
+
+    -- Second native path: the game's own region swing (what the touch controls use). It picks the
+    -- target itself so it needs no line of sight - which is exactly what saves a hit when the
+    -- raycast swing above is blocked by a corner or a block the target is standing behind.
+    local function nativeRegionSwing(distance)
+        local controller = bedwars.SwordController
+        if type(controller and controller.swingSwordInRegion) ~= 'function' then return false end
+
+        -- Widen the region far enough to contain the target for this call only (HitBoxes' Sword
+        -- mode edits the same idea through a constant; this leaves that alone).
+        local combat = bedwars.CombatConstant
+        local oldRegion = combat and combat.REGION_SWORD_CHARACTER_DISTANCE or nil
+        if combat and oldRegion and distance and (distance + 2) > oldRegion then
+            combat.REGION_SWORD_CHARACTER_DISTANCE = distance + 2
+        end
+
+        local before = nativeSends
+        withoutClickLimit(function()
+            controller:swingSwordInRegion()
+        end)
+
+        if combat and oldRegion then
+            combat.REGION_SWORD_CHARACTER_DISTANCE = oldRegion
+        end
+        return nativeSends > before
+    end
+
+    -- Forged packet. selfPosition is what the server measures reach from, so it is only pulled in
+    -- when the target is genuinely out of legit range - and never closer than the legit limit -
+    -- and the ray is a real one from that point at the target so a server re-cast still connects.
+    local function forgedPayload(sword, ent, selfpos, targetPos)
+        local delta = targetPos - selfpos
+        local dist = delta.Magnitude
+        local dir = dist > 0 and delta.Unit or entitylib.character.RootPart.CFrame.LookVector
+        local pos = selfpos + dir * math.max(dist - 14.399, 0)
+        return {
+            weapon = sword.tool,
+            chargedAttack = {chargeRatio = 0},
+            entityInstance = ent.Character,
+            validate = {
+                raycast = {
+                    cameraPosition = {value = pos},
+                    cursorDirection = {value = dir}
+                },
+                targetPosition = {value = targetPos},
+                selfPosition = {value = pos}
+            }
+        }, pos, dir
+    end
+
+    local function sendForged(payload, count, viaRequest)
+        for _ = 1, math.max(count or 1, 1) do
+            local sent = false
+            if viaRequest then
+                -- Route through the game's own send wrapper so anything it does to a real attack
+                -- is done to ours too; fall back to the raw remote if that call errors.
+                sent = pcall(function()
+                    bedwars.SwordController:sendServerRequest(payload)
+                end)
+            end
+            if not sent then
+                AttackRemote:SendToServer(payload)
+            end
+        end
+        return true
+    end
+
+    -- Deliver one hit. Order matters: the game-built packet is the only one the server trusts
+    -- unconditionally, so Auto tries both native paths first and forges only when the game
+    -- refused to swing at all.
+    local function deliverHit(method, ent, payload, distance)
+        if method == 'Auto' or method == 'Native' then
+            if nativeSwing(ent, distance) then return true end
+            if nativeRegionSwing(distance) then return true end
+            -- Native isn't available on this build (stripped debug library, moved upvalue,
+            -- renamed controller): still land the hit rather than swinging at nothing.
+            return sendForged(payload, 1, true)
+        end
+        if method == 'Request' then
+            return sendForged(payload, 1, true)
+        end
+        return sendForged(payload, math.clamp(Hitreg and Hitreg.Value or 1, 1, 36), false)
     end
 
     local FastHits
     local Legit
-    local Unpatch
+    local Pace
     local FireRate
     local Whitelist
     local FireRates = {}
@@ -6065,6 +6414,11 @@ run(function()
         Name = 'Killaura',
         Function = function(callback)
             if callback then
+                -- Count the attack packets the game itself sends, so a native swing that the game
+                -- quietly declined is recognised as a miss and falls through to a forged send.
+                hookSendRequest()
+                Killaura:Clean(unhookSendRequest)
+
                 if Animation.Enabled then
                     local fake = {
                         Controllers = {
@@ -6121,9 +6475,12 @@ run(function()
                     end)
                 end
 
-                local swingCooldown, switchCooldown, lastSwing, targetIndex = tick(), tick(), 0, 0
+                local switchCooldown, lastSwing, targetIndex = tick(), 0, 0
                 local lastShot, projectileIndex = tick(), 0
                 local lastHit = 0
+                -- When each target was last hit, so paced mode can hold one clean swing per
+                -- target instead of one globally (Multi mode hits everyone at full speed).
+                local lastHitAt = {}
                 repeat
                     local attacked, sword, meta = {}, getAttackData()
                     Attacking = false
@@ -6185,146 +6542,120 @@ run(function()
                                 if delta.Magnitude > AttackRange.Value then continue end
 
                                 local actualRoot = v.Character.PrimaryPart
-                                -- Swing Time hit method paces one clean hit per swing-time window so the
-                                -- server sees a legit sword cadence instead of a 60hz stream; HitReg leaves
-                                -- this open and leans on Update rate + packet repeats instead. swingCooldown
-                                -- is refreshed on every landed hit below, so this is the gap since the last one.
-                                local usingSwingTime = HitMethod and HitMethod.Value == 'Swing Time'
-                                local swingGate = (not usingSwingTime) or (tick() - swingCooldown) >= SwingTime.Value
-                                if actualRoot and swingGate and (v.Humanoid.FloorMaterial ~= Enum.Material.Air or math.random(1, 100) < AirChance.Value) then
-                                    if UpdateRate.Value >= 120 or (tick() - lastHit) >= (1 / UpdateRate.Value) then
-                                        lastHit = tick()
+                                -- Cadence. The server only accepts one hit per weapon swing window,
+                                -- so streaming attacks at 60hz means nearly every packet is thrown
+                                -- away - which is what "the aura isn't hitting" actually looks like.
+                                -- Paced mode sends one hit per target per real swing window (full
+                                -- damage, almost no wasted packets); turning it off falls back to
+                                -- the raw Update rate for anyone who wants the old spam.
+                                local now = tick()
+                                local gate
+                                if Pace.Enabled then
+                                    local speed = (meta and meta.sword and meta.sword.attackSpeed) or SwingTime.Value
+                                    gate = (now - (lastHitAt[v.Character] or 0)) >= math.max(speed, 0.05)
+                                else
+                                    gate = UpdateRate.Value >= 120 or (now - lastHit) >= (1 / UpdateRate.Value)
+                                end
+                                if actualRoot and gate and (v.Humanoid.FloorMaterial ~= Enum.Material.Air or math.random(1, 100) < AirChance.Value) then
+                                    lastHit = now
+                                    lastHitAt[v.Character] = now
 
-                                        local dir = CFrame.lookAt(selfpos, actualRoot.Position).LookVector
-                                        local pos = selfpos + dir * math.max(delta.Magnitude - 14.4, 0)
-                                        bedwars.SwordController.lastAttack = workspace:GetServerTimeNow()
-                                        store.attackReach = (delta.Magnitude * 100) // 1 / 100
-                                        store.attackReachUpdate = tick() + 1
-                                        swingCooldown = tick()
+                                    bedwars.SwordController.lastAttack = workspace:GetServerTimeNow()
+                                    store.attackReach = (delta.Magnitude * 100) // 1 / 100
+                                    store.attackReachUpdate = tick() + 1
 
-                                        local payload = {
-                                            weapon = sword.tool,
-                                            chargedAttack = {chargeRatio = 0},
-                                            entityInstance = v.Character,
-                                            validate = {
-                                                -- A valid ray (from our position `pos` straight at the target)
-                                                -- rather than the old empty {}: the server re-casts this and drops
-                                                -- the hit if it misses, which is what killed the empty-raycast path.
-                                                -- Used by the HitReg / Swing Time forged fallbacks below; the Native
-                                                -- method ignores this payload and lets the game build its own.
-                                                raycast = {
-                                                    cameraPosition = {value = pos},
-                                                    cursorDirection = {value = dir},
-                                                },
-                                                targetPosition = {value = actualRoot.Position},
-                                                selfPosition = {value = pos}
-                                            }
-                                        }
-                                        -- Hit method decides how the hit is delivered:
-                                        --   Native     - drives the game's own swing so the packet is game-built
-                                        --                and server-trusted (the actual unpatch). Falls back to a
-                                        --                raw send if native manipulation isn't available.
-                                        --   HitReg     - forged packet sent Hitreg.Value times (1-36) to fight
-                                        --                packet loss / cooldown edges.
-                                        --   Swing Time - one forged packet, paced by the Swing time slider so the
-                                        --                cadence matches a legit sword (gated above).
-                                        local method = HitMethod and HitMethod.Value or 'Native'
-                                        if method == 'Native' then
-                                            if not nativeSwing(v) then
-                                                AttackRemote:SendToServer(payload)
+                                    local payload, pos = forgedPayload(sword, v, selfpos, actualRoot.Position)
+                                    -- Hit method:
+                                    --   Auto    - game-built swing first (the real unpatch), forged only if
+                                    --             the game refused to swing at all.
+                                    --   Native  - game-built only; still forges when this build has no
+                                    --             usable native path rather than swinging at nothing.
+                                    --   Remote  - forged packet on the raw AttackEntity remote, repeated
+                                    --             HitReg times to punch through packet loss.
+                                    --   Request - forged packet through the game's own send wrapper.
+                                    local method = HitMethod and HitMethod.Value or 'Auto'
+                                    if method ~= 'Native' and method ~= 'Remote' and method ~= 'Request' then
+                                        method = 'Auto'
+                                    end
+                                    deliverHit(method, v, payload, delta.Magnitude)
+
+                                    if FastHits.Enabled and tick() > lastShot and not entitylib.Wallcheck(entitylib.character.RootPart.Position, actualRoot.Position, {gameCamera, lplr.Character, v.Character}) then
+                                        local projectiles = getProjectiles()
+                                        if #projectiles > 0 then
+                                            projectileIndex += 1
+                                            if not projectiles[projectileIndex] then
+                                                projectileIndex = 1
                                             end
-                                        else
-                                            local sendCount = method == 'HitReg' and math.clamp(Hitreg and Hitreg.Value or 1, 1, 36) or 1
-                                            for _ = 1, sendCount do
-                                                if Unpatch.Enabled then
-                                                    -- Experimental: hand the request to the game's own send wrapper
-                                                    -- (SwordController.sendServerRequest). Falls back to the raw remote
-                                                    -- if the call errors, so Unpatch is never worse than the default.
-                                                    local sent = pcall(function()
-                                                        bedwars.SwordController:sendServerRequest(payload)
-                                                    end)
-                                                    if not sent then
-                                                        AttackRemote:SendToServer(payload)
+
+                                            local item, ammo, projectile, itemMeta = unpack(projectiles[projectileIndex])
+                                            if tick() > (FireRates[item.itemType] or 0) then
+                                                local projmeta = bedwars.ProjectileMeta[projectile]
+                                                local projSpeed, gravity = projmeta.launchVelocity, projmeta.gravitationalAcceleration or 196.2
+                                                local oldhotbar, oldtool = store.inventory.hotbarSlot, store.hand.tool
+                                                local hotbar = getHotbar(item.tool)
+                                                if hotbar then
+                                                    switchItem(item.tool)
+                                                    if Legit.Enabled then
+                                                        hotbarSwitch(hotbar)
                                                     end
-                                                else
-                                                    AttackRemote:SendToServer(payload)
-                                                end
-                                            end
-                                        end
-
-                                        if FastHits.Enabled and tick() > lastShot and not entitylib.Wallcheck(entitylib.character.RootPart.Position, actualRoot.Position, {gameCamera, lplr.Character, v.Character}) then
-                                            local projectiles = getProjectiles()
-                                            if #projectiles > 0 then
-                                                projectileIndex += 1
-                                                if not projectiles[projectileIndex] then
-                                                    projectileIndex = 1
                                                 end
 
-                                                local item, ammo, projectile, itemMeta = unpack(projectiles[projectileIndex])
-                                                if tick() > (FireRates[item.itemType] or 0) then
-                                                    local projmeta = bedwars.ProjectileMeta[projectile]
-                                                    local projSpeed, gravity = projmeta.launchVelocity, projmeta.gravitationalAcceleration or 196.2
-                                                    local oldhotbar, oldtool = store.inventory.hotbarSlot, store.hand.tool
-                                                    local hotbar = getHotbar(item.tool)
-                                                    if hotbar then
-                                                        switchItem(item.tool)
-                                                        if Legit.Enabled then
-                                                            hotbarSwitch(hotbar)
-                                                        end
-                                                    end
+                                                local calc = prediction.SolveTrajectory(selfpos, projSpeed, gravity, v.RootPart.Position, v.RootPart.Velocity, workspace.Gravity, v.HipHeight, v.Jumping and 42.6 or nil, nil, nil, lplr:GetNetworkPing())
+                                                if calc then
+                                                    local sdir, id = CFrame.lookAt(selfpos, calc).LookVector, httpService:GenerateGUID(true)
+                                                    local shootPosition = (CFrame.new(selfpos, calc) * CFrame.new(Vector3.new(-bedwars.BowConstantsTable.RelX, -bedwars.BowConstantsTable.RelY, -bedwars.BowConstantsTable.RelZ))).Position
 
-                                                    local calc = prediction.SolveTrajectory(selfpos, projSpeed, gravity, v.RootPart.Position, v.RootPart.Velocity, workspace.Gravity, v.HipHeight, v.Jumping and 42.6 or nil, nil, nil, lplr:GetNetworkPing())
-                                                    if calc then
-                                                        local sdir, id = CFrame.lookAt(selfpos, calc).LookVector, httpService:GenerateGUID(true)
-                                                        local shootPosition = (CFrame.new(selfpos, calc) * CFrame.new(Vector3.new(-bedwars.BowConstantsTable.RelX, -bedwars.BowConstantsTable.RelY, -bedwars.BowConstantsTable.RelZ))).Position
-
-                                                        bedwars.ProjectileController:createLocalProjectile(itemMeta, ammo, projectile, shootPosition, id, sdir * projSpeed, {drawDurationSeconds = 1})
-                                                        local res = projectileRemote:InvokeServer(
-                                                            item.tool,
-                                                            ammo,
-                                                            projectile,
-                                                            shootPosition,
-                                                            pos,
-                                                            sdir * projSpeed,
-                                                            id,
-                                                            {
-                                                                drawDurationSeconds = 1,
-                                                                shotId = httpService:GenerateGUID(false)
-                                                            },
-                                                            workspace:GetServerTimeNow() - 0.045
-                                                        )
-                                                        if res then
-                                                            pcall(function()
-                                                                res.Parent = replicatedStorage
-                                                            end)
-                                                            FireRates[item.itemType] = tick() + itemMeta.fireDelaySec
-                                                            local shoot = itemMeta.launchSound
-                                                            shoot = shoot and shoot[math.random(1, #shoot)] or nil
-                                                            if shoot then
-                                                                bedwars.SoundManager:playSound(shoot)
-                                                            end
+                                                    bedwars.ProjectileController:createLocalProjectile(itemMeta, ammo, projectile, shootPosition, id, sdir * projSpeed, {drawDurationSeconds = 1})
+                                                    local res = projectileRemote:InvokeServer(
+                                                        item.tool,
+                                                        ammo,
+                                                        projectile,
+                                                        shootPosition,
+                                                        pos,
+                                                        sdir * projSpeed,
+                                                        id,
+                                                        {
+                                                            drawDurationSeconds = 1,
+                                                            shotId = httpService:GenerateGUID(false)
+                                                        },
+                                                        workspace:GetServerTimeNow() - 0.045
+                                                    )
+                                                    if res then
+                                                        pcall(function()
+                                                            res.Parent = replicatedStorage
+                                                        end)
+                                                        FireRates[item.itemType] = tick() + itemMeta.fireDelaySec
+                                                        local shoot = itemMeta.launchSound
+                                                        shoot = shoot and shoot[math.random(1, #shoot)] or nil
+                                                        if shoot then
+                                                            bedwars.SoundManager:playSound(shoot)
                                                         end
-                                                        lastShot = tick() + (lplr:GetNetworkPing() + FireRate.Value)
                                                     end
-                                                    if oldtool then
-                                                        switchItem(oldtool)
-                                                    end
-                                                    task.spawn(function()
-                                                        if Legit.Enabled then
-                                                            hotbarSwitch(oldhotbar)
-                                                        end
-                                                    end)
+                                                    lastShot = tick() + (lplr:GetNetworkPing() + FireRate.Value)
                                                 end
+                                                if oldtool then
+                                                    switchItem(oldtool)
+                                                end
+                                                task.spawn(function()
+                                                    if Legit.Enabled then
+                                                        hotbarSwitch(oldhotbar)
+                                                    end
+                                                end)
                                             end
                                         end
+                                    end
 
-                                        if Mode.Value ~= 'Multi' then
-                                            break
-                                        end
+                                    if Mode.Value ~= 'Multi' then
+                                        break
                                     end
                                 end
                             end
                         else
+                            -- Nobody in range: the per-target swing timers are meaningless now, so
+                            -- drop them rather than letting the table grow for a whole match.
+                            if next(lastHitAt) ~= nil then
+                                table.clear(lastHitAt)
+                            end
                             if (tick() - lastSwing) < Continue:GetRandomValue() and not Swing.Enabled and not LegitAura.Enabled and AnimDelay < tick() then
                                 AnimDelay = tick() + math.max(SwingTime.Value, 0.11)
                                 if vape.ThreadFix then
@@ -6454,16 +6785,22 @@ run(function()
     })
     HitMethod = Killaura:CreateDropdown({
         Name = 'Hit method',
-        List = {'Native', 'HitReg', 'Swing Time'},
-        Default = 'Native',
-        Tooltip = 'Chooses how each hit is delivered.\nNative - drives the game\'s own swing so the packet is built and signed by the game itself (the real unpatch - the anticheat can\'t tell it from a legit click). Needs line of sight; reach follows the Reach module.\nHitReg - forged packet sent several times (HitReg slider) to punch through packet loss.\nSwing Time - one forged packet, paced by the Swing time slider so the cadence looks like a real sword.',
+        List = {'Auto', 'Native', 'Remote', 'Request'},
+        Default = 'Auto',
+        Tooltip = 'How each hit is delivered.\nAuto (recommended) - makes the GAME build and send the attack (the real unpatch: the server cannot tell it from a genuine click), and only forges a packet itself if the game refused to swing.\nNative - game-built only, never spams a forged packet unless this build has no usable native path at all.\nRemote - forged packet on the raw attack remote, repeated HitReg times to punch through packet loss.\nRequest - forged packet handed to the game\'s own send wrapper.',
         Function = function(val)
-            -- Show only the slider that the chosen method actually uses.
+            -- Show the HitReg slider only for the methods that actually repeat packets.
             pcall(function()
-                if Hitreg and Hitreg.Object then Hitreg.Object.Visible = val == 'HitReg' end
-                if SwingTime and SwingTime.Object then SwingTime.Object.Visible = val == 'Swing Time' end
+                if Hitreg and Hitreg.Object then
+                    Hitreg.Object.Visible = val == 'Remote' or val == 'Auto'
+                end
             end)
         end
+    })
+    Pace = Killaura:CreateToggle({
+        Name = 'Pace to attack speed',
+        Default = true,
+        Tooltip = 'Send one hit per target per real weapon swing instead of streaming attacks at the update rate. The server only accepts one hit per swing window anyway, so this deals exactly the same damage with a fraction of the packets - and stops the server throttling the whole burst, which is what makes an aura look like it is not hitting. Turn off to go back to raw update-rate spam.'
     })
     SwingTime = Killaura:CreateSlider({
         Name = 'Swing time',
@@ -6471,32 +6808,31 @@ run(function()
         Max = 2,
         Decimal = 100,
         Default = 0.11,
-        Suffix = 'seconds'
+        Suffix = 'seconds',
+        Tooltip = 'Swing animation pacing, and the fallback hit interval for weapons that do not report an attack speed.'
     })
     UpdateRate = Killaura:CreateSlider({
         Name = 'Update rate',
         Min = 1,
         Max = 120,
         Default = 60,
-        Suffix = 'hz'
+        Suffix = 'hz',
+        Tooltip = 'How often hits are sent when "Pace to attack speed" is off.'
     })
     Hitreg = Killaura:CreateSlider({
         Name = 'HitReg',
         Min = 1,
         Max = 36,
         Default = 1,
-        Tooltip = 'How many times each hit is sent to the server. Higher forces the hit to register more reliably (more attack packets per hit). Only used when Hit method is HitReg.'
+        Tooltip = 'How many times a forged hit is sent to the server. Higher fights packet loss at the cost of more traffic. Used by the Remote method (and by Auto only when the game refuses to swing).'
     })
-    -- Apply the initial Hit method visibility now that both sliders exist (the
-    -- dropdown is created above them, so its own Function couldn't reach them yet).
+    -- Apply the initial Hit method visibility now that the slider exists (the dropdown is
+    -- created above it, so its own Function couldn't reach it yet).
     pcall(function()
-        if Hitreg.Object then Hitreg.Object.Visible = HitMethod.Value == 'HitReg' end
-        if SwingTime.Object then SwingTime.Object.Visible = HitMethod.Value == 'Swing Time' end
+        if Hitreg.Object then
+            Hitreg.Object.Visible = HitMethod.Value == 'Remote' or HitMethod.Value == 'Auto'
+        end
     end)
-    Unpatch = Killaura:CreateToggle({
-        Name = 'Unpatch',
-        Tooltip = 'Only affects the HitReg / Swing Time (forged) methods - the Native method is already the unpatch.\nOff: send the forged packet on the raw AttackEntity remote.\nOn (experimental): route each forged hit through the game\'s own send wrapper (sendServerRequest) so any processing the game applies to a real attack is applied too. Falls back to the raw send if that call fails.'
-    })
     FastHits = Killaura:CreateToggle({
 	Name = 'Fast Hits',
 	Tooltip = 'Deals more damage quicker using projectiles',
@@ -14662,48 +14998,56 @@ run(function()
 end)
 
 run(function()
-    -- AutoWin (v2)
+    -- AutoWin (v3 - rewritten)
     --
-    -- Full-match automation for real BedWars games. AutoWin itself only navigates,
-    -- buys/bridges and decides WHEN to fight; the actual breaking and killing are
-    -- done by the game's own, well-tuned Breaker and Killaura modules, which it
-    -- drives on for the duration and restores to their previous state afterwards.
+    -- Wins the match on its own: navigate to every enemy bed and destroy it, then hunt down the
+    -- remaining players. The actual breaking and fighting are done by the script's own Breaker and
+    -- Killaura, which AutoWin drives on for the run and hands back exactly as it found them.
+    --
+    -- The rule this rewrite is built around: IT ALWAYS BRIDGES. There is no fly window, no
+    -- hop-the-void shortcut and no "gaps too wide, skipping this bed" any more. The moment there is
+    -- no walkable footing under the next step it places a block, verifies the placement, steps onto
+    -- it and repeats until the far side is reached - so a gap is never a reason to stop, and a run
+    -- can never end with the character sailing off the map. Everything else (travel, walls, beds,
+    -- players, restocking) is built on top of that one primitive.
     --
     -- Movement:
-    --   * Teleport - discrete foot-level hops paced under the Travel Speed cap. Every
-    --     hop raycasts for a wall at body height first, so it can never clip through
-    --     one. Tiny gaps are crossed by logging the current altitude, teleporting
-    --     across horizontally and snapping back up to that altitude each hop (no
-    --     per-frame gravity cancel, so no float glitch).
-    --   * Walk - moves the humanoid legitimately, jumps ledges, and bridges voids.
-    --   * "Bridge every gap" - never fly/hop a void, always place blocks.
+    --   * Teleport - discrete foot-level hops paced under the Travel Speed cap. Every hop raycasts
+    --     for a wall at body height first, so it can never clip through geometry.
+    --   * Walk - drives the humanoid legitimately at the Travel Speed, jumping ledges.
+    --   Both cross gaps the same way: by bridging.
     --
-    -- Resources: it buys wool at a shop keeper using that keeper's shopId (checking
-    -- currency). If it can't afford blocks it walks to the nearest iron generator and
-    -- waits for iron before buying. Walk mode presses C (go to base) if it runs out
-    -- over a void.
+    -- Resources: wool is bought from the nearest shop keeper using that keeper's shopId; if there
+    -- is no iron for it, it walks to the nearest iron generator and waits. Out of blocks over a
+    -- void it presses C (go to base), restocks and carries on.
     --
-    -- AntiDeath compatible: while travelling it suspends AntiDeath (which parks the
-    -- real root below the map) and re-enables it when it stops to fight/break, then
-    -- restores your original AntiDeath setting when it finishes.
+    -- AntiDeath compatible: AntiDeath parks the real root below the map, which fights any movement,
+    -- so it is suspended for each travel segment and restored when we stop to fight or break.
     local AutoWin
     local Mode
     local Speed
     local HopDistance
-    local FlyWindow
-    local BridgeEvery
     local AttackRange
     local BedReach
     local StartDelay
     local BuyBlocks
+    local Stock
     local ReturnHome
     local KillPlayers
     local Notify
 
     local SPEED_CAP = 30
-    -- Original humanoid WalkSpeed, captured the first time Walk mode drives it up to the
-    -- Travel Speed, so it can be handed back exactly when AutoWin stops.
+    -- Original humanoid WalkSpeed, captured the first time Walk mode drives it up to the Travel
+    -- Speed, so it can be handed back exactly when AutoWin stops.
     local savedWalkSpeed
+
+    -- How far above / below our current foot level a surface still counts as footing rather than a
+    -- gap: one block up is a step, three blocks down is a survivable drop. Anything else is either
+    -- a wall (handled separately) or a void to bridge.
+    local STEP_UP, STEP_DOWN = 3.5, 9
+    -- Grid constants. BedWars blocks sit on a 3-stud grid; a block centre is at cell * 3 and you
+    -- stand 1.5 studs above that centre.
+    local CELL = 3
 
     local virtualInputManager = cloneref(game:GetService('VirtualInputManager'))
 
@@ -14731,8 +15075,8 @@ run(function()
     local function isWalk()
         return Mode.Value == 'Walk'
     end
-    -- Our live root + character, or nil during the death/respawn gap. Every loop
-    -- reads this fresh so nothing holds a stale reference across a respawn.
+    -- Our live root + character, or nil during the death/respawn gap. Every loop reads this fresh
+    -- so nothing holds a stale reference across a respawn.
     local function myRoot()
         local c = entitylib.character
         if entitylib.isAlive and c and c.RootPart and c.RootPart.Parent then
@@ -14742,7 +15086,7 @@ run(function()
     end
 
     ----------------------------------------------------------------------------
-    -- Bed helpers. A bed belongs to us if it flags NoBreak for our own team.
+    -- Beds. A bed belongs to us if it flags NoBreak for our own team.
     ----------------------------------------------------------------------------
     local function myTeam()
         return lplr:GetAttribute('Team')
@@ -14802,81 +15146,31 @@ run(function()
     end
 
     ----------------------------------------------------------------------------
-    -- Ground / gap / wall analysis.
+    -- Ground, footing and walls.
     ----------------------------------------------------------------------------
     local function groundY(x, z, fromY)
         downParams.FilterDescendantsInstances = {lplr.Character, gameCamera}
-        local res = workspace:Raycast(Vector3.new(x, fromY + 6, z), Vector3.new(0, -400, 0), downParams)
+        local res = workspace:Raycast(Vector3.new(x, fromY, z), Vector3.new(0, -400, 0), downParams)
         return res and res.Position.Y or nil
     end
 
-    local function widestGap(fromPos, toPos)
-        local flat = (toPos - fromPos) * Vector3.new(1, 0, 1)
-        local dist = flat.Magnitude
-        if dist < 1 then return 0 end
-        local dir = flat.Unit
-        local step = 4
-        local voidRun, widest = 0, 0
-        for d = 0, dist, step do
-            local p = fromPos + dir * d
-            if groundY(p.X, p.Z, fromPos.Y + 40) then
-                voidRun = 0
-            else
-                voidRun += step
-                if voidRun > widest then widest = voidRun end
-            end
-        end
-        return widest
+    -- The surface height under (x, z) if it is something we could actually stand on from our
+    -- current foot level, else nil (too high = wall, too low or missing = gap to bridge).
+    -- `down` overrides how far we are willing to drop for this step.
+    local function footingAt(x, z, footY, down)
+        local gy = groundY(x, z, footY + 6)
+        if not gy then return nil end
+        if gy - footY > STEP_UP then return nil end
+        if footY - gy > (down or STEP_DOWN) then return nil end
+        return gy
     end
 
-    local function scanGaps()
-        local root = myRoot()
-        if not root then return 0 end
-        local from = root.Position
-        local widest = 0
-        for _, bed in enemyBeds() do
-            local part = bedPart(bed)
-            if part then
-                local g = widestGap(from, part.Position)
-                if g > widest then widest = g end
-                from = part.Position
-            end
-        end
-        return widest
-    end
-
-    local function voidWidth(fromPos, dir, footY, maxScan)
-        for d = 2, maxScan, 2 do
-            local p = fromPos + dir * d
-            local gy = groundY(p.X, p.Z, math.max(fromPos.Y, footY) + 40)
-            if gy and math.abs(gy - footY) <= 20 then
-                return math.max(d - 2, 0)
-            end
-        end
-        return maxScan
-    end
-
-    local function groundReach(startPos, dir, maxDist, hip)
-        local footY = startPos.Y - hip
-        local reach, reachY = 0, nil
-        for d = 2, maxDist, 2 do
-            local p = startPos + dir * d
-            local gy = groundY(p.X, p.Z, startPos.Y)
-            if gy and math.abs(gy - footY) <= 20 then
-                reach, reachY = d, gy
-            else
-                break
-            end
-        end
-        return reach, reachY
-    end
-
-    -- Wall at body height ahead (cast above small walkable ledges so a step-up
-    -- isn't mistaken for a wall). Prevents ever teleporting through geometry.
+    -- Wall at body height ahead (cast above small walkable ledges so a step-up is not mistaken for
+    -- a wall). This is what stops a teleport hop ever passing through geometry.
     local function wallAhead(root, dir, footY, dist)
         wallParams.FilterDescendantsInstances = {lplr.Character, gameCamera}
         local origin = Vector3.new(root.Position.X, footY + 3.5, root.Position.Z)
-        return workspace:Raycast(origin, dir * dist, wallParams)
+        return workspace:Raycast(origin, dir * math.max(dist, 0.1), wallParams)
     end
 
     local function isBlockInstance(inst)
@@ -14884,35 +15178,59 @@ run(function()
         local ok, meta = pcall(function() return bedwars.ItemMeta[inst.Name] end)
         return ok and meta and meta.block ~= nil
     end
-    -- A block we are actually allowed to break (so tunnelling never hammers an
-    -- indestructible wall forever).
+    -- A block we are actually allowed to break, so tunnelling never hammers an indestructible wall
+    -- forever.
     local function instanceBreakable(inst)
         if not isBlockInstance(inst) then return false end
         local ok, res = pcall(function()
-            return bedwars.BlockController:isBlockBreakable({blockPosition = inst.Position / 3}, lplr)
+            return bedwars.BlockController:isBlockBreakable({blockPosition = inst.Position / CELL}, lplr)
         end)
         return ok and res
     end
-
-    local function flyable(w)
-        if isWalk() or BridgeEvery.Enabled then return false end
-        if w <= 0 then return false end
-        return w <= math.clamp(FlyWindow.Value, 0, 1.6) * effSpeed()
+    local function breakInstance(inst)
+        pcall(bedwars.breakBlock, inst, true, true, nil, true, breakmethods.Distance, 360, false)
     end
 
     ----------------------------------------------------------------------------
-    -- Shop / iron / block purchasing.
+    -- Blocks to bridge with.
     ----------------------------------------------------------------------------
-    local function woolCount()
-        local _, amount = getWool()
+    -- Things that are technically placeable but must never end up in a bridge.
+    local badBlocks = {'tnt', 'cannon', 'bed', 'trap', 'gumdrop', 'glue', 'ladder', 'sludge', 'bomb', 'beacon', 'spawner', 'chest'}
+    local function usableBlock(itemType)
+        for _, bad in badBlocks do
+            if itemType:find(bad) then return false end
+        end
+        return true
+    end
+    -- Wool first (cheapest and always restockable), then any other sane placeable block, so a run
+    -- doesn't stall over a gap just because the wool ran out while we hold planks.
+    local function bridgeBlock()
+        local wool, amount = getWool()
+        if wool and (amount or 0) > 0 then return wool, amount end
+        for _, item in store.inventory.inventory.items do
+            local meta = bedwars.ItemMeta[item.itemType]
+            if meta and meta.block and (item.amount or 0) > 0 and usableBlock(item.itemType) then
+                return item.itemType, item.amount
+            end
+        end
+        return nil, 0
+    end
+    local function blockCount()
+        local _, amount = bridgeBlock()
         return amount or 0
     end
     local function ironCount()
         local it = getItem('iron')
         return it and it.amount or 0
     end
-    local function woolShopItem()
-        local ok, item = pcall(function() return bedwars.Shop.getShopItem('wool', lplr) end)
+
+    ----------------------------------------------------------------------------
+    -- Shop / restocking.
+    ----------------------------------------------------------------------------
+    local function woolShopItem(id)
+        local ok, item = pcall(function()
+            return bedwars.Shop.getShopItem('wool', lplr, id and {shopId = id} or nil)
+        end)
         return ok and item or nil
     end
 
@@ -14987,19 +15305,19 @@ run(function()
         return best, bestPos
     end
 
-    local travelTo -- forward declaration
+    local travelTo -- forward declaration (restocking travels, travelling restocks)
 
-    -- Buy wool at the shop we're standing at (must already be in range) until we
-    -- hold at least `target`, or a purchase stops going through.
-    local function buyWoolHere(target)
+    -- Buy wool at the shop we are standing at (must already be in range) until we hold at least
+    -- `target` blocks, or a purchase stops going through.
+    local function buyBlocksHere(target)
         local id = shopIdNear(20)
         if not id then return end
-        for _ = 1, 30 do
+        for _ = 1, 40 do
             if not AutoWin.Enabled then return end
-            if woolCount() >= target then return end
+            if blockCount() >= target then return end
             local sent = false
             pcall(function()
-                local item = bedwars.Shop.getShopItem('wool', lplr, {shopId = id})
+                local item = woolShopItem(id)
                 if not item then return end
                 local currency = getItem(item.currency)
                 if (currency and currency.amount or 0) < (item.price or 0) then return end
@@ -15011,45 +15329,9 @@ run(function()
         end
     end
 
-    -- Ensure we hold at least `target` wool. Buys at a shop; if we can't afford it,
-    -- walks to the nearest iron generator and waits for iron first. Returns true if
-    -- we ended up holding any wool.
-    local function restock(target)
-        if not BuyBlocks.Enabled or target <= 0 then return woolCount() > 0 end
-        if woolCount() >= target then return true end
-        local deadline = tick() + 60
-        while AutoWin.Enabled and entitylib.isAlive and woolCount() < target and tick() < deadline do
-            local item = woolShopItem()
-            if not item then return woolCount() > 0 end
-            local price = item.price or 0
-
-            if ironCount() < price then
-                stage('Not enough iron - waiting at the generator...')
-                local _, gpos = nearestIronGen()
-                local root = myRoot()
-                if gpos and root and (gpos - root.Position).Magnitude > 14 then
-                    travelTo(function() return gpos end, 12, false, true)
-                end
-                local waitUntil = tick() + 25
-                repeat task.wait(0.3) until ironCount() >= price or tick() > waitUntil or not AutoWin.Enabled or not entitylib.isAlive
-                if ironCount() < price then return woolCount() > 0 end
-            end
-
-            if not shopIdNear(18) then
-                stage('Heading to the shop for blocks...')
-                local _, spos = nearestShop()
-                if spos then travelTo(function() return spos end, 10, false, true) end
-            end
-            local shopWait = tick() + 8
-            repeat task.wait() until store.shopLoaded or tick() > shopWait or not AutoWin.Enabled or not entitylib.isAlive
-            buyWoolHere(target)
-        end
-        return woolCount() > 0
-    end
-
     ----------------------------------------------------------------------------
-    -- Teleport home: presses C (the game's "go to base" bind) and waits until we
-    -- stop moving. Used by Walk mode when it runs dry over a void.
+    -- Teleport home: presses C (the game's own "go to base" bind) and waits until we stop moving.
+    -- The last-resort restock when we run dry somewhere with no shop.
     ----------------------------------------------------------------------------
     local function pressHome()
         virtualInputManager:SendKeyEvent(true, Enum.KeyCode.C, false, game)
@@ -15080,44 +15362,66 @@ run(function()
         return entitylib.isAlive
     end
 
-    ----------------------------------------------------------------------------
-    -- Block placement / bridging (one face-adjacent grid cell at a time).
-    ----------------------------------------------------------------------------
-    local function placeBridge(worldCentre)
-        if getPlacedBlock(worldCentre) then return true end
-        local wool = getWool()
-        if not wool then return false end
-        pcall(bedwars.placeBlock, worldCentre, wool)
-        local deadline = tick() + 0.4
-        repeat task.wait() until getPlacedBlock(worldCentre) or tick() > deadline or not AutoWin.Enabled
-        return getPlacedBlock(worldCentre) and true or false
+    -- Get hold of at least `target` blocks: buy at a shop, waiting at the iron generator for iron
+    -- if we cannot afford them yet. Returns true if we ended up holding anything to bridge with.
+    local function restock(target)
+        if not BuyBlocks.Enabled or target <= 0 then return blockCount() > 0 end
+        if blockCount() >= target then return true end
+        local deadline = tick() + 60
+        while AutoWin.Enabled and entitylib.isAlive and blockCount() < target and tick() < deadline do
+            local item = woolShopItem()
+            if not item then return blockCount() > 0 end
+            local price = item.price or 0
+
+            if ironCount() < price then
+                stage('Not enough iron - waiting at the generator...')
+                local _, gpos = nearestIronGen()
+                local root = myRoot()
+                if gpos and root and (gpos - root.Position).Magnitude > 14 then
+                    travelTo(function() return gpos end, 12, false, true)
+                end
+                local waitUntil = tick() + 25
+                repeat task.wait(0.3) until ironCount() >= price or tick() > waitUntil or not AutoWin.Enabled or not entitylib.isAlive
+                if ironCount() < price then return blockCount() > 0 end
+            end
+
+            if not shopIdNear(18) then
+                stage('Heading to the shop for blocks...')
+                local _, spos = nearestShop()
+                if not spos then return blockCount() > 0 end
+                travelTo(function() return spos end, 10, false, true)
+            end
+            local shopWait = tick() + 8
+            repeat task.wait() until store.shopLoaded or tick() > shopWait or not AutoWin.Enabled or not entitylib.isAlive
+            buyBlocksHere(target)
+        end
+        return blockCount() > 0
     end
-    local function breakInstance(inst)
-        pcall(bedwars.breakBlock, inst, true, true, nil, true, breakmethods.Distance, 360, false)
+
+    -- Guarantee we have something to bridge with, whatever it takes: buy, wait for iron, and as a
+    -- last resort go home for a restock. `noRestock` is set while we are already inside a shop trip
+    -- so it can never recurse into itself.
+    local function ensureBlocks(noRestock)
+        if blockCount() > 0 then return true end
+        if noRestock then return false end
+        stage('Out of blocks - restocking...')
+        restock(Stock.Value)
+        if blockCount() == 0 and ReturnHome.Enabled then
+            returnHome()
+            restock(Stock.Value)
+        end
+        return blockCount() > 0
     end
 
     ----------------------------------------------------------------------------
     -- Movement primitives.
     ----------------------------------------------------------------------------
-    -- Discrete ground hop. Velocity is left plausible (horizontal zeroed, gravity
-    -- kept) instead of force-zeroed, so a positional jump never contradicts a
-    -- reported velocity for the anti-cheat.
-    local function tpStep(root, footPos, hip, lookAt, studs)
-        local ty = footPos.Y + hip
-        local from = Vector3.new(footPos.X, ty, footPos.Z)
-        local flat = (Vector3.new(lookAt.X, ty, lookAt.Z) - from)
-        local dir = flat.Magnitude > 0 and flat.Unit or root.CFrame.LookVector
-        root.CFrame = CFrame.new(from, from + dir)
-        root.AssemblyLinearVelocity = Vector3.new(0, root.AssemblyLinearVelocity.Y, 0)
-        task.wait(math.max(studs / effSpeed(), 1 / 30))
-    end
     local function walkStep(waypoint, studs, jump)
         local _, char = myRoot()
         local hum = char and char.Humanoid
         if not hum then task.wait(0.05) return end
-        -- Drive the walk at the Travel Speed slider. Before this, Walk mode moved at the
-        -- humanoid's own WalkSpeed (so the slider did nothing and it crawled at the base
-        -- speed - "walking too slow"). Capture the original once so cleanup can restore it.
+        -- Drive the walk at the Travel Speed slider, capturing the original once so cleanup can
+        -- hand it back.
         if savedWalkSpeed == nil then savedWalkSpeed = hum.WalkSpeed end
         local want = math.max(effSpeed(), 12)
         if math.abs(hum.WalkSpeed - want) > 0.1 then
@@ -15130,51 +15434,64 @@ run(function()
         local dl = tick() + math.clamp(studs / ws, 0.05, 1.2)
         repeat task.wait() until tick() > dl or not AutoWin.Enabled or not entitylib.isAlive
     end
-    -- Advance one grid cell of bridge toward the target. Returns the new foot
-    -- altitude (block top) on success, or nil if we could not place/cross.
-    local function bridgeStep(root, dir, footY, target, hip)
-        local curGrid = bedwars.BlockController:getBlockPosition(Vector3.new(root.Position.X, footY - 1.5, root.Position.Z))
-        local dx, dz = target.X - root.Position.X, target.Z - root.Position.Z
-        local gstep
-        if math.abs(dx) >= math.abs(dz) and math.abs(dx) >= 1 then
-            gstep = Vector3.new(math.sign(dx), 0, 0)
-        elseif math.abs(dz) >= 1 then
-            gstep = Vector3.new(0, 0, math.sign(dz))
-        else
-            return nil
-        end
-        local nextCentre = bedwars.BlockController:getWorldPosition(curGrid + gstep)
-        if not placeBridge(nextCentre) then return nil end
-        if not AutoWin.Enabled then return nil end
-        local newFootY = nextCentre.Y + 1.5
-        if isWalk() then
-            walkStep(Vector3.new(nextCentre.X, newFootY + hip, nextCentre.Z), 3, false)
-        else
-            local ty = newFootY + hip
-            local from = Vector3.new(nextCentre.X, ty, nextCentre.Z)
-            root.CFrame = CFrame.new(from, Vector3.new(target.X, ty, target.Z))
-            root.AssemblyLinearVelocity = Vector3.new(0, root.AssemblyLinearVelocity.Y, 0)
-            task.wait(math.max(3 / effSpeed(), 1 / 30))
-        end
-        return newFootY
-    end
 
-    -- Bridge one step, restocking (waiting for iron / going home) when out of wool.
-    local function doBridge(root, dir, footY, target, hip, noRestock)
-        if woolCount() == 0 then
-            if noRestock then return nil end
-            restock(8)
-            if woolCount() == 0 and isWalk() and ReturnHome.Enabled then
-                returnHome()
-                restock(8)
-            end
-            if woolCount() == 0 then return nil end
+    -- One movement step to a root-level destination. Teleport mode leaves the velocity plausible
+    -- (horizontal zeroed, gravity kept) instead of force-zeroing it, so a positional jump never
+    -- contradicts a reported velocity.
+    local function moveStep(root, dest, studs, lookAt, jump)
+        if isWalk() then
+            walkStep(dest, studs, jump)
+            return
         end
-        return bridgeStep(root, dir, footY, target, hip)
+        local look = lookAt and Vector3.new(lookAt.X, dest.Y, lookAt.Z) or nil
+        if look and (look - dest).Magnitude > 0.01 then
+            root.CFrame = CFrame.new(dest, look)
+        else
+            root.CFrame = CFrame.new(dest) * (root.CFrame - root.CFrame.Position)
+        end
+        root.AssemblyLinearVelocity = Vector3.new(0, root.AssemblyLinearVelocity.Y, 0)
+        task.wait(math.max(studs / effSpeed(), 1 / 30))
     end
 
     ----------------------------------------------------------------------------
-    -- Driving the game's own modules (Breaker / Killaura) and AntiDeath.
+    -- Bridging: the only way this module crosses a gap.
+    ----------------------------------------------------------------------------
+    -- Place one block and wait for the server to confirm it. Returns true once the cell holds a
+    -- block (including when it already did).
+    local function placeAt(world)
+        if getPlacedBlock(world) then return true end
+        local block = bridgeBlock()
+        if not block then return false end
+        pcall(bedwars.placeBlock, world, block)
+        local deadline = tick() + 0.5
+        repeat task.wait() until getPlacedBlock(world) or tick() > deadline or not AutoWin.Enabled
+        return getPlacedBlock(world) and true or false
+    end
+
+    -- Extend the bridge one grid cell toward `target` and step onto it. Axis-aligned, one cell at a
+    -- time - the same shape a player's bridge has - and every cell is confirmed placed before we
+    -- stand on it. Returns the new foot altitude, or nil if the cell could not be filled.
+    local function bridgeStep(root, footY, target, hip)
+        local pos = root.Position
+        -- The cell we are supported by is the one directly under our feet.
+        local support = bedwars.BlockController:getBlockPosition(Vector3.new(pos.X, footY - 1.5, pos.Z))
+        local dx, dz = target.X - pos.X, target.Z - pos.Z
+        if math.abs(dx) < 0.05 and math.abs(dz) < 0.05 then return nil end
+        local cell = math.abs(dx) >= math.abs(dz)
+            and support + Vector3.new(dx >= 0 and 1 or -1, 0, 0)
+            or support + Vector3.new(0, 0, dz >= 0 and 1 or -1)
+
+        local world = cell * CELL
+        if not placeAt(world) then return nil end
+        if not AutoWin.Enabled then return nil end
+
+        local newFootY = world.Y + 1.5
+        moveStep(root, Vector3.new(world.X, newFootY + hip, world.Z), CELL, target, false)
+        return newFootY
+    end
+
+    ----------------------------------------------------------------------------
+    -- Driving the script's own modules (Breaker / Killaura) and AntiDeath.
     ----------------------------------------------------------------------------
     local savedStates = {}
     local function getModule(name)
@@ -15206,8 +15523,8 @@ run(function()
         if want ~= nil and m.Enabled ~= want then pcall(function() m:Toggle() end) end
     end
 
-    -- AntiDeath parks the real root below the map while it dodges, which fights any
-    -- movement we make. We suspend it for the duration of each travel segment.
+    -- AntiDeath parks the real root below the map while it dodges, which fights any movement we
+    -- make, so it is suspended for the duration of each travel segment.
     local userAntiDeath = false
     local travelDepth = 0
     local function suspendAntiDeath()
@@ -15224,40 +15541,38 @@ run(function()
     end
 
     ----------------------------------------------------------------------------
-    -- Travel toward a (possibly moving) target. Over ground it hops / walks (never
-    -- through a wall). Over a void it flies short gaps (Teleport, unless "Bridge
-    -- every gap") by logging the altitude and snapping back to it each hop, and
-    -- otherwise bridges. `breakThrough` breaks blocks in the way (tunnelling to a
-    -- bed). `noRestock` stops it recursing into the shop trip.
+    -- Travel toward a (possibly moving) target. Walks or hops over footing, breaks through walls
+    -- when asked, and bridges every gap. `noRestock` stops it recursing into a shop trip.
     ----------------------------------------------------------------------------
     local function travelCore(getTarget, stopRange, breakThrough, noRestock)
-        local deadline = tick() + 90
-        local flyY
-        local lastPos, stuckSince = nil, tick()
-        -- Progress toward the target (not raw movement): a wall bounce that nudges us
-        -- forward and back each cycle still counts as "no progress", so we bail on a real
-        -- stall instead of grinding uselessly until the 90s deadline.
+        local deadline = tick() + 150
+        -- Progress toward the target, not raw movement: a wall bounce that nudges us forward and
+        -- back each cycle still counts as no progress, so we bail on a real stall instead of
+        -- grinding until the deadline.
         local bestDist, lastProgress = math.huge, tick()
-        local lastSafePos            -- last spot we stood on solid ground (void bailout)
-        local rootGoneSince          -- when the live root first went missing this stretch
-        -- When a trip has to abort while we're out over a gap, drop back onto the last
-        -- solid ground we recorded instead of leaving the character hovering to fall to
-        -- its death. Teleport mode only (Walk mode recovers via Return Home); always
-        -- returns false so callers can `return bailToSafeGround(...)` directly.
-        local function bailToSafeGround(overVoid)
-            if overVoid and lastSafePos and not isWalk() then
+        local blockedSince = tick()
+        local lastSafe                -- last spot with real footing, for the void bail-out
+        local rootGoneSince
+        local bridging = false
+
+        -- When a trip has to abort while we are out over a gap, drop back onto the last solid
+        -- footing we recorded instead of leaving the character hovering to fall to its death.
+        -- Always returns false so callers can `return bail(...)` directly.
+        local function bail(overVoid)
+            if overVoid and lastSafe and not isWalk() then
                 local liveRoot = myRoot()
                 if liveRoot then
-                    liveRoot.CFrame = CFrame.new(lastSafePos)
+                    liveRoot.CFrame = CFrame.new(lastSafe)
                     liveRoot.AssemblyLinearVelocity = Vector3.zero
                 end
             end
             return false
         end
+
         while AutoWin.Enabled and tick() < deadline do
             if not entitylib.isAlive then return false end
-            -- Never fight an AntiDeath dodge: if the root is parked, wait it out - but
-            -- don't spin here forever if something leaves it parked (bounded safety net).
+            -- Never fight an AntiDeath dodge: if the root is parked, wait it out - but don't spin
+            -- here forever if something leaves it parked.
             if store.rootpart then
                 if tick() - lastProgress > 15 then return false end
                 task.wait()
@@ -15265,94 +15580,115 @@ run(function()
             end
             local root, char = myRoot()
             if not root then
-                -- A one-frame nil root (a respawn / character swap) must not abort the
-                -- whole trip. Wait briefly for it to come back; only give up if it stays
-                -- gone (a real death, which the caller's ensureAlive handles).
+                -- A one-frame nil root (respawn / character swap) must not abort the whole trip.
                 rootGoneSince = rootGoneSince or tick()
                 if tick() - rootGoneSince > 1.5 then return false end
                 task.wait()
                 continue
             end
             rootGoneSince = nil
+
             local target = getTarget()
             if not target then return false end
 
             local pos = root.Position
-            if not lastPos or (pos - lastPos).Magnitude > 1.5 then stuckSince = tick() end
-            lastPos = pos
-
+            local hip = char.HipHeight or 3
+            local footY = pos.Y - hip
             local flat = (target - pos) * Vector3.new(1, 0, 1)
             local dist = flat.Magnitude
             if dist <= stopRange then return true end
-            -- Only real progress toward the target resets the stall timer.
+
             if dist < bestDist - 1 then
                 bestDist, lastProgress = dist, tick()
-            elseif tick() - lastProgress > 10 then
-                return bailToSafeGround(flyY ~= nil)
+            elseif tick() - lastProgress > 15 then
+                return bail(bridging)
             end
-            local hip = char.HipHeight or 3
-            local dir = dist > 0 and flat.Unit or root.CFrame.LookVector
-            local maxStep = math.min(HopDistance.Value, dist)
-            local footYnow = flyY or (pos.Y - hip)
 
-            -- Wall directly ahead? Never clip through it.
-            local hit = wallAhead(root, dir, footYnow, maxStep + 1)
+            -- Remember footing we can fall back to, and note whether we are currently over a void.
+            local standingOn = footingAt(pos.X, pos.Z, footY, 3)
+            if standingOn then
+                lastSafe = Vector3.new(pos.X, standingOn + hip, pos.Z)
+                bridging = false
+            end
+
+            local dir = dist > 0.01 and flat.Unit or root.CFrame.LookVector
+            local step = math.min(HopDistance.Value, dist)
+            -- How far we are willing to drop for the next step. A small drop is always fine; when
+            -- the target is genuinely below us we allow a bigger one so we descend onto a lower
+            -- island instead of bridging straight over the top of it. A teleport hop down costs
+            -- nothing, a walked one has to be survived, so Walk mode stays conservative.
+            local dropLimit = STEP_DOWN
+            if target.Y < footY - 4 then
+                dropLimit = isWalk() and 18 or 60
+            end
+
+            ------------------------------------------------------------------
+            -- Walls first: never move through geometry.
+            ------------------------------------------------------------------
+            local hit = wallAhead(root, dir, footY, step + 1)
             if hit then
                 if breakThrough and instanceBreakable(hit.Instance) then
                     stage('Breaking through a wall...')
                     breakInstance(hit.Instance)
                     task.wait(0.12)
-                    if tick() - stuckSince > 12 then return false end
+                    if tick() - blockedSince > 20 then return bail(bridging) end
                     continue
                 end
-                maxStep = math.max(math.min(maxStep, hit.Distance - 1.5), 0)
-                if maxStep < 1 then
-                    if isWalk() then walkStep(pos + dir * 2, 2, true) end
-                    if tick() - stuckSince > 3 then return false end
+                step = math.max(math.min(step, hit.Distance - 1.5), 0)
+                if step < 1.5 then
+                    -- Blocked. Try to climb it if it is a ledge we could stand on, otherwise jump
+                    -- (Walk) and give the stall detector a chance to move us on.
+                    local ahead = pos + dir * CELL
+                    local top = groundY(ahead.X, ahead.Z, footY + 24)
+                    if top and top > footY and (top - footY) <= 6 and not wallAhead(root, dir, top, CELL + 1) then
+                        moveStep(root, Vector3.new(ahead.X, top + hip, ahead.Z), CELL, target, true)
+                        continue
+                    end
+                    if isWalk() then
+                        walkStep(pos + dir * 2, 2, true)
+                    end
+                    if tick() - blockedSince > 6 then return bail(bridging) end
                     task.wait(0.05)
                     continue
                 end
             end
+            blockedSince = tick()
 
-            local reach, reachY = groundReach(pos, dir, maxStep, hip)
-            if reach >= 2 and reachY then
-                -- Solid ground ahead.
-                flyY = nil
-                lastSafePos = pos          -- remember safe footing for the void bailout
-                local foot = pos + dir * reach
-                if isWalk() then
-                    local stepUp = reachY - (pos.Y - hip)
-                    walkStep(Vector3.new(foot.X, reachY + hip, foot.Z), reach, stepUp > 1.5)
-                else
-                    tpStep(root, Vector3.new(foot.X, reachY, foot.Z), hip, target, reach)
-                end
+            ------------------------------------------------------------------
+            -- How far we can travel on real footing this step.
+            ------------------------------------------------------------------
+            local reach, reachY = 0, nil
+            local d = 1.5
+            while d <= step do
+                local p = pos + dir * d
+                local gy = footingAt(p.X, p.Z, footY, dropLimit)
+                if not gy then break end
+                reach, reachY = d, gy
+                d += 1.5
+            end
+
+            if reach >= 1.5 and reachY then
+                local dest = pos + dir * reach
+                moveStep(root, Vector3.new(dest.X, reachY + hip, dest.Z), reach, target, (reachY - footY) > 1.5)
             else
-                -- Void ahead.
-                local footY = flyY or (pos.Y - hip)
-                local gap = voidWidth(pos, dir, footY, 240)
-                if flyable(gap) then
-                    -- Log the altitude, teleport across horizontally, snap back up
-                    -- to it (this replaces the old per-frame gravity cancel).
-                    if not flyY then flyY = footY end
-                    local p = pos + dir * maxStep
-                    local ty = flyY + hip
-                    root.CFrame = CFrame.new(Vector3.new(p.X, ty, p.Z), Vector3.new(target.X, ty, target.Z))
-                    root.AssemblyLinearVelocity = Vector3.zero
-                    task.wait(math.max(maxStep / effSpeed(), 1 / 30))
-                else
-                    flyY = nil
-                    local newFootY = doBridge(root, dir, footY, target, hip, noRestock)
-                    if not newFootY then
-                        -- Out of blocks over a gap: recover onto solid ground instead of
-                        -- being left to fall (we're definitely over a void here).
-                        return bailToSafeGround(true)
-                    end
-                    flyY = newFootY
+                ------------------------------------------------------------------
+                -- Nothing to stand on ahead: bridge. Always. This is the only way this module
+                -- crosses a gap, so it either places a block or gives up the trip - it never
+                -- flies, hops or falls across.
+                ------------------------------------------------------------------
+                if not ensureBlocks(noRestock) then
+                    stage('No blocks left to bridge with.')
+                    return bail(true)
+                end
+                bridging = true
+                if not bridgeStep(root, footY, target, hip) then
+                    return bail(true)
                 end
             end
         end
         return false
     end
+
     -- Wrapper: suspend AntiDeath for the whole travel segment, then restore it.
     function travelTo(getTarget, stopRange, breakThrough, noRestock)
         suspendAntiDeath()
@@ -15362,11 +15698,11 @@ run(function()
     end
 
     ----------------------------------------------------------------------------
-    -- Bed breaking. The real Breaker (driven on) destroys the bed once it's in
-    -- range; we navigate, tunnel any covering block, and hammer it as a fallback.
+    -- Bed breaking. The driven Breaker destroys the bed once it is in range; we navigate, tunnel
+    -- any covering block and hammer it ourselves as a fallback.
     ----------------------------------------------------------------------------
     local function breakBed(bed)
-        local timeout = tick() + 30
+        local timeout = tick() + 45
         while AutoWin.Enabled and bed.Parent and bedPart(bed) and entitylib.isAlive and tick() < timeout do
             local part = bedPart(bed)
             if not part then break end
@@ -15420,9 +15756,8 @@ run(function()
         repeat task.wait(0.2) until entitylib.isAlive or not AutoWin.Enabled
         if not (AutoWin.Enabled and entitylib.isAlive) then return false end
         task.wait(0.4)
-        -- Re-check after the settle wait: if the user turned AutoWin off during it, do
-        -- NOT re-drive the modules - cleanup() has already restored them and re-enabling
-        -- here would leave Killaura/Breaker stuck on.
+        -- Re-check after the settle wait: if the user turned AutoWin off during it, cleanup() has
+        -- already restored the modules and re-enabling here would leave them stuck on.
         if not (AutoWin.Enabled and entitylib.isAlive) then return false end
         driveModule('Breaker', true, 'Break Bed')
         driveModule('Killaura', true)
@@ -15434,32 +15769,60 @@ run(function()
     end
 
     ----------------------------------------------------------------------------
-    -- Phase 1: destroy every enemy bed, nearest first (tunnelling through walls).
+    -- Phase 1: destroy every enemy bed, nearest first (tunnelling through walls, bridging gaps).
     ----------------------------------------------------------------------------
     local function bedPhase()
         if #enemyBeds() == 0 then return end
         stage('Scanning for enemy beds...')
-        local skip = {}
+        local attempts = {}
+        -- Give up on the phase only if nothing at all has been destroyed for a long stretch, so a
+        -- genuinely unbreakable bed can't spin the loop forever while still letting a hard one be
+        -- retried as often as it takes.
+        local lastBreak, bedsLeft = tick(), #enemyBeds()
         while AutoWin.Enabled do
             if not ensureAlive() then break end
             local root = myRoot()
             if not root then break end
+            if #enemyBeds() < bedsLeft then
+                bedsLeft, lastBreak = #enemyBeds(), tick()
+            end
+            if tick() - lastBreak > 300 then
+                stage('No bed has gone down in a while - stopping the bed phase.')
+                break
+            end
+            -- A bed is only given up on after two failed runs at it, and even then only while
+            -- another bed is still reachable - a wide gap is no longer a reason to skip one,
+            -- because we bridge across it.
+            local skip = {}
+            for bed, tries in attempts do
+                if tries >= 2 then skip[bed] = true end
+            end
             local bed = closestBed(root.Position, skip)
-            if not bed then break end
+            if not bed then
+                bed = closestBed(root.Position)
+                if not bed then break end
+                table.clear(attempts)
+            end
             stage('Destroying the nearest enemy bed...')
+            -- Top up before setting off so a gap on the way doesn't strand us.
+            if BuyBlocks.Enabled and blockCount() < 8 and shopIdNear(18) then
+                buyBlocksHere(Stock.Value)
+            end
             local reached = travelTo(function()
                 return bed.Parent and bedPart(bed) and bedPart(bed).Position or nil
             end, BedReach.Value, true)
             if not AutoWin.Enabled then break end
-            if not reached then
-                stage(BuyBlocks.Enabled and 'A bed is unreachable right now - skipping.' or 'A bed is across a wide gap - enable Buy Blocks to bridge it.')
-                skip[bed] = true
-                task.wait(0.2)
-                continue
+            if reached then
+                breakBed(bed)
             end
-            breakBed(bed)
             if bed.Parent and bedPart(bed) then
-                skip[bed] = true
+                attempts[bed] = (attempts[bed] or 0) + 1
+                if not reached then
+                    stage('Could not get to that bed - restocking and trying another.')
+                    restock(Stock.Value)
+                end
+            else
+                attempts[bed] = nil
             end
             task.wait(0.15)
         end
@@ -15509,26 +15872,29 @@ run(function()
     end
 
     ----------------------------------------------------------------------------
-    -- Pre-flight: opportunistic top-up only (travelTo waits for iron at a real gap).
+    -- Pre-flight: stock up before setting off, since every gap is bridged now.
     ----------------------------------------------------------------------------
     local function preflight()
-        local widest = scanGaps()
-        if widest <= 0 then
-            stage('Route is solid - moving out.')
+        if not BuyBlocks.Enabled then
+            stage(blockCount() > 0 and 'Moving out.' or 'No blocks and Buy Blocks is off - gaps will stop the run.')
             return
         end
-        if flyable(widest) then
-            stage('Route gaps (~' .. math.floor(widest) .. ' studs) are fly-crossable - moving out.')
-        elseif BuyBlocks.Enabled then
-            local item = woolShopItem()
-            if item and shopIdNear(18) and ironCount() >= (item.price or 0) then
-                buyWoolHere(math.ceil(widest / 3) + 8)
+        if blockCount() < Stock.Value then
+            stage('Stocking up on blocks before moving out...')
+            if shopIdNear(18) then
+                buyBlocksHere(Stock.Value)
+            else
+                local _, spos = nearestShop()
+                if spos then
+                    travelTo(function() return spos end, 10, false, true)
+                    local shopWait = tick() + 6
+                    repeat task.wait() until store.shopLoaded or tick() > shopWait or not AutoWin.Enabled
+                    buyBlocksHere(Stock.Value)
+                end
             end
-            stage('Moving out - will buy/bridge gaps on the way.')
-        else
-            stage('Gaps too wide to fly (~' .. math.floor(widest) .. ' studs) - enable Buy Blocks to bridge them.')
         end
-        task.wait(0.4)
+        stage('Moving out - bridging every gap on the way.')
+        task.wait(0.3)
     end
 
     ----------------------------------------------------------------------------
@@ -15564,7 +15930,7 @@ run(function()
                 if not AutoWin.Enabled then return end
 
                 userAntiDeath = (getModule('AntiDeath') and getModule('AntiDeath').Enabled) or false
-                -- Drive the game's own, well-tuned Breaker (beds) & Killaura for the run.
+                -- Drive the script's own, well-tuned Breaker (beds) & Killaura for the run.
                 driveModule('Breaker', true, 'Break Bed')
                 driveModule('Killaura', true)
 
@@ -15587,18 +15953,13 @@ run(function()
                 cleanup()
             end
         end,
-        Tooltip = 'Automatically wins the match: buys/bridges to every enemy bed and destroys it, then hunts the remaining players - using the game\'s own Breaker & Killaura (restored afterwards) and staying out of AntiDeath\'s way. Built for real BedWars games.'
+        Tooltip = 'Automatically wins the match: bridges across every gap to reach each enemy bed and destroys it, then hunts the remaining players - using the script\'s own Breaker & Killaura (restored afterwards) and staying out of AntiDeath\'s way. It never flies or hops a void: if there is nothing to stand on, it places blocks.'
     })
     Mode = AutoWin:CreateDropdown({
         Name = 'Travel mode',
         List = {'Teleport', 'Walk'},
         Default = 'Teleport',
-        Tooltip = 'Teleport: discrete wall-checked hops, flying tiny gaps and bridging wider ones. Walk: moves legitimately, jumps ledges, bridges every void, and presses C to go home if it runs out of blocks.'
-    })
-    BridgeEvery = AutoWin:CreateToggle({
-        Name = 'Bridge every gap',
-        Default = false,
-        Tooltip = 'Never fly or hop across a void - always place blocks. Slower but the most predictable and legit-looking.'
+        Tooltip = 'Teleport: discrete wall-checked hops, paced under the travel speed.\nWalk: moves the humanoid legitimately and jumps ledges.\nBoth cross gaps by bridging.'
     })
     Speed = AutoWin:CreateSlider({
         Name = 'Travel Speed',
@@ -15606,7 +15967,7 @@ run(function()
         Max = 30,
         Default = 22,
         Suffix = ' st/s',
-        Tooltip = 'Effective travel speed. In Walk mode this now actually drives your WalkSpeed (it used to be ignored, so walking crawled at the base speed); in Teleport mode each hop is paced so you never exceed it. Keep it near a normal sprint (~23) if you want to stay under the movement anti-cheat; raise for speed at the cost of being more obvious.'
+        Tooltip = 'Effective travel speed. Walk mode drives your WalkSpeed to this; Teleport mode paces each hop so you never exceed it. Keep it near a normal sprint (~23) to stay under the movement anti-cheat.'
     })
     HopDistance = AutoWin:CreateSlider({
         Name = 'Hop Distance',
@@ -15614,16 +15975,7 @@ run(function()
         Max = 20,
         Default = 16,
         Suffix = ' studs',
-        Tooltip = 'Teleport mode: how far each hop moves you. Bigger hops mean fewer, less frequent teleports (less blinking) to cover the same ground. Pacing still caps the effective speed at the Travel Speed value.'
-    })
-    FlyWindow = AutoWin:CreateSlider({
-        Name = 'Fly Window',
-        Min = 0.5,
-        Max = 1.6,
-        Default = 1,
-        Decimal = 10,
-        Suffix = ' seconds',
-        Tooltip = 'A gap is flown if it can be crossed within this many seconds at the travel speed; wider gaps are bridged. Ignored when "Bridge every gap" is on.'
+        Tooltip = 'Teleport mode: how far each hop moves you over solid ground. Bigger hops mean fewer, less frequent teleports for the same distance. Bridging always advances one block at a time regardless.'
     })
     AttackRange = AutoWin:CreateSlider({
         Name = 'Player Reach',
@@ -15655,12 +16007,22 @@ run(function()
     BuyBlocks = AutoWin:CreateToggle({
         Name = 'Buy Blocks',
         Default = true,
-        Tooltip = 'Buys wool at a shop keeper (waiting at the iron generator for iron if needed) so it can bridge gaps that are too wide to fly.'
+        Tooltip = 'Buys wool at a shop keeper (waiting at the iron generator for iron if needed) so there are always blocks to bridge with. With this off, a gap you have no blocks for ends the trip.'
+    })
+    Stock = AutoWin:CreateSlider({
+        Name = 'Block stock',
+        Min = 8,
+        Max = 128,
+        Default = 48,
+        Suffix = function(val)
+            return val == 1 and ' block' or ' blocks'
+        end,
+        Tooltip = 'How many blocks to keep in reserve for bridging. It tops up to this before setting off and whenever it runs dry.'
     })
     ReturnHome = AutoWin:CreateToggle({
         Name = 'Return home when stuck',
         Default = true,
-        Tooltip = 'Walk mode only: if it runs out of blocks over a void, it presses C to teleport home, restocks and carries on instead of falling.'
+        Tooltip = 'If it runs out of blocks with a gap still to cross, press C to teleport home, restock and carry on instead of stalling.'
     })
     KillPlayers = AutoWin:CreateToggle({
         Name = 'Kill Players',
