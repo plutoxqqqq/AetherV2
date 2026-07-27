@@ -3506,6 +3506,7 @@ run(function()
     local lastBlockPlace = 0
     local lastZephyrJump = 0
     local fallAnchorY
+    local tpAnchorY
     local projectileRemote = {InvokeServer = function() end}
     task.spawn(function()
         projectileRemote = bedwars.Client:Get(remotes.FireProjectile).instance
@@ -3535,59 +3536,77 @@ run(function()
         return workspace:Blockcast(root.CFrame, Vector3.new(3, 3, 3), Vector3.new(0, castDistance, 0), rayCheck)
     end
 
-    -- TP mode. Drop straight down to touch the ground with zero velocity for just long enough
-    -- that the server registers a grounded, no-fall landing (which clears its fall tracking),
-    -- then snap right back to the airborne spot we came from. Because the touch has no impact
-    -- speed there is nothing to convert into damage, and the reset means the fall accumulated so
-    -- far is wiped - so when we really land later there is no built-up drop left to hurt us. The
-    -- loop calls this while we're falling fast, keeping the fall perpetually reset.
-    local function tpNoFall(root, character)
+    -- Height of the floor below us. Prefers the box cast (tolerant of thin blocks and ledges)
+    -- and falls back to a plain long ray, so a missed box cast never leaves a mode with
+    -- nothing to aim at.
+    local function groundBelow(root, character)
         updateRay(root)
-        -- Find the ground below us. Prefer the box cast (tolerant of thin/edge blocks); fall
-        -- back to a plain long ray so a missed box cast never leaves TP mode doing nothing.
-        local groundY
         local ground = getGround(root, character, 1500)
-        if ground then
-            groundY = ground.Position.Y
-        else
-            local ray = workspace:Raycast(root.Position, Vector3.new(0, -3000, 0), rayCheck)
-            if not ray then return end
-            groundY = ray.Position.Y
+        if ground then return ground.Position.Y end
+        local ray = workspace:Raycast(root.Position, Vector3.new(0, -3000, 0), rayCheck)
+        return ray and ray.Position.Y or nil
+    end
+
+    -- TP mode. A fall only hurts because of how much of it the game has registered by the time
+    -- you land, so this keeps clearing that: drop to the floor with no speed for long enough
+    -- that the landing replicates and the fall resets, then carry on falling from where we
+    -- WOULD have been had we never stopped.
+    --
+    -- That last part is the fix. The old version snapped back to the exact spot it left, so the
+    -- character could never make any downward progress - every touch rewound the fall to the
+    -- same height and it just hovered and strobed in place, which is what "TP does nothing"
+    -- looked like. Resuming along the fall instead means the descent carries on normally and
+    -- each touch simply wipes the damage that had built up behind it.
+    local function tpNoFall(root, character)
+        local groundY = groundBelow(root, character)
+        if not groundY then return false end
+
+        local humanoid = character.Humanoid
+        local startCFrame = root.CFrame
+        local startVel = root.AssemblyLinearVelocity
+        local clearance = (character.HipHeight or (humanoid and humanoid.HipHeight) or 2) + (root.Size.Y * 0.5)
+        local floorY = groundY + clearance
+        local drop = startCFrame.Position.Y - floorY
+
+        -- Already low enough that the rest of the fall cannot hurt: just take the landing
+        -- softly rather than bouncing off the floor and back up for no reason.
+        if drop <= 8 then
+            root.AssemblyLinearVelocity = Vector3.new(startVel.X, math.max(startVel.Y, -20), startVel.Z)
+            return true
         end
 
-        -- Remember the airborne position + motion so we can resume it exactly afterwards.
-        local humanoid = character.Humanoid
-        local savedCFrame = root.CFrame
-        local savedVel = root.AssemblyLinearVelocity
-        local clearance = (character.HipHeight or (humanoid and humanoid.HipHeight) or 2) + (root.Size.Y * 0.5)
-        local touchCFrame = CFrame.new(savedCFrame.X, groundY + clearance + 0.05, savedCFrame.Z) * savedCFrame.Rotation
+        local touchCFrame = CFrame.new(startCFrame.X, floorY + 0.05, startCFrame.Z) * startCFrame.Rotation
 
-        -- Sit on the ground (velocity pinned to zero, landed state forced) until the landing
-        -- registers AND has been held long enough to actually replicate to the server - a
-        -- single-frame touch was the reason this "did nothing" before, because the server never
-        -- sampled us grounded. Capped so we never linger and fall for real.
+        -- Hold the touch until the landing has registered AND been held long enough to
+        -- replicate; a single-frame touch is never sampled by the server. Capped so we never
+        -- linger long enough to be visibly standing there.
         local started = tick()
-        local minHold, maxHold = 0.09, 0.28
         local landed = false
         repeat
             root.CFrame = touchCFrame
             root.AssemblyLinearVelocity = Vector3.zero
-            if humanoid then
-                pcall(function()
-                    humanoid:ChangeState(Enum.HumanoidStateType.Landed)
-                    humanoid:ChangeState(Enum.HumanoidStateType.Running)
-                end)
-            end
             task.wait()
             if not NoFall.Enabled or not entitylib.isAlive or not root.Parent then return true end
             if humanoid and humanoid.FloorMaterial ~= Enum.Material.Air then landed = true end
-        until (landed and (tick() - started) >= minHold) or (tick() - started) >= maxHold
+        until (landed and (tick() - started) >= 0.08) or (tick() - started) >= 0.25
 
-        -- Back to the exact airborne spot and motion, with the fall counter now reset.
-        if root.Parent then
-            root.CFrame = savedCFrame
-            root.AssemblyLinearVelocity = savedVel
+        if not root.Parent then return true end
+
+        -- Resume along the fall, not back at the top of it.
+        local elapsed = tick() - started
+        local gravity = workspace.Gravity
+        local resume = startCFrame.Position
+            + Vector3.new(startVel.X * elapsed, (startVel.Y * elapsed) - (0.5 * gravity * elapsed * elapsed), startVel.Z * elapsed)
+        local resumeVel = Vector3.new(startVel.X, startVel.Y - (gravity * elapsed), startVel.Z)
+
+        -- Never resume underneath the floor we just stood on.
+        if resume.Y <= floorY then
+            root.AssemblyLinearVelocity = Vector3.new(resumeVel.X, 0, resumeVel.Z)
+            return true
         end
+
+        root.CFrame = CFrame.new(resume) * startCFrame.Rotation
+        root.AssemblyLinearVelocity = resumeVel
         return true
     end
 
@@ -3858,10 +3877,61 @@ run(function()
         root.Velocity = Vector3.zero
     end
 
+    -- Impact speed to bleed a fall down to. BedWars gives roughly six blocks of grace, which is
+    -- an 84 stud/s landing, so arriving at 45 is a fall the game has nothing to charge for and
+    -- still looks like an ordinary drop off a block rather than a feather landing.
+    local SAFE_IMPACT = 45
+
+    -- Blatant. Two independent layers, neither of which is a humanoid state spoof:
+    --
+    --  1. Cancel the fall the client registers. BedWars works out fall damage from the landing
+    --     velocity it registers for you, and FallDamageController.additionalRegisteredVelocity
+    --     is the offset added to it, so holding that at the inverse of the drop means the
+    --     landing it reports is a harmless one. This is the game's own number, not a Roblox
+    --     property being lied to.
+    --  2. Make the landing genuinely soft, so there is nothing for anything - client or
+    --     server - to turn into damage in the first place.
+    --
+    -- Layer 2 is what the old build got wrong. It ran off the module's 20-40ms poll, and at two
+    -- hundred studs a second that regularly stepped straight over the touchdown; when it did
+    -- catch one it pinned you to -10 studs a second a full ten studs up and floated you down in
+    -- plain sight. It now runs on PreSimulation with the real frame time, looks ahead by the
+    -- speed you are actually falling at, and only bleeds off in the last couple of frames.
+    local function blatantStep(dt)
+        local character, root, humanoid = validCharacter()
+        if not character or not root then return end
+
+        local velocity = root.AssemblyLinearVelocity
+
+        -- Layer 1, held the whole time we are in the air so the value is already in place
+        -- whenever the landing is registered.
+        pcall(function()
+            bedwars.FallDamageController.additionalRegisteredVelocity = math.max(-velocity.Y + 60, 60)
+        end)
+        blatantHeld = true
+
+        -- Layer 2.
+        if not isnetworkowner(root) then return end
+        if velocity.Y >= -SAFE_IMPACT then return end
+        if humanoid and humanoid.FloorMaterial ~= Enum.Material.Air then return end
+
+        local speed = -velocity.Y
+        local ground = getGround(root, character, math.max(speed * 0.5, 40))
+        if not ground then return end
+
+        local clearance = (character.HipHeight or (humanoid and humanoid.HipHeight) or 2) + (root.Size.Y * 0.5)
+        local remaining = math.max((root.Position.Y - ground.Position.Y) - clearance, 0)
+
+        -- Two frames of margin: always ahead of the impact, never early enough to hang.
+        if remaining <= 3 or remaining <= speed * math.max(dt, 1 / 240) * 2 then
+            root.AssemblyLinearVelocity = Vector3.new(velocity.X, -SAFE_IMPACT, velocity.Z)
+        end
+    end
+
     local function setSettingsVisible()
         local legit = Mode and Mode.Value == 'Legit'
-        -- Blatant no longer uses per-second anchor attempts (it neutralises the reporter
-        -- via the state machine), so that slider stays hidden.
+        -- Blatant no longer uses per-second anchor attempts (it cancels the registered fall and
+        -- softens the touchdown instead), so that slider stays hidden.
         if AnchorAttempts and AnchorAttempts.Object then AnchorAttempts.Object.Visible = false end
         for _, option in {BlockClutch, TelepearlClutch, DaoClutch, JadeHammerClutch, VoidAxeClutch, Zephyr} do
             if option and option.Object then
@@ -3874,42 +3944,21 @@ run(function()
         Name = 'NoFallDamage',
         Function = function(callback)
             if callback then
+                if Mode.Value == 'Blatant' then
+                    -- Per frame, with the real step time, rather than inside the poll below.
+                    NoFall:Clean(runService.PreSimulation:Connect(blatantStep))
+                end
+
                 repeat
                     local waitDelay = 0.04
                     local character, root, humanoid = validCharacter()
                     if character then
                         if Mode.Value == 'Blatant' then
-                            -- Blatant nofall: a simple, robust combination of the popular methods so it
-                            -- works regardless of how this build validates a fall. We keep the game's own
-                            -- FallDamageController offset cancelled (source-level, honoured on builds that
-                            -- read it) and - the part that actually guarantees it - bleed the drop off to a
-                            -- harmless speed the instant before touchdown while forcing a Landed state, so a
-                            -- velocity/position-validated fall registers as a soft, non-damaging landing.
-                            -- The offset is reset to 0 on disable.
-                            local vy = root.AssemblyLinearVelocity.Y
-                            pcall(function()
-                                bedwars.FallDamageController.additionalRegisteredVelocity = math.max(-vy + 60, 60)
-                            end)
-                            blatantHeld = true
-                            if vy < -1 then
-                                local ground = getGround(root, character, 80)
-                                local dropLeft = ground and (root.Position.Y - ground.Position.Y) or math.huge
-                                if dropLeft <= 10 then
-                                    -- Touchdown imminent: cancel the impact and register a soft landing.
-                                    root.AssemblyLinearVelocity = Vector3.new(root.AssemblyLinearVelocity.X, math.max(vy, -10), root.AssemblyLinearVelocity.Z)
-                                    pcall(function()
-                                        humanoid:ChangeState(Enum.HumanoidStateType.Landed)
-                                        humanoid:ChangeState(Enum.HumanoidStateType.Running)
-                                    end)
-                                    waitDelay = 0.02
-                                else
-                                    waitDelay = 0.03
-                                end
-                            else
-                                waitDelay = 0.03
-                            end
+                            -- Driven by the PreSimulation connection above; nothing to poll for.
+                            waitDelay = 0.2
                         elseif humanoid.FloorMaterial ~= Enum.Material.Air then
                             usedPearl = false
+                            tpAnchorY = nil
                         elseif Mode.Value == 'Legit' then
                             local ground = getGround(root, character, HealthCheck and HealthCheck.Enabled and 300 or (GroundDistance and GroundDistance.Value or 30))
                             -- Zephyr is now a Legit sub-toggle: if it's on, try the
@@ -3926,20 +3975,33 @@ run(function()
                                 legitClutch(root, humanoid, ground)
                             end
                         elseif Mode.Value == 'TP' then
-                            -- Belt-and-suspenders: keep the game's registered fall velocity
-                            -- cancelled the whole time TP mode is airborne, so fall damage is
-                            -- neutralised even when a teleport touch doesn't replicate a grounded
-                            -- state in time - which is why TP could look like it "did nothing".
-                            -- Reset to 0 on disable via the blatantHeld flag below.
+                            -- Belt and braces: keep the registered fall velocity cancelled the
+                            -- whole time TP mode is airborne, so the fall is neutralised even on
+                            -- a touch that doesn't replicate a grounded state in time. Reset to 0
+                            -- on disable via the blatantHeld flag below.
                             local vy = root.AssemblyLinearVelocity.Y
                             pcall(function()
                                 bedwars.FallDamageController.additionalRegisteredVelocity = math.max(-vy + 60, 60)
                             end)
                             blatantHeld = true
+
+                            -- Anchored from the moment we leave the ground, not from the moment
+                            -- we are falling fast enough, so the first touch still happens inside
+                            -- the game's grace rather than a dozen studs past it.
+                            tpAnchorY = tpAnchorY or root.Position.Y
+
                             if vy <= -(MinVelocity and MinVelocity.Value or 60) then
-                                if tpNoFall(root, character) then
-                                    -- Short gap so the next touch resets the fall again before enough
-                                    -- distance builds back up to hurt on the real landing.
+                                -- Touch off every 12 studs of fall rather than on a timer. That is
+                                -- comfortably inside the game's own grace, so the fall on the books
+                                -- can never reach a damaging size no matter how far you actually
+                                -- drop - and unlike a fixed interval it does not depend on the poll
+                                -- rate keeping up with terminal velocity.
+                                if (tpAnchorY - root.Position.Y) >= 12 then
+                                    if tpNoFall(root, character) then
+                                        tpAnchorY = root.Position.Y
+                                    end
+                                    waitDelay = 0.02
+                                else
                                     waitDelay = 0.03
                                 end
                             end
@@ -3956,6 +4018,7 @@ run(function()
                 lastZephyrJump = 0
                 zephyrFired = false
                 fallAnchorY = nil
+                tpAnchorY = nil
                 -- Always hand the fall-damage controller's offset back to normal if Blatant drove it.
                 if blatantHeld then
                     pcall(function()
@@ -3965,7 +4028,7 @@ run(function()
                 end
             end
         end,
-        Tooltip = 'Prevents fall damage. Legit uses clutch methods; TP briefly touches the ground to reset the fall then snaps back to your airborne spot; Blatant cancels the drop into a soft landing (velocity cancel + landed-state spoof) so the fall is never damaging.'
+        Tooltip = 'Prevents fall damage. Legit uses clutch methods; TP touches the floor every 12 studs of fall to clear it, then resumes falling from where you would have been; Blatant cancels the fall the client registers and bleeds the last couple of frames of the drop so the landing is genuinely harmless.'
     })
     Mode = NoFall:CreateDropdown({
         Name = 'Mode',
@@ -3977,7 +4040,7 @@ run(function()
                 NoFall:Toggle()
             end
         end,
-        Tooltip = 'Legit uses a fixed clutch order: blocks, telepearls, then tools (enable Zephyr to jump-cancel the fall with the Zephyr/WindWalker kit instead). Blatant softens the landing right before touchdown so no damage registers. TP quickly touches the floor to reset the fall, then resumes your airborne position.'
+        Tooltip = 'Legit uses a fixed clutch order: blocks, telepearls, then tools (enable Zephyr to jump-cancel the fall with the Zephyr/WindWalker kit instead). Blatant holds the registered fall velocity cancelled and softens the touchdown itself, so no damage registers. TP touches the floor every 12 studs of fall to clear it and then carries on falling from where the drop had reached.'
     })
     MinVelocity = NoFall:CreateSlider({
         Name = 'Minimum Velocity',
@@ -6327,26 +6390,64 @@ run(function()
     -- Deliver one hit. Order matters: the game-built packet is the only one the server trusts
     -- unconditionally, so Auto tries both native paths first and forges only when the game
     -- refused to swing at all.
-    local function deliverHit(method, ent, payload, distance)
+    -- `repeats` is how many attack packets this one hit should produce. It is always 1 unless
+    -- Hit rate is set to HitReg, which is the mode whose entire point is volume - so the count
+    -- now applies to every method rather than only the raw remote.
+    local function deliverHit(method, ent, payload, distance, repeats)
+        repeats = math.clamp(repeats or 1, 1, 36)
+
         if method == 'Auto' or method == 'Native' then
-            if nativeSwing(ent, distance) then return true end
-            if nativeRegionSwing(distance) then return true end
+            local landed = false
+            for _ = 1, repeats do
+                if nativeSwing(ent, distance) or nativeRegionSwing(distance) then
+                    landed = true
+                end
+            end
+            if landed then return true end
             -- Native isn't available on this build (stripped debug library, moved upvalue,
             -- renamed controller): still land the hit rather than swinging at nothing.
-            return sendForged(payload, 1, true)
+            return sendForged(payload, repeats, true)
         end
-        if method == 'Request' then
-            return sendForged(payload, 1, true)
-        end
-        return sendForged(payload, math.clamp(Hitreg and Hitreg.Value or 1, 1, 36), false)
+
+        return sendForged(payload, repeats, method == 'Request')
     end
 
     local FastHits
     local Legit
-    local Pace
+    local HitRate
+    local SyncAnim
+    local refreshHitRate
     local FireRate
     local Whitelist
     local FireRates = {}
+
+    -- Hit cadence. Exactly one of HitReg and Swing time drives it - having both was the reason
+    -- the two sliders contradicted each other, with Swing time throttling the very hits HitReg
+    -- was there to multiply.
+    --
+    --   Swing Time - one clean hit per target per weapon swing. The server only accepts one hit
+    --                per swing window anyway, so this deals the same damage with a fraction of
+    --                the packets and never gets the burst throttled.
+    --   HitReg     - free-runs at the update rate and sends HitReg packets per hit, for pushing
+    --                through packet loss at the cost of a lot more traffic.
+    local function hitCadence(meta)
+        if HitRate and HitRate.Value == 'HitReg' then
+            return 'HitReg', 1 / math.max(UpdateRate.Value, 1), math.clamp(Hitreg and Hitreg.Value or 1, 1, 36)
+        end
+        local speed = (meta and meta.sword and meta.sword.attackSpeed) or SwingTime.Value
+        return 'Swing Time', math.max(speed, 0.05), 1
+    end
+
+    -- How long to hold off the next swing animation. With Sync on it follows whichever of the
+    -- two is actually driving the hits, so the arm moves at the rate you are really attacking
+    -- instead of running on its own unrelated timer.
+    local function animationInterval(meta)
+        if not (SyncAnim and SyncAnim.Enabled) then
+            return math.max(SwingTime.Value, 0.11)
+        end
+        local _, interval = hitCadence(meta)
+        return math.clamp(interval, 0.08, 2)
+    end
 
     local function getAmmo(check)
 	for _, item in store.inventory.inventory.items do
@@ -6526,7 +6627,7 @@ run(function()
                                     Attacking = true
                                     store.KillauraTarget = v
                                     if not Swing.Enabled and AnimDelay < tick() and not LegitAura.Enabled then
-                                        AnimDelay = tick() + math.max(SwingTime.Value, 0.11)
+                                        AnimDelay = tick() + animationInterval(meta)
                                         lastSwing = tick()
                                         bedwars.SwordController:playSwordEffect(meta, false)
                                         if meta.displayName:find(' Scythe') then
@@ -6542,19 +6643,14 @@ run(function()
                                 if delta.Magnitude > AttackRange.Value then continue end
 
                                 local actualRoot = v.Character.PrimaryPart
-                                -- Cadence. The server only accepts one hit per weapon swing window,
-                                -- so streaming attacks at 60hz means nearly every packet is thrown
-                                -- away - which is what "the aura isn't hitting" actually looks like.
-                                -- Paced mode sends one hit per target per real swing window (full
-                                -- damage, almost no wasted packets); turning it off falls back to
-                                -- the raw Update rate for anyone who wants the old spam.
                                 local now = tick()
+                                local mode, interval, repeats = hitCadence(meta)
                                 local gate
-                                if Pace.Enabled then
-                                    local speed = (meta and meta.sword and meta.sword.attackSpeed) or SwingTime.Value
-                                    gate = (now - (lastHitAt[v.Character] or 0)) >= math.max(speed, 0.05)
+                                if mode == 'HitReg' then
+                                    gate = UpdateRate.Value >= 120 or (now - lastHit) >= interval
                                 else
-                                    gate = UpdateRate.Value >= 120 or (now - lastHit) >= (1 / UpdateRate.Value)
+                                    -- Per target, so Multi still hits everyone at full speed.
+                                    gate = (now - (lastHitAt[v.Character] or 0)) >= interval
                                 end
                                 if actualRoot and gate and (v.Humanoid.FloorMaterial ~= Enum.Material.Air or math.random(1, 100) < AirChance.Value) then
                                     lastHit = now
@@ -6570,14 +6666,14 @@ run(function()
                                     --             the game refused to swing at all.
                                     --   Native  - game-built only; still forges when this build has no
                                     --             usable native path rather than swinging at nothing.
-                                    --   Remote  - forged packet on the raw AttackEntity remote, repeated
-                                    --             HitReg times to punch through packet loss.
+                                    --   Remote  - forged packet on the raw AttackEntity remote.
                                     --   Request - forged packet through the game's own send wrapper.
+                                    -- Each one sends `repeats` packets, which is 1 outside HitReg mode.
                                     local method = HitMethod and HitMethod.Value or 'Auto'
                                     if method ~= 'Native' and method ~= 'Remote' and method ~= 'Request' then
                                         method = 'Auto'
                                     end
-                                    deliverHit(method, v, payload, delta.Magnitude)
+                                    deliverHit(method, v, payload, delta.Magnitude, repeats)
 
                                     if FastHits.Enabled and tick() > lastShot and not entitylib.Wallcheck(entitylib.character.RootPart.Position, actualRoot.Position, {gameCamera, lplr.Character, v.Character}) then
                                         local projectiles = getProjectiles()
@@ -6657,7 +6753,7 @@ run(function()
                                 table.clear(lastHitAt)
                             end
                             if (tick() - lastSwing) < Continue:GetRandomValue() and not Swing.Enabled and not LegitAura.Enabled and AnimDelay < tick() then
-                                AnimDelay = tick() + math.max(SwingTime.Value, 0.11)
+                                AnimDelay = tick() + animationInterval(meta)
                                 if vape.ThreadFix then
 								setthreadidentity(8)
 							end
@@ -6787,20 +6883,17 @@ run(function()
         Name = 'Hit method',
         List = {'Auto', 'Native', 'Remote', 'Request'},
         Default = 'Auto',
-        Tooltip = 'How each hit is delivered.\nAuto (recommended) - makes the GAME build and send the attack (the real unpatch: the server cannot tell it from a genuine click), and only forges a packet itself if the game refused to swing.\nNative - game-built only, never spams a forged packet unless this build has no usable native path at all.\nRemote - forged packet on the raw attack remote, repeated HitReg times to punch through packet loss.\nRequest - forged packet handed to the game\'s own send wrapper.',
-        Function = function(val)
-            -- Show the HitReg slider only for the methods that actually repeat packets.
-            pcall(function()
-                if Hitreg and Hitreg.Object then
-                    Hitreg.Object.Visible = val == 'Remote' or val == 'Auto'
-                end
-            end)
-        end
+        Tooltip = 'How each hit is delivered.\nAuto (recommended) - makes the GAME build and send the attack (the real unpatch: the server cannot tell it from a genuine click), and only forges a packet itself if the game refused to swing.\nNative - game-built only, never spams a forged packet unless this build has no usable native path at all.\nRemote - forged packet on the raw attack remote.\nRequest - forged packet handed to the game\'s own send wrapper.'
     })
-    Pace = Killaura:CreateToggle({
-        Name = 'Pace to attack speed',
-        Default = true,
-        Tooltip = 'Send one hit per target per real weapon swing instead of streaming attacks at the update rate. The server only accepts one hit per swing window anyway, so this deals exactly the same damage with a fraction of the packets - and stops the server throttling the whole burst, which is what makes an aura look like it is not hitting. Turn off to go back to raw update-rate spam.'
+    HitRate = Killaura:CreateDropdown({
+        Name = 'Hit rate',
+        List = {'Swing Time', 'HitReg'},
+        Default = 'Swing Time',
+        Tooltip = 'What paces the aura. Only one of the two is ever in charge.\nSwing Time - one clean hit per target per weapon swing. The server accepts one hit per swing window anyway, so this is full damage on a fraction of the packets.\nHitReg - free-runs at the update rate and repeats each hit HitReg times to punch through packet loss, at the cost of a lot more traffic.',
+        Function = function()
+            -- Dropdowns fire this while they are being built, before the sliders below exist.
+            if refreshHitRate then refreshHitRate() end
+        end
     })
     SwingTime = Killaura:CreateSlider({
         Name = 'Swing time',
@@ -6809,7 +6902,14 @@ run(function()
         Decimal = 100,
         Default = 0.11,
         Suffix = 'seconds',
-        Tooltip = 'Swing animation pacing, and the fallback hit interval for weapons that do not report an attack speed.'
+        Tooltip = 'One hit per target per this long, for weapons that do not report their own attack speed. Also paces the swing animation.'
+    })
+    Hitreg = Killaura:CreateSlider({
+        Name = 'HitReg',
+        Min = 1,
+        Max = 36,
+        Default = 1,
+        Tooltip = 'How many attack packets each hit sends. Higher fights packet loss at the cost of a lot more traffic.'
     })
     UpdateRate = Killaura:CreateSlider({
         Name = 'Update rate',
@@ -6817,22 +6917,30 @@ run(function()
         Max = 120,
         Default = 60,
         Suffix = 'hz',
-        Tooltip = 'How often hits are sent when "Pace to attack speed" is off.'
+        Tooltip = 'How often hits are sent in HitReg mode.'
     })
-    Hitreg = Killaura:CreateSlider({
-        Name = 'HitReg',
-        Min = 1,
-        Max = 36,
-        Default = 1,
-        Tooltip = 'How many times a forged hit is sent to the server. Higher fights packet loss at the cost of more traffic. Used by the Remote method (and by Auto only when the game refuses to swing).'
-    })
-    -- Apply the initial Hit method visibility now that the slider exists (the dropdown is
-    -- created above it, so its own Function couldn't reach it yet).
-    pcall(function()
-        if Hitreg.Object then
-            Hitreg.Object.Visible = HitMethod.Value == 'Remote' or HitMethod.Value == 'Auto'
+    SyncAnim = Killaura:CreateToggle({
+        Name = 'Sync to HitReg/Swing time',
+        Default = true,
+        Tooltip = 'Paces the swing animation off whichever of HitReg and Swing time is driving the hits, so the arm moves at the rate you are actually attacking. Turn off to run the animation on the Swing time slider regardless of the hit rate.',
+        Function = function()
+            if refreshHitRate then refreshHitRate() end
         end
-    end)
+    })
+    -- Show only the slider that is actually in charge, so the two can never look like they are
+    -- both doing something. Swing time stays up in HitReg mode when the animation is not
+    -- synced, because pacing the animation is the one job it still has there.
+    refreshHitRate = function()
+        pcall(function()
+            local hitreg = HitRate and HitRate.Value == 'HitReg'
+            if Hitreg and Hitreg.Object then Hitreg.Object.Visible = hitreg end
+            if UpdateRate and UpdateRate.Object then UpdateRate.Object.Visible = hitreg end
+            if SwingTime and SwingTime.Object then
+                SwingTime.Object.Visible = (not hitreg) or not (SyncAnim and SyncAnim.Enabled)
+            end
+        end)
+    end
+    refreshHitRate()
     FastHits = Killaura:CreateToggle({
 	Name = 'Fast Hits',
 	Tooltip = 'Deals more damage quicker using projectiles',
@@ -7353,100 +7461,267 @@ run(function()
 end)
 
 run(function()
-    -- Extender: one module for every kit mobility ability. It watches the AbilityController
-    -- cooldown edge (the same API LongJump uses) for any of the kit dash / jump / teleport
-    -- abilities firing, then briefly holds your forward speed higher so the move carries you
-    -- further. No kit gate - it acts purely on the ability actually being used, so it can never
-    -- be blocked by a mismatched kit id (which is what stopped the old per-kit modules).
+    -- Extender: one module for every kit mobility ability. It watches for a dash / jump /
+    -- teleport actually being cast, then carries the move further by holding your speed up
+    -- while it plays out. No kit gate - it acts on the ability being used, so it can never
+    -- be blocked by a mismatched kit id.
+    --
+    -- Detection used to be "canUseAbility went true -> false". That call answers "can I use
+    -- this RIGHT NOW", and the answer is no whenever the item granting the ability is not in
+    -- your hand - so changing hotbar slots produced exactly the same edge as casting, and the
+    -- module fired on it. Three things stop that now:
+    --   * an ability is only watched while the item that grants it is actually held, and the
+    --     watch is re-seeded (not edged) on any frame your hand changed,
+    --   * a dash is confirmed against the character's own CanDashNext cooldown stamp, which
+    --     only ever moves when a dash was really spent,
+    --   * nothing boosts on the edge alone. The edge only arms; the boost waits until the
+    --     character has genuinely been launched, so an ability the server refused - or a slot
+    --     change that slipped through - never moves you.
     local Extender
     local Distance
+    local Duration
+    local Smooth
+    local Fallback
 
-    -- Every ability we can catch: Jade hammer jump, Void Regent / Void Axe jump, the Yuzi (and
-    -- any) dao dash, and the Elektra teleport. canUseAbility only ever edges for one you actually
-    -- own and use, so listing them all together is safe.
-    local ABILITIES = {'jade_hammer_jump', 'void_axe_jump', 'dash', 'elektra_tp', 'ELEKTRA_TP'}
-    local DURATION = 0.55
-    local SAMPLE = 0.08
+    -- Ability -> the items that grant it. Anything not listed here is a kit ability, which no
+    -- held item gates, so those are watched the whole time.
+    local ABILITY_ITEMS = {
+        jade_hammer_jump = {jade_hammer = true},
+        void_axe_jump = {void_axe = true},
+        dash = {wood_dao = true, stone_dao = true, iron_dao = true, diamond_dao = true, emerald_dao = true}
+    }
+    local KIT_ABILITIES = {'elektra_tp', 'ELEKTRA_TP'}
 
-    local prevReady = {}
-    local boostUntil, sampleUntil, basePeak, boostDir = 0, 0, 0, nil
-    local prevSpeed = 0
+    local ABILITIES = {}
+    for ability in ABILITY_ITEMS do
+        table.insert(ABILITIES, ability)
+    end
+    for _, ability in KIT_ABILITIES do
+        table.insert(ABILITIES, ability)
+    end
 
-    local function beginBoost(root)
-        boostUntil = tick() + DURATION
-        sampleUntil = tick() + SAMPLE
+    -- How long a cast has to actually throw us before we forget about it, and what counts as
+    -- being thrown. Sprinting tops out well under this, so ordinary running never qualifies.
+    local ARM_WINDOW = 0.3
+    local LAUNCH_SPEED = 46
+    local LAUNCH_GAIN = 16
+    -- Jump abilities throw you upwards rather than forwards, so a horizontal-only check would
+    -- never confirm the jade hammer or void axe jump. Nothing reaches this without an ability
+    -- edge having armed it first, so it cannot be tripped by an ordinary jump.
+    local LAUNCH_LIFT = 45
+    -- The dash velocity lands a frame or two after the cooldown edge, so give the ability a
+    -- moment to reach its own peak before measuring what to hold it at - otherwise the boost
+    -- ends up feeding back into its own baseline.
+    local SAMPLE = 0.05
+
+    local prevReady, lastHand = {}, nil
+    local armedUntil, armSpeed = 0, 0
+    local boostStart, boostUntil, peakSpeed, boostDir = 0, 0, 0, nil
+    local lastDash, prevSpeed = 0, 0
+
+    local function heldName()
+        local hand = store.hand
+        return hand and hand.tool and hand.tool.Name or nil
+    end
+
+    local function grants(ability, held)
+        local items = ABILITY_ITEMS[ability]
+        if not items then return true end
+        return held ~= nil and items[held] == true
+    end
+
+    -- True when what you are holding grants one of the item abilities above, in which case the
+    -- cooldown watch already covers you and the velocity fallback has no business firing.
+    local function heldGrantsAbility(held)
+        if not held then return false end
+        for _, items in ABILITY_ITEMS do
+            if items[held] then return true end
+        end
+        return false
+    end
+
+    local function flatVelocity(root)
         local vel = root.AssemblyLinearVelocity
-        local horiz = Vector3.new(vel.X, 0, vel.Z)
-        basePeak = horiz.Magnitude
+        return Vector3.new(vel.X, 0, vel.Z)
+    end
+
+    local function dashStamp()
+        local character = lplr.Character
+        return character and character:GetAttribute('CanDashNext') or 0
+    end
+
+    -- A cast was seen. Remember how fast we were BEFORE it so the launch check has something to
+    -- compare against - the ability's velocity often lands on the very frame the cooldown edges,
+    -- and measuring after that would leave nothing to detect. Nothing touches the character yet.
+    local function arm(baseline)
+        armedUntil = tick() + ARM_WINDOW
+        armSpeed = baseline
+    end
+
+    -- Did the ability actually throw us?
+    local function launched(root, speed, baseline)
+        if speed >= LAUNCH_SPEED and speed >= baseline + LAUNCH_GAIN then return true end
+        return root.AssemblyLinearVelocity.Y >= LAUNCH_LIFT
+    end
+
+    -- The ability really did throw us: start carrying it.
+    local function launch(root)
+        armedUntil = 0
+        boostStart = tick()
+        boostUntil = boostStart + (Duration and Duration.Value or 0.45)
+
+        local horiz = flatVelocity(root)
+        peakSpeed = horiz.Magnitude
+
         if horiz.Magnitude > 4 then
             boostDir = horiz.Unit
         else
-            -- Teleports leave you with little horizontal speed, so aim the nudge where you're looking.
+            -- A teleport leaves you with almost no horizontal speed, so aim the carry where
+            -- you are looking instead.
             local look = (gameCamera and gameCamera.CFrame.LookVector) or root.CFrame.LookVector
             look = Vector3.new(look.X, 0, look.Z)
             boostDir = look.Magnitude > 0 and look.Unit or nil
         end
     end
 
+    local function reset()
+        table.clear(prevReady)
+        lastHand = nil
+        armedUntil, armSpeed = 0, 0
+        boostStart, boostUntil, peakSpeed, boostDir = 0, 0, 0, nil
+        lastDash, prevSpeed = 0, 0
+    end
+
     Extender = vape.Categories.Blatant:CreateModule({
         Name = 'Extender',
         Function = function(callback)
             if callback then
-                table.clear(prevReady)
-                boostUntil, sampleUntil, basePeak, boostDir = 0, 0, 0, nil
-                prevSpeed = 0
+                reset()
+                lastDash = dashStamp()
+                lastHand = heldName()
+
                 Extender:Clean(runService.PreSimulation:Connect(function()
                     if not entitylib.isAlive then return end
                     local root = entitylib.character.RootPart
                     if not root or not isnetworkowner(root) then return end
 
-                    -- Detect any kit mobility ability going ready -> on cooldown (it was just used).
-                    for _, ab in ABILITIES do
-                        local ok, ready = pcall(function() return bedwars.AbilityController:canUseAbility(ab) end)
-                        ready = (ok and ready) and true or false
-                        if prevReady[ab] == nil then prevReady[ab] = ready end
-                        if prevReady[ab] and not ready then
-                            beginBoost(root)
-                        end
-                        prevReady[ab] = ready
+                    local now = tick()
+                    local held = heldName()
+                    local handChanged = held ~= lastHand
+                    lastHand = held
+
+                    local horiz = flatVelocity(root)
+                    local speed = horiz.Magnitude
+                    -- The slower of this frame and the last one, so an ability whose velocity
+                    -- lands on the same frame as its cooldown edge is still measurable.
+                    local baseline = math.min(prevSpeed, speed)
+
+                    -- CanDashNext is stamped forward every time a dash is actually spent, and
+                    -- unlike canUseAbility it does not care what you are holding, so a slot
+                    -- change cannot move it.
+                    local stamp = dashStamp()
+                    if stamp > lastDash + 0.01 then
+                        arm(baseline)
+                    end
+                    if stamp ~= lastDash then
+                        lastDash = stamp
                     end
 
-                    -- Fallback trigger: a dash / jump slams your horizontal speed far above
-                    -- normal running in a single frame. Catch that spike directly so the
-                    -- extender still fires even when the cooldown API doesn't edge for this
-                    -- kit/build (which is why "none of the extenders worked"). Gated high
-                    -- enough that ordinary sprinting never trips it.
-                    local horizSpeed = Vector3.new(root.AssemblyLinearVelocity.X, 0, root.AssemblyLinearVelocity.Z).Magnitude
-                    if boostUntil <= tick() and horizSpeed > 55 and horizSpeed > prevSpeed + 22 then
-                        beginBoost(root)
-                    end
-                    prevSpeed = horizSpeed
-
-                    if boostUntil > tick() and boostDir then
-                        local vel = root.AssemblyLinearVelocity
-                        local horiz = Vector3.new(vel.X, 0, vel.Z)
-                        local dir = horiz.Magnitude > 4 and horiz.Unit or boostDir
-                        if tick() < sampleUntil then
-                            -- Sampling phase: learn the ability's own peak speed WITHOUT boosting
-                            -- (the cooldown edge fires a beat before the dash velocity lands, so the
-                            -- speed right at the edge is too low to measure against). Sampling first
-                            -- also stops the boost feeding back into its own baseline.
-                            basePeak = math.max(basePeak, horiz.Magnitude)
+                    for _, ability in ABILITIES do
+                        if not grants(ability, held) then
+                            -- Not in hand: the ability does not exist for us right now, so
+                            -- there is no ready state worth remembering.
+                            prevReady[ability] = nil
                         else
-                            -- Boost phase: hold at the sampled peak plus the extra distance so the
-                            -- dash / jump / teleport keeps carrying you instead of decaying.
-                            local speed = math.max(horiz.Magnitude, basePeak + Distance.Value)
-                            local target = dir * speed
-                            root.AssemblyLinearVelocity = Vector3.new(target.X, vel.Y, target.Z)
+                            local ok, ready = pcall(function()
+                                return bedwars.AbilityController:canUseAbility(ability)
+                            end)
+                            ready = (ok and ready) and true or false
+
+                            if handChanged or prevReady[ability] == nil then
+                                -- Just picked the item up. This flip is the item arriving, not
+                                -- a cast, so seed the state rather than treating it as an edge.
+                                prevReady[ability] = ready
+                            else
+                                if prevReady[ability] and not ready then
+                                    arm(baseline)
+                                end
+                                prevReady[ability] = ready
+                            end
                         end
+                    end
+
+                    prevSpeed = speed
+
+                    if boostUntil <= now then
+                        if armedUntil > now then
+                            if launched(root, speed, armSpeed) then
+                                launch(root)
+                            end
+                        else
+                            armedUntil = 0
+
+                            -- Opt-in safety net for kits whose ability never edges the cooldown
+                            -- API. Off by default because a bare velocity spike is also what
+                            -- knockback and explosions look like, which is what made the old
+                            -- build fire at things that were not abilities at all.
+                            if Fallback and Fallback.Enabled and not heldGrantsAbility(held)
+                                and speed >= LAUNCH_SPEED + 14 and speed >= baseline + LAUNCH_GAIN * 2 then
+                                launch(root)
+                            end
+                        end
+                        return
+                    end
+
+                    if not boostDir then return end
+
+                    local direction = speed > 4 and horiz.Unit or boostDir
+
+                    -- Knocked off the line we launched on: something hit us, so let the ability
+                    -- go rather than dragging the character through the knockback.
+                    if direction:Dot(boostDir) < 0.2 then
+                        boostUntil = 0
+                        boostDir = nil
+                        return
+                    end
+
+                    -- Follow where we are actually going so the move stays steerable instead of
+                    -- running on a rail.
+                    boostDir = direction
+
+                    if now - boostStart < SAMPLE then
+                        peakSpeed = math.max(peakSpeed, speed)
+                        return
+                    end
+
+                    local total = math.max(boostUntil - boostStart, 0.001)
+                    local progress = math.clamp((now - boostStart) / total, 0, 1)
+                    local envelope = 1
+
+                    if Smooth and Smooth.Enabled then
+                        -- Ease in, then fall away on a cosine tail, so the speed curve reads as
+                        -- a dash decaying rather than a rectangular block of velocity that snaps
+                        -- back to walking pace the instant the timer runs out.
+                        local rise = math.clamp(progress / 0.15, 0, 1)
+                        local fall = math.cos(math.clamp((progress - 0.15) / 0.85, 0, 1) * (math.pi / 2))
+                        envelope = rise * fall
+                    end
+
+                    local target = (peakSpeed + Distance.Value) * envelope
+
+                    -- Only ever add to what the ability is already doing. Pinning the speed to a
+                    -- fixed number the whole way through is the part that looked obviously
+                    -- driven, and it also fought the game whenever the move was faster than us.
+                    if target > speed then
+                        local applied = direction * target
+                        root.AssemblyLinearVelocity = Vector3.new(applied.X, root.AssemblyLinearVelocity.Y, applied.Z)
                     end
                 end))
             else
-                boostUntil, sampleUntil, basePeak, boostDir = 0, 0, 0, nil
-                table.clear(prevReady)
+                reset()
             end
         end,
-        Tooltip = 'Extends your kit\'s mobility ability. Detects the Jade hammer jump, Void Regent / Void Axe jump, Yuzi dao dash or Elektra teleport firing and holds your speed up so it carries you further.'
+        Tooltip = 'Extends your kit\'s mobility ability. Detects the Jade hammer jump, Void Regent / Void Axe jump, Yuzi dao dash or Elektra teleport being cast and carries your speed on so the move takes you further.'
     })
     Distance = Extender:CreateSlider({
         Name = 'Extra Distance',
@@ -7454,7 +7729,25 @@ run(function()
         Max = 80,
         Default = 20,
         Suffix = ' studs',
-        Tooltip = 'How much extra forward speed to hold during the ability so it carries you further.'
+        Tooltip = 'How much extra forward speed to carry during the ability so it takes you further.'
+    })
+    Duration = Extender:CreateSlider({
+        Name = 'Duration',
+        Min = 0.1,
+        Max = 1.5,
+        Decimal = 100,
+        Default = 0.45,
+        Suffix = 'seconds',
+        Tooltip = 'How long the ability is carried for. Shorter reads as a slightly longer dash; longer turns it into an obvious glide.'
+    })
+    Smooth = Extender:CreateToggle({
+        Name = 'Smooth',
+        Default = true,
+        Tooltip = 'Eases the extra speed in and lets it decay away instead of holding a flat speed for the whole duration and dropping it all at once.'
+    })
+    Fallback = Extender:CreateToggle({
+        Name = 'Velocity fallback',
+        Tooltip = 'Also trigger on a large speed spike while no dash/jump item is held, for kits whose ability never shows up on the cooldown API. Off by default: knockback and explosions look the same as an ability from velocity alone, so this can fire when you were not the one moving.'
     })
 end)
 

@@ -11101,18 +11101,23 @@ run(function()
                     Wallcheck = true,
                 }) or nil
     			if ent then
+    				-- The target position argument was missing here, so every argument after it
+    				-- landed a slot early: the target's velocity was read as its position, world
+    				-- gravity as its velocity, and so on. That aimed at a point a few studs from
+    				-- the shooter instead of at anyone.
     				calc = prediction.SolveTrajectory(
     					selfpos,
     					projSpeed,
-    					meta.gravitationalAcceleration or 196.2,
-    					Vector3.new(ent.RootPart.Velocity.X, 0, ent.RootPart.Velocity.Z),
+    					projmeta.gravitationalAcceleration or 196.2,
+    					ent.RootPart.Position,
+    					ent.RootPart.Velocity,
     					workspace.Gravity,
     					ent.HipHeight,
-    					nil,
+    					ent.Jumping and 42.6 or nil,
     					RaycastParams.new(),
     					nil,
     					lplr:GetNetworkPing()
-    				)
+    				) or calc
     			end
     
     			local dir = CFrame.lookAt(selfpos, calc).LookVector
