@@ -4615,7 +4615,7 @@ function mainapi:CreateCategory(categorysettings)
 	mainapi.CategorySlot = (mainapi.CategorySlot or 0) + 1
 	local slot = mainapi.CategorySlot
 	local defaultX = 6 + (slot % 8) * 230
-	local defaultY = 60 + (slot >= 8 and 360 or 0)
+	local defaultY = 60 + math.floor(slot / 8) * 360
 
 	local window = Instance.new('TextButton')
 	window.Name = categorysettings.Name..'Category'
@@ -5815,6 +5815,9 @@ function mainapi:CreateCategory(categorysettings)
 	})
 
 	categoryapi.Object = window
+	-- Remembered so a saved position that would stack this window on top of another one (or park
+	-- it off-screen) can be thrown away on load in favour of this category's own lattice slot.
+	categoryapi.DefaultPosition = UDim2.fromOffset(defaultX, defaultY)
 	self.Categories[categorysettings.Name] = categoryapi
 
 	return categoryapi
@@ -6086,10 +6089,18 @@ function mainapi:CreateCategoryList(categorysettings)
 	}
 	categorysettings.Color = categorysettings.Color or Color3.fromRGB(5, 134, 105)
 
+	-- Take a lattice slot like the normal categories do. These list windows all defaulted to the
+	-- same (240, 46), so Friends, Targets and the config list opened stacked on each other (and on
+	-- top of the first category), which reads as "the tab won't open".
+	mainapi.CategorySlot = (mainapi.CategorySlot or 0) + 1
+	local slot = mainapi.CategorySlot
+	local defaultX = 6 + (slot % 8) * 230
+	local defaultY = 60 + math.floor(slot / 8) * 360
+
 	local window = Instance.new('TextButton')
 	window.Name = displayName..'CategoryList'
 	window.Size = UDim2.fromOffset(220, 45)
-	window.Position = UDim2.fromOffset(240, 46)
+	window.Position = UDim2.fromOffset(defaultX, defaultY)
 	window.BackgroundColor3 = uipallet.Main
 	window.AutoButtonColor = false
 	window.Visible = false
@@ -6906,6 +6917,7 @@ function mainapi:CreateCategoryList(categorysettings)
 	})
 
 	categoryapi.Object = window
+	categoryapi.DefaultPosition = UDim2.fromOffset(defaultX, defaultY)
 	self.Categories[categorysettings.Name] = categoryapi
 
 	return categoryapi
@@ -7693,6 +7705,39 @@ function mainapi:Load(skipgui, profile)
 	local guidata = {}
 	local savecheck = true
 
+	-- Restoring a saved window position used to be unconditional, and that gave a category two
+	-- ways to look like it "won't open":
+	--   * Configs written before each category got its own lattice slot stored the SAME position
+	--     for all of them, so every one restores stacked on the same spot and only the topmost is
+	--     ever visible. Categories added after that config was written have no saved position, so
+	--     they take a fresh slot and open normally - which is exactly the "only the new tabs open,
+	--     the original ones don't" symptom.
+	--   * A position saved on a larger monitor can restore completely off the current screen.
+	-- So a saved position is only honoured when it is on-screen and not already taken; otherwise
+	-- the category falls back to its own default slot.
+	local usedPositions = {}
+	local function restorePosition(object, pos)
+		if not (object and object.Object) then return end
+		local default = object.DefaultPosition
+		if not pos or pos.X == nil or pos.Y == nil then
+			if default then object.Object.Position = default end
+			return
+		end
+		local viewport = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(1920, 1080)
+		local uiscale = (scale and scale.Scale or 1)
+		uiscale = uiscale > 0 and uiscale or 1
+		local maxX, maxY = (viewport.X / uiscale) - 60, (viewport.Y / uiscale) - 40
+		local offscreen = pos.X < -40 or pos.Y < -40 or pos.X > maxX or pos.Y > maxY
+		local key = pos.X..','..pos.Y
+		if default and (usedPositions[key] or offscreen) then
+			object.Object.Position = default
+			usedPositions[default.X.Offset..','..default.Y.Offset] = true
+			return
+		end
+		usedPositions[key] = true
+		object.Object.Position = UDim2.fromOffset(pos.X, pos.Y)
+	end
+
 	if isfile('aetherv2/profiles/'..game.GameId..'.gui.txt') then
 		guidata = loadJson('aetherv2/profiles/'..game.GameId..'.gui.txt')
 		if not guidata then
@@ -7727,9 +7772,7 @@ function mainapi:Load(skipgui, profile)
 					object.ListEnabled = v.ListEnabled or {}
 					object:ChangeValue()
 				end
-				if v.Position then
-					object.Object.Position = UDim2.fromOffset(v.Position.X, v.Position.Y)
-				end
+				restorePosition(object, v.Position)
 			end
 		end
 	end
@@ -7783,7 +7826,9 @@ function mainapi:Load(skipgui, profile)
 				object.ListEnabled = v.ListEnabled or {}
 				object:ChangeValue()
 			end
-			object.Object.Position = UDim2.fromOffset(v.Position.X, v.Position.Y)
+			-- Guarded: an entry written without a Position (an older or imported config) used to
+			-- throw here and abort the rest of the config load.
+			restorePosition(object, v.Position)
 		end
 
 		for i, object in self.Modules do
