@@ -1764,6 +1764,23 @@ function mainapi:CreateCategory(categorysettings)
 		mwindowlist.HorizontalAlignment = Enum.HorizontalAlignment.Left
 		mwindowlist.VerticalAlignment = Enum.VerticalAlignment.Top
 		mwindowlist.Parent = modulechildren
+		-- `Children` is where scripts put their own content: the options panel by default, or a
+		-- draggable on-screen frame for HUD modules (anything that asks for a Size, plus the Legit
+		-- tab's Hud category). Every other GUI in the repo does this; rise did neither, so any
+		-- script touching module.Children - Keystrokes, ReachDisplay, Schematica, AutoWin - was
+		-- indexing nil, and on this GUI alone that took the whole game chunk down with it.
+		moduleapi.Children = modulechildren
+		local hudframe
+		if modulesettings.Size or modulesettings.Category == 'Hud' then
+			hudframe = Instance.new('Frame')
+			hudframe.Name = modulesettings.Name..'HUD'
+			hudframe.Size = modulesettings.Size or UDim2.fromOffset(120, 28)
+			hudframe.BackgroundTransparency = 1
+			hudframe.Visible = false
+			hudframe.Parent = scaledgui
+			makeDraggable(hudframe, clickgui)
+			moduleapi.Children = hudframe
+		end
 		modulesettings.Function = modulesettings.Function or function() end
 		addMaid(moduleapi)
 
@@ -1783,6 +1800,11 @@ function mainapi:CreateCategory(categorysettings)
 			tween:Tween(mtitle, TweenInfo.new(0.1), {
 				TextColor3 = self.Enabled and mainapi:RiseColor(mtitle.AbsolutePosition) or color.Dark(uipallet.Text, 0.21)
 			})
+			-- Only the HUD frame follows the toggle; the options panel keeps its own
+			-- expand/collapse state.
+			if hudframe then
+				hudframe.Visible = self.Enabled
+			end
 			if not self.Enabled then
 				for _, v in self.Connections do
 					v:Disconnect()

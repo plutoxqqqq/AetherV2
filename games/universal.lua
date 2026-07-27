@@ -28,8 +28,15 @@ local function downloadFile(path, func)
 	end
 	return (func or readfile)(path)
 end
+-- Each module registers through run(). A bare `func()` meant one bad module aborted the whole
+-- chunk part-way through, so a single error (a nil HUD frame, a missing remote) silently cost you
+-- every module below it in the file. Isolate them: report the one that failed and keep loading.
 local run = function(func)
-	func()
+	local success, result = xpcall(func, debug and debug.traceback or tostring)
+	if not success then
+		warn('[AetherV2] Skipped a universal module during startup: '..tostring(result))
+	end
+	return success
 end
 local queue_on_teleport = queue_on_teleport or function() end
 local cloneref = cloneref or function(obj)
@@ -8315,10 +8322,14 @@ run(function()
     Keystrokes:CreateToggle({
 	Name = 'Show Spacebar',
 	Function = function(callback)
-		Keystrokes.Children.Size = UDim2.fromOffset(110, callback and 107 or 78)
+		-- Children is the module's HUD frame. Guard it: this toggle fires while the module is
+		-- being built, so a GUI that hands back no frame must not abort the whole script here.
+		if Keystrokes.Children then
+			Keystrokes.Children.Size = UDim2.fromOffset(110, callback and 107 or 78)
+		end
 		if callback then
 			createKeystroke(Enum.KeyCode.Space, UDim2.new(0, 0, 0, 83), UDim2.new(0, 25, 0, -10), '______')
-		else
+		elseif keys[Enum.KeyCode.Space] then
 			keys[Enum.KeyCode.Space].Key:Destroy()
 			keys[Enum.KeyCode.Space] = nil
 		end
