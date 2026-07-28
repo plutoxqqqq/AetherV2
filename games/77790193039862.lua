@@ -192,7 +192,7 @@ run(function()
 	entitylib.start()
 end)
 
-for _, v in {'Aim Assist', 'Reach', 'Silent Aim', 'Anti Fall', 'Desync', 'Invisible', 'Jesus', 'Mouse TP', 'Phase', 'SpinBot', 'Swim', 'Target Strafe', 'Animation Player', 'Anti Ragdoll', 'Chat Spammer', 'Disabler', 'State Spoofer', 'Freecam', 'Gravity', 'Parkour', 'Safe Walk', 'Murder Mystery'} do
+for _, v in {'AimAssist', 'Reach', 'SilentAim', 'AntiFall', 'Desync', 'Invisible', 'Jesus', 'MouseTP', 'Phase', 'SpinBot', 'Swim', 'TargetStrafe', 'AnimationPlayer', 'AntiRagdoll', 'ChatSpammer', 'Disabler', 'StateSpoofer', 'Freecam', 'Gravity', 'Parkour', 'SafeWalk', 'MurderMystery'} do
 	vape:Remove(v)
 end
 
@@ -219,7 +219,7 @@ run(function()
     end
     
     AutoClicker = vape.Categories.Combat:CreateModule({
-    	Name = 'Auto Clicker',
+    	Name = 'AutoClicker',
     	Function = function(callback)
     		if callback then
     			AutoClicker:Clean(inputService.InputBegan:Connect(function(input)
@@ -383,7 +383,7 @@ end)
 
 run(function()
     vape.Categories.Blatant:CreateModule({
-    	Name = 'Auto Block',
+    	Name = 'AutoBlock',
     	Function = function(callback)
     		if callback then
     			oldhit = hookfunction(arena.Client.startHit, function(...)
@@ -494,7 +494,7 @@ run(function()
     end
     
     HighJump = vape.Categories.Blatant:CreateModule({
-    	Name = 'High Jump',
+    	Name = 'HighJump',
     	Function = function(callback)
     		if callback then
     			if AutoDisable.Enabled then
@@ -534,7 +534,7 @@ run(function()
     local modified = {}
     
     HitBoxes = vape.Categories.Blatant:CreateModule({
-        Name = 'Hit Boxes',
+        Name = 'HitBoxes',
         Function = function(callback)
             if callback then
                 repeat
@@ -863,7 +863,7 @@ run(function()
     local AutoDisable
     
     LongJump = vape.Categories.Blatant:CreateModule({
-    	Name = 'Long Jump',
+    	Name = 'LongJump',
     	Function = function(callback)
     		if callback then
     			local exempt = tick() + 0.1
@@ -909,7 +909,7 @@ run(function()
     local old
     
     vape.Categories.Blatant:CreateModule({
-        Name = 'No Slow',
+        Name = 'NoSlow',
         Function = function(callback)
             if callback then
                 old = debug.getupvalue(arena.MoveFunction, 17)

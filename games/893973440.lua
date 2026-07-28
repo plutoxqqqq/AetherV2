@@ -138,7 +138,7 @@ run(function()
 	entitylib.start()
 end)
 
-for _, v in {'Aim Assist', 'Reach', 'Silent Aim', 'Trigger Bot', 'Anti Fall', 'Invisible', 'Jesus', 'Killaura', 'Disabler', 'Murder Mystery'} do
+for _, v in {'AimAssist', 'Reach', 'SilentAim', 'TriggerBot', 'AntiFall', 'Invisible', 'Jesus', 'Killaura', 'Disabler', 'MurderMystery'} do
 	vape:Remove(v)
 end
 
@@ -436,7 +436,7 @@ run(function()
     local old
     
     NoSlowdown = vape.Categories.Blatant:CreateModule({
-        Name = 'No Slow',
+        Name = 'NoSlow',
         Function = function(callback)
             if callback then
                 repeat
@@ -495,7 +495,7 @@ run(function()
     end
     
     PhaseHammer = vape.Categories.Blatant:CreateModule({
-        Name = 'Phase Hammer',
+        Name = 'PhaseHammer',
         Function = function(callback)
             if callback then
                 PhaseHammer:Clean(entitylib.Events.LocalAdded:Connect(addEntity))
@@ -518,7 +518,7 @@ run(function()
     local Self
     
     RopeDisabler = vape.Categories.Utility:CreateModule({
-        Name = 'Restrain Beast',
+        Name = 'RestrainBeast',
         Function = function(callback)
             if callback then
                 repeat
@@ -547,7 +547,7 @@ run(function()
     local SlowBeast
     
     SlowBeast = vape.Categories.Blatant:CreateModule({
-        Name = 'Slow Beast',
+        Name = 'SlowBeast',
         Function = function(callback)
             if callback then
                 repeat
@@ -570,7 +570,7 @@ run(function()
     local SpamBeast
     
     SpamBeast = vape.Categories.Blatant:CreateModule({
-        Name = 'Spam Beast',
+        Name = 'SpamBeast',
         Function = function(callback)
             if callback then
                 repeat
@@ -653,7 +653,7 @@ run(function()
     end
     
     ComputerESP = vape.Categories.Render:CreateModule({
-        Name = 'Computer ESP',
+        Name = 'ComputerESP',
         Function = function(callback)
             if callback then
                 ComputerESP:Clean(vapeEvents.MapAdded.Event:Connect(MapAdded))
@@ -727,7 +727,7 @@ run(function()
     local Mode
     
     AutoComputer = vape.Categories.Utility:CreateModule({
-        Name = 'Auto Computer',
+        Name = 'AutoComputer',
         Function = function(callback)
             if callback then
                 repeat

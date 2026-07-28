@@ -1683,7 +1683,7 @@ run(function()
 	end)
 end, 20)
 
-for _, v in {'Anti Ragdoll', 'Trigger Bot', 'Silent Aim', 'Auto Rejoin', 'Rejoin', 'Disabler', 'Timer', 'Server Hop', 'Mouse TP', 'Murder Mystery'} do
+for _, v in {'AntiRagdoll', 'TriggerBot', 'SilentAim', 'AutoRejoin', 'Rejoin', 'Disabler', 'Timer', 'ServerHop', 'MouseTP', 'MurderMystery'} do
 	vape:Remove(v)
 end
 
@@ -3334,7 +3334,7 @@ run(function()
                                     local connection
                                     connection = runService.PreSimulation:Connect(function()
                                         local flyModule = vape.Modules.Fly
-                                        local longJumpModule = vape.Modules.LongJump or vape.Modules['Long Jump']
+                                        local longJumpModule = vape.Modules.LongJump or vape.Modules['LongJump']
                                         if (flyModule and flyModule.Enabled) or (InfiniteFly and InfiniteFly.Enabled) or (longJumpModule and longJumpModule.Enabled) then
                                             connection:Disconnect()
                                             AntiFallDirection = nil
@@ -4682,12 +4682,12 @@ run(function()
     end
 
     KrystalDisabler = vape.Categories.Exploits:CreateModule({
-        Name = 'Krystal Disabler',
+        Name = 'KrystalDisabler',
         Function = function(callback)
             local controller = getController()
             if callback then
                 if not controller or type(controller.updateMomentum) ~= 'function' then
-                    notif('Krystal Disabler', 'Krystal controller is unavailable.', 5, 'warning')
+                    notif('KrystalDisabler', 'Krystal controller is unavailable.', 5, 'warning')
                     KrystalDisabler:Toggle()
                     return
                 end
@@ -5376,7 +5376,7 @@ run(function()
     end
 
     TPAura = vape.Categories.Blatant:CreateModule({
-        Name = 'TP Aura',
+        Name = 'TPAura',
         Function = function(callback)
             if callback then
                 lockedTarget, lockedUntil, lastSwitch, switchIndex = nil, 0, 0, 0
@@ -12625,60 +12625,286 @@ run(function()
     local AntiLasso
     local Chance
     local Check
+    local currentConnections = {}
+    local currentCharacter
+    local activeLasso
+    local ignoredLasso
+    local lassoVersion = 0
+    local returnFilter = RaycastParams.new()
+    local returnOverlap = OverlapParams.new()
 
-    local random = Random.new()
+    returnFilter.FilterType = Enum.RaycastFilterType.Exclude
+    returnFilter.RespectCanCollide = true
+    returnFilter.IgnoreWater = true
+    returnOverlap.FilterType = Enum.RaycastFilterType.Exclude
+    returnOverlap.RespectCanCollide = true
 
-    local function shouldAnchor()
-	return random:NextNumber(1, 100) <= Chance.Value and (not Check.Enabled or entitylib.EntityPosition({
-		Range = 50,
-		Part = 'RootPart',
-		Players = true
-	}))
+    local function disconnectCharacter()
+        for _, connection in currentConnections do
+            connection:Disconnect()
+        end
+        table.clear(currentConnections)
+        currentCharacter = nil
     end
 
-    local function added(character)
-	if not character then
-		return
-	end
+    local function isFinite(value)
+        return type(value) == 'number' and value == value and value > -math.huge and value < math.huge
+    end
 
-	AntiLasso:Clean(character.ChildAdded:Connect(function(accessory)
-		if accessory:IsA('Accessory') and accessory:FindFirstChild('Rope') and shouldAnchor() then
-			local root = character.PrimaryPart or character:FindFirstChild('HumanoidRootPart')
-			if root then
-				root.Anchored = true
-				accessory.Destroying:Once(function()
-					if root.Parent then
-						root.Anchored = false
-					end
-				end)
-			end
-		end
-	end))
+    local function isFiniteCFrame(value)
+        if typeof(value) ~= 'CFrame' then return false end
+        for _, component in {value:GetComponents()} do
+            if not isFinite(component) then return false end
+        end
+        return true
+    end
+
+    local function getLassoObject(character)
+        for _, child in character:GetChildren() do
+            if child:FindFirstChild('Rope', true) then
+                return child
+            end
+        end
+    end
+
+    local function hasClearance(character, root, position)
+        returnOverlap.FilterDescendantsInstances = {character, gameCamera}
+        for _, part in workspace:GetPartBoundsInBox(CFrame.new(position), root.Size * Vector3.new(0.9, 1, 0.9), returnOverlap) do
+            local queryIgnored = bedwars.QueryUtil.isQueryIgnored
+            if part.CanCollide and not (type(queryIgnored) == 'function' and queryIgnored(bedwars.QueryUtil, part)) then
+                return false
+            end
+        end
+        return true
+    end
+
+    local function getSafeReturnCFrame(event)
+        local character, root, saved = event.character, event.root, event.cframe
+        local humanoid = character:FindFirstChildOfClass('Humanoid')
+        if not isFiniteCFrame(saved) or not root.Parent or not humanoid or humanoid.Health <= 0 then return end
+        local position = saved.Position
+        if position.Y <= workspace.FallenPartsDestroyHeight + 12 then return end
+
+        returnFilter.FilterDescendantsInstances = {character, gameCamera}
+        local ground = workspace:Raycast(position + Vector3.yAxis * 3, -Vector3.yAxis * 99, returnFilter)
+        if ground and position.Y - ground.Position.Y >= 1 and hasClearance(character, root, position) then
+            return saved
+        end
+
+        local offsets = {Vector3.zero}
+        for radius = 3, 12, 3 do
+            for _, direction in {
+                Vector3.xAxis,
+                -Vector3.xAxis,
+                Vector3.zAxis,
+                -Vector3.zAxis,
+                Vector3.new(1, 0, 1).Unit,
+                Vector3.new(1, 0, -1).Unit,
+                Vector3.new(-1, 0, 1).Unit,
+                Vector3.new(-1, 0, -1).Unit
+            } do
+                table.insert(offsets, direction * radius)
+            end
+        end
+
+        local best, bestDistance
+        for _, offset in offsets do
+            local origin = position + offset + Vector3.yAxis * 12
+            local result = workspace:Raycast(origin, -Vector3.yAxis * 72, returnFilter)
+            if result and result.Instance.CanCollide then
+                local candidate = Vector3.new(origin.X, result.Position.Y + humanoid.HipHeight + root.Size.Y / 2, origin.Z)
+                local distance = (candidate - position).Magnitude
+                if candidate.Y > workspace.FallenPartsDestroyHeight + 12 and hasClearance(character, root, candidate)
+                    and (not bestDistance or distance < bestDistance)
+                then
+                    best, bestDistance = candidate, distance
+                end
+            end
+        end
+        return best and CFrame.new(best) * saved.Rotation or nil
+    end
+
+    local function clearLasso(event)
+        if activeLasso ~= event then return end
+        activeLasso = nil
+        if event.root.Parent then
+            event.root.Anchored = false
+        end
+    end
+
+    local function returnPlayer(event, visualReleased)
+        if activeLasso ~= event or event.returned or not AntiLasso.Enabled then return false end
+        if collectionService:HasTag(event.character, 'LassoHooked') then return false end
+        if not visualReleased and getLassoObject(event.character) then return false end
+        local root = event.root
+        local returnCFrame = getSafeReturnCFrame(event)
+        if not returnCFrame or lplr.Character ~= event.character or not entitylib.isAlive or entitylib.character.RootPart ~= root then
+            clearLasso(event)
+            return true
+        end
+        event.returned = true
+        root.Anchored = false
+        root.AssemblyLinearVelocity = Vector3.zero
+        root.AssemblyAngularVelocity = Vector3.zero
+        root.CFrame = returnCFrame
+        root.AssemblyLinearVelocity = Vector3.zero
+        root.AssemblyAngularVelocity = Vector3.zero
+        if activeLasso == event then
+            activeLasso = nil
+        end
+        return true
+    end
+
+    local function waitForRelease(event)
+        task.spawn(function()
+            local visualReleasedAt
+            while activeLasso == event and AntiLasso.Enabled and lplr.Character == event.character and event.root.Parent do
+                local tagged = collectionService:HasTag(event.character, 'LassoHooked')
+                local visual = getLassoObject(event.character)
+                if not tagged and not visual then
+                    returnPlayer(event)
+                    return
+                end
+                if not tagged then
+                    visualReleasedAt = visualReleasedAt or tick()
+                    if tick() - visualReleasedAt >= 1 then
+                        returnPlayer(event, true)
+                        return
+                    end
+                else
+                    visualReleasedAt = nil
+                end
+                task.wait(0.05)
+            end
+        end)
+    end
+
+    local function startLasso(character, nativeEvent)
+        if not AntiLasso.Enabled or character ~= lplr.Character or ignoredLasso == character then return end
+        if activeLasso and activeLasso.character == character then
+            if not nativeEvent or not activeLasso.releaseSeen then return end
+            clearLasso(activeLasso)
+        end
+        if Random.new(os.clock()):NextNumber(1, 100) > Chance.Value or Check.Enabled and not entitylib.EntityPosition({
+            Range = 50,
+            Part = 'RootPart',
+            Players = true
+        }) then
+            if nativeEvent then ignoredLasso = character end
+            return
+        end
+        local root = character:FindFirstChild('HumanoidRootPart') or character.PrimaryPart
+        local humanoid = character:FindFirstChildOfClass('Humanoid')
+        if not root or not humanoid or humanoid.Health <= 0 or not isFiniteCFrame(root.CFrame) then return end
+        if activeLasso then clearLasso(activeLasso) end
+        lassoVersion += 1
+        local event = {
+            cframe = root.CFrame,
+            character = character,
+            root = root,
+            token = lassoVersion
+        }
+        activeLasso = event
+        root.Anchored = true
+        waitForRelease(event)
+    end
+
+    local function releaseLasso(character)
+        if ignoredLasso == character then
+            ignoredLasso = nil
+            return
+        end
+        local event = activeLasso
+        if not event or event.character ~= character then return end
+        event.releaseSeen = true
+        task.defer(function()
+            local deadline = tick() + 1
+            repeat
+                if activeLasso ~= event or returnPlayer(event) then return end
+                task.wait()
+            until tick() >= deadline
+            returnPlayer(event, true)
+        end)
+    end
+
+    local function Added(character)
+        local previousCharacter = currentCharacter
+        disconnectCharacter()
+        if previousCharacter ~= character then ignoredLasso = nil end
+        if not AntiLasso.Enabled or not character or not character.Parent then return end
+        if activeLasso then clearLasso(activeLasso) end
+        currentCharacter = character
+        table.insert(currentConnections, character.ChildAdded:Connect(function(child)
+            if child:FindFirstChild('Rope', true) then
+                startLasso(character)
+            end
+        end))
+        table.insert(currentConnections, character.Destroying:Connect(function()
+            if currentCharacter == character then
+                disconnectCharacter()
+            end
+            if activeLasso and activeLasso.character == character then
+                clearLasso(activeLasso)
+            end
+        end))
+        local humanoid = character:FindFirstChildOfClass('Humanoid')
+        if humanoid then
+            table.insert(currentConnections, humanoid.Died:Connect(function()
+                if activeLasso and activeLasso.character == character then
+                    clearLasso(activeLasso)
+                end
+            end))
+        end
+        if collectionService:HasTag(character, 'LassoHooked') or getLassoObject(character) then
+            startLasso(character, collectionService:HasTag(character, 'LassoHooked'))
+        end
     end
 
     AntiLasso = vape.Categories.Utility:CreateModule({
-	Name = 'AntiLasso',
-	Function = function(callback)
-		if callback then
-			AntiLasso:Clean(entitylib.Events.LocalAdded:Connect(function(ent)
-				task.delay(1, function()
-					added(ent and ent.Character)
-				end)
-			end))
-			if entitylib.isAlive then
-				added(lplr.Character)
-			end
-		end
-	end,
-	Tooltip = 'Prevents you from getting pulled by lasso projectiles.'
+        Name = 'AntiLasso',
+        Function = function(callback)
+            if callback then
+                AntiLasso:Clean(collectionService:GetInstanceAddedSignal('LassoHooked'):Connect(function(character)
+                    if character == lplr.Character then
+                        startLasso(character, true)
+                    end
+                end))
+                AntiLasso:Clean(collectionService:GetInstanceRemovedSignal('LassoHooked'):Connect(function(character)
+                    if character == lplr.Character then
+                        releaseLasso(character)
+                    end
+                end))
+                AntiLasso:Clean(entitylib.Events.LocalAdded:Connect(function(ent)
+                    task.defer(function()
+                        if AntiLasso.Enabled and ent and ent.Character then
+                            Added(ent.Character)
+                        end
+                    end)
+                end))
+                AntiLasso:Clean(lplr.OnTeleport:Connect(function()
+                    if activeLasso then clearLasso(activeLasso) end
+                    ignoredLasso = nil
+                    disconnectCharacter()
+                end))
+                if entitylib.isAlive then
+                    Added(lplr.Character)
+                end
+            else
+                lassoVersion += 1
+                ignoredLasso = nil
+                disconnectCharacter()
+                if activeLasso then clearLasso(activeLasso) end
+            end
+        end,
+        Tooltip = 'Prevents you from getting pulled by lasso projectile.'
     })
 
     Chance = AntiLasso:CreateSlider({
-	Name = 'Chance',
-	Min = 0,
-	Max = 100,
-	Default = 100,
-	Suffix = '%'
+        Name = 'Chance',
+        Min = 0,
+        Max = 100,
+        Default = 100,
+        Suffix = '%'
     })
     Check = AntiLasso:CreateToggle({Name = 'Only when targeting'})
 end)
@@ -14600,7 +14826,7 @@ run(function()
     }
     
     AutoKit = vape.Categories.Utility:CreateModule({
-        Name = 'Auto Kit',
+        Name = 'AutoKit',
         Function = function(callback)
             if callback then
                 repeat task.wait() until store.equippedKit ~= '' and store.matchState ~= 0 or (not AutoKit.Enabled)

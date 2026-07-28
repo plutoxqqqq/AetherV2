@@ -6098,7 +6098,7 @@ run(function()
 	local NameToId = {}
 	
 	BedBreakEffect = vape.Legit:CreateModule({
-		Name = 'Bed Break Effect',
+		Name = 'BedBreakEffect',
 		Function = function(callback)
 			if callback then
 	            BedBreakEffect:Clean(vapeEvents.BedwarsBedBreak.Event:Connect(function(data)
@@ -6128,7 +6128,7 @@ end)
 
 run(function()
 	vape.Legit:CreateModule({
-		Name = 'Clean Kit',
+		Name = 'CleanKit',
 		Function = function(callback)
 			if callback then
 				bedwars.WindWalkerController.spawnOrb = function() end
@@ -6192,7 +6192,7 @@ run(function()
 	local oldvalues, oldfont = {}
 	
 	DamageIndicator = vape.Legit:CreateModule({
-		Name = 'Damage Indicator',
+		Name = 'DamageIndicator',
 		Function = function(callback)
 			if callback then
 				oldvalues = table.clone(tab)
@@ -6314,7 +6314,7 @@ run(function()
 	local effects, util = {}, {}
 	
 	FPSBoost = vape.Legit:CreateModule({
-		Name = 'FPS Boost',
+		Name = 'FPSBoost',
 		Function = function(callback)
 			if callback then
 				if Kill.Enabled then
@@ -6391,7 +6391,7 @@ run(function()
 	local done = {}
 	
 	HitColor = vape.Legit:CreateModule({
-		Name = 'Hit Color',
+		Name = 'HitColor',
 		Function = function(callback)
 			if callback then 
 				repeat
@@ -6631,7 +6631,7 @@ run(function()
 	}
 	
 	KillEffect = vape.Legit:CreateModule({
-		Name = 'Kill Effect',
+		Name = 'KillEffect',
 		Function = function(callback)
 			if callback then
 				for i, v in killeffects do
@@ -6696,7 +6696,7 @@ run(function()
 	local label
 	
 	ReachDisplay = vape.Legit:CreateModule({
-		Name = 'Reach Display',
+		Name = 'ReachDisplay',
 		Function = function(callback)
 			if callback then
 				repeat
@@ -6785,7 +6785,7 @@ run(function()
 	end
 	
 	SongBeats = vape.Legit:CreateModule({
-		Name = 'Song Beats',
+		Name = 'SongBeats',
 		Function = function(callback)
 			if callback then
 				songobj = Instance.new('Sound')
@@ -6939,7 +6939,7 @@ run(function()
 	end
 	
 	UICleanup = vape.Legit:CreateModule({
-		Name = 'UI Cleanup',
+		Name = 'UICleanup',
 		Function = function(callback)
 			for i, v in (callback and new or old) do
 				for i2, v2 in v do

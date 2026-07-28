@@ -434,7 +434,7 @@ run(function()
     end
     
     AutoClicker = vape.Categories.Combat:CreateModule({
-        Name = 'Auto Clicker',
+        Name = 'AutoClicker',
         Function = function(callback)
             if callback then
                 AutoClicker:Clean(inputService.InputBegan:Connect(function(input, gameProcessed)
@@ -611,7 +611,7 @@ run(function()
     end
     
     AntiFall = vape.Categories.Blatant:CreateModule({
-        Name = 'Anti Fall',
+        Name = 'AntiFall',
         Function = function(callback)
             if callback then
                 local pos, debounce = getLowGround(), tick()
@@ -683,7 +683,7 @@ run(function()
     local old
     
     vape.Categories.Blatant:CreateModule({
-        Name = 'Inv Move',
+        Name = 'InvMove',
         Function = function(callback)
             if callback then
                 old = skywars.FocusedController.enableFocus
@@ -1046,7 +1046,7 @@ run(function()
     local rayCheck = RaycastParams.new()
     
     NoFall = vape.Categories.Blatant:CreateModule({
-        Name = 'No Fall',
+        Name = 'NoFall',
         Function = function(callback)
             if callback then
                 repeat
@@ -1076,7 +1076,7 @@ run(function()
     local old, oldcheck
     
     vape.Categories.Blatant:CreateModule({
-        Name = 'No Slow',
+        Name = 'NoSlow',
         Function = function(callback)
             if callback then
                 old = skywars.HumanoidController.addSpeedModifier
@@ -1142,7 +1142,7 @@ run(function()
     end
     
     local ProjectileAimbot = vape.Categories.Blatant:CreateModule({
-        Name = 'Projectile Aimbot',
+        Name = 'ProjectileAimbot',
         Function = function(callback)
             if callback then
                 old = hookfunction(skywars.CameraUtil.getCursorDirection, function(...)
@@ -1194,7 +1194,7 @@ run(function()
     end
     
     ProjectileAura = vape.Categories.Blatant:CreateModule({
-        Name = 'Projectile Aura',
+        Name = 'ProjectileAura',
         Function = function(callback)
             if callback then
                 repeat
@@ -1414,7 +1414,7 @@ run(function()
     local Delay = {}
     
     ChestSteal = vape.Categories.World:CreateModule({
-        Name = 'Chest Steal',
+        Name = 'ChestSteal',
         Function = function(callback)
             if callback then
                 local chests = collection('block:chest', ChestSteal)
@@ -1503,7 +1503,7 @@ run(function()
     end
     
     AutoBuy = vape.Categories.Inventory:CreateModule({
-        Name = 'Auto Buy',
+        Name = 'AutoBuy',
         Function = function(callback)
             if callback then
                 AutoBuy:Clean(vapeEvents.CurrencyChange.Event:Connect(buyCheck))
@@ -1581,7 +1581,7 @@ run(function()
     end
     
     AutoConsume = vape.Categories.Inventory:CreateModule({
-        Name = 'Auto Consume',
+        Name = 'AutoConsume',
         Function = function(callback)
             if callback then
                 AutoConsume:Clean(vapeEvents.InventoryAmountChanged.Event:Connect(consumeCheck))

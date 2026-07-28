@@ -488,7 +488,7 @@ run(function()
     local connections = {}
 
     NoFall = vape.Categories.Blatant:CreateModule({
-    	Name = 'No Fall',
+    	Name = 'NoFall',
     	Function = function(callback)
     		if callback then
     			NoFall:Clean(entitylib.Events.LocalAdded:Connect(function(ent)
