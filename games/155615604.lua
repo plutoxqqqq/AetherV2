@@ -454,7 +454,7 @@ do
 	end
 end
 
-for _, v in {'Reach', 'Jesus', 'Killaura', 'Murder Mystery'} do
+for _, v in {'Reach', 'Jesus', 'Killaura', 'MurderMystery'} do
 	vape:Remove(v)
 end
 
@@ -547,7 +547,7 @@ run(function()
     end
     
     SilentAim = vape.Categories.Combat:CreateModule({
-        Name = 'Silent Aim',
+        Name = 'SilentAim',
         Function = function(callback)
             if CircleObject then
                 CircleObject.Visible = callback and Mode.Value == 'Mouse'
@@ -751,7 +751,7 @@ run(function()
     local AntiKillPlane
     
     AntiKillPlane = vape.Categories.Blatant:CreateModule({
-        Name = 'Anti Kill Plane',
+        Name = 'AntiKillPlane',
         Function = function(callback)
             if callback then
                 for x = -2048, 2048, 2048 do
@@ -777,7 +777,7 @@ run(function()
     local AntiRiotShield
     
     AntiRiotShield = vape.Categories.Blatant:CreateModule({
-        Name = 'Anti Riot Shield',
+        Name = 'AntiRiotShield',
         Function = function(callback)
             if callback then
                 repeat
@@ -833,7 +833,7 @@ run(function()
     end
     
     AntiTaze = vape.Categories.Blatant:CreateModule({
-        Name = 'Anti Taze',
+        Name = 'AntiTaze',
         Function = function(callback)
             if callback then
                 AntiTaze:Clean(entitylib.Events.LocalAdded:Connect(EntityAdded))
@@ -859,7 +859,7 @@ run(function()
     local cdholder, cdframe, cdlabel
     
     AutoArrest = vape.Categories.Blatant:CreateModule({
-        Name = 'Auto Arrest',
+        Name = 'AutoArrest',
         Function = function(callback)
             if callback then
                 repeat
@@ -966,7 +966,7 @@ run(function()
     local AutoReset
     
     AutoReset = vape.Categories.Blatant:CreateModule({
-        Name = 'Auto Reset',
+        Name = 'AutoReset',
         Function = function(callback)
             if callback then
                 AutoReset:Clean(lplr:GetPropertyChangedSignal('Team'):Connect(function()
@@ -988,7 +988,7 @@ run(function()
     local olddata, old = {}, nil
     
     GunModifications = vape.Categories.Blatant:CreateModule({
-        Name = 'Gun Modifications',
+        Name = 'GunModifications',
         Function = function(callback)
             if callback then
                 repeat
@@ -1092,7 +1092,7 @@ run(function()
     end
     
     NoJumpCooldown = vape.Categories.Blatant:CreateModule({
-        Name = 'No Jump Cooldown',
+        Name = 'NoJumpCooldown',
         Function = function(callback)
             if callback then
                 NoJumpCooldown:Clean(entitylib.Events.LocalAdded:Connect(EntityAdded))
@@ -1118,7 +1118,7 @@ run(function()
     local up, down = 0, 0
     
     VehicleFly = vape.Categories.Blatant:CreateModule({
-        Name = 'Vehicle Fly',
+        Name = 'VehicleFly',
         Function = function(callback)
             if callback then
                 up, down = 0, 0
@@ -1222,7 +1222,7 @@ run(function()
     local seats = {}
     
     VehicleSpeed = vape.Categories.Blatant:CreateModule({
-        Name = 'Vehicle Speed',
+        Name = 'VehicleSpeed',
         Function = function(callback)
             if callback then
                 repeat
@@ -1273,7 +1273,7 @@ run(function()
     end
     
     VehicleWallbang = vape.Categories.Blatant:CreateModule({
-        Name = 'Vehicle Wallbang',
+        Name = 'VehicleWallbang',
         Function = function(callback)
             if callback then
                 VehicleWallbang:Clean(workspace.CarContainer.DescendantAdded:Connect(Modify))
@@ -1330,7 +1330,7 @@ run(function()
     end
     
     C4ESP = vape.Categories.Render:CreateModule({
-        Name = 'C4 ESP',
+        Name = 'C4ESP',
         Function = function(callback)
             if callback then
                 C4ESP:Clean(collectionService:GetInstanceAddedSignal('C4'):Connect(Added))
@@ -1395,7 +1395,7 @@ run(function()
     local KillNotifications
     
     KillNotifications = vape.Categories.Render:CreateModule({
-        Name = 'Kill Notifications',
+        Name = 'KillNotifications',
         Function = function(callback)
             if callback then
                 KillNotifications:Clean(vapeEvents.PlayerKill.Event:Connect(function(killer, victim)
@@ -1688,7 +1688,7 @@ run(function()
     }
     
     NameTags = vape.Categories.Render:CreateModule({
-        Name = 'Name Tags',
+        Name = 'NameTags',
         Function = function(callback)
             if callback then
                 methodused = DrawingToggle.Enabled and 'Drawing' or 'Normal'
@@ -1864,7 +1864,7 @@ run(function()
     rayParams.FilterType = Enum.RaycastFilterType.Exclude
     
     AutoDetonate = vape.Categories.Utility:CreateModule({
-        Name = 'Auto Detonate',
+        Name = 'AutoDetonate',
         Function = function(callback)
             if callback then
                 AutoDetonate:Clean(collectionService:GetInstanceAddedSignal('C4'):Connect(function(obj)
@@ -1941,7 +1941,7 @@ run(function()
     }
     
     AutoHeal = vape.Categories.Utility:CreateModule({
-        Name = 'Auto Heal',
+        Name = 'AutoHeal',
         Function = function(callback)
             if callback then
                 repeat
@@ -1995,7 +1995,7 @@ run(function()
     end
     
     AutoPickup = vape.Categories.Utility:CreateModule({
-        Name = 'Auto Pickup',
+        Name = 'AutoPickup',
         Function = function(callback)
             if callback then
                 for _, obj in workspace:GetChildren() do
@@ -2069,7 +2069,7 @@ run(function()
     end
     
     AutoReload = vape.Categories.Utility:CreateModule({
-        Name = 'Auto Reload',
+        Name = 'AutoReload',
         Function = function(callback)
             if callback then
                 oldshoot = hookfunction(pl.Shoot, function(...)
@@ -2123,7 +2123,7 @@ run(function()
     local drawingobjs = {}
     
     BulletTracers = vape.Categories.Legit:CreateModule({
-        Name = 'Bullet Tracers',
+        Name = 'BulletTracers',
         Function = function(callback)
             if callback then
                 TracerHook:Add('BulletTracers', function(...)
@@ -2275,7 +2275,7 @@ run(function()
     end
     
     DamageIndicator = vape.Categories.Legit:CreateModule({
-        Name = 'Damage Indicator',
+        Name = 'DamageIndicator',
         Function = function(callback)
             if callback then
                 TracerHook:Add('DamageIndicator', function(...)
@@ -2402,7 +2402,7 @@ run(function()
     local sounds = {}
     
     KillSound = vape.Categories.Legit:CreateModule({
-        Name = 'Kill Sound',
+        Name = 'KillSound',
         Function = function(callback)
             if callback then
                 KillSound:Clean(vapeEvents.PlayerKill.Event:Connect(function(plr)

@@ -375,7 +375,7 @@ end
 
 run(function()
     vape.Categories.Combat:CreateModule({
-    	Name = 'Force Headshot',
+    	Name = 'ForceHeadshot',
     	Function = function(callback)
     		if callback then
     			local hook

@@ -950,7 +950,7 @@ end
 	the format the file used before the three lists existed.
 
 	Names are matched loosely (case and separators ignored) so the file can say
-	'KrystalDisabler' for a module registered as 'Krystal Disabler'.
+	'krystal disabler' for a module registered as 'KrystalDisabler'.
 ]]
 downloadFile('aetherv2/profiles/features.json')
 local featureLists = {

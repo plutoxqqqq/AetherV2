@@ -83,7 +83,7 @@ run(function()
     playersService.PlayerAdded:Connect(Added)
 end)
 
-for _, v in {'Reach', 'Trigger Bot', 'Anti Fall', 'Anti Ragdoll', 'Disabler'} do
+for _, v in {'Reach', 'TriggerBot', 'AntiFall', 'AntiRagdoll', 'Disabler'} do
     vape:Remove(v)
 end
 
@@ -118,7 +118,7 @@ run(function()
     end
     
     SilentAim = vape.Categories.Combat:CreateModule({
-        Name = 'Silent Aim',
+        Name = 'SilentAim',
         Function = function(callback)
             if callback then
                 old = hookmetamethod(game, '__namecall', newcclosure(function(...)
