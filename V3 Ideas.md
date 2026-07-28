@@ -39,7 +39,8 @@ loss of capability, it's the biggest capability *unlock* available:
   hotbar, ESP and buy modules stop string-matching names.
 - `bedwars.ProjectileMeta` + `BowConstantsTable` (30 refs) drive projectile prediction from the
   game's own tables instead of tuned guesses.
-- `bedwars.AbilityController` (26 refs) turns 30+ `Auto<Kit>` modules into one data-driven engine.
+- `bedwars.AbilityController` (26 refs) + `BedwarsKitMeta` turn `AutoKit`'s 325 lines of hardcoded
+  per-kit closures into a data file, and bring home the eight kit modules that escaped it (§6.10).
 - Beds, generators, teams, forge level and match phase become one shared observable store instead
   of a dozen modules each walking the workspace every frame.
 
@@ -49,7 +50,7 @@ loss of capability, it's the biggest capability *unlock* available:
 |---|------|-------------------|
 | G1 | Fix everything known-broken | §4 triage closed; no module errors on toggle. |
 | G2 | Expand the GUI hard | §5: full parity across skins + BedWars-native match panels. |
-| G3 | Ship a large module wave | §6: 130+ new/rebuilt modules, weighted to the overpowered end. |
+| G3 | Ship a module list worth maintaining | §6: 223 V2 modules → 70, each with a named binding; 9 genuinely new, 12 deleted. |
 | G4 | Behaviour that feels deliberate | §7: conflicts, priorities, safety guards, QoL. |
 | G5 | Survive BedWars updates | §9: one binding layer, signature registry, patch report. |
 | G6 | Narrow to BedWars | Non-BedWars game files deleted; `universal.lua` specialized in. |
@@ -108,7 +109,7 @@ becomes the only path to game internals:
 bind:Define('SwordController', {
     Path   = {'Controllers', 'SwordController'},
     Expect = { swingSword = 'function', lastAttack = 'number' },
-    UsedBy = {'OmniAura','ReachRamp','SwingTiming','ShieldSync'},
+    UsedBy = {'OmniAura','ReachControl','ShieldSync','HitboxSolver'},
 })
 ```
 
@@ -119,7 +120,7 @@ Resolved and type-checked once at load; a failure is named, attributed to its mo
 of rediscovering: `Phase`, `QueueType`, `Teams`, `Beds` (position / alive / layers / material),
 `Generators` (type / tier / next spawn / contested), `ForgeLevel`, `Upgrades`, `Kits` per player,
 `Alive`, `TimeLeft`. This single change is what makes the bed/generator/team/shop panels (§5.6),
-the whole objectives module family (§6.5), and the biggest FPS win (§8) possible.
+the whole objectives module family (§6.8), and the biggest FPS win (§8) possible.
 
 **F3 — Modules as data.** A module is a table (name, category, tooltip, options, `Depends`,
 `GameBind`, `Conflicts`, `OnEnable`/`OnDisable`/`OnTick`), not a closure that builds its own GUI
@@ -278,7 +279,7 @@ The payoff for narrowing scope, and the most visible new feature.
 - **Match panel** — phase, time left, queue type, alive count, your team, forge level, active
   upgrades. One glance instead of four HUD widgets.
 - **Bed tracker** — every team's bed: alive/dead, layer count, material, distance, defenders
-  present, "last damaged 4s ago". Click a bed → set it as the AutoWin / BedBreaker target.
+  present, "last damaged 4s ago". Click a bed → set it as the Autopilot / BedBreaker target.
 - **Generator panel** — type, tier, next-spawn countdown, contested state, sorted by distance.
   Click → path to it.
 - **Team panel** — per-team roster with kit icons, armor tier, alive/dead, and a threat score from
@@ -298,7 +299,7 @@ The payoff for narrowing scope, and the most visible new feature.
 - **Network** — remote calls/sec per remote, rate-limit visualizer, last-200-calls inspector.
   Essential for tuning aura cadence and diagnosing lagback.
 - **Hit-reg inspector** — accepted vs. rejected attacks over time, with the reach envelope the
-  server is actually honouring right now (feeds `ReachEnvelope`, §6.1).
+  server is actually honouring right now (feeds `ReachControl`, §6.4).
 - **Target inspector** — health, kit, armor, distance, predicted position, ping, wallcheck result
   and *why* it passed or failed.
 - **Binding health** — every `bedwars.*` binding with green/amber/red status (§9).
@@ -332,126 +333,212 @@ red/green) · 0.5×–2.0× scaling that reflows · keyboard-only navigation wit
 
 ## 6. Modules
 
-V2 already ships **207 unique module names** across the three game files (161 registrations in
-BedWars, 70 universal, 16 lobby). Every one of them was read before this section was written;
-**§6.14 is the full disposition audit** — each existing module is either absorbed by something
-below (named in the *Absorbs* column), kept as-is, or dropped. Nothing here re-proposes a module
-that already exists under a different name; where a new idea came close, it was demoted to a *mode*
-of the module it duplicated, and §6.14 lists those collisions explicitly.
+V2 makes **247 module registrations** across the three surviving game files — 161 in
+`6872274481.lua`, 70 in `universal.lua`, 16 in the lobby — resolving to **223 unique module names**
+(21 names appear in more than one file). Every one of them was read before this section was written.
+The "207 modules" figure in earlier drafts undercounted: sixteen registrations declare their `Name`
+with double quotes and were missed by the audit script, including all eleven lobby modules beyond
+the obvious five.
 
-Overpowered is the default tier — the legit tier is §6.11 and is opt-in.
+The first draft of this document answered that with *more* — "130+ new/rebuilt modules, weighted to
+the overpowered end". That was the wrong instinct. A module list is not a feature count; it is a
+maintenance surface, and V2's problem was never that it had too few modules. It was that it had four
+auras, three projectile aimbots, eleven lighting modules and a `Swim` toggle for a game with no
+water — and that a third of the list either did nothing observable, or worked only until the server
+noticed.
 
-### 6.1 Combat — the overpowered core
+**V3 ships 70 modules.** 201 of V2's 223 names are absorbed into them, 10 become HUD elements or GUI
+features rather than modules, and 12 are deleted outright. Nine modules are genuinely new. The
+section is shorter than V2's list and strictly more capable, because the capability now lives in
+options on engines that are actually maintained instead of in modules that each rediscover the same
+mechanic badly.
 
-| Module | Concept | Absorbs |
+### 6.1 What got cut, and why
+
+Three kinds of entry were removed. Each cut is named here rather than quietly dropped, because "we
+deleted your favourite toggle" deserves a reason.
+
+**Cut 1 — gimmicks: mechanics that don't exist in Roblox BedWars, or don't work the way the module
+assumed.** These are §2's failure mode, and the first V3 draft reintroduced several of its own.
+
+| Cut | Why |
+|---|---|
+| `SpinBot`, "AntiAim" | Nothing in BedWars reads your look vector for validation, and no other client aims off it. Spinning is a self-inflicted visual. |
+| `Swim`, `Gravity`, `Spider`, `Parkour` | No water on the map pool; `Gravity` and `Spider` are Roblox-physics toys with no BedWars use; `Parkour` is Minecraft vocabulary for "jump the gap", which `SpeedEngine` already does. |
+| `Invisible` | Client-local only. You are invisible to yourself. |
+| "VoidPull" (draft) | Lassos pull *you* toward an anchor. They do not yank other players. The module was designed against a mechanic that isn't there. |
+| "Strafe", "Rewind" (draft) | Both assume a client-authoritative movement model. `Humanoid` state is reconciled; a friction model and a position rewind are lagback generators with a nice slider. |
+| "HitSelect" (draft) | Presumes per-body-part server hit validation to learn against. `CombatConstant` validates distance and cadence, not limbs. |
+| "MacroEngine" (draft) | Recorded input replay in a game where every action is a validated remote call. It records the tell and replays it. |
+
+**Cut 2 — clutter: entries that were real, but were an option, a HUD element, or a panel wearing a
+module's clothes.** Each of these cost a GUI row, a config key, a lifecycle and a bug surface, and
+gave back a line of text.
+
+| Cut | Became |
+|---|---|
+| `Clock`, `Coords`, `FPS`, `Ping`, `Keystrokes`, `Speedmeter`, `Timer` | HUD elements in the HUD editor (§5.7). They draw a number; they are not modules. |
+| `Waypoints` | Radar and map markers (§5.7). |
+| `Search`, `Memory` | GUI search (§5.3) and the profiler panel (§5.6). |
+| "BedIntel", "GenIntel", "DefenseAnalyzer", "UpgradeAdvisor", "ResourceHUD", "KitAdvisor", "AbilityTimers" (draft) | The match state store (F2) and the match panels (§5.5). A tracker with no behaviour is data, and data belongs in the store that every module already reads. |
+| `ReachDisplay`, `PotionStatus`, `KitDisplay` | Readouts on the owning module's row (§7.6) and the relevant panel. |
+| "SwingTiming", "SprintSync", "Humanizer" (draft) | Shared services (§6.3). They were never modules; they were things three modules each needed. |
+| "MultiHit", "PredictiveAura", "TargetLock", "RetaliationBot", "VoidCombo", "AntiBot", "ComboKeeper", "BackTrack+", "ProjectileSpam", "AutoJump", "BlockFly", "AutoBridge", "TunnelDig", "BedRoute", "ArcPredict", "AbilityChain", "GenSteal", "ForgeManager", "ConfigSync", "MatchRecorder", "KillFeed+", "Trail" (draft) | Options and modes of the module they were carved off. Every one of them was one checkbox on something that already existed. |
+
+**Cut 3 — dead weight: entries whose premise doesn't survive contact with the game.**
+
+| Cut | Why |
+|---|---|
+| `StaffDetector`, `CheatDetector` | Badge, group and gamepass heuristics on strangers. High false-positive rate, no true-positive mechanism — Roblox moderation does not join your lobby wearing a badge. The useful half (a bound kill switch) is `PanicButton`, which is kept. |
+| `AutoToxic`, `ChatSpammer`, `ChatCrasher` | Harassment and griefing tooling with zero competitive value, and the fastest route to a report. |
+| `Schematica` | Saved base blueprints auto-built from stored resources. Enormous placement-validation surface, months of tuning, and it loses to boxing yourself in with four blocks. |
+| `MurderMystery` | Different game (§1). |
+| "Scripting Console" (draft) | Arbitrary Lua against the core, shipped to users, behind a confirmation dialog. The confirmation dialog is not a security model. The legitimate need — inspecting state while developing a module — is the diagnostics panel (§5.6). |
+| "AutoWin+" (draft) | It was Autopilot's endgame phase with its own name and its own copy of the phase machine. |
+
+### 6.2 Design rules
+
+Every module below satisfies all six. A proposal that fails one is an option, a service, a panel, or
+nothing.
+
+1. **It names a binding.** Every module declares the `bedwars.*` surface it stands on, and that
+   surface is one the repo already touches. The *Stands on* column is not decoration — it is the
+   feasibility argument, and it is what §9's patch report attributes failures to. A module whose
+   mechanic can't be named in `bind.lua` is folklore.
+2. **It owns a channel, or it submits to one.** Exactly one module writes the attack remote, one
+   writes movement speed, one arbitrates block placement, one writes camera CFrame. Everything else
+   submits a request. Contention is a lint error (§6.16), not a race between two toggles.
+3. **It is a mode, not a module, if it shares 80% of its code.** `Silent` and `Packet` aura are
+   delivery modes of one targeting engine. `Range` is a mode of `BedBreaker`. This is the single
+   rule V2 violated most.
+4. **It has behaviour.** If it only reads and draws, it's the match store plus a panel (§5.5) or a
+   HUD element (§5.7).
+5. **It degrades instead of desyncing.** A module whose steady state is "the server hasn't noticed
+   yet" is exploit-tier (§6.15) and gated, not a headline feature. This is where the draft's
+   `AntiDeath+`, `DesyncEngine` and `NoClip+` went.
+6. **It survives its own success.** Anything that scales with player count, block count or projectile
+   count declares its scheduler bucket and its budget (F4), or it is the thing the profiler blames.
+
+### 6.3 Shared services — the parts that are not modules
+
+Seven behaviours that three or more modules each need. In V2 each caller reimplemented them; in the
+draft several were promoted to modules, which is how "SwingTiming" ended up in a combat table next
+to the two modules that consume it. They live in the core, have no GUI row, and appear in the
+binding-health panel like any other binding.
+
+| Service | Provides | Consumers |
 |---|---|---|
-| **OmniAura** | One aura engine. Priority tree (lowest health → bedless → closest → aiming-at-me → weakest armor), per-target cooldowns, cadence curve, multi-target fan-out. **Modes: Swing / Silent / Packet** — Packet issues attacks straight through the sword remote with no animation, rotation or viewmodel tell. (A separate "PacketAura" module would have duplicated V2's `SilentAura`; it's a mode.) | Killaura, Aura, SilentAura, TPAura, OwlAura, TriggerBot, AutoClicker, NoClickDelay |
-| **MultiHit** | Multiple accepted attack packets per cooldown window, bounded by what `CombatConstant` actually validates rather than by guesswork. | DamageBoost (blatant half stays in §6.13) |
-| **ReachRamp** | Reach scaled by target velocity and your ping from `CombatConstant`, not a flat slider. Stays plausible at high latency; fixes B-16. | Reach (combat) |
-| **ReachEnvelope** | Learns the true server-accepted reach live from accepted vs. rejected hits and draws it. Feeds ReachRamp and the hit-reg inspector. | ReachDisplay |
-| **HitboxSolver** | Per-target hitbox expansion that *auto-shrinks* when the server starts rejecting — the difference between a hitbox module that works and one that gets you lagged back. | HitBoxes, HitFix |
-| **HitSelect** | Picks which body part to send per target, learned from hit/miss feedback. | — |
-| **SilentAim+** | Server-side aim for melee **and** projectiles; camera untouched. Kit-ability aiming (`VulcanAimbot`, `TerraAimbot`) is *not* absorbed here — it belongs to the kit engine (§6.7). | SilentAim |
-| **PredictiveAura** | Attacks where the target *will* be, via `lib/prediction` — lands hits around bridge corners and on strafers. | — |
-| **BackTrack+** | When the live position is rejected, attack a recorded recent position that isn't. | BackTrack |
-| **TargetLock** | Hard-locks one target until death or range break; silent or smooth-camera. | — |
-| **TargetOrbit** | Auto-strafes a locked target at a set radius and height, void-aware. | TargetStrafe, PlayerAttach |
-| **KnockbackControl** | Full shaping over `KnockbackUtil`: horizontal/vertical multipliers, directional override, full negation, per-source rules (sword / fireball / TNT / ability). | Velocity, KnockbackDelay |
-| **ComboKeeper** | Times hits against `KnockbackUtil` so the target never lands — the most oppressive thing in this list. | — |
-| **VoidCombo** | Detects a combo pushing someone toward the void and biases aura angle to finish it. | — |
-| **VoidPull** | Uses lasso to yank a target off their bridge or over the edge. | AutoLasso (offensive half) |
-| **SwingTiming** | The shared cadence service — real sword cooldown from `CombatConstant` — that OmniAura, MultiHit and ShieldSync all time against, rather than three modules each guessing. Replaces the MC "CritTimer" idea; there are no crits here (§2). | — |
-| **SprintSync** | Sprint state managed through `SprintController` so movement modules and aura stop fighting each other. | Sprint, KeepSprint |
-| **ShieldSync** | Auto-raises the shield between attack windows and drops it to swing. The Roblox-correct version of "block hit". | InfiniteShield (behaviour half) |
-| **ArmorBreaker** | Prioritizes the weakest-armor target and swaps to the tool that beats their tier, via `ItemMeta`. | ArmorSwitch, AutoTool |
-| **EffectNullifier** | One data-driven nullifier for incoming effects — balloons, lassos, traps, suffocation, ragdoll, kit abilities. New effects are table entries, not new modules. Deliberately **not** called "Disabler": V2's `Disabler` is a movement-detection bypass and lives with AntiLagback+. | BalloonDisabler, KrystalDisabler, TrapDisabler, AntiLasso, AntiSuffocate, AntiRagdoll |
-| **AntiDeath+** | Health-state desync with an auto-disable the moment the server corrects, instead of riding a broken state into a lagback. (V2's `Health` is a Render-category display, not a health spoof — it goes to UnifiedESP, §6.8.) | AntiDeath |
-| **AutoConsume+** | Heal / speed / jump potions at thresholds, cooldown- and combat-aware, with pre-fight prep. | AutoConsume, FastConsume, PotionStatus |
-| **KitCounter** | Per-enemy-kit counterplay: dodge known abilities, swap to the counter item, from `data/kits.json`. | AutoCounter |
-| **RetaliationBot** | Fully idle until damaged, then engages for N seconds. The single best legit-adjacent behaviour. | — |
-| **AntiBot** | Filters NPCs out of targeting with movement-entropy heuristics. | — |
-| **AntiAim** | Spoofs your reported look vector — breaks enemy aim assists and rotation-based checks. Absorbing `SpinBot` also retires its "does not work in first person" tooltip (B-13) by handling the case. | SpinBot |
-| **DesyncEngine** | Position-packet hold/burst with a live buffer visualizer and manual release. | FakeLag, Desync, Blink |
-| **AntiLagback+** | Detects a server correction and reverts smoothly instead of snapping; auto-throttles whichever module triggered it. | AntiLagback, Disabler |
+| **SwingTiming** | The real sword cooldown window from `CombatConstant` / `SwordController.lastAttack`, plus accepted/rejected feedback. | OmniAura, ShieldSync, ArmorBreaker, HitboxSolver |
+| **TargetProvider** | One ranked, filtered target list per frame — priority tree, team filter, wallcheck, NPC filter, FOV. | OmniAura, ProjectileEngine, TargetOrbit, AutoKit Engine, KitCounter, PlayerESP |
+| **MovementChannel** | The single writer of walk speed, velocity and character CFrame, with a correction detector. | SpeedEngine, NoSlow, FlyEngine, BalloonFly, LassoSwing, TeleportSuite, AntiVoid, AutoPath, TargetOrbit |
+| **BlockChannel** | The single arbiter of `placeBlock` / `breakBlock`, with one placement rate limit matched to what `BlockController` accepts and a priority queue across callers. | Scaffold, BlockPlacer, Breaker, BridgeCut, BedBreaker, BedDefense, TrapLayer |
+| **PathSolver** | Route between two world points across an island map, with gap-bridging requests handed to BlockChannel. | AutoPath, Autopilot, AutoFarm, BedBreaker |
+| **RemoteBudget** | One global ceiling on outbound remote traffic, so three modules cannot collectively spam past what the server tolerates. | every module that fires a remote |
+| **Humanizer** | One coherent jitter and latency-variance source, seeded per session. | every automated action; exposed as a single intensity control in Legit mode (§6.14) |
 
-### 6.2 Projectiles
+### 6.4 Combat — 9 modules (29 V2 modules in, 1 new)
 
-| Module | Concept | Absorbs |
-|---|---|---|
-| **ProjectileEngine** | One engine over `ProjectileMeta` + `BowConstantsTable`: per-projectile gravity, drag and launch velocity read from the game, not tuned. Aim, aura, auto-release and charge timing in one place. | ProjectileAimbot, ProjectileAura, AutoShoot, BowAssist, AutoRelease |
-| **ArcPredict HUD** | Renders **your own** predicted arc and impact point live while charging. Other people's projectiles are ProjectileESP's job (§6.8) — the split V2 blurs across three modules. | ProjectileLanding |
-| **DodgeNet** | Predicts every incoming projectile, shows time-to-impact, picks a dodge direction that doesn't walk you into the void. | ProjectileDodger |
-| **FireballAssist** | Auto-aims fireballs at bridges and at players mid-bridge, with self-damage and self-knockback accounted for. | — |
-| **TNTAssist** | Placement/throw solver against beds and defenses, layer-aware. | — |
-| **TelepearlSolver** | Solves telepearl trajectories to a clicked destination through gravity and geometry. | AutoPearl |
-| **ProjectileSpam** | Rate-limited multi-projectile fire respecting per-type cooldowns. | ProjectileExploit (gated, §6.13) |
+Twenty-nine V2 modules collapse into nine: four auras, three reach entries, two hitbox modules, six
+one-effect nullifiers and a dozen single-mechanic toggles. The mechanics are worth keeping; the
+fragmentation is not.
 
-### 6.3 Movement
+| Module | What it does | Stands on | Retires |
+|---|---|---|---|
+| **OmniAura** | The one melee engine: targeting via TargetProvider, cadence via SwingTiming, and three delivery modes — **Swing** (animated), **Silent** (server-side rotation only), **Packet** (straight to the sword remote, no animation, rotation or viewmodel tell). Options cover what V2 shipped as separate modules: hits per accepted window, multi-target fan-out, target lock, prediction against `lib/prediction` for strafers and bridge corners, recorded-position fallback when the live position is rejected, and *engage-only-when-damaged* for legit play. | `SwordController` (43 refs), `CombatConstant`, `QueryUtil` | Killaura, Aura, SilentAura, TPAura, SilentAim, TriggerBot, AutoClicker, NoClickDelay, BackTrack |
+| **ReachControl** | One owner of distance for sword, placement and break. Learns the envelope the server is actually honouring right now from accepted vs. rejected actions, ramps within it by target velocity and your ping, and draws it. Replaces the bare `delta.Magnitude - 14.4` (B-16) and the three independent reach sliders. Interaction range is InteractEngine's channel, not this one. | `CombatConstant`, `BlockController`, `BlockBreaker` | Reach, ReachDisplay, Extender |
+| **HitboxSolver** | Per-target hitbox expansion that auto-shrinks the moment the server starts rejecting. The shrink is the module — expansion without it is a lagback with extra steps. | `QueryUtil`, SwingTiming feedback | HitBoxes, HitFix |
+| **KnockbackControl** | Full shaping over `KnockbackUtil`: horizontal and vertical multipliers, directional override, full negation, per-source rules (sword / fireball / TNT / ability), and a **juggle** mode that times your cadence against knockback recovery so the target never lands. | `KnockbackUtil`, `KnockbackController` | Velocity, KnockbackDelay |
+| **ShieldSync** *(new)* | Raises the shield in the dead time between accepted attack windows and drops it to swing, driven by SwingTiming. This is the Roblox-correct answer to "block hitting" (§2) — a real item with a real state, not a Minecraft technique. Nothing in V2 does this; `InfiniteShield` is a duration exploit and stays gated (§6.15). | `SwordController`, `ItemMeta`, SwingTiming | — |
+| **ArmorBreaker** | Prioritizes the weakest-armor target and swaps to the tool that beats their tier, from real item data instead of name matching. | `ItemMeta` (53 refs) | ArmorSwitch, AutoTool |
+| **EffectNullifier** | One data-driven canceller for incoming status effects — balloons, lassos, traps, suffocation, ragdoll, kit abilities. A new effect is a table row, not a new module; V2 needed six. Named for what it does: V2's `Disabler` is a movement-detection bypass and belongs to AntiLagback. | `StatusEffectMeta`, `StatusEffectUtil` | BalloonDisabler, KrystalDisabler, TrapDisabler, AntiLasso, AntiSuffocate, AntiRagdoll |
+| **AutoConsume** | Heal / speed / jump potions at thresholds, cooldown- and combat-aware, with pre-engagement prep. Absorbs the status readout as a row readout. | `ItemMeta`, `StatusEffectMeta` | AutoConsume, FastConsume, PotionStatus |
+| **AntiLagback** | Detects a server correction, reverts smoothly instead of snapping, identifies which module caused it, and throttles *that* module before the user notices. The correction signal is published to MovementChannel, so every movement module gets it for free. | `Store`, MovementChannel | AntiLagback, Disabler |
 
-| Module | Concept | Absorbs |
-|---|---|---|
-| **SpeedEngine** | One speed module with modes (CFrame / velocity / animation-safe), per-mode lagback profiles, and auto-fallback to the mode the server currently tolerates. | Speed, Step, LongJump, HighJump, BoostAirJump, InfiniteJump |
-| **FlyEngine** | Acceleration-curved flight without the instant start/stop signature, plus waypoint paths, loop/reverse, altitude hold. | Fly |
-| **BalloonFly** | Automated balloon use for vertical travel and clutch saves — the game's real flight, and the one that doesn't trip anything. | AutoBalloon |
-| **LassoSwing** | Auto-lasso to a clicked destination or target, with swing-momentum handling. | AutoLasso |
-| **TeleportSuite** | One TP module with a safety guard (no TP into void/blocks) covering mouse, kit-missile and kit-raven teleports. | MouseTP, MissileTP, RavenTP |
-| **AutoPath** | A* to a clicked world point, bridging gaps automatically. | — |
-| **AntiVoid+** | Predicts void and fall death, then cancels velocity, places a block, pops a balloon, or fires a telepearl — whichever is available. **Manual mode** binds the same recovery to a key (a separate "ClutchAssist" would have been the same code twice). | AntiFall, NoFallDamage, TritonClutch, SafeWalk |
-| **NoSlow+** | Removes movement penalties (bow charge, item use, ability windup) as one module over `SprintController`. | NoSlowdown |
-| **Strafe** | Air-strafe momentum control with a configurable friction model. | — |
-| **Rewind** | Records the last N seconds of position; a key rewinds you along the path. | — |
-| **Waypoints** | Named saved coordinates per map with an on-screen marker and pathing. | Waypoints |
-| **AutoJump** | Auto-jumps gaps and steps around bases. Not MC parkour tech — just gap handling. | Parkour |
-| **Freecam+** | Freecam with recording, spline paths, playback and a cinematic mode. | Freecam |
-| **NoClip+** | Phase with a re-solidify guard so you don't get corrected into the void. (`Block-In` is offensive block placement, not clipping — it stays in §6.4.) | NoClip |
+### 6.5 Projectiles & explosives — 4 modules (10 V2 modules in, 1 new)
 
-### 6.4 Building & breaking
+Ten V2 modules each tune their own gravity constant, while `ProjectileMeta` (20 refs) and
+`BowConstantsTable` (30 refs) sit right there with the real numbers.
 
-| Module | Concept | Absorbs |
-|---|---|---|
-| **Scaffold+** | Predictive bridging: tower / flat / diagonal / downward, block conservation, sprint-safe, "don't bridge into the void" guard, and placement rate matched to what `BlockController` accepts. | Scaffold |
-| **AutoBridge** | Bridges automatically along a pathfound route between islands. | AutoBuildUp |
-| **BlockFly** | Scaffold-driven flight for maps and modes where FlyEngine is corrected. | — |
-| **ReachPlace** | Places and interacts at the true maximum server-accepted distance, learned like `ReachEnvelope`. **Audit first:** V2's `Extender` is Blatant-category and may already be placement reach rather than combat reach — if so it belongs here, not with ReachRamp. Interaction range (chests, prompts, pickups) is InteractEngine's channel, §6.9. | Extender (pending audit) |
-| **NukeBreaker** | Multi-block breaking in a configurable shape and radius over `BlockBreaker`, with tool auto-swap. | Breaker, FastBreak |
-| **TunnelDig** | Digs a shaped tunnel through defenses, tool-aware. | — |
-| **AutoDefense** | Auto-boxes you in when health drops below a threshold, using the best available block. Its offensive twin — boxing an *enemy* in — is V2's `Block-In`, kept as a mode here rather than reinvented. | Block-In |
-| **AutoSuffocate+** | Kept from V2 as the offensive placement module; folded under one placement rate-limiter with everything else in this table so block modules stop fighting each other. | AutoSuffocate |
-| **Schematic+** | Saved base layouts (defense box, bed shell, tower) auto-built from stored resources. | Schematica |
+| Module | What it does | Stands on | Retires |
+|---|---|---|---|
+| **ProjectileEngine** | Aim, aura, charge and release for every throwable and fired projectile, solved from the game's own tables rather than tuned constants. Owns your projectile aim channel; the camera is never touched. Draws your own predicted arc and impact point while charging as a display option. | `ProjectileMeta`, `BowConstantsTable`, `ProjectileController`, `ProjectileLaunchHook` | ProjectileAimbot, ProjectileAura, AutoShoot, BowAssist, AutoRelease, ProjectileLanding |
+| **ExplosiveSolver** *(new)* | Fireball and TNT as the objective tools they actually are: aim at bridges to cut them, at players mid-bridge, and at bed defenses by layer — with your own self-damage and self-knockback solved for, including deliberate fireball-jump routing. V2 has no explosive module at all despite fireballs being one of the strongest items in the game. | `ProjectileMeta`, `KnockbackUtil`, `ItemMeta` | — |
+| **TelepearlSolver** | Solves telepearl trajectories to a clicked destination through gravity and geometry, with a landing-safety check against the void. | `ProjectileMeta`, `ItemMeta` | AutoPearl |
+| **IncomingProjectiles** | The render *and* reaction owner for **other people's** projectiles: live trajectories, predicted impact points, trails, and time-to-impact. Optional single-input dodge that yields to any active movement module and refuses any direction ending in the void — the draft's auto-dodge fought every other movement module and walked people off the map. | `ProjectileController`, `ProjectileMeta` | ProjectileTracers, Arrows, ProjectileDodger |
 
-### 6.5 Beds & objectives
+### 6.6 Movement — 9 modules (19 V2 modules in, 1 new)
 
-| Module | Concept | Absorbs |
-|---|---|---|
-| **BedIntel** | Unified bed tracking: layers, material, distance, damage history, defenders present. Feeds the bed panel and every module below. Data only — the visuals stay in BedPlates+ (§6.8). | BedESP |
-| **BedBreaker** | Full-auto breaking: tool selection, layer-aware order, defense-first, resume after interruption, and a "don't start what you can't finish" check against nearby defenders. **Range mode** breaks from maximum accepted distance with no walk-in (a separate "BedAura" would have been this module with one option changed). | BedAssist |
-| **BedDefense** | Auto-rebuilds your bed's exposed face with the best available block when damaged. | BedProtector |
-| **BedAlarm+** | Directional alarm: who, from where, layers remaining, on-screen arrow, optional sound. | BedAlarm |
-| **BedRoute** | Pathfinds to a chosen enemy bed, bridging gaps, avoiding known traps. | — |
-| **DefenseAnalyzer** | Scores each bed's defenses (layers × material hardness × defenders) and recommends the easiest target. | — |
-| **TrapMapper** | Maps enemy traps and landmines around each base; routes around or disarms them. | TrapESP (logic half) |
-| **AutoWin+** | A state machine over match phase: last bed broken → hunt survivors → close the game. Replaces a fragile timing loop. | AutoWin |
+| Module | What it does | Stands on | Retires |
+|---|---|---|---|
+| **SpeedEngine** | One speed module with modes (CFrame / velocity / humanoid), per-mode lagback profiles, vertical variants, and automatic fallback to whichever mode the server currently tolerates. Six V2 modules were six hardcoded points in this space. | MovementChannel, `SprintController` | Speed, Step, LongJump, HighJump, BoostAirJump, InfiniteJump, Parkour |
+| **FlyEngine** | Acceleration-curved flight without the instant start/stop signature, with altitude hold and waypoint paths. Declared in conflict with Scaffold's tower mode and with BalloonFly. | MovementChannel | Fly |
+| **BalloonFly** | Automated balloon use for vertical travel and clutch saves — the game's own flight, and the one the server has no opinion about. | `BalloonController` (19 refs) | AutoBalloon |
+| **LassoSwing** | Lasso to a clicked point or target with swing-momentum handling and a release solver. | `ItemMeta`, MovementChannel | AutoLasso |
+| **TeleportSuite** | Mouse teleport with a safety guard — never into the void, never inside geometry, never past the distance the server accepts. Kit teleports are kit-engine entries that *call* this solver rather than reimplementing it (§6.10). | MovementChannel, `Store` | MouseTP |
+| **AntiVoid** | Predicts void and fall death, then recovers with whatever you actually have: cancel velocity, place a block, pop a balloon, fire a telepearl. Manual mode binds the same recovery to a key, which is what a "ClutchAssist" module would have been. | `FallDamageController`, BlockChannel, `BalloonController` | AntiFall, NoFallDamage, SafeWalk |
+| **NoSlow** | Removes the game's own movement penalties — bow charge, item use, ability windup — and keeps sprint state coherent so movement modules and aura stop fighting over it. Submits to MovementChannel rather than writing speed directly, which is why it composes with SpeedEngine instead of racing it. | `SprintController` (16 refs) | NoSlowdown, Sprint, KeepSprint |
+| **TargetOrbit** | Auto-strafes a locked target at a set radius and height, void-aware and bridge-aware. | MovementChannel, TargetProvider | TargetStrafe, PlayerAttach |
+| **AutoPath** *(new)* | Click a point, get walked there — across islands, with gap-bridging requests handed to BlockChannel and known traps routed around. This is PathSolver with a GUI, and it is not extra surface: Autopilot, AutoFarm and BedBreaker all need the same solver, so shipping it as a module costs one row and makes the hardest dependency in §6 independently testable. | PathSolver, BlockChannel | — |
 
-### 6.6 Resources & economy
+### 6.7 Building & breaking — 4 modules (6 V2 modules in, 1 new)
 
-| Module | Concept | Absorbs |
-|---|---|---|
-| **GenIntel** | Generator tracking: tier, next-spawn countdown, contested state, income rate. Data only; the world visuals stay in GeneratorESP+ (§6.8). | — |
-| **AutoFarm** | The full loop: collect from your gens → bank at the forge → buy the next upgrade → repeat, with configurable priorities. | AutoBank |
-| **SmartBuy** | A priority list over `ItemMeta` with affordability, forge level, and "don't buy a sword I already beat" logic. | AutoBuy, ShopClicker, ShopQuickBuy |
-| **ForgeManager** | Buys team forge tiers and upgrades by priority the moment the team can afford them. | — |
-| **UpgradeAdvisor** | Recommends the next upgrade from match phase and enemy pressure. | — |
-| **GenSteal** | Prioritized enemy-generator stealing with an escape route and a "leave before they respawn" timer. | AutoSteal |
-| **DropManager** | Drop junk, protect priority items, void-drop enemy loot, auto-pickup by filter. Pickup *range* is InteractEngine's (§6.9); this owns the filter. | AutoVoidDrop, FastDrop |
-| **EnchantAuto** | Auto-collects from and applies at the enchant table by priority. | — |
-| **AutoFish+** | Solves the fishing minigame via `FishingMinigameController` and banks the output; the same minigame framework covers honor farming. | AutoFish, AutoHonor |
-| **ResourceHUD** | Income rate per resource, time-to-afford for the next queued purchase. | — |
+Every module here submits to BlockChannel. That is what stops V2's situation where three modules
+each place blocks at their own rate and the server rejects all of them.
 
-### 6.7 Kits — 30 modules into one engine
+| Module | What it does | Stands on | Retires |
+|---|---|---|---|
+| **Scaffold** | Predictive bridging: tower / flat / diagonal / downward, plus a **block-flight** mode for when FlyEngine is being corrected. Block conservation, sprint-safe, "don't bridge into the void" guard, and an **auto** mode that bridges a PathSolver route between islands without input. Modes are named for what they do, not for Minecraft techniques (§2). | `BlockController` (33), `placeBlock` (15), BlockChannel | Scaffold, AutoBuildUp |
+| **BlockPlacer** | The general placement module, offensive and defensive from one rate limiter: box yourself in below a health threshold, box an enemy in, suffocate, and place from a chosen block priority list. | `placeBlock`, `BlockSelector`, BlockChannel | Block-In, AutoSuffocate |
+| **Breaker** | Owns the break channel. Multi-block breaking in a configurable shape and radius, tool auto-swap by hardness, and layer-aware ordering. Tunnels are a shape, not a module. | `BlockBreaker` (18), `breakBlock` (9), `BlockBreakController` | Breaker, FastBreak |
+| **BridgeCut** *(new)* | Breaks the block a moving enemy is about to step on, or the bridge behind a rusher, solved from their predicted position rather than their current one. The single highest-value use of the break channel in BedWars and V2 has nothing like it — `Breaker` is a radius, not a target. Submits to Breaker's channel; it supplies the targeting policy only. | `BlockBreaker`, `lib/prediction`, TargetProvider | — |
 
-There are 30+ `Auto<Kit>` modules today (AutoKaida, plus the whole roster), each independently
-written, independently broken, independently maintained. Replace all of them with **AutoKit Engine**
-— one module plus `data/kits.json`:
+### 6.8 Objectives — 5 modules (3 V2 modules in, 2 new)
+
+Beds are how the game is won, and V2 devotes five modules to them — three of which are ESP, leaving
+`BedAssist` and `BedProtector` as the only bed *behaviour* in the client. With the match store (F2)
+holding bed state, these become behaviour instead of scanning, and two obvious gaps get filled.
+
+| Module | What it does | Stands on | Retires |
+|---|---|---|---|
+| **BedBreaker** | Full-auto breaking: tool selection, layer-aware order, defenses first, resume after interruption, a "don't start what you can't finish" check against nearby defenders, and a **range** mode that breaks from the maximum accepted distance with no walk-in. Target selection reads the store's defense score (layers × material hardness × defenders), so the easiest bed is the default target rather than the nearest. | `BlockBreaker`, `ItemMeta`, match store, PathSolver | BedAssist |
+| **BedDefense** | Rebuilds your bed's exposed faces with the best available block the moment they're damaged, prioritizing the face under attack. | BlockChannel, `ItemMeta`, match store | BedProtector |
+| **BedAlarm** | Directional alarm: who, from where, layers remaining, on-screen arrow, distinct sound. The one notification in this client that earns a sound cue. | match store, `SoundManager` (17 refs) | BedAlarm |
+| **TrapLayer** *(new)* | Buys and places traps and landmines at your base's actual chokepoints — derived from the map's approach paths, not from a fixed offset — and re-arms them as they're consumed. V2 can *see* traps (`TrapESP`) and *ignore* them (`TrapDisabler`); nothing in it ever places one, which is the half that wins games. | `Shop`, `ItemMeta`, BlockChannel, PathSolver | — |
+| **RushAlert** *(new)* | Fires before the bed is touched, not after: detects players crossing toward your island, names the team and kit, estimates arrival, and optionally recalls Autopilot from the map. `BedAlarm` tells you that you already lost a layer; this is the one that lets you not lose it. | match store, TargetProvider | — |
+
+### 6.9 Economy — 6 modules (8 V2 modules in, 2 new)
+
+| Module | What it does | Stands on | Retires |
+|---|---|---|---|
+| **SmartBuy** | One priority list over real item data, covering personal purchases *and* team upgrades and forge tiers, with affordability, tier gating and "don't buy a sword I already beat" logic. V2 splits this across two item modules with no upgrade support at all. | `Shop` (15), `ShopItems`, `ItemMeta`, `TeamUpgradeMeta`, `BedwarsShopController` | AutoBuy, ShopClicker |
+| **AutoFarm** | The loop: collect from generators → bank at the forge → hand the next purchase to SmartBuy → repeat. **Enemy** generators are a target mode with an escape route and a "leave before they respawn" timer, not a second module. | match store, PathSolver, `Store` | AutoBank, AutoSteal |
+| **DropManager** | Owns the ground-item filter: drop junk, protect priority items, void-drop enemy loot, filtered auto-pickup. Pickup *range* is InteractEngine's channel; this owns *what*. | `ItemDropController`, `ItemMeta` | AutoVoidDrop, FastDrop |
+| **AutoLoot** *(new)* | Owns *containers*, where DropManager owns the ground: restock from your team chest against SmartBuy's priority list, and strip an enemy chest when you take their base. Routed by PathSolver, opened through InteractEngine. V2 can render chests four different ways and open none of them. | `ItemMeta`, InteractEngine, PathSolver | — |
+| **EnchantAuto** *(new)* | Collects from and applies at the enchant table by priority. The repo already collects the enchant-table block in three files (B-14) and never built a module on it. | `EnchantMeta` | — |
+| **AutoFish** | Solves the fishing minigame and banks the output; the same solver covers honor farming, which is the same minigame with a different reward. | `FishingMinigameController` (6 refs) | AutoFish, AutoHonor |
+
+### 6.10 Kits — 2 modules (9 V2 modules in, 0 new)
+
+**Correcting the record:** earlier drafts of this document claimed V2 has "30+ `Auto<Kit>` modules"
+that V3 would collapse into one. It does not, and the claim should not survive into V3 planning.
+There is exactly **one** `AutoKit` module, and it already dispatches through an
+`AutoKitFunctions[kit]` table covering **23 kits**, with per-kit toggles generated from
+`BedwarsKitMeta`. V2 got the structure right here.
+
+The problem is what's *inside* the table: those 23 entries are **325 lines of hardcoded Lua
+closures** (`6872274481.lua:14501–14826`). A new kit means shipping code. A changed ability breaks a
+closure buried mid-table with nothing naming it, which is exactly the failure §9 exists to end. And
+**eight** kit behaviours escaped the table entirely and became their own modules across three
+different categories — `AutoKaida` in Blatant, `OwlAura`/`VulcanAimbot`/`TerraAimbot` in Blatant,
+`MissileTP`/`RavenTP`/`TritonClutch`/`GrimReaperFix` in Utility.
+
+So the real change is smaller than advertised and better defined: **23 closures become data, 8
+strays come home, and the dispatch table stops being code.**
+
+| Module | What it does | Stands on | Retires |
+|---|---|---|---|
+| **AutoKit Engine** | `AutoKit`'s dispatch structure kept, its 23 hardcoded closures replaced by `data/kits.json`: a kit is a data entry naming its ability, triggers, aim target and cooldown. Aimed abilities are solved by ProjectileEngine, kit teleports by TeleportSuite, kit clutches by AntiVoid, kit auras by OmniAura — the engine routes, it does not reimplement. A new kit is a JSON entry; a kit broken by an update fails *visibly* in the binding-health panel (§9) instead of inside closure 14 of 23. | `AbilityController` (26), `BedwarsKitMeta`, `kit` | AutoKit, AutoKaida, OwlAura, VulcanAimbot, TerraAimbot, TritonClutch, MissileTP, RavenTP, GrimReaperFix |
+| **KitCounter** | The same table read from the other side: what the enemy kits present can do, when their abilities are back up (estimated from use), which item counters them, and which windows to dodge. Feeds the kit panel (§5.5); kit icons and ability-ready state are a PlayerESP layer, not a second ESP module. | `BedwarsKitMeta`, `data/kits.json`, TargetProvider | AutoCounter |
 
 ```json
 {
@@ -468,195 +555,223 @@ written, independently broken, independently maintained. Replace all of them wit
 }
 ```
 
-A new kit becomes a data entry; every kit gets the same cooldown and priority system for free;
-`KitCounter` and the kit panel read the same table; a kit broken by an update fails *visibly* in the
-binding-health panel instead of silently. Plus:
+### 6.11 Render & visuals — 10 modules (49 V2 modules in, 0 new)
 
-- **KitAdvisor** — counterplay suggestions for the enemy kits present, shown in the lobby.
-- **AbilityTimers** — HUD cooldown timers for every enemy ability, seeded from kill-feed and visual
-  ability cues.
-- **KitESP+** — kit icon over every player with ability-ready state. (Absorbs KitESP, KitDisplay.)
-- **AbilityChain** — chains your own kit ability into the aura's combo window (e.g. ability → close
-  → ComboKeeper) instead of firing it on cooldown blindly.
-- **Ability aiming** — `VulcanAimbot` and `TerraAimbot` are kit-ability aimbots, not melee aimbots.
-  They become aimed ability entries in `kits.json`, solved by ProjectileEngine (§6.2). Same for
-  `TritonClutch` (kit clutch → AntiVoid+ recovery entry), `RavenTP` / `MissileTP` (kit teleports →
-  TeleportSuite), `OwlAura` (kit aura → OmniAura), `KrystalDisabler` (→ EffectNullifier) and
-  `GrimReaperFix`. **Every kit-named module in V2 is a kit-engine data entry in V3** — that's the
-  30-modules-to-one claim, stated precisely.
+Nothing new here on purpose. Forty-nine V2 modules — eleven of them lighting presets, nine player-ESP
+variants, eight world-ESP variants — become ten modules with layers. Every one is drawn on a budgeted
+scheduler bucket with pooling, frustum culling and distance LOD (§8), which V2 does for none of
+them. This is the largest single reduction in the document.
 
-### 6.8 Render & visuals
+| Module | What it does | Stands on | Retires |
+|---|---|---|---|
+| **PlayerESP** | One player ESP with independently toggled, independently coloured layers: box, corner box, tracer, skeleton, chams, nametag, health bar, armor tier, kit icon with ability-ready state, distance, off-screen arrow. | `QueryUtil`, `getIcon`, TargetProvider, `drawing` | ESP, Chams, NameTags, Tracers, PlayerOutline, ArmorHighlight, Health, KitESP, KitDisplay |
+| **WorldESP** | The same layer treatment for world objects: bed plates with layer count, material icon and damage flash; generators with tier badge, spawn-countdown ring and contested highlight; chests and loot with a contents preview where readable; traps and beehives with arm state and blast radius. Eight V2 modules, one scan, one draw pass. | match store, `getIcon`, `ItemMeta` | BedESP, BedPlates, GeneratorESP, StorageESP, LootESP, ItemESP, TrapESP, BeehiveESP |
+| **BlockESP** | See-through-defenses view: obsidian, team blocks and bed shells highlighted by hardness. This is what `Xray` means in a game with no ores (§2). | `BlockController`, `QueryUtil` | Xray |
+| **DamageNumbers** | Floating damage and heal numbers with a combo counter. No crit styling — there are no crits (§2). | `DamageIndicator` (8 refs) | DamageIndicator, HitColor, WhiteHits |
+| **WorldTuner** | Every lighting and atmosphere preset as one module with a preset list, plus manual time / atmosphere / brightness and an **FPS-cost label per preset**. Eleven V2 modules that each set the same handful of `Lighting` properties. | `Lighting`, `VisualizerUtils` | IRLReplica, AbyssalDepths, StormMode, AuroraSky, ChillLighting, Shader, Bloom, MotionBlur, Fullbright, TimeChanger, Atmosphere |
+| **NoRender** | A per-class checklist of particles, effects and decorations to stop rendering, plus the FFlag tweaks that actually move the needle, with measured cost shown per entry. | `RunService`, executor FFlag capability | PotatoMode, FPSBoost, ShadowRemover, RemoveNeon, FFlagEditor |
+| **UITuner** | The game's own interface: hide, reposition or restyle BedWars HUD elements. Separate from NoRender because it is a legit-safe visual preference rather than a performance switch. | `UILayers`, `Roact`, `AppController`, `StreamerModeController` | Interface, UICleanup, RemovePlayerLevelUI, StreamRemover, OG4v4v4v4 |
+| **CameraSuite** | FOV, third-person offsets, shoulder swap, zoom presets, and freecam with a spectate target. One owner of the camera CFrame channel. | `FovController` (9 refs) | FOV, ZoomUnlocker, Freecam |
+| **ViewModel** | First-person model FOV, position, rotation, sway and bob. | `ViewmodelController` (14), `InventoryViewmodelController` | Viewmodel, ViewmodelVisuals, LegacyAnimation |
+| **Crosshair** | Shape, gap, thickness, dot, dynamic spread, hit marker driven by SwingTiming's accepted-hit signal. | `drawing`, SwingTiming | Crosshair |
 
-| Module | Concept | Absorbs |
+### 6.12 Utility — 10 modules (55 V2 modules in, 0 new)
+
+| Module | What it does | Stands on | Retires |
+|---|---|---|---|
+| **Autopilot** | The headline: plays the match as a phase machine over the match store — farm → bank → buy → route to the weakest bed → break → hunt survivors → close — with clutch recovery, a bail-out when outnumbered, and a hand-back to the user at any point. Every other module in §6 is a component it drives, which is exactly why it is one module and not five. Gated behind an explicit acknowledgement (§10.4). | match store, PathSolver, and most of §6 | AutoPlay, AutoWin |
+| **QueueManager** | Auto-queues a chosen mode after a match, retries on failure, tracks winstreak across queues, and hops on a bad server. | `QueueController`, `QueueMeta` | AutoRejoin, Rejoin, ServerHop |
+| **AFKGuard** | Anti-idle, auto-reconnect, and a log of what happened while you were away. | `Players`, `Store` | Anti-AFK |
+| **PanicButton** | One key: disable every non-legit module, restore camera, FOV and lighting, hide the GUI. Its bind is reserved and cannot be conflicted away (§7.2). | module registry | Panic |
+| **InteractEngine** | One owner of interaction range and speed — chests, shops, prompts, pickups — so five V2 modules stop stacking multipliers on the same channel. Block placement and break distance are ReachControl's; this is prompts and containers. | `ProximityPrompt`, `ClickHold`, `InteractExtender` surface | PickupRange, FastInteraction, InteractExtender, ProximityPromptDuration, ProximityExtender |
+| **Cosmetics** | Every purely local appearance option in one module with a preview: skins, tags, cursors, kill and win effects, armor trims, capes, hats, texture packs, sounds, trails, block selector colour. Twenty-five V2 modules that all do the same class of thing, none of which is visible to anyone else. | `ItemMeta`, `KillEffectController`, `SoundList`, `SoundManager` | SkinChanger, CustomTags, CustomCursor, InvisibleCursor, KillEffect, WinEffect, BedBreakEffect, ArmorTrims, ChinaHat, Cape, GamingChair, TexturePack, AnimationPlayer, SongBeats, SoundChanger, CleanKit, BlockSelectorColor, Breadcrumbs, Headless, OGNameTags, AutoEmote, NightmareEmote, CustomClanTag, TitleChanger, LARPKits |
+| **Spoofer** | Everything that misreports *you* — to the server or to other clients — in one module, with one honesty setting and a per-entry label saying whether it is client-local (cosmetic) or server-visible (risk). V2's fourteen spoofers had fourteen risk profiles and no way to tell which was which: six are lobby-only vanity sitting in the same list as things the server can actually see. Includes an **inspect** mode — V2's `ACMODView` — that shows you what everyone else sees. | `KillFeedController`, `Store`, `GamePlayer` | NameTagSpoofer, DeviceSpoofer, StateSpoofer, KillfeedSpoofer, WinstreakSpoofer, Disguise, PlayerModel, NametagSpoof, LeaderboardSpoof, PlayerProfileSpoof, StatsBoardSpoof, SetPlayerLevel, SetPlayerWins, ACMODView |
+| **Statistics** | Persistent lifetime and per-session stats — kills, beds, wins, winstreak, per-module usage and enabled time — plus a match timeline (beds, kills, purchases, deaths) rendered as an after-action summary. Absorbs V2's lobby-only `ViewMatchHistory`, which fetched the same data and displayed it once. Feeds §7.6's "last used" surface. | `Store`, config store | ViewMatchHistory |
+| **ChatFilter** | Client-side mute, highlight and regex rules, per player, plus chat position and name colouring. | `TextChatService` | ChatPosition, ChatNameColor |
+| **AutoHotbar** | Saved hotbar layouts applied on spawn and after purchases, driven by the inventory panel's drag-to-reorder (§5.5). Kept as-is in scope, rebuilt on the new lifecycle. | `getInventory`, `ItemMeta` | AutoHotbar |
+
+### 6.13 Lobby — 1 module
+
+The lobby file's five registrations mostly stop being lobby-specific: `Sprint` is NoSlow, `Headless`
+and `OGNameTags` are Cosmetics, `WinstreakSpoofer` is Spoofer. What remains is genuinely
+lobby-only:
+
+| Module | What it does | Retires |
 |---|---|---|
-| **UnifiedESP** | One ESP with a layer system — box / corner box / tracer / skeleton / chams / nametag / healthbar / armor / kit / distance / off-screen arrow — each independently toggled and coloured. | ESP, Chams, NameTags, Tracers, PlayerOutline, ArmorHighlight, Health |
-| **BedPlates+** | Layer count, material icon, damage flash, team colour. | BedPlates |
-| **GeneratorESP+** | Tier badge, spawn countdown ring, contested highlight. | GeneratorESP |
-| **StorageESP+** | Chests and loot with a contents preview where readable. | StorageESP, LootESP, ItemESP |
-| **TrapESP+** | Traps and landmines with arm state and blast radius. | TrapESP, BeehiveESP |
-| **ProjectileESP** | **Other people's** projectiles: trajectories, predicted impact points, arrow trails. | ProjectileTracers, Arrows |
-| **BlockESP** | See-through-defenses view: obsidian/team blocks and bed shells highlighted by hardness. This is what `Xray` should be in BedWars — not ore hunting (§2). | Xray |
-| **DamageNumbers** | Floating damage/heal numbers with a combo counter — no crit styling, there are no crits. | DamageIndicator, HitColor |
-| **KillFeed+** | Custom feed with kit icons, streaks and your kills highlighted. | KillfeedSpoofer (display half) |
-| **WorldTuner** | The AetherIRL / Abyss / Storm / Aurora lighting families as one module with presets, plus time/atmosphere/brightness, and an FPS-cost label per preset. | IRLReplica, AbyssalDepths, StormMode, AuroraSky, ChillLighting, Shader, Bloom, MotionBlur, Fullbright, TimeChanger, Atmosphere |
-| **NoRender** | Per-class checklist of particles/effects to stop rendering, for FPS. | PotatoMode, FPSBoost, ShadowRemover, RemoveNeon |
-| **UITuner** | The game's own UI: hide, reposition or restyle BedWars HUD elements. Separate from NoRender because it's a legit-safe visual preference, not a performance switch. | Interface, UICleanup, RemovePlayerLevelUI, StreamRemover, OG4v4v4v4 |
-| **CustomCrosshair** | Shape, gap, thickness, dot, dynamic spread, hit marker. | Crosshair |
-| **CameraTweaks** | Third-person offsets, shoulder swap, zoom presets, FOV over `FovController`. | FOV, ZoomUnlocker |
-| **ViewModel+** | FOV, position, rotation, sway, bob over `ViewmodelController`. | Viewmodel, ViewmodelVisuals, LegacyAnimation |
-| **Trail** | Configurable motion trail for you or your targets. | Breadcrumbs |
+| **AutoGamble** | Automated gambling with a configurable stop rule — stop on profit, stop on loss, stop after N. The stop rule is the module; V2's version is a click loop. | AutoGamble |
 
-### 6.9 Utility
+Winstreak and next-milestone readouts are HUD elements (§5.7); mode selection and auto-ready are
+QueueManager options (§6.12).
 
-| Module | Concept | Absorbs |
-|---|---|---|
-| **Autopilot** | The headline overpowered module: plays the match. Farm → bank → buy → rush the weakest bed (DefenseAnalyzer) → break → hunt survivors, with clutch recovery and a bail-out when outnumbered. Everything else in §6 is a component of it. | AutoPlay |
-| **MacroEngine** | Record, replay, bind and share action macros as text. | — |
-| **Scripting Console** | Sandboxed in-GUI Lua console with the core + BedWars API and autocomplete. Turns Aether into a platform. Opt-in behind a confirmation. | — |
-| **QueueManager** | Auto-queues a chosen mode after a match, retries on failure, tracks winstreak across queues. | AutoRejoin, Rejoin, ServerHop |
-| **AFK Suite** | Anti-idle, auto-respond, auto-reconnect, plus a log of what happened while away. | Anti-AFK, AutoToxic |
-| **ChatFilter** | Client-side mute/highlight rules with regex, per player. | ChatPosition, ChatNameColor |
-| **StaffDetector+** | Badge/group/gamepass heuristics, join alerts, configurable panic action. | StaffDetector, CheatDetector |
-| **PanicButton** | One key: disable every non-legit module, restore camera/FOV/lighting, hide the GUI. | Panic |
-| **ConfigSync** | Export/import configs as a string with a diff preview before applying. | — |
-| **MatchRecorder** | Logs a match timeline (beds, kills, purchases) and replays it as a summary. | — |
-| **Statistics** | Persistent lifetime stats — kills, beds, wins, winstreak, per-module usage. | — |
-| **Cosmetics** | Skin / tag / cursor / effect / audio customization in one place, all purely local. | SkinChanger, CustomTags, CustomCursor, InvisibleCursor, KillEffect, WinEffect, BedBreakEffect, ArmorTrims, ChinaHat, Cape, GamingChair, TexturePack, AnimationPlayer, SongBeats, SoundChanger, CleanKit, BlockSelectorColor |
-| **SpooferSuite** | Everything that misreports *you* to the server or to other clients, in one place with a single honesty setting — instead of five modules with five risk profiles. | NameTagSpoofer, DeviceSpoofer, StateSpoofer, KillfeedSpoofer (spoof half), WinstreakSpoofer, Disguise, PlayerModel |
-| **InteractEngine** | One owner for interaction range and speed (chests, shops, prompts, pickups), so three modules stop stacking multipliers on the same channel. | PickupRange, FastInteraction, InteractExtender, ProximityPromptDuration |
+### 6.14 Legit mode — 2 modules
 
-### 6.10 Lobby
+72 Legit registrations currently have no home in two skins (B-04). Legit deserves investment as a
+*mode that reshapes every module's defaults* — capping ReachControl to a plausible envelope, forcing
+OmniAura to Swing delivery, raising Humanizer's intensity — rather than as a category with its own
+duplicate modules. Only two behaviours exist solely in this mode:
 
-**WinstreakHUD** (streak, session record, next-milestone) · **AutoGamble+** with a configurable stop
-rule · **OGNameTags** kept · **QueueAutomation** — pick mode, auto-ready, auto-requeue. The lobby's
-`Sprint` is the same module as the match one (SprintSync, §6.1) and stops being duplicated;
-`WinstreakSpoofer` moves to SpooferSuite (§6.9).
+| Module | What it does | Stands on | Retires |
+|---|---|---|---|
+| **AimAssist** | Curve-driven camera smoothing with per-axis speed, FOV falloff, target-switch delay and humanized jitter. The only module in the document that moves the camera for aim; OmniAura's Silent and Packet modes never touch it. | TargetProvider, Humanizer, `FovController` | AimAssist |
+| **VisualsOnly** | One toggle: everything that draws, nothing that acts. Disables and locks every module that writes a remote or a movement channel. | module registry | — |
 
-### 6.11 Legit mode
+Presets — Legit / Closet / Rage — ship in `configs/` as readable JSON (F6), replacing the
+double-encoded `cc.json` and `rage.json`.
 
-72 registrations currently have no home in two skins. Legit deserves real investment as a *mode*
-that reshapes defaults, not just a category.
+### 6.15 Exploit tier — 8 modules, all gated
 
-- **AimAssist+** — curve-driven smoothing, per-axis speed, FOV falloff, humanized jitter,
-  target-switch delay.
-- **LegitReach** — stays inside a plausible envelope and randomizes per swing.
-- **Humanizer** — global jitter and latency variance applied to every automated action.
-- **VisualsOnly** — one toggle: ESP and HUD, nothing that touches gameplay.
-- **Presets** — Legit / Closet / Rage shipped in `configs/` as readable JSON, replacing the current
-  double-encoded `cc.json` / `rage.json`.
+These are the modules whose steady state is "the server hasn't corrected me yet" (design rule 5).
+They are not deleted — several are the most powerful things in the client — but they are quarantined
+under one contract rather than mixed into the combat and movement tables where their risk is
+invisible.
 
-### 6.12 Cross-module behaviour rules
+**The contract:** each sits behind a capability probe and self-disables cleanly when its primitive is
+unavailable, instead of erroring · each shows **"last verified against BedWars build X"** in the GUI
+· each is off by default, badged blatant (§7.4), and excluded from every shipped preset ·
+**AutoPatchCheck** compares the live build against `data/signatures.json` at load and warns which of
+them are likely broken this build (§9) · any one of them that cannot be brought under this contract
+is deleted rather than shipped in V2's state of "works until it silently doesn't".
 
-Overpowered modules interfere with each other more than they interfere with the game. The engine
-must enforce:
-
-- **Declared conflicts** — `OmniAura` vs `PacketAura`, `FlyEngine` vs `BlockFly`, `SpeedEngine`
-  modes. Surfaced in the GUI, not silently broken.
-- **One owner per channel** — exactly one module writes velocity, one writes CFrame, one owns the
-  attack remote. Contention is a lint error, not a race.
-- **Global rate ceiling** — all remote traffic passes one budget so three modules can't collectively
-  spam past what the server tolerates.
-- **Safety guards** — nothing acts while dead, in the lobby, in a cutscene, or during respawn.
-- **Randomization is central** — one humanization service, so every module's jitter is coherent
-  rather than each rolling its own.
-- **Auto-throttle on correction** — a lagback tells `AntiLagback+` which module triggered it, and
-  that module backs off before the user notices.
-- **No new module without a disposition check** — every proposal is diffed against §6.14 first. If
-  an existing module already does 80% of it, it becomes a mode or an option of that module. This is
-  how V2 ended up with four auras, three projectile aimbots and five lighting modules.
-
-### 6.13 Exploit tier
-
-Highest churn, most likely to break. Policy, not a wish list:
-
-- Every exploit module sits behind a **capability probe** and self-disables cleanly when its
-  primitive is unavailable, instead of erroring.
-- Each shows **"last verified against BedWars build X"** in the GUI so users know what's stale.
-- **AutoPatchCheck** compares the live build against `data/signatures.json` at load and warns which
-  modules are likely broken this build (§9).
-- Existing entries (`ProjectileExploit`, `ShopTierBypass`, `InstantKill`, `DamageBoost`,
-  `InfiniteShield`, `GrimReaperFix`) get audited into this contract or deleted — no module ships in
-  the current state of "works until it silently doesn't."
-
-### 6.14 Existing-module disposition audit
-
-All **207** unique module names in V2, each with exactly one destination. Nothing proposed in
-§6.1–§6.13 duplicates a module that already exists: where two engines could plausibly claim the
-same V2 module, the split is stated in the row itself.
-
-**Absorbed into a §6 engine** (the module is retired; its behaviour becomes a mode or option):
-
-| Engine | Retires |
+| Module | Retires |
 |---|---|
-| OmniAura | Killaura, Aura, SilentAura, TPAura, OwlAura, TriggerBot, AutoClicker, NoClickDelay |
-| ReachRamp / ReachEnvelope | Reach, ReachDisplay |
+| **DesyncEngine** — position-packet hold and burst, with a live buffer visualizer and manual release. Declared in conflict with AntiLagback. | FakeLag, Desync, Blink |
+| **AntiDeath** — health-state desync, auto-disabling the instant the server corrects. | AntiDeath |
+| **NoClip** — phase with a re-solidify guard, so a correction doesn't drop you into the void. | NoClip |
+| **InfiniteShield** — shield duration beyond what the item grants. The *timing* half is ShieldSync (§6.4) and is not gated. | InfiniteShield |
+| **InstantKill** | InstantKill |
+| **DamageBoost** | DamageBoost |
+| **ShopTierBypass** | ShopTierBypass |
+| **ProjectileExploit** | ProjectileExploit |
+
+### 6.16 Uniqueness invariants
+
+"No two modules do the same thing" is enforceable, not aspirational. These are the pairs that look
+like overlaps, with the boundary stated, plus the lint that keeps them apart.
+
+| Pair | Boundary |
+|---|---|
+| OmniAura · ProjectileEngine · AutoKit Engine · AimAssist | Four things aim. Melee is OmniAura, projectiles are ProjectileEngine, abilities are the kit engine, and **only AimAssist moves the camera**. |
+| ReachControl · InteractEngine | Sword, place and break distance vs. prompt and container distance. Two channels, never both. |
+| Breaker · BedBreaker · BridgeCut | Breaker owns the break channel; the other two supply targeting policy (objective layers, predicted footfall) and submit to it. |
+| Scaffold · BlockPlacer · BedDefense · TrapLayer | All place blocks; all submit to BlockChannel's single rate limit with declared priority. Route bridging vs. enclosure vs. objective repair vs. trap arming. |
+| SpeedEngine · NoSlow · FlyEngine · AntiVoid · TargetOrbit · AutoPath | All move you; all write through MovementChannel, which resolves precedence rather than letting the last writer win. |
+| PlayerESP · WorldESP · BlockESP · IncomingProjectiles | Players vs. world objects vs. terrain-through-walls vs. projectiles. Projectile rendering lives with the projectile module and is not duplicated in §6.11. |
+| Cosmetics · Spoofer | What only you see vs. what others see. If it leaves your client, it is Spoofer's, with a risk label. |
+| WorldTuner · NoRender · UITuner | Lighting and atmosphere vs. render suppression for FPS vs. the game's own interface. |
+| DropManager · AutoLoot · InteractEngine | Ground items vs. containers vs. the range and speed both use. |
+| AntiLagback · DesyncEngine | One reacts to corrections; one causes them. Declared conflict, surfaced in the GUI. |
+| BedAlarm · RushAlert | After the bed is hit vs. before. |
+
+**Enforced in CI** (§4.3): module names unique across the registry · every module declares exactly
+one owned channel or none · no two modules declare the same owned channel · every module's
+`GameBind` list resolves through `bind.lua` · every `Retires` entry appears exactly once across the
+whole of §6 · every one of V2's 223 names appears exactly once in §6.17.
+
+### 6.17 Disposition audit — all 223 V2 modules
+
+Every V2 module name, each with exactly one destination. Nothing in §6.4–§6.15 duplicates something
+that already exists; where two engines could plausibly claim the same V2 module, §6.16 states the
+split.
+
+**Absorbed into a V3 module** (201 names):
+
+| Destination | Retires |
+|---|---|
+| OmniAura | Killaura, Aura, SilentAura, TPAura, SilentAim, TriggerBot, AutoClicker, NoClickDelay, BackTrack |
+| ReachControl | Reach, ReachDisplay, Extender |
 | HitboxSolver | HitBoxes, HitFix |
-| SilentAim+ / AimAssist+ *(legit, §6.11)* | SilentAim, AimAssist |
 | KnockbackControl | Velocity, KnockbackDelay |
 | ArmorBreaker | ArmorSwitch, AutoTool |
 | EffectNullifier | BalloonDisabler, KrystalDisabler, TrapDisabler, AntiLasso, AntiSuffocate, AntiRagdoll |
-| AntiDeath+ / AntiLagback+ | AntiDeath, AntiLagback, Disabler |
-| DesyncEngine | FakeLag, Desync, Blink |
-| AntiAim | SpinBot |
-| TargetOrbit / BackTrack+ | TargetStrafe, PlayerAttach, BackTrack |
-| AutoConsume+ | AutoConsume, FastConsume, PotionStatus |
+| AutoConsume | AutoConsume, FastConsume, PotionStatus |
+| AntiLagback | AntiLagback, Disabler |
+| ProjectileEngine | ProjectileAimbot, ProjectileAura, AutoShoot, BowAssist, AutoRelease, ProjectileLanding |
+| TelepearlSolver | AutoPearl |
+| IncomingProjectiles | ProjectileTracers, Arrows, ProjectileDodger |
+| SpeedEngine | Speed, Step, LongJump, HighJump, BoostAirJump, InfiniteJump, Parkour |
+| FlyEngine | Fly |
+| BalloonFly | AutoBalloon |
+| LassoSwing | AutoLasso |
+| TeleportSuite | MouseTP |
+| AntiVoid | AntiFall, NoFallDamage, SafeWalk |
+| NoSlow | NoSlowdown, Sprint, KeepSprint |
+| TargetOrbit | TargetStrafe, PlayerAttach |
+| Scaffold | Scaffold, AutoBuildUp |
+| BlockPlacer | Block-In, AutoSuffocate |
+| Breaker | Breaker, FastBreak |
+| BedBreaker | BedAssist |
+| BedDefense | BedProtector |
+| BedAlarm | BedAlarm |
+| SmartBuy | AutoBuy, ShopClicker |
+| AutoFarm | AutoBank, AutoSteal |
+| DropManager | AutoVoidDrop, FastDrop |
+| AutoFish | AutoFish, AutoHonor |
+| AutoKit Engine | AutoKit, AutoKaida, OwlAura, VulcanAimbot, TerraAimbot, TritonClutch, MissileTP, RavenTP, GrimReaperFix |
 | KitCounter | AutoCounter |
-| SprintSync / ShieldSync | Sprint, KeepSprint, InfiniteShield *(exploit half → §6.13)* |
-| ProjectileEngine | ProjectileAimbot, ProjectileAura, AutoShoot, BowAssist, AutoRelease *(audit: Utility-category in V2)* |
-| ArcPredict / DodgeNet / TelepearlSolver | ProjectileLanding, ProjectileDodger, AutoPearl |
-| SpeedEngine | Speed, Step, LongJump, HighJump, BoostAirJump, InfiniteJump |
-| FlyEngine / BalloonFly / LassoSwing | Fly, AutoBalloon, AutoLasso |
-| TeleportSuite | MouseTP, MissileTP, RavenTP |
-| AntiVoid+ | AntiFall, NoFallDamage, TritonClutch, SafeWalk |
-| NoSlow+ / AutoJump / NoClip+ / Freecam+ / Waypoints | NoSlowdown, Parkour, NoClip, Freecam, Waypoints |
-| Scaffold+ / AutoBridge / NukeBreaker / Schematic+ | Scaffold, AutoBuildUp, Breaker, FastBreak, Schematica |
-| AutoDefense / AutoSuffocate+ | Block-In, AutoSuffocate |
-| ReachPlace | Extender *(pending audit)* |
-| BedIntel / BedBreaker / BedDefense / BedAlarm+ / AutoWin+ | BedESP, BedAssist, BedProtector, BedAlarm, AutoWin |
-| AutoFarm / SmartBuy / GenSteal / DropManager | AutoBank, AutoBuy, ShopClicker, ShopQuickBuy, AutoSteal, AutoVoidDrop, FastDrop |
-| AutoFish+ | AutoFish, AutoHonor |
-| AutoKit Engine | AutoKit, AutoKaida *(and every other `Auto<Kit>`)*, VulcanAimbot, TerraAimbot, GrimReaperFix |
-| KitESP+ | KitESP, KitDisplay |
-| UnifiedESP | ESP, Chams, NameTags, Tracers, PlayerOutline, ArmorHighlight, Health |
-| BedPlates+ / GeneratorESP+ / StorageESP+ / TrapESP+ | BedPlates, GeneratorESP, StorageESP, LootESP, ItemESP, TrapESP, BeehiveESP |
-| ProjectileESP | ProjectileTracers, Arrows |
+| PlayerESP | ESP, Chams, NameTags, Tracers, PlayerOutline, ArmorHighlight, Health, KitESP, KitDisplay |
+| WorldESP | BedESP, BedPlates, GeneratorESP, StorageESP, LootESP, ItemESP, TrapESP, BeehiveESP |
 | BlockESP | Xray |
-| DamageNumbers / KillFeed+ | DamageIndicator, HitColor |
+| DamageNumbers | DamageIndicator, HitColor, WhiteHits |
 | WorldTuner | IRLReplica, AbyssalDepths, StormMode, AuroraSky, ChillLighting, Shader, Bloom, MotionBlur, Fullbright, TimeChanger, Atmosphere |
-| NoRender / UITuner | PotatoMode, FPSBoost, ShadowRemover, RemoveNeon, Interface, UICleanup, RemovePlayerLevelUI, StreamRemover, OG4v4v4v4 |
-| CustomCrosshair / CameraTweaks / ViewModel+ / Trail | Crosshair, FOV, ZoomUnlocker, Viewmodel, ViewmodelVisuals, LegacyAnimation, Breadcrumbs |
-| Autopilot / QueueManager / AFK Suite | AutoPlay, AutoRejoin, Rejoin, ServerHop, Anti-AFK, AutoToxic |
-| StaffDetector+ / PanicButton | StaffDetector, CheatDetector, Panic |
+| NoRender | PotatoMode, FPSBoost, ShadowRemover, RemoveNeon, FFlagEditor |
+| UITuner | Interface, UICleanup, RemovePlayerLevelUI, StreamRemover, OG4v4v4v4 |
+| CameraSuite | FOV, ZoomUnlocker, Freecam |
+| ViewModel | Viewmodel, ViewmodelVisuals, LegacyAnimation |
+| Crosshair | Crosshair |
+| Autopilot | AutoPlay, AutoWin |
+| QueueManager | AutoRejoin, Rejoin, ServerHop |
+| AFKGuard | Anti-AFK |
+| PanicButton | Panic |
+| InteractEngine | PickupRange, FastInteraction, InteractExtender, ProximityPromptDuration, ProximityExtender |
+| Cosmetics | SkinChanger, CustomTags, CustomCursor, InvisibleCursor, KillEffect, WinEffect, BedBreakEffect, ArmorTrims, ChinaHat, Cape, GamingChair, TexturePack, AnimationPlayer, SongBeats, SoundChanger, CleanKit, BlockSelectorColor, Breadcrumbs, Headless, OGNameTags, AutoEmote, NightmareEmote, CustomClanTag, TitleChanger, LARPKits |
+| Spoofer | NameTagSpoofer, DeviceSpoofer, StateSpoofer, KillfeedSpoofer, WinstreakSpoofer, Disguise, PlayerModel, NametagSpoof, LeaderboardSpoof, PlayerProfileSpoof, StatsBoardSpoof, SetPlayerLevel, SetPlayerWins, ACMODView |
+| Statistics | ViewMatchHistory |
 | ChatFilter | ChatPosition, ChatNameColor |
-| Cosmetics | SkinChanger, CustomTags, CustomCursor, InvisibleCursor, KillEffect, WinEffect, BedBreakEffect, ArmorTrims, ChinaHat, Cape, GamingChair, TexturePack, AnimationPlayer, SongBeats, SoundChanger, CleanKit, BlockSelectorColor |
-| SpooferSuite | NameTagSpoofer, DeviceSpoofer, StateSpoofer, KillfeedSpoofer, WinstreakSpoofer, Disguise, PlayerModel |
-| InteractEngine | PickupRange, FastInteraction, InteractExtender, ProximityPromptDuration |
+| AutoHotbar | AutoHotbar |
+| AutoGamble | AutoGamble |
+| AimAssist | AimAssist |
+| DesyncEngine *(gated)* | FakeLag, Desync, Blink |
+| AntiDeath *(gated)* | AntiDeath |
+| NoClip *(gated)* | NoClip |
+| InfiniteShield *(gated)* | InfiniteShield |
+| InstantKill *(gated)* | InstantKill |
+| DamageBoost *(gated)* | DamageBoost |
+| ShopTierBypass *(gated)* | ShopTierBypass |
+| ProjectileExploit *(gated)* | ProjectileExploit |
 
-**Kept as standalone modules** (nothing above duplicates them; they just get the new lifecycle,
-config and status surface): AutoHotbar, AutoGamble, OGNameTags, Spider, Gravity, Swim *(audit: no
-water on most maps — likely delete)*, Invisible, ChatSpammer, ChatCrasher, Memory, FFlagEditor,
-Search, Timer, DamageBoost, InstantKill, ProjectileExploit, ShopTierBypass *(last five → §6.13)*.
+**Not modules** (10 names) — they exist, they just aren't module rows:
 
-**Become HUD elements, not modules** (they're overlays in the HUD editor, §5.7): FPS, Ping, Clock,
-Coords, Keystrokes, Speedmeter.
+| Destination | Names |
+|---|---|
+| HUD elements (§5.7) | FPS, Ping, Clock, Coords, Keystrokes, Speedmeter, Timer, Waypoints |
+| GUI search (§5.3) | Search |
+| Profiler panel (§5.6) | Memory |
 
-**Dropped:** MurderMystery (other game).
+**Deleted** (12 names), with the reason in §6.1: AutoToxic, ChatSpammer, ChatCrasher, StaffDetector,
+CheatDetector, Schematica, Spider, Gravity, Swim, Invisible, SpinBot, MurderMystery.
 
-**Near-duplicates caught by this audit** — ideas that were cut or demoted rather than shipped
-alongside something that already exists:
+**New in V3** (9 modules, no V2 ancestor): ShieldSync, ExplosiveSolver, AutoPath, BridgeCut,
+TrapLayer, RushAlert, AutoLoot, EnchantAuto, VisualsOnly.
 
-| Proposed | Collided with | Resolution |
-|---|---|---|
-| PacketAura | `SilentAura` | Mode of OmniAura, not a module. |
-| BedAura | `BedAssist` / BedBreaker | Range mode of BedBreaker. |
-| ClutchAssist | `TritonClutch` / AntiVoid+ | Manual mode of AntiVoid+. |
-| DisablerEngine (name) | `Disabler` (movement detection) | Renamed EffectNullifier; `Disabler` went to AntiLagback+. |
-| SwingTiming as an aura | OmniAura cadence | Demoted to the shared timing service both use. |
-| ProjectileESP vs ArcPredict | `ProjectileTracers` / `ProjectileLanding` | Split: yours vs theirs. |
-| BedIntel vs BedPlates+ | `BedESP` / `BedPlates` | Split: data vs visuals. Same for GenIntel/GeneratorESP+. |
-| ReachPlace vs InteractEngine | `InteractExtender`, `Extender` | Split: block placement vs interaction range. |
-| DropManager vs InteractEngine | `PickupRange` | Range is InteractEngine's; filtering is DropManager's. |
-| "CritTimer", "BlockHit" | — | Deleted outright: Minecraft mechanics that don't exist here (§2). |
+### 6.18 Cross-module behaviour rules
+
+Overpowered modules interfere with each other more than they interfere with the game. The engine
+enforces:
+
+- **Declared conflicts** — FlyEngine vs. Scaffold's block-flight mode, AntiLagback vs. DesyncEngine,
+  AimAssist vs. OmniAura's silent modes. Surfaced in the GUI, not silently broken.
+- **One owner per channel** (§6.16) — attack, movement, block, camera, remote budget. Contention is
+  a lint error, not a race.
+- **Global rate ceiling** — all remote traffic passes RemoteBudget, so three modules cannot
+  collectively spam past what the server tolerates.
+- **Safety guards** — nothing acts while dead, in the lobby, in a cutscene, or during respawn.
+- **Randomization is central** — Humanizer is one service, so every module's jitter is coherent
+  rather than each rolling its own and producing a *more* distinctive fingerprint.
+- **Auto-throttle on correction** — a lagback tells AntiLagback which module caused it, and that
+  module backs off before the user notices.
+- **No new module without a disposition check** — every proposal is diffed against §6.17 and tested
+  against the six rules in §6.2 first. If an existing module already does 80% of it, it becomes a
+  mode or an option of that module. That check is the entire difference between this list and V2's.
 
 ---
 
@@ -765,7 +880,7 @@ The #1 cause of "the script broke" in this repo's history.
 | **1 — Core split** | Lift the shared core out of `new.lua` (F5), define the skin contract, port Nexus, add scheduler / state store / console. V2 skins stay loadable through a shim so nothing goes dark mid-migration. |
 | **2 — Skin parity** | Classic, Legacy, Rise onto the core. B-02, B-03, B-04, B-06, B-08, B-12 mostly cease to exist. HUD editor + theme engine. |
 | **3 — BedWars layer** | `bind.lua` + `signatures.json` **first** (everything depends on it), then match state, beds/generators/shop/inventory/kits helpers, split the 25k-line file by category, dissolve `universal.lua`. Fixes B-05, B-16. Ship the match panels — the first visibly new thing users get. |
-| **4 — Module wave** | §6 in order: Combat → Projectiles → Movement → Building → Beds → Economy → Kits engine → Render → Utility → Legit. **AutoKit Engine is the highest-leverage single item** (retires 30 modules); **Autopilot is the headline**. |
+| **4 — Module wave** | §6.3 shared services **first** — SwingTiming, TargetProvider, MovementChannel, BlockChannel, PathSolver, RemoteBudget, Humanizer — because every table below submits to one of them. Then Combat → Projectiles → Movement → Building → Objectives → Economy → Kits → Render → Utility → Legit, with the exploit tier (§6.15) last and behind its contract. **Render is the largest single reduction** (49 → 10); **Autopilot is the headline**; the 12 deletions in §6.1 ship in Phase 0 with the scope cut. |
 | **5 — Behaviour wave** | §7, front-loading keybinds, notifications, search, onboarding, and §7.6 clarity. |
 | **6 — Polish** | Profiler and network panels, config v2 + migration, loader hashing (B-11), docs, `version.txt` → `4.0`. |
 
@@ -794,7 +909,7 @@ reverses `OnEnable`.
 | `universal.lua` dissolution loses undocumented behaviour | Generate the module + option list before and after, and diff. Any asymmetry is explicit. |
 | Users lose configs in migration | V2 profiles copied to `profiles/v2-backup/` untouched before any write. |
 | BedWars ships a large update mid-port | §9 is scheduled first in Phase 3 precisely so update day is a diff, not archaeology. |
-| The overpowered wave gets people banned faster than V2 did | §6.12 (rate ceiling, auto-throttle, safety guards) and blatancy badges (§7.4) are part of the module wave, not a follow-up. |
+| The overpowered wave gets people banned faster than V2 did | §6.18 (rate ceiling, auto-throttle, safety guards), the §6.15 exploit contract, and blatancy badges (§7.4) are part of the module wave, not a follow-up. |
 | Scope — §5–§7 is ~200 items | Deliberately independent and phased. Phases 0–3 are V3; 4–6 are continuous delivery after it. |
 
 ### 10.4 Open questions
@@ -806,9 +921,10 @@ reverses `OnEnable`.
    split — but gate them behind the capability contract so a half-finished skin can't ship.
 3. **Is Legit a category or a mode that reshapes every module's defaults?** Recommendation: a mode.
    It's what people actually mean, and it makes the 72 Legit registrations coherent.
-4. **Does the Scripting Console ship enabled?** Recommendation: no — opt-in behind a confirmation,
-   since it runs arbitrary code against the core.
-5. **Is Autopilot (§6.9) shipped on, or gated?** Recommendation: gated behind an explicit
+4. **Do the 12 deleted modules (§6.1) need a deprecation path?** Recommendation: no for the six
+   gimmicks and three griefing modules, but `StaffDetector` has real users who will notice. Announce
+   it with the Phase 0 scope cut rather than silently in a module wave.
+5. **Is Autopilot (§6.12) shipped on, or gated?** Recommendation: gated behind an explicit
    acknowledgement. It's the most powerful and the most conspicuous thing in the document.
 
 ---
