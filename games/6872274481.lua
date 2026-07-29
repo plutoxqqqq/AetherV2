@@ -3495,7 +3495,6 @@ run(function()
     local VoidAxeClutch
     local HealthCheck
     local Zephyr
-    local blatantHeld = false
     local rayCheck = RaycastParams.new()
     rayCheck.RespectCanCollide = true
     rayCheck.FilterType = Enum.RaycastFilterType.Exclude
@@ -3506,7 +3505,6 @@ run(function()
     local lastBlockPlace = 0
     local lastZephyrJump = 0
     local fallAnchorY
-    local tpAnchorY
     local projectileRemote = {InvokeServer = function() end}
     task.spawn(function()
         projectileRemote = bedwars.Client:Get(remotes.FireProjectile).instance
@@ -3547,66 +3545,37 @@ run(function()
         return ray and ray.Position.Y or nil
     end
 
-    -- TP mode. A fall only hurts because of how much of it the game has registered by the time
-    -- you land, so this keeps clearing that: drop to the floor with no speed for long enough
-    -- that the landing replicates and the fall resets, then carry on falling from where we
-    -- WOULD have been had we never stopped.
+    -- The distance from the root's centre down to the floor we stand on. entitylib already folds
+    -- half the root part into HipHeight, so adding it again (as this used to) put every floor
+    -- estimate a stud out.
+    local function standClearance(root, character)
+        local humanoid = character.Humanoid
+        return character.HipHeight or ((humanoid and humanoid.HipHeight or 2) + (root.Size.Y * 0.5))
+    end
+
+    -- TP mode. BedWars charges for the landing you report, so the way to clear a long drop is to
+    -- end it early: cast straight down, put the character on the floor it was heading for anyway
+    -- and take the touchdown there with no speed left on it.
     --
-    -- That last part is the fix. The old version snapped back to the exact spot it left, so the
-    -- character could never make any downward progress - every touch rewound the fall to the
-    -- same height and it just hovered and strobed in place, which is what "TP does nothing"
-    -- looked like. Resuming along the fall instead means the descent carries on normally and
-    -- each touch simply wipes the damage that had built up behind it.
+    -- The old version teleported down for a couple of frames and then teleported back UP to
+    -- "resume" the fall from where it would have got to. Moving upwards that fast is exactly what
+    -- the server's movement check rejects, so every touch was rubber-banded straight back to
+    -- where it started and the mode looked like it never teleported at all. A drop to the ground
+    -- is a move the server is already expecting, so this one lands.
     local function tpNoFall(root, character)
         local groundY = groundBelow(root, character)
         if not groundY then return false end
 
-        local humanoid = character.Humanoid
-        local startCFrame = root.CFrame
-        local startVel = root.AssemblyLinearVelocity
-        local clearance = (character.HipHeight or (humanoid and humanoid.HipHeight) or 2) + (root.Size.Y * 0.5)
-        local floorY = groundY + clearance
-        local drop = startCFrame.Position.Y - floorY
+        local floorY = groundY + standClearance(root, character)
+        local drop = root.Position.Y - floorY
+        -- Below the floor we found (inside a block, or it read a ceiling): leave it alone.
+        if drop <= 1 then return false end
 
-        -- Already low enough that the rest of the fall cannot hurt: just take the landing
-        -- softly rather than bouncing off the floor and back up for no reason.
-        if drop <= 8 then
-            root.AssemblyLinearVelocity = Vector3.new(startVel.X, math.max(startVel.Y, -20), startVel.Z)
-            return true
-        end
-
-        local touchCFrame = CFrame.new(startCFrame.X, floorY + 0.05, startCFrame.Z) * startCFrame.Rotation
-
-        -- Hold the touch until the landing has registered AND been held long enough to
-        -- replicate; a single-frame touch is never sampled by the server. Capped so we never
-        -- linger long enough to be visibly standing there.
-        local started = tick()
-        local landed = false
-        repeat
-            root.CFrame = touchCFrame
-            root.AssemblyLinearVelocity = Vector3.zero
-            task.wait()
-            if not NoFall.Enabled or not entitylib.isAlive or not root.Parent then return true end
-            if humanoid and humanoid.FloorMaterial ~= Enum.Material.Air then landed = true end
-        until (landed and (tick() - started) >= 0.08) or (tick() - started) >= 0.25
-
-        if not root.Parent then return true end
-
-        -- Resume along the fall, not back at the top of it.
-        local elapsed = tick() - started
-        local gravity = workspace.Gravity
-        local resume = startCFrame.Position
-            + Vector3.new(startVel.X * elapsed, (startVel.Y * elapsed) - (0.5 * gravity * elapsed * elapsed), startVel.Z * elapsed)
-        local resumeVel = Vector3.new(startVel.X, startVel.Y - (gravity * elapsed), startVel.Z)
-
-        -- Never resume underneath the floor we just stood on.
-        if resume.Y <= floorY then
-            root.AssemblyLinearVelocity = Vector3.new(resumeVel.X, 0, resumeVel.Z)
-            return true
-        end
-
-        root.CFrame = CFrame.new(resume) * startCFrame.Rotation
-        root.AssemblyLinearVelocity = resumeVel
+        local velocity = root.AssemblyLinearVelocity
+        root.CFrame -= Vector3.new(0, drop, 0)
+        -- Keep the horizontal travel so the landing spot is the one the fall was heading for,
+        -- and arrive with nothing vertical left for the game to charge for.
+        root.AssemblyLinearVelocity = Vector3.new(velocity.X, 0, velocity.Z)
         return true
     end
 
@@ -3877,54 +3846,88 @@ run(function()
         root.Velocity = Vector3.zero
     end
 
-    -- Impact speed to bleed a fall down to. BedWars gives roughly six blocks of grace, which is
-    -- an 84 stud/s landing, so arriving at 45 is a fall the game has nothing to charge for and
-    -- still looks like an ordinary drop off a block rather than a feather landing.
+    -- BedWars starts charging for a fall at roughly six blocks, which is an 84 stud/s landing.
+    -- FALL_VELOCITY is that threshold; SAFE_IMPACT is what we bleed a drop down to, far enough
+    -- under it that nothing is owed and still fast enough to look like stepping off a block
+    -- rather than floating down.
+    local FALL_VELOCITY = 85
     local SAFE_IMPACT = 45
+
+    -- The event the game's own FallDamageController sends the server when you hit the ground. The
+    -- fall on the server's books is settled from what this reports, which is why sending it
+    -- ourselves is what actually clears a fall - see clearRegisteredFall below.
+    local groundHitRemote
+    local trackedFall = 0
+    local lastGroundHit = 0
+    task.spawn(function()
+        local success, remote = pcall(function()
+            return bedwars.Client:Get(remotes.GroundHit).instance
+        end)
+        groundHitRemote = success and remote or nil
+    end)
+
+    -- Hand in a ground hit for the fall built up so far, with no block attached to it. The server
+    -- settles and clears the fall it is tracking for us, and the hit itself goes nowhere because
+    -- there is no block to have landed on - so by the time we really touch down there is nothing
+    -- left on the books to charge for. This is the mechanism the shipped v4 script uses for its
+    -- Packet mode; it is the game's own event, not a spoofed Roblox property.
+    local function clearRegisteredFall()
+        if not groundHitRemote then return end
+        if tick() - lastGroundHit < 0.12 then return end
+        lastGroundHit = tick()
+        pcall(function()
+            groundHitRemote:FireServer(nil, Vector3.new(0, trackedFall, 0), workspace:GetServerTimeNow())
+        end)
+    end
 
     -- Blatant. Two independent layers, neither of which is a humanoid state spoof:
     --
-    --  1. Cancel the fall the client registers. BedWars works out fall damage from the landing
-    --     velocity it registers for you, and FallDamageController.additionalRegisteredVelocity
-    --     is the offset added to it, so holding that at the inverse of the drop means the
-    --     landing it reports is a harmless one. This is the game's own number, not a Roblox
-    --     property being lied to.
+    --  1. Clear the fall the server is tracking, by sending the ground hit for it while we are
+    --     still in the air (above).
     --  2. Make the landing genuinely soft, so there is nothing for anything - client or
     --     server - to turn into damage in the first place.
     --
-    -- Layer 2 is what the old build got wrong. It ran off the module's 20-40ms poll, and at two
-    -- hundred studs a second that regularly stepped straight over the touchdown; when it did
-    -- catch one it pinned you to -10 studs a second a full ten studs up and floated you down in
-    -- plain sight. It now runs on PreSimulation with the real frame time, looks ahead by the
-    -- speed you are actually falling at, and only bleeds off in the last couple of frames.
+    -- The old build had neither working. Layer 1 wrote FallDamageController
+    -- .additionalRegisteredVelocity, which is not a field the controller has - the write went
+    -- into a pcall, created a key nothing reads and silently did nothing at all. Layer 2 looked
+    -- ahead by only two frames, which at two hundred studs a second is under seven studs of
+    -- warning and regularly missed the touchdown outright. It now settles the fall through the
+    -- game's own event and looks a full tenth of a second ahead, the same margin the shipped
+    -- script's Bounce mode uses.
     local function blatantStep(dt)
         local character, root, humanoid = validCharacter()
-        if not character or not root then return end
+        if not character or not root then
+            trackedFall = 0
+            return
+        end
+
+        -- Grounded: nothing owed, start the next fall from scratch.
+        if humanoid and humanoid.FloorMaterial ~= Enum.Material.Air then
+            trackedFall = 0
+            return
+        end
 
         local velocity = root.AssemblyLinearVelocity
+        trackedFall = math.min(trackedFall, velocity.Y)
+        if trackedFall > -FALL_VELOCITY then return end
 
-        -- Layer 1, held the whole time we are in the air so the value is already in place
-        -- whenever the landing is registered.
-        pcall(function()
-            bedwars.FallDamageController.additionalRegisteredVelocity = math.max(-velocity.Y + 60, 60)
-        end)
-        blatantHeld = true
+        -- Layer 1.
+        clearRegisteredFall()
 
         -- Layer 2.
         if not isnetworkowner(root) then return end
         if velocity.Y >= -SAFE_IMPACT then return end
-        if humanoid and humanoid.FloorMaterial ~= Enum.Material.Air then return end
 
         local speed = -velocity.Y
         local ground = getGround(root, character, math.max(speed * 0.5, 40))
         if not ground then return end
 
-        local clearance = (character.HipHeight or (humanoid and humanoid.HipHeight) or 2) + (root.Size.Y * 0.5)
-        local remaining = math.max((root.Position.Y - ground.Position.Y) - clearance, 0)
+        local remaining = math.max((root.Position.Y - ground.Position.Y) - standClearance(root, character), 0)
 
-        -- Two frames of margin: always ahead of the impact, never early enough to hang.
-        if remaining <= 3 or remaining <= speed * math.max(dt, 1 / 240) * 2 then
+        -- A tenth of a second of warning, or two frames if the game is running slower than that.
+        if remaining <= 3 or remaining <= speed * math.max(dt * 2, 0.1) then
             root.AssemblyLinearVelocity = Vector3.new(velocity.X, -SAFE_IMPACT, velocity.Z)
+            trackedFall = 0
         end
     end
 
@@ -3958,7 +3961,6 @@ run(function()
                             waitDelay = 0.2
                         elseif humanoid.FloorMaterial ~= Enum.Material.Air then
                             usedPearl = false
-                            tpAnchorY = nil
                         elseif Mode.Value == 'Legit' then
                             local ground = getGround(root, character, HealthCheck and HealthCheck.Enabled and 300 or (GroundDistance and GroundDistance.Value or 30))
                             -- Zephyr is now a Legit sub-toggle: if it's on, try the
@@ -3975,35 +3977,15 @@ run(function()
                                 legitClutch(root, humanoid, ground)
                             end
                         elseif Mode.Value == 'TP' then
-                            -- Belt and braces: keep the registered fall velocity cancelled the
-                            -- whole time TP mode is airborne, so the fall is neutralised even on
-                            -- a touch that doesn't replicate a grounded state in time. Reset to 0
-                            -- on disable via the blatantHeld flag below.
-                            local vy = root.AssemblyLinearVelocity.Y
-                            pcall(function()
-                                bedwars.FallDamageController.additionalRegisteredVelocity = math.max(-vy + 60, 60)
-                            end)
-                            blatantHeld = true
-
-                            -- Anchored from the moment we leave the ground, not from the moment
-                            -- we are falling fast enough, so the first touch still happens inside
-                            -- the game's grace rather than a dozen studs past it.
-                            tpAnchorY = tpAnchorY or root.Position.Y
-
-                            if vy <= -(MinVelocity and MinVelocity.Value or 60) then
-                                -- Touch off every 12 studs of fall rather than on a timer. That is
-                                -- comfortably inside the game's own grace, so the fall on the books
-                                -- can never reach a damaging size no matter how far you actually
-                                -- drop - and unlike a fixed interval it does not depend on the poll
-                                -- rate keeping up with terminal velocity.
-                                if (tpAnchorY - root.Position.Y) >= 12 then
-                                    if tpNoFall(root, character) then
-                                        tpAnchorY = root.Position.Y
-                                    end
-                                    waitDelay = 0.02
-                                else
-                                    waitDelay = 0.03
-                                end
+                            -- Nothing is owed until the drop is fast enough to actually hurt.
+                            -- Once it is, end the fall on the floor below us - and keep doing it
+                            -- for as long as we are still falling, so a drop that starts again
+                            -- (off a ledge we landed on, or a pillar we clipped) is caught too.
+                            if root.AssemblyLinearVelocity.Y <= -(MinVelocity and MinVelocity.Value or 60) then
+                                tpNoFall(root, character)
+                                waitDelay = 0.05
+                            else
+                                waitDelay = 0.03
                             end
                         end
                     end
@@ -4018,17 +4000,10 @@ run(function()
                 lastZephyrJump = 0
                 zephyrFired = false
                 fallAnchorY = nil
-                tpAnchorY = nil
-                -- Always hand the fall-damage controller's offset back to normal if Blatant drove it.
-                if blatantHeld then
-                    pcall(function()
-                        bedwars.FallDamageController.additionalRegisteredVelocity = 0
-                    end)
-                    blatantHeld = false
-                end
+                trackedFall = 0
             end
         end,
-        Tooltip = 'Prevents fall damage. Legit uses clutch methods; TP touches the floor every 12 studs of fall to clear it, then resumes falling from where you would have been; Blatant cancels the fall the client registers and bleeds the last couple of frames of the drop so the landing is genuinely harmless.'
+        Tooltip = 'Prevents fall damage. Legit uses clutch methods; TP drops you onto the floor below so the fall ends there instead of at speed; Blatant settles the fall with the game\'s own ground-hit event while you are still in the air and bleeds the last tenth of a second off the drop, so the landing is genuinely harmless.'
     })
     Mode = NoFall:CreateDropdown({
         Name = 'Mode',
@@ -4040,7 +4015,7 @@ run(function()
                 NoFall:Toggle()
             end
         end,
-        Tooltip = 'Legit uses a fixed clutch order: blocks, telepearls, then tools (enable Zephyr to jump-cancel the fall with the Zephyr/WindWalker kit instead). Blatant holds the registered fall velocity cancelled and softens the touchdown itself, so no damage registers. TP touches the floor every 12 studs of fall to clear it and then carries on falling from where the drop had reached.'
+        Tooltip = 'Legit uses a fixed clutch order: blocks, telepearls, then tools (enable Zephyr to jump-cancel the fall with the Zephyr/WindWalker kit instead). Blatant settles the fall through the game\'s own ground-hit event mid-air and softens the touchdown itself, so no damage registers. TP puts you straight down on the floor below you the moment the drop gets dangerous, ending the fall where it was going to end anyway.'
     })
     MinVelocity = NoFall:CreateSlider({
         Name = 'Minimum Velocity',
@@ -15517,13 +15492,13 @@ run(function()
 end)
 
 run(function()
-    -- AutoWin (v4 - full match cycle)
+    -- AutoWin (v5 - full match cycle, walked rather than teleported)
     --
     -- One fixed plan, run over and over until the game is won:
     --   1. Stand at the team iron generator and collect iron until we hold the target amount.
     --   2. Walk to the shop keeper and buy wool (16 wool per 8 iron).
-    --   3. Bridge to the nearest enemy bed - teleporting a fixed distance at a fixed interval and
-    --      guaranteeing footing under every single grid cell on the way, so the path is a
+    --   3. Bridge to the nearest enemy bed - walking the path a grid cell at a time and
+    --      guaranteeing footing under every single cell on the way, so the path is a
     --      continuous walkable bridge with no gaps.
     --   4. Break the bed, bank the loot, respawn, and repeat until every enemy bed is gone.
     --   5. Bridge to the closest player (buying exactly the number of blocks that crossing needs)
@@ -15537,8 +15512,6 @@ run(function()
     local AutoWin
     local IronAmount
     local WoolAmount
-    local HopDistance
-    local HopDelay
     local BedReach
     local PlayerReach
     local StartDelay
@@ -15747,15 +15720,29 @@ run(function()
         end
         return 0
     end
-    -- Place one block and wait for the server to confirm it before anyone stands on it.
+    -- The six cells sharing a face with this one. A block can only be placed against something
+    -- that is already there, so this is what decides whether a placement is worth sending.
+    local faceOffsets = {
+        Vector3.new(CELL, 0, 0), Vector3.new(-CELL, 0, 0),
+        Vector3.new(0, CELL, 0), Vector3.new(0, -CELL, 0),
+        Vector3.new(0, 0, CELL), Vector3.new(0, 0, -CELL)
+    }
+    local function hasNeighbour(world)
+        for _, offset in faceOffsets do
+            if cellSolid(world + offset) then return true end
+        end
+        return false
+    end
+    -- Ask for one block and move on. Placements are fired ahead of where we are walking rather
+    -- than waited on, and the caller only ever steps onto a cell once cellSolid agrees the block
+    -- has actually arrived, so nothing here has to block.
     local function placeAt(world)
         if cellSolid(world) then return true end
         local block = bridgeBlock()
         if not block then return false end
+        if not hasNeighbour(world) then return false end
         pcall(bedwars.placeBlock, world, block)
-        local deadline = tick() + 0.5
-        repeat task.wait() until getPlacedBlock(world) or tick() > deadline or not running()
-        return getPlacedBlock(world) and true or false
+        return true
     end
     local function breakAt(world)
         local block = getPlacedBlock(world)
@@ -15767,11 +15754,42 @@ run(function()
     end
 
     ----------------------------------------------------------------------------
-    -- Bridging. The single movement primitive: step one grid cell toward the target, guarantee
-    -- footing under it (placing a block when there is none), clear anything our body would be
-    -- inside, and repeat. A hop covers Hop Distance worth of cells, then we teleport onto the last
-    -- one and wait Hop Delay. Nothing here can ever cross a gap without filling it in.
+    -- Movement. The character WALKS. It is never teleported.
+    --
+    -- This is the fix for the run going nowhere. The old build hopped: it wrote root.CFrame
+    -- straight onto a cell up to Hop Distance studs away, waited Hop Delay, and did it again.
+    -- BedWars checks how far you move between position samples - the Speed module in this very
+    -- script is capped at 23 studs/s for exactly that reason - so a ten-stud jump inside a single
+    -- frame is always rejected. The server pulled us back, the next iteration measured the same
+    -- distance to the bed and hopped again, and the run sat in that loop forever: teleport, get
+    -- lagged back, teleport, never advance.
+    --
+    -- So the path is now walked. We point the humanoid at the next cell and let the game move us
+    -- at the speed it gives us, jump where the path steps up, tower where it goes straight up,
+    -- and stand still at the edge whenever the next block has not landed yet. There is nothing
+    -- here for the server to reject, and every cell is still bridged before it is walked on.
     ----------------------------------------------------------------------------
+
+    -- The direction handed to the humanoid each frame. `driving` is what makes the module take
+    -- the wheel at all: while it is false nothing is written, so the player keeps normal control
+    -- during the phases that are not travelling (mining the generator, breaking a bed, fighting).
+    local moveDir, driving = Vector3.zero, false
+
+    local function startDriving()
+        AutoWin:Clean(runService.Stepped:Connect(function()
+            if not driving then return end
+            local root, char = myRoot()
+            if not root or not char or not char.Humanoid then return end
+            char.Humanoid:Move(moveDir, false)
+        end))
+        AutoWin:Clean(function()
+            moveDir, driving = Vector3.zero, false
+        end)
+    end
+
+    local function stopMoving()
+        moveDir, driving = Vector3.zero, false
+    end
 
     -- Choose the next cell of the path. Returns nil once we are on top of the target column.
     local function nextCell(from, goal)
@@ -15818,104 +15836,152 @@ run(function()
         return ok and cost or 0
     end
 
-    -- Advance one hop toward `target`.
-    -- Returns: 'moved', 'reached', 'noblocks', 'blocked' or 'dead'.
-    local function hop(target, stopRange, allowBreak)
+    -- How many cells of the path to keep bridged in front of us. Walking covers a cell in about
+    -- a seventh of a second, which is not long enough to place a block and wait for it to come
+    -- back, so the blocks are always asked for a few cells early and are there by the time we
+    -- arrive. Standing still at the edge (below) is the fallback when they are not.
+    local LOOKAHEAD = 3
+
+    -- Climb one level straight up: jump, and drop a block into the cell our feet just left.
+    local function towerUp(cursor)
         local root, char = myRoot()
-        if not root then return 'dead' end
-        local hip = char.HipHeight or 3
-        local pos = root.Position
+        if not root or not char or not char.Humanoid then return end
+        if not bridgeBlock() then return end
+        -- Stand still for the climb; the caller is still driving, so this only kills the
+        -- horizontal push, it does not hand control back.
+        moveDir = Vector3.zero
+        local startY = root.Position.Y
+        pcall(function() char.Humanoid.Jump = true end)
+        local deadline = tick() + 0.7
+        repeat
+            task.wait()
+            local current = myRoot()
+            if not current then return end
+            -- Place as soon as we are clear of the cell, not at the top of the jump: waiting for
+            -- the apex is what leaves you falling back down before the block exists.
+            if current.Position.Y - startY >= CELL + 0.2 then
+                placeAt(worldOf(cursor + Vector3.new(0, 1, 0)))
+                return
+            end
+        until tick() > deadline or not running()
+    end
 
-        local flat = (target - pos) * Vector3.new(1, 0, 1)
-        if flat.Magnitude <= stopRange and math.abs(target.Y - pos.Y) <= 12 then return 'reached' end
+    -- Walk all the way to a (possibly moving) target, bridging the path as we go.
+    -- Returns true on arrival, or false plus a reason ('noblocks', 'blocked', 'stuck').
+    local function travelTo(getTarget, stopRange, allowBreak, label)
+        local stallSince, best = tick(), math.huge
+        local deadline = tick() + 240
+        local lastJump = 0
+        driving = true
 
-        local cursor = footCell(root, hip)
-        local goal = cellOf(Vector3.new(target.X, target.Y - STAND, target.Z))
-        local steps = math.max(1, math.floor(HopDistance.Value / CELL))
-        local moved = false
+        while running() and tick() < deadline do
+            if not alive() then
+                stopMoving()
+                return false
+            end
+            local target = getTarget()
+            local root, char = myRoot()
+            if not target or not root or not char then
+                stopMoving()
+                return false
+            end
+            local hip = char.HipHeight or 3
 
-        for _ = 1, steps do
-            if not running() then return 'dead' end
-            local cell = nextCell(cursor, goal)
-            if not cell then break end
-            local world = worldOf(cell)
-
-            -- Footing: this is the "no gaps" guarantee - every cell we walk over is solid, and if
-            -- it is not, we make it solid before moving.
-            if not cellSolid(world) then
-                if not bridgeBlock() then return 'noblocks' end
-                if not placeAt(world) then
-                    return bridgeBlock() and 'blocked' or 'noblocks'
-                end
+            local left = ((target - root.Position) * Vector3.new(1, 0, 1)).Magnitude
+            if left <= stopRange and math.abs(target.Y - root.Position.Y) <= 12 then
+                stopMoving()
+                return true
             end
 
-            -- Head room: we must not teleport inside a block. Break placed blocks in the way when
+            status(nil, label, string.format('%d studs left  |  %d blocks', math.floor(left), blockCount()))
+            -- Progress is measured in three dimensions, not on the flat. Towering straight up to
+            -- a bed on a high island closes no horizontal distance at all, and judging it on the
+            -- flat would call a climb that is working perfectly well a stall.
+            local progress = (target - root.Position).Magnitude
+            if progress < best - 1 then
+                best, stallSince = progress, tick()
+            elseif tick() - stallSince > 20 then
+                stopMoving()
+                return false, 'stuck'
+            end
+
+            local cursor = footCell(root, hip)
+            local goal = cellOf(Vector3.new(target.X, target.Y - STAND, target.Z))
+            local step = nextCell(cursor, goal)
+            if not step then
+                stopMoving()
+                return true
+            end
+            local world = worldOf(step)
+
+            -- Footing: this is the "no gaps" guarantee. Every cell we walk over is solid, and if
+            -- it is not, we ask for a block there - several cells before we need it.
+            local ahead = cursor
+            for _ = 1, LOOKAHEAD do
+                local cell = nextCell(ahead, goal)
+                if not cell then break end
+                if not cellSolid(worldOf(cell)) then
+                    if not bridgeBlock() then
+                        stopMoving()
+                        return false, 'noblocks'
+                    end
+                    placeAt(worldOf(cell))
+                end
+                ahead = cell
+            end
+
+            -- Head room: we must not walk into a block. Break placed ones out of the way when
             -- allowed (that is how we tunnel into a base); solid map geometry means stop.
-            local clear = true
+            local blocked = false
             for h = 1, 2 do
                 local above = world + Vector3.new(0, CELL * h, 0)
                 if cellSolid(above) then
                     if allowBreak and getPlacedBlock(above) then
                         status(nil, 'Tunnelling through blocks')
-                        if not breakAt(above) then
-                            clear = false
-                            break
-                        end
-                    else
-                        clear = false
+                        breakAt(above)
+                    end
+                    if cellSolid(above) then
+                        blocked = true
                         break
                     end
                 end
             end
-            if not clear then
-                return moved and 'moved' or 'blocked'
+            if blocked then
+                moveDir = Vector3.zero
+                if tick() - stallSince > 8 then
+                    stopMoving()
+                    return false, 'blocked'
+                end
+                task.wait(0.1)
+                continue
             end
 
-            cursor = cell
-            moved = true
-        end
-
-        if not moved then return 'blocked' end
-
-        -- One discrete teleport onto the last verified cell, facing the way we are going.
-        local dest = worldOf(cursor) + Vector3.new(0, STAND + hip, 0)
-        local look = Vector3.new(target.X, dest.Y, target.Z)
-        if (look - dest).Magnitude > 0.01 then
-            root.CFrame = CFrame.new(dest, look)
-        else
-            root.CFrame = CFrame.new(dest) * (root.CFrame - root.CFrame.Position)
-        end
-        root.AssemblyLinearVelocity = Vector3.new(0, root.AssemblyLinearVelocity.Y, 0)
-        return 'moved'
-    end
-
-    -- Bridge all the way to a (possibly moving) target. Returns true on arrival.
-    local function bridgeTo(getTarget, stopRange, allowBreak, label)
-        local stallSince, best = tick(), math.huge
-        local deadline = tick() + 240
-        while running() and tick() < deadline do
-            if not alive() then return false end
-            local target = getTarget()
-            if not target then return false end
-            local root = myRoot()
-            if not root then return false end
-
-            local left = ((target - root.Position) * Vector3.new(1, 0, 1)).Magnitude
-            status(nil, label, string.format('%d studs left  |  %d blocks', math.floor(left), blockCount()))
-            if left < best - 1 then
-                best, stallSince = left, tick()
-            elseif tick() - stallSince > 25 then
-                return false
+            -- Only ever step onto a cell that has actually got something under it. If the block
+            -- we asked for has not come back yet we hold position on the edge instead of walking
+            -- off it, and pick the walk back up on a later pass.
+            if not cellSolid(world) then
+                moveDir = Vector3.zero
+                task.wait(0.05)
+                continue
             end
 
-            local result = hop(target, stopRange, allowBreak)
-            if result == 'reached' then return true end
-            if result == 'dead' then return false end
-            if result == 'noblocks' then return false, 'noblocks' end
-            if result == 'blocked' and tick() - stallSince > 10 then return false end
+            local aim = world + Vector3.new(0, STAND + hip, 0)
+            local delta = (aim - root.Position) * Vector3.new(1, 0, 1)
+            moveDir = delta.Magnitude > 0.05 and delta.Unit or Vector3.zero
 
-            task.wait(HopDelay.Value)
+            if step.Y > cursor.Y and tick() - lastJump > 0.35 then
+                lastJump = tick()
+                if delta.Magnitude <= CELL * 0.5 then
+                    -- Straight up with nowhere to walk to: tower instead.
+                    towerUp(cursor)
+                else
+                    pcall(function() char.Humanoid.Jump = true end)
+                end
+            end
+
+            task.wait()
         end
+        stopMoving()
         return false
     end
 
@@ -15978,16 +16044,25 @@ run(function()
         if gen then
             local root = myRoot()
             if root and (gen.Position - root.Position).Magnitude > 10 then
-                bridgeTo(function()
+                travelTo(function()
                     return gen.Parent and gen.Position or nil
                 end, 8, false, 'Walking to the generator')
             end
         end
 
-        local deadline = tick() + 150
+        -- Wait at the generator, but only while iron is actually coming in. Standing somewhere
+        -- with no generator in reach used to burn two and a half minutes of the run doing
+        -- nothing at all before the cycle was allowed to carry on with what it already had.
+        local deadline = tick() + 90
+        local held, sinceGain = ironCount(), tick()
         while running() and alive() and ironCount() < target and tick() < deadline do
             status('Resources', 'Collecting iron', ironCount() .. '/' .. target .. ' iron')
             vacuum(18)
+            if ironCount() > held then
+                held, sinceGain = ironCount(), tick()
+            elseif tick() - sinceGain > 25 then
+                break
+            end
             task.wait(0.35)
         end
         refreshHUD()
@@ -16053,7 +16128,7 @@ run(function()
             status('Resources', 'Walking to the shop', '')
             local _, spos = nearestShop()
             if not spos then return blockCount() > 0 end
-            bridgeTo(function() return spos end, 8, false, 'Walking to the shop')
+            travelTo(function() return spos end, 8, false, 'Walking to the shop')
         end
         local id = shopIdNear(20)
         if not id then return blockCount() > 0 end
@@ -16264,7 +16339,7 @@ run(function()
         end
 
         status('Bridging', 'Bridging to ' .. bedName(bed), '')
-        local reached, why = bridgeTo(function()
+        local reached, why = travelTo(function()
             return bed.Parent and bedPart(bed) and bedPart(bed).Position or nil
         end, BedReach.Value, true, 'Bridging to ' .. bedName(bed))
 
@@ -16365,7 +16440,7 @@ run(function()
             end
 
             status('Combat', 'Bridging to ' .. name, '')
-            local reached = bridgeTo(function()
+            local reached = travelTo(function()
                 return ent.RootPart and ent.RootPart.Parent and ent.RootPart.Position or nil
             end, PlayerReach.Value, true, 'Bridging to ' .. name)
 
@@ -16388,6 +16463,9 @@ run(function()
             if callback then
                 phaseText, actionText, detailText = 'Starting', 'Waiting for the map', ''
                 refreshHUD()
+                -- Hook the humanoid up before anything can want to move.
+                stopMoving()
+                startDriving()
 
                 repeat task.wait() until (store.matchState ~= 0 and store.map and entitylib.isAlive) or not running()
                 if not running() then return end
@@ -16419,11 +16497,12 @@ run(function()
                     status('Done', 'Game won', '')
                 end
             else
+                stopMoving()
                 phaseText, actionText, detailText = 'Idle', 'Waiting...', ''
                 refreshHUD()
             end
         end,
-        Tooltip = 'Plays the whole match: gathers iron at the generator, buys wool, bridges to every enemy bed (filling in every gap - it never crosses a hole it has not blocked first), breaks the bed, banks the loot and respawns, then hunts down the remaining players with a silent aura. Progress is shown on the HUD; drag its title bar to move it.',
+        Tooltip = 'Plays the whole match: gathers iron at the generator, buys wool, walks and bridges to every enemy bed (filling in every gap - it never crosses a hole it has not blocked first), breaks the bed, banks the loot and respawns, then hunts down the remaining players with a silent aura. It walks the whole way rather than teleporting, so the server has nothing to lag it back for. Progress is shown on the HUD; drag its title bar to move it.',
         Size = UDim2.fromOffset(224, 92)
     })
 
@@ -16516,23 +16595,6 @@ run(function()
         Default = 32,
         Suffix = ' wool',
         Tooltip = 'The least wool to set off with. Longer crossings automatically buy more than this - the route is measured cell by cell first.'
-    })
-    HopDistance = AutoWin:CreateSlider({
-        Name = 'Hop distance',
-        Min = 3,
-        Max = 24,
-        Default = 10,
-        Suffix = ' studs',
-        Tooltip = 'How far each teleport moves you. Every 3-stud cell in between is checked and bridged first, so a longer hop never skips over a gap.'
-    })
-    HopDelay = AutoWin:CreateSlider({
-        Name = 'Hop delay',
-        Min = 0.1,
-        Max = 2,
-        Default = 1,
-        Decimal = 100,
-        Suffix = ' seconds',
-        Tooltip = 'How long to wait between hops. 10 studs every second is roughly a walking pace, which is what keeps the movement plausible.'
     })
     BedReach = AutoWin:CreateSlider({
         Name = 'Bed reach',
