@@ -3486,7 +3486,7 @@ run(function()
     local NoFall
     local Mode
     local MinVelocity
-    local RegisteredVelocity
+    local FallThreshold
     local GroundDistance
     local AnchorAttempts
     local BlockClutch
@@ -3499,6 +3499,10 @@ run(function()
     local rayCheck = RaycastParams.new()
     rayCheck.RespectCanCollide = true
     rayCheck.FilterType = Enum.RaycastFilterType.Exclude
+    -- Deliberately left on the default collision group - see groundBelow.
+    local plainCheck = RaycastParams.new()
+    plainCheck.RespectCanCollide = true
+    plainCheck.FilterType = Enum.RaycastFilterType.Exclude
     local lastAnchor = 0
     local usedPearl = false
     local lastLegitUse = 0
@@ -3535,15 +3539,40 @@ run(function()
         return workspace:Blockcast(root.CFrame, Vector3.new(3, 3, 3), Vector3.new(0, castDistance, 0), rayCheck)
     end
 
-    -- Height of the floor below us. Prefers the box cast (tolerant of thin blocks and ledges)
-    -- and falls back to a plain long ray, so a missed box cast never leaves a mode with
-    -- nothing to aim at.
+    -- Height of the floor below us, by three independent methods.
+    --
+    -- A cast that comes back empty is the single failure that stops TP mode dead: with no floor
+    -- to aim at it does nothing at all, which is exactly what "TP doesn't teleport" looks like
+    -- from the outside. So an empty result is never taken at face value here.
+    --
+    --   1. The box cast, tolerant of thin blocks and of ledges a thin ray slips past. This is the
+    --      shipped script's own method, on the character's collision group.
+    --   2. A plain long ray on the DEFAULT collision group. If the character sits in a group that
+    --      does not collide with the map, (1) passes straight through the world and finds nothing
+    --      while this still sees it.
+    --   3. The block engine's own store, walked cell by cell down the column we are over. On a
+    --      BedWars map the floor is nearly always a placed block, and a data lookup cannot be
+    --      defeated by a collision group, a CanQuery flag or a filter at all.
     local function groundBelow(root, character)
-        updateRay(root)
         local ground = getGround(root, character, 1500)
         if ground then return ground.Position.Y end
-        local ray = workspace:Raycast(root.Position, Vector3.new(0, -3000, 0), rayCheck)
-        return ray and ray.Position.Y or nil
+
+        plainCheck.FilterDescendantsInstances = {lplr.Character, gameCamera, AntiFallPart}
+        local ray = workspace:Raycast(root.Position, Vector3.new(0, -3000, 0), plainCheck)
+        if ray then return ray.Position.Y end
+
+        local success, blockY = pcall(function()
+            local origin = root.Position
+            for step = 1, 200 do
+                local below = Vector3.new(origin.X, origin.Y - (step * 3), origin.Z)
+                if getPlacedBlock(below) then
+                    -- Top face of the block we found, which is what we would stand on.
+                    return (bedwars.BlockController:getBlockPosition(below).Y * 3) + 1.5
+                end
+            end
+            return nil
+        end)
+        return success and blockY or nil
     end
 
     -- The distance from the root's centre down to the floor we stand on. entitylib already folds
@@ -3552,6 +3581,21 @@ run(function()
     local function standClearance(root, character)
         local humanoid = character.Humanoid
         return character.HipHeight or ((humanoid and humanoid.HipHeight or 2) + (root.Size.Y * 0.5))
+    end
+
+    -- The fall that has built up: the fastest we have been moving downwards since we were last on
+    -- the ground. This, not the speed at any one instant, is what a fall is worth - a drop that
+    -- has already reached 200 studs a second is a lethal fall even on the frame it happens to be
+    -- reading -3 because it clipped something. Every mode below decides off this one number.
+    local trackedFall = 0
+
+    local function updateTrackedFall(root, humanoid)
+        if humanoid and humanoid.FloorMaterial ~= Enum.Material.Air then
+            trackedFall = 0
+        else
+            trackedFall = math.min(trackedFall, root.AssemblyLinearVelocity.Y)
+        end
+        return trackedFall
     end
 
     -- TP mode. BedWars charges for the landing you report, so the way to clear a long drop is to
@@ -3575,8 +3619,14 @@ run(function()
         local velocity = root.AssemblyLinearVelocity
         root.CFrame -= Vector3.new(0, drop, 0)
         -- Keep the horizontal travel so the landing spot is the one the fall was heading for,
-        -- and arrive with nothing vertical left for the game to charge for.
+        -- and arrive with nothing vertical left for the game to charge for. Dropping to the
+        -- floor is a move the server is already expecting from someone who is falling, which is
+        -- why this replicates where the old build's teleport back UP was always rejected.
         root.AssemblyLinearVelocity = Vector3.new(velocity.X, 0, velocity.Z)
+        -- The fall is over as far as we are concerned. Without this the next pass would still be
+        -- holding the old speed and would fire again before the humanoid has registered the
+        -- landing, which is what turns one teleport into a burst of them.
+        trackedFall = 0
         return true
     end
 
@@ -3847,74 +3897,46 @@ run(function()
         root.Velocity = Vector3.zero
     end
 
-    -- Blatant, rebuilt from scratch.
+    -- Blatant. Nothing physical happens here at all: the character falls at full speed, lands
+    -- where and when it would have, and no velocity, position or humanoid state is ever touched.
+    -- The only thing that changes is what the server has on its books for the fall.
     --
-    -- Every previous attempt tried to save the fall at the last moment - watch the drop build up,
-    -- then bleed it off, snap the velocity, or fire something at the game in the final frames
-    -- before touchdown. All of them are the same race: at two hundred studs a second a frame is
-    -- three and a half studs, and any version of "act just before landing" loses that race some
-    -- of the time. Landing on a slope, on a block placed under you mid-fall, or during a frame
-    -- spike, and the intervention is simply too late.
+    -- BedWars settles fall damage off the ground-hit event the client sends it. So while a
+    -- dangerous fall is in progress we send that event ourselves, over and over, with no block
+    -- attached to it: the fall the server is holding for us is continuously settled and cleared,
+    -- and the real landing arrives with nothing left on the books to charge for.
     --
-    -- This does not intervene at the landing at all. BedWars charges you for how fast you are
-    -- moving when you land, so the fall is never allowed to become fast in the first place: the
-    -- character's downward velocity is held at a harmless value for the whole descent, and the
-    -- speed that gets taken off it is added back as position instead. The game only ever sees a
-    -- gentle fall; you still drop at the speed you really would, land where you really would and
-    -- when you really would. There is no moment it can be late for, because it is doing its work
-    -- for the entire fall rather than at the end of it.
+    -- The cadence is the mechanism, not a detail. One packet and then silence leaves the fall
+    -- free to build straight back up before touchdown, which is why this is deliberately NOT
+    -- rate limited - it fires on every pass of the module's poll for as long as the fall is
+    -- dangerous, so at the moment of landing the server has at most one tick of drop recorded.
+    -- An earlier build here rate limited it to one send every 120ms and that is precisely the
+    -- kind of "tidying" that stops it working.
     --
-    -- Two things it deliberately does not do: it never touches a humanoid state, and it never
-    -- sends the game anything. It only writes to your own character, and everything it writes is
-    -- something an ordinary fall does anyway.
-    local fallSpeed = 0
+    -- Every physical variant of this has now been tried and none of them hold: cancelling the
+    -- registered velocity, bleeding the impact off in the last frames, capping the fall speed
+    -- and giving the distance back. They all lose the same race against the landing frame, or
+    -- lean on a field the game does not have. This one does not race anything - it is simply
+    -- keeping the server's record of the fall empty the whole way down.
+    local groundHit
 
-    -- Never carry more than this. Real drops never get near it; the clamp is only so a bugged
-    -- reading can't turn into a position jump big enough to be rejected as teleporting.
-    local MAX_CARRY = 700
+    local function resolveGroundHit()
+        if groundHit then return groundHit end
+        local success, remote = pcall(function()
+            return bedwars.Client:Get(remotes.GroundHit).instance
+        end)
+        groundHit = success and remote or nil
+        return groundHit
+    end
+    task.spawn(resolveGroundHit)
 
-    local function blatantStep(dt)
-        local character, root, humanoid = validCharacter()
-        if not character or not root then
-            fallSpeed = 0
-            return
-        end
-        if not isnetworkowner(root) then return end
-
-        -- On the floor, or on the way up: there is no fall to hide.
-        local velocity = root.AssemblyLinearVelocity
-        if velocity.Y >= 0 or (humanoid and humanoid.FloorMaterial ~= Enum.Material.Air) then
-            fallSpeed = 0
-            return
-        end
-
-        local cap = RegisteredVelocity and RegisteredVelocity.Value or 60
-        -- The speed we are really falling at. While the engine is still under the cap that is
-        -- just its own number; from the moment we pin it, the acceleration is ours to carry.
-        if -velocity.Y >= fallSpeed then
-            fallSpeed = -velocity.Y
-        else
-            fallSpeed = math.min(fallSpeed + (workspace.Gravity * dt), MAX_CARRY)
-        end
-        if fallSpeed <= cap then return end
-
-        root.AssemblyLinearVelocity = Vector3.new(velocity.X, -cap, velocity.Z)
-
-        -- Hand back the speed we just took off, as distance. Writing position skips collision, so
-        -- this checks the drop is clear first: once the floor is inside the next step we stop
-        -- compensating entirely and let the character land on its own at the capped speed, which
-        -- is the harmless landing we wanted in the first place. It can never be pushed through a
-        -- floor, and the last stretch of the fall is real physics.
-        local carry = (fallSpeed - cap) * dt
-        if carry <= 0 then return end
-
-        updateRay(root)
-        local clearance = standClearance(root, character)
-        if workspace:Raycast(root.Position, Vector3.new(0, -(carry + clearance + 1), 0), rayCheck) then
-            fallSpeed = cap
-            return
-        end
-        root.CFrame -= Vector3.new(0, carry, 0)
+    local function clearRegisteredFall(fall)
+        local remote = resolveGroundHit()
+        if not remote then return false end
+        pcall(function()
+            remote:FireServer(nil, Vector3.new(0, fall, 0), workspace:GetServerTimeNow())
+        end)
+        return true
     end
 
     local function setSettingsVisible()
@@ -3927,13 +3949,14 @@ run(function()
                 option.Object.Visible = legit
             end
         end
-        -- Legit and TP both decide when to act off Minimum Velocity; Blatant never waits for a
-        -- speed to be reached, it caps one, so the two swap over with the mode.
+        -- Legit and TP act off Minimum Velocity, Blatant off its own threshold, so the two swap
+        -- over with the mode rather than both sitting there doing nothing for two thirds of it.
+        local blatant = Mode and Mode.Value == 'Blatant' or false
         if MinVelocity and MinVelocity.Object then
-            MinVelocity.Object.Visible = not (Mode and Mode.Value == 'Blatant')
+            MinVelocity.Object.Visible = not blatant
         end
-        if RegisteredVelocity and RegisteredVelocity.Object then
-            RegisteredVelocity.Object.Visible = Mode and Mode.Value == 'Blatant' or false
+        if FallThreshold and FallThreshold.Object then
+            FallThreshold.Object.Visible = blatant
         end
     end
 
@@ -3941,18 +3964,22 @@ run(function()
         Name = 'NoFallDamage',
         Function = function(callback)
             if callback then
-                if Mode.Value == 'Blatant' then
-                    -- Per frame, with the real step time, rather than inside the poll below.
-                    NoFall:Clean(runService.PreSimulation:Connect(blatantStep))
+                if Mode.Value == 'Blatant' and not resolveGroundHit() then
+                    notif('NoFallDamage', 'Could not reach the ground-hit event - Blatant has nothing to send', 8, 'alert')
                 end
 
                 repeat
                     local waitDelay = 0.04
                     local character, root, humanoid = validCharacter()
                     if character then
+                        local fall = updateTrackedFall(root, humanoid)
                         if Mode.Value == 'Blatant' then
-                            -- Driven by the PreSimulation connection above; nothing to poll for.
-                            waitDelay = 0.2
+                            -- Settle the fall the server is holding, every single pass, for as
+                            -- long as the drop is worth charging for. Nothing physical here.
+                            waitDelay = 0.03
+                            if fall < -(FallThreshold and FallThreshold.Value or 85) then
+                                clearRegisteredFall(fall)
+                            end
                         elseif humanoid.FloorMaterial ~= Enum.Material.Air then
                             usedPearl = false
                         elseif Mode.Value == 'Legit' then
@@ -3971,15 +3998,13 @@ run(function()
                                 legitClutch(root, humanoid, ground)
                             end
                         elseif Mode.Value == 'TP' then
-                            -- Nothing is owed until the drop is fast enough to actually hurt.
-                            -- Once it is, end the fall on the floor below us - and keep doing it
-                            -- for as long as we are still falling, so a drop that starts again
-                            -- (off a ledge we landed on, or a pillar we clipped) is caught too.
-                            if root.AssemblyLinearVelocity.Y <= -(MinVelocity and MinVelocity.Value or 60) then
+                            -- Nothing is owed until the drop is worth something. Once it is, end
+                            -- the fall on the floor below us. Judged on the fall built up rather
+                            -- than this instant's reading, so a fast drop that momentarily reads
+                            -- slow - clipping a ledge, brushing a block - still counts.
+                            waitDelay = 0.03
+                            if fall <= -(MinVelocity and MinVelocity.Value or 60) then
                                 tpNoFall(root, character)
-                                waitDelay = 0.05
-                            else
-                                waitDelay = 0.03
                             end
                         end
                     end
@@ -3994,10 +4019,10 @@ run(function()
                 lastZephyrJump = 0
                 zephyrFired = false
                 fallAnchorY = nil
-                fallSpeed = 0
+                trackedFall = 0
             end
         end,
-        Tooltip = 'Prevents fall damage. Legit uses clutch methods; TP drops you onto the floor below so the fall ends there instead of at speed; Blatant holds the fall the game sees down to a harmless speed for the whole descent and gives the missing speed back as distance, so you still fall and land normally but never fast enough to be charged for it.'
+        Tooltip = 'Prevents fall damage. Legit uses clutch methods; TP drops you onto the floor below so the fall ends there instead of at speed; Blatant keeps settling the fall on the server with the game\'s own ground-hit event the whole way down, so the landing has nothing left to charge for. Blatant changes nothing about how you actually fall - no slowing, no floating, no teleporting.'
     })
     Mode = NoFall:CreateDropdown({
         Name = 'Mode',
@@ -4009,7 +4034,7 @@ run(function()
                 NoFall:Toggle()
             end
         end,
-        Tooltip = 'Legit uses a fixed clutch order: blocks, telepearls, then tools (enable Zephyr to jump-cancel the fall with the Zephyr/WindWalker kit instead). Blatant never lets the fall get fast in the first place: it caps the speed the game sees for the whole drop and hands the difference back as distance, so nothing has to be timed and nothing is sent to the server. TP puts you straight down on the floor below you the moment the drop gets dangerous, ending the fall where it was going to end anyway.'
+        Tooltip = 'Legit uses a fixed clutch order: blocks, telepearls, then tools (enable Zephyr to jump-cancel the fall with the Zephyr/WindWalker kit instead). Blatant sends the game\'s own ground-hit event for you, continuously, while the fall is in the air - the fall the server is holding is cleared as fast as it builds, and your character is never touched, so you fall and land completely normally. TP puts you straight down on the floor below you the moment the drop gets dangerous, ending the fall where it was going to end anyway.'
     })
     MinVelocity = NoFall:CreateSlider({
         Name = 'Minimum Velocity',
@@ -4018,14 +4043,14 @@ run(function()
         Default = 60,
         Tooltip = 'How fast the drop has to be before Legit clutches or TP puts you on the floor. Blatant does not use this - it caps a speed rather than waiting for one.'
     })
-    RegisteredVelocity = NoFall:CreateSlider({
-        Name = 'Registered velocity',
-        Min = 20,
-        Max = 80,
-        Default = 60,
+    FallThreshold = NoFall:CreateSlider({
+        Name = 'Fall threshold',
+        Min = 40,
+        Max = 120,
+        Default = 85,
         Suffix = ' studs/s',
         Visible = false,
-        Tooltip = 'Blatant only: the fastest the game is ever allowed to think you are falling. BedWars starts charging at about 85, so anything under that costs you nothing; the speed taken off is given straight back as distance, so this does not slow your actual fall down. Lower it if a fall ever still registers, raise it if the descent looks stepped.'
+        Tooltip = 'Blatant only: how fast the fall has to get before the ground hit starts being sent. 85 is where BedWars itself starts charging, so anything slower needs no help. Lower it if a fall ever still registers.'
     })
     GroundDistance = NoFall:CreateSlider({
         Name = 'Ground Check',
