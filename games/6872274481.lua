@@ -3487,6 +3487,7 @@ run(function()
     local Mode
     local MinVelocity
     local FallThreshold
+    local SpoofState
     local GroundDistance
     local AnchorAttempts
     local BlockClutch
@@ -3939,6 +3940,50 @@ run(function()
         return true
     end
 
+    -- RakNet mode. The only one that works underneath the game entirely: it edits the physics
+    -- packet on its way out of the client.
+    --
+    -- What a fall was worth is decided from what you replicate while you are in the air, and the
+    -- humanoid state rides along in the standard 0x1b physics packet - the same packet and the
+    -- same offset StateSpoofer writes to. So for as long as a dangerous fall is in progress this
+    -- rewrites that one byte to a grounded state: the server is told about someone running, never
+    -- about someone falling, and a fall that was never reported has nothing to settle on landing.
+    --
+    -- Nothing local changes. Not velocity, not position, not the state your own client is using -
+    -- the fall looks and feels exactly as it always did on your screen, and the only difference
+    -- is what leaves the machine.
+    --
+    -- A send hook runs on the network thread, where one error disconnects you, so there are two
+    -- hard rules here: everything is inside a pcall with an explicit length check, and while the
+    -- fall is not dangerous the hook returns immediately without touching the packet, so ordinary
+    -- movement replicates byte for byte the way it normally would.
+    local rakHook, spoofFall = nil, false
+
+    local function addRakHook()
+        if rakHook then return end
+        rakHook = function(packet)
+            if not spoofFall then return end
+            pcall(function()
+                if packet.AsArray and packet.AsArray[1] == 0x1b then
+                    local data = packet.AsBuffer
+                    local state = SpoofState and Enum.HumanoidStateType[SpoofState.Value]
+                    if data and state and buffer.len(data) >= 26 then
+                        buffer.writeu8(data, 25, state.Value + 32)
+                        packet:SetData(data)
+                    end
+                end
+            end)
+        end
+        pcall(raknet.add_send_hook, rakHook)
+    end
+
+    local function removeRakHook()
+        spoofFall = false
+        if not rakHook then return end
+        pcall(raknet.remove_send_hook, rakHook)
+        rakHook = nil
+    end
+
     local function setSettingsVisible()
         local legit = Mode and Mode.Value == 'Legit'
         -- Blatant holds the whole fall down rather than firing off attempts a few times a second,
@@ -3951,12 +3996,15 @@ run(function()
         end
         -- Legit and TP act off Minimum Velocity, Blatant off its own threshold, so the two swap
         -- over with the mode rather than both sitting there doing nothing for two thirds of it.
-        local blatant = Mode and Mode.Value == 'Blatant' or false
+        local packetMode = Mode and (Mode.Value == 'Blatant' or Mode.Value == 'RakNet') or false
         if MinVelocity and MinVelocity.Object then
-            MinVelocity.Object.Visible = not blatant
+            MinVelocity.Object.Visible = not packetMode
         end
         if FallThreshold and FallThreshold.Object then
-            FallThreshold.Object.Visible = blatant
+            FallThreshold.Object.Visible = packetMode
+        end
+        if SpoofState and SpoofState.Object then
+            SpoofState.Object.Visible = Mode and Mode.Value == 'RakNet' or false
         end
     end
 
@@ -3967,10 +4015,22 @@ run(function()
                 if Mode.Value == 'Blatant' and not resolveGroundHit() then
                     notif('NoFallDamage', 'Could not reach the ground-hit event - Blatant has nothing to send', 8, 'alert')
                 end
+                if Mode.Value == 'RakNet' then
+                    if not rakNetCheck('NoFallDamage') then
+                        NoFall:Toggle()
+                        return
+                    end
+                    addRakHook()
+                end
 
                 repeat
                     local waitDelay = 0.04
                     local character, root, humanoid = validCharacter()
+                    if not character then
+                        -- No character to read: never leave the packet hook rewriting state for
+                        -- a fall that is no longer happening.
+                        spoofFall = false
+                    end
                     if character then
                         local fall = updateTrackedFall(root, humanoid)
                         if Mode.Value == 'Blatant' then
@@ -3980,6 +4040,11 @@ run(function()
                             if fall < -(FallThreshold and FallThreshold.Value or 85) then
                                 clearRegisteredFall(fall)
                             end
+                        elseif Mode.Value == 'RakNet' then
+                            -- The hook does the work; this only decides when it is armed, so the
+                            -- rewrite is confined to the part of the fall that would cost us.
+                            waitDelay = 0.03
+                            spoofFall = fall < -(FallThreshold and FallThreshold.Value or 85)
                         elseif humanoid.FloorMaterial ~= Enum.Material.Air then
                             usedPearl = false
                         elseif Mode.Value == 'Legit' then
@@ -4020,13 +4085,14 @@ run(function()
                 zephyrFired = false
                 fallAnchorY = nil
                 trackedFall = 0
+                removeRakHook()
             end
         end,
-        Tooltip = 'Prevents fall damage. Legit uses clutch methods; TP drops you onto the floor below so the fall ends there instead of at speed; Blatant keeps settling the fall on the server with the game\'s own ground-hit event the whole way down, so the landing has nothing left to charge for. Blatant changes nothing about how you actually fall - no slowing, no floating, no teleporting.'
+        Tooltip = 'Prevents fall damage. Legit uses clutch methods; TP drops you onto the floor below so the fall ends there instead of at speed; Blatant keeps settling the fall on the server with the game\'s own ground-hit event the whole way down, so the landing has nothing left to charge for; RakNet edits the outgoing physics packet so the fall is never reported in the first place. Neither of them changes how you actually fall - no slowing, no floating, no teleporting.'
     })
     Mode = NoFall:CreateDropdown({
         Name = 'Mode',
-        List = {'Legit', 'Blatant', 'TP'},
+        List = {'Legit', 'Blatant', 'TP', 'RakNet'},
         Function = function()
             setSettingsVisible()
             if NoFall.Enabled then
@@ -4050,7 +4116,13 @@ run(function()
         Default = 85,
         Suffix = ' studs/s',
         Visible = false,
-        Tooltip = 'Blatant only: how fast the fall has to get before the ground hit starts being sent. 85 is where BedWars itself starts charging, so anything slower needs no help. Lower it if a fall ever still registers.'
+        Tooltip = 'Blatant and RakNet: how fast the fall has to get before either of them starts work. 85 is where BedWars itself starts charging, so anything slower needs no help. Lower it if a fall ever still registers.'
+    })
+    SpoofState = NoFall:CreateDropdown({
+        Name = 'Reported state',
+        List = {'Running', 'Landed', 'RunningNoPhysics'},
+        Visible = false,
+        Tooltip = 'RakNet only: the humanoid state written into the outgoing physics packet while a dangerous fall is in the air. Running is what an ordinary player on the ground reports and is the safest choice; try Landed if a fall still registers.'
     })
     GroundDistance = NoFall:CreateSlider({
         Name = 'Ground Check',
@@ -16670,6 +16742,532 @@ run(function()
     Notify = AutoWin:CreateToggle({
         Name = 'Notifications',
         Tooltip = 'Also send a notification each time the current action changes. Off by default - the HUD already shows what it is doing without filling the notification stack.'
+    })
+end)
+
+run(function()
+    -- EntityAnalyser
+    --
+    -- Works out how dangerous each player actually is from what they do in front of us - who they
+    -- kill, who kills them, how long they keep a combo running, what they are holding, whether
+    -- they have taken a bed - and does two quite separate things with the answer.
+    --
+    -- Everyone gets a colour over their head: green for skilled, yellow for average, red for
+    -- unskilled. For anyone below skilled that is the whole of it. Nothing about how the cheat
+    -- behaves changes for an average or a weak player - they are only ever labelled.
+    --
+    -- A skilled player, and only while one is actually near us or trading hits with us, also gets
+    -- a small, temporary loosening of whichever modules are opted in below. Every change is
+    -- applied as a delta, never past the slider's own maximum, recorded, and taken back off the
+    -- moment the fight ends - and again if the module is turned off, or the script unloads. Your
+    -- saved settings are never written to: what you set is what you get back.
+    --
+    -- The labels are BillboardGuis in their own folder. They are deliberately NOT Highlights and
+    -- NOT Drawings, which is what ESP, PlayerOutline, KitESP and the charm/aura visuals use, so
+    -- there is no object any of those modules and this one can fight over. They sit higher than
+    -- the +3 studs the other overhead tags use, so a nametag and a rating can be on together.
+    local EntityAnalyser
+    local SkilledAt
+    local UnskilledBelow
+    local TriggerRange
+    local HoldTime
+    local BoostAmount
+    local Tweak
+    local TweakKillaura
+    local TweakSilentAura
+    local TweakVelocity
+    local TweakAntiLagback
+    local Labels
+    local ShowScore
+    local ShowSkilled
+    local ShowAverage
+    local ShowUnskilled
+    local Teammates
+    local Notify
+
+    -- Hits that keep landing inside this gap are one combo. Long enough to cover a normal swing
+    -- cadence, short enough that two people trading single hits never reads as a combo.
+    local COMBO_WINDOW = 1.6
+    -- How long after a hit either way we still count as fighting someone.
+    local FIGHT_MEMORY = 5
+
+    local tierColor = {
+        Skilled = Color3.fromRGB(85, 220, 130),
+        Average = Color3.fromRGB(235, 205, 90),
+        Unskilled = Color3.fromRGB(235, 95, 95)
+    }
+
+    local stats, tags, applied, seen = {}, {}, {}, {}
+    local folder
+    local boosted, engagedSince = false, 0
+
+    local function statFor(plr)
+        if not plr then return nil end
+        local record = stats[plr]
+        if not record then
+            record = {
+                kills = 0,
+                deaths = 0,
+                hits = 0,
+                beds = 0,
+                combo = 0,
+                bestCombo = 0,
+                lastHit = 0,
+                lastVictim = nil,
+                lastFight = 0,
+                score = 50,
+                tier = 'Average'
+            }
+            stats[plr] = record
+        end
+        return record
+    end
+
+    ----------------------------------------------------------------------------
+    -- Scoring.
+    ----------------------------------------------------------------------------
+    -- 0-100, starting from 50 meaning "nothing known yet". Every term below only moves the score
+    -- off that baseline when there is actual evidence to move it with, so a player we have not
+    -- seen do anything is never labelled good or bad on nothing at all - they stay Average until
+    -- they show us something.
+    local function scoreOf(plr, record)
+        local score = 50
+
+        -- Trades. What they do to other people is the strongest single signal there is, but one
+        -- lucky kill is not a pattern - the weight climbs with how much we have actually watched.
+        local fights = record.kills + record.deaths
+        if fights > 0 then
+            local ratio = (record.kills - record.deaths) / fights
+            score += ratio * math.min(fights, 4) * 7
+        end
+
+        -- Combos. Anyone lands a hit; keeping someone in the air is a different skill entirely.
+        if record.bestCombo >= 3 then
+            score += math.min((record.bestCombo - 2) * 4, 16)
+        end
+
+        -- Gear. A diamond or emerald sword means they farmed for it rather than tripped over it.
+        local strength = 0
+        pcall(function()
+            strength = getStrength({Player = plr}) or 0
+        end)
+        if strength > 0 then
+            score += math.clamp((strength - 15) * 0.8, -6, 10)
+        end
+
+        -- Beds. Taking one is a whole successful push, start to finish.
+        score += math.min(record.beds * 6, 12)
+
+        return math.clamp(score, 0, 100)
+    end
+
+    local function tierOf(score)
+        if score >= (SkilledAt and SkilledAt.Value or 68) then return 'Skilled' end
+        if score <= (UnskilledBelow and UnskilledBelow.Value or 32) then return 'Unskilled' end
+        return 'Average'
+    end
+
+    ----------------------------------------------------------------------------
+    -- Labels.
+    ----------------------------------------------------------------------------
+    local function removeTag(plr)
+        local tag = tags[plr]
+        if tag then
+            tag:Destroy()
+        end
+        tags[plr] = nil
+    end
+
+    local function tierShown(tier)
+        if tier == 'Skilled' then return ShowSkilled.Enabled end
+        if tier == 'Unskilled' then return ShowUnskilled.Enabled end
+        return ShowAverage.Enabled
+    end
+
+    local function updateTag(plr, ent, record)
+        local adornee = ent.Head or ent.RootPart
+        if not folder or not Labels.Enabled or not adornee or not adornee.Parent or not tierShown(record.tier) then
+            removeTag(plr)
+            return
+        end
+
+        local tag = tags[plr]
+        if not tag or tag.Adornee ~= adornee or not tag.Parent then
+            removeTag(plr)
+            tag = Instance.new('BillboardGui')
+            tag.Name = 'EntityAnalyser'
+            tag.AlwaysOnTop = true
+            tag.ClipsDescendants = false
+            tag.Size = UDim2.fromOffset(150, 18)
+            -- Above the +3 the other overhead tags use, so nothing covers anything.
+            tag.StudsOffsetWorldSpace = Vector3.new(0, 4.4, 0)
+            tag.Adornee = adornee
+            tag.Parent = folder
+
+            local label = Instance.new('TextLabel')
+            label.Name = 'Label'
+            label.Size = UDim2.fromScale(1, 1)
+            label.BackgroundTransparency = 1
+            label.Font = Enum.Font.GothamBold
+            label.TextSize = 13
+            label.TextStrokeTransparency = 0.4
+            label.Parent = tag
+            tags[plr] = tag
+        end
+
+        local label = tag:FindFirstChild('Label')
+        if label then
+            label.TextColor3 = tierColor[record.tier] or tierColor.Average
+            label.Text = ShowScore.Enabled
+                and ('\u{25CF} ' .. record.tier .. ' ' .. math.floor(record.score))
+                or ('\u{25CF} ' .. record.tier)
+        end
+    end
+
+    local function clearTags()
+        for plr in tags do
+            removeTag(plr)
+        end
+        table.clear(tags)
+    end
+
+    ----------------------------------------------------------------------------
+    -- Module tweaks.
+    ----------------------------------------------------------------------------
+    -- Everything a skilled player is allowed to change, and by how much. Slider entries are an
+    -- addition, applied through the option's own SetValue so the module is told about it exactly
+    -- as if you had dragged the slider; module entries are a straight enable. Nothing outside
+    -- this list is ever touched, and nothing here is touched unless its toggle is on.
+    local function boostPlan()
+        local amount = BoostAmount and BoostAmount.Value or 1.5
+        local plan = {}
+        if TweakKillaura.Enabled then
+            table.insert(plan, {Module = 'Killaura', Option = 'Attack range', Add = amount})
+            table.insert(plan, {Module = 'Killaura', Option = 'Swing range', Add = amount})
+        end
+        if TweakSilentAura.Enabled then
+            table.insert(plan, {Module = 'SilentAura', Option = 'Extra swing distance', Add = amount})
+        end
+        if TweakVelocity.Enabled then
+            table.insert(plan, {Module = 'Velocity', Enable = true})
+        end
+        if TweakAntiLagback.Enabled then
+            table.insert(plan, {Module = 'AntiLagback', Enable = true})
+        end
+        return plan
+    end
+
+    local function setOption(option, value)
+        if option.SetValue then
+            pcall(option.SetValue, option, value)
+        else
+            option.Value = value
+        end
+    end
+
+    local function applyBoost()
+        if boosted then return end
+        boosted = true
+        for _, entry in boostPlan() do
+            local module = vape.Modules and vape.Modules[entry.Module]
+            if module then
+                if entry.Enable then
+                    -- Only ever our own doing: if it was already on, we leave it alone and
+                    -- remember nothing, so we cannot switch off something you turned on.
+                    if not module.Enabled then
+                        pcall(module.Toggle, module)
+                        table.insert(applied, {Module = module})
+                    end
+                else
+                    local option = module.Options and module.Options[entry.Option]
+                    if option and type(option.Value) == 'number' then
+                        -- Respect the slider's own ceiling. A boost is meant to be slight, not a
+                        -- way to push a module past a limit it was given for a reason.
+                        local target = option.Max and math.min(option.Value + entry.Add, option.Max) or (option.Value + entry.Add)
+                        local delta = target - option.Value
+                        if delta > 0 then
+                            setOption(option, target)
+                            table.insert(applied, {Option = option, Delta = delta})
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    local function restoreBoost()
+        boosted = false
+        for i = #applied, 1, -1 do
+            local entry = applied[i]
+            if entry.Option then
+                -- Subtract what we added rather than restoring a snapshot, so if you moved the
+                -- slider yourself while a boost was up, your change survives the restore.
+                setOption(entry.Option, entry.Option.Value - entry.Delta)
+            elseif entry.Module and entry.Module.Enabled then
+                pcall(entry.Module.Toggle, entry.Module)
+            end
+            applied[i] = nil
+        end
+    end
+
+    -- A skilled player counts as on us while they are inside Trigger range, or while either of us
+    -- has landed a hit on the other recently. Teammates never trigger this however they are
+    -- labelled - there is no fight to prepare for.
+    local function skilledEngaged()
+        if not entitylib.isAlive then return false end
+        local root = entitylib.character.RootPart
+        if not root then return false end
+        local now, range = tick(), TriggerRange.Value
+        for _, ent in entitylib.List do
+            local plr = ent.Player
+            local record = plr and stats[plr]
+            if record and record.tier == 'Skilled' and ent.Character and ent.Character.Parent and entitylib.targetCheck(ent) then
+                if now - record.lastFight <= FIGHT_MEMORY then return true end
+                if ent.RootPart and ent.RootPart.Parent and (ent.RootPart.Position - root.Position).Magnitude <= range then
+                    return true
+                end
+            end
+        end
+        return false
+    end
+
+    ----------------------------------------------------------------------------
+    -- Passes.
+    ----------------------------------------------------------------------------
+    local function refresh()
+        table.clear(seen)
+        for _, ent in entitylib.List do
+            local plr = ent.Player
+            if plr then
+                seen[plr] = true
+                local record = statFor(plr)
+                record.score = scoreOf(plr, record)
+                local tier = tierOf(record.score)
+                if tier ~= record.tier then
+                    record.tier = tier
+                    if tier == 'Skilled' and Notify.Enabled then
+                        notif('EntityAnalyser', plr.Name .. ' is playing well (' .. math.floor(record.score) .. ')', 4)
+                    end
+                end
+                if Teammates.Enabled or entitylib.targetCheck(ent) then
+                    updateTag(plr, ent, record)
+                else
+                    removeTag(plr)
+                end
+            end
+        end
+        -- Anyone who has left the entity list - died, left, streamed out - loses their label.
+        for plr in tags do
+            if not seen[plr] then
+                removeTag(plr)
+            end
+        end
+    end
+
+    EntityAnalyser = vape.Categories.Utility:CreateModule({
+        Name = 'EntityAnalyser',
+        Function = function(callback)
+            if callback then
+                folder = Instance.new('Folder')
+                folder.Name = 'EntityAnalyser'
+                folder.Parent = vape.gui
+                EntityAnalyser:Clean(folder)
+                -- Belt and braces: whatever happens to the loop below, the settings go back.
+                EntityAnalyser:Clean(restoreBoost)
+
+                EntityAnalyser:Clean(vapeEvents.EntityDeathEvent.Event:Connect(function(deathTable)
+                    local killer = deathTable.fromEntity and playersService:GetPlayerFromCharacter(deathTable.fromEntity)
+                    local killed = deathTable.entityInstance and playersService:GetPlayerFromCharacter(deathTable.entityInstance)
+                    if killer and killer ~= killed then
+                        statFor(killer).kills += 1
+                    end
+                    if killed then
+                        local record = statFor(killed)
+                        record.deaths += 1
+                        record.combo = 0
+                    end
+                end))
+
+                EntityAnalyser:Clean(vapeEvents.EntityDamageEvent.Event:Connect(function(damageTable)
+                    if (damageTable.damage or 0) <= 0 then return end
+                    local attacker = damageTable.fromEntity and playersService:GetPlayerFromCharacter(damageTable.fromEntity)
+                    local victim = damageTable.entityInstance and playersService:GetPlayerFromCharacter(damageTable.entityInstance)
+                    if not attacker or attacker == victim then return end
+
+                    local record, now = statFor(attacker), tick()
+                    -- A combo is hits that keep landing on the same person without a gap. Reset
+                    -- on a new victim or on any pause, so trading blows around a scrappy fight
+                    -- never adds up into one long combo.
+                    if record.lastVictim == victim and now - record.lastHit <= COMBO_WINDOW then
+                        record.combo += 1
+                    else
+                        record.combo = 1
+                    end
+                    record.lastVictim, record.lastHit = victim, now
+                    record.bestCombo = math.max(record.bestCombo, record.combo)
+                    record.hits += 1
+
+                    -- Remember who we are actually in a fight with, either direction.
+                    if victim == lplr then
+                        record.lastFight = now
+                    elseif attacker == lplr and victim then
+                        statFor(victim).lastFight = now
+                    end
+                end))
+
+                EntityAnalyser:Clean(vapeEvents.BedwarsBedBreak.Event:Connect(function(bedTable)
+                    if bedTable.player then
+                        statFor(bedTable.player).beds += 1
+                    end
+                end))
+
+                repeat
+                    refresh()
+                    if Tweak.Enabled then
+                        if skilledEngaged() then
+                            engagedSince = tick()
+                            applyBoost()
+                        elseif boosted and tick() - engagedSince > HoldTime.Value then
+                            restoreBoost()
+                        end
+                    elseif boosted then
+                        restoreBoost()
+                    end
+                    task.wait(0.25)
+                until not EntityAnalyser.Enabled
+            else
+                restoreBoost()
+                clearTags()
+                table.clear(stats)
+                folder = nil
+            end
+        end,
+        Tooltip = 'Reads how well every player is actually playing - kills and deaths, how long their combos run, their gear, beds they have taken - and marks them green, yellow or red over their head. A skilled player also gets a small, temporary loosening of the modules you tick below, but only while one is near you or fighting you, and every change is taken straight back off afterwards. Average and unskilled players are only ever labelled; nothing changes for them.'
+    })
+
+    SkilledAt = EntityAnalyser:CreateSlider({
+        Name = 'Skilled at',
+        Min = 50,
+        Max = 95,
+        Default = 68,
+        Tooltip = 'Score a player has to reach to count as skilled. Everyone starts at 50 with nothing known about them, and only moves once they have actually done something.'
+    })
+    UnskilledBelow = EntityAnalyser:CreateSlider({
+        Name = 'Unskilled below',
+        Min = 5,
+        Max = 50,
+        Default = 32,
+        Tooltip = 'Score a player has to drop under to be marked red. Purely a label - nothing about the cheat changes for them.'
+    })
+    Tweak = EntityAnalyser:CreateToggle({
+        Name = 'Tweak modules',
+        Default = true,
+        Function = function(callback)
+            for _, option in {TweakKillaura, TweakSilentAura, TweakVelocity, TweakAntiLagback, BoostAmount, TriggerRange, HoldTime} do
+                if option and option.Object then
+                    option.Object.Visible = callback
+                end
+            end
+            if not callback then
+                restoreBoost()
+            end
+        end,
+        Tooltip = 'Whether a skilled player is allowed to change anything at all. Off makes this a pure read-out: the labels still work, no setting is ever touched.'
+    })
+    TweakKillaura = EntityAnalyser:CreateToggle({
+        Name = 'Killaura',
+        Default = true,
+        Darker = true,
+        Tooltip = 'Adds the boost amount to Killaura\'s attack and swing range while a skilled player is on you.'
+    })
+    TweakSilentAura = EntityAnalyser:CreateToggle({
+        Name = 'SilentAura',
+        Default = true,
+        Darker = true,
+        Tooltip = 'Adds the boost amount to SilentAura\'s extra swing distance while a skilled player is on you.'
+    })
+    TweakVelocity = EntityAnalyser:CreateToggle({
+        Name = 'Velocity',
+        Darker = true,
+        Tooltip = 'Switches Velocity on for the fight and back off afterwards - only if it was off to begin with.'
+    })
+    TweakAntiLagback = EntityAnalyser:CreateToggle({
+        Name = 'AntiLagback',
+        Darker = true,
+        Tooltip = 'Switches AntiLagback on for the fight and back off afterwards - only if it was off to begin with.'
+    })
+    BoostAmount = EntityAnalyser:CreateSlider({
+        Name = 'Boost amount',
+        Min = 0.5,
+        Max = 4,
+        Default = 1.5,
+        Decimal = 10,
+        Darker = true,
+        Suffix = ' studs',
+        Tooltip = 'How much to add to the range sliders. Kept deliberately small - this is meant to be a nudge for a hard fight, and it never pushes a slider past its own maximum.'
+    })
+    TriggerRange = EntityAnalyser:CreateSlider({
+        Name = 'Trigger range',
+        Min = 10,
+        Max = 120,
+        Default = 45,
+        Darker = true,
+        Suffix = ' studs',
+        Tooltip = 'How close a skilled player has to be for the tweaks to come up. They also come up whenever you and a skilled player are trading hits, whatever the distance.'
+    })
+    HoldTime = EntityAnalyser:CreateSlider({
+        Name = 'Hold time',
+        Min = 0.5,
+        Max = 10,
+        Default = 3,
+        Decimal = 10,
+        Darker = true,
+        Suffix = ' seconds',
+        Tooltip = 'How long to keep the tweaks up after the skilled player breaks off, so a fight moving in and out of range does not flicker your settings on and off.'
+    })
+    Labels = EntityAnalyser:CreateToggle({
+        Name = 'Labels',
+        Default = true,
+        Function = function(callback)
+            for _, option in {ShowScore, ShowSkilled, ShowAverage, ShowUnskilled} do
+                if option and option.Object then
+                    option.Object.Visible = callback
+                end
+            end
+            if not callback then
+                clearTags()
+            end
+        end,
+        Tooltip = 'Show the rating over each player\'s head. These are billboards in their own folder, not highlights or drawings, so they cannot conflict with ESP, PlayerOutline, KitESP or any charm/aura visual.'
+    })
+    ShowScore = EntityAnalyser:CreateToggle({
+        Name = 'Show score',
+        Default = true,
+        Darker = true,
+        Tooltip = 'Put the number next to the rating.'
+    })
+    ShowSkilled = EntityAnalyser:CreateToggle({
+        Name = 'Label skilled',
+        Default = true,
+        Darker = true
+    })
+    ShowAverage = EntityAnalyser:CreateToggle({
+        Name = 'Label average',
+        Default = true,
+        Darker = true
+    })
+    ShowUnskilled = EntityAnalyser:CreateToggle({
+        Name = 'Label unskilled',
+        Default = true,
+        Darker = true
+    })
+    Teammates = EntityAnalyser:CreateToggle({
+        Name = 'Label teammates',
+        Tooltip = 'Also rate your own team. They never trigger a tweak either way - there is no fight to get ready for.'
+    })
+    Notify = EntityAnalyser:CreateToggle({
+        Name = 'Notifications',
+        Tooltip = 'Say something the first time a player crosses into skilled.'
     })
 end)
 
