@@ -3486,6 +3486,8 @@ run(function()
     local NoFall
     local Mode
     local MinVelocity
+    local FallThreshold
+    local SpoofState
     local GroundDistance
     local AnchorAttempts
     local BlockClutch
@@ -3495,10 +3497,13 @@ run(function()
     local VoidAxeClutch
     local HealthCheck
     local Zephyr
-    local blatantHeld = false
     local rayCheck = RaycastParams.new()
     rayCheck.RespectCanCollide = true
     rayCheck.FilterType = Enum.RaycastFilterType.Exclude
+    -- Deliberately left on the default collision group - see groundBelow.
+    local plainCheck = RaycastParams.new()
+    plainCheck.RespectCanCollide = true
+    plainCheck.FilterType = Enum.RaycastFilterType.Exclude
     local lastAnchor = 0
     local usedPearl = false
     local lastLegitUse = 0
@@ -3506,7 +3511,6 @@ run(function()
     local lastBlockPlace = 0
     local lastZephyrJump = 0
     local fallAnchorY
-    local tpAnchorY
     local projectileRemote = {InvokeServer = function() end}
     task.spawn(function()
         projectileRemote = bedwars.Client:Get(remotes.FireProjectile).instance
@@ -3536,77 +3540,94 @@ run(function()
         return workspace:Blockcast(root.CFrame, Vector3.new(3, 3, 3), Vector3.new(0, castDistance, 0), rayCheck)
     end
 
-    -- Height of the floor below us. Prefers the box cast (tolerant of thin blocks and ledges)
-    -- and falls back to a plain long ray, so a missed box cast never leaves a mode with
-    -- nothing to aim at.
+    -- Height of the floor below us, by three independent methods.
+    --
+    -- A cast that comes back empty is the single failure that stops TP mode dead: with no floor
+    -- to aim at it does nothing at all, which is exactly what "TP doesn't teleport" looks like
+    -- from the outside. So an empty result is never taken at face value here.
+    --
+    --   1. The box cast, tolerant of thin blocks and of ledges a thin ray slips past. This is the
+    --      shipped script's own method, on the character's collision group.
+    --   2. A plain long ray on the DEFAULT collision group. If the character sits in a group that
+    --      does not collide with the map, (1) passes straight through the world and finds nothing
+    --      while this still sees it.
+    --   3. The block engine's own store, walked cell by cell down the column we are over. On a
+    --      BedWars map the floor is nearly always a placed block, and a data lookup cannot be
+    --      defeated by a collision group, a CanQuery flag or a filter at all.
     local function groundBelow(root, character)
-        updateRay(root)
         local ground = getGround(root, character, 1500)
         if ground then return ground.Position.Y end
-        local ray = workspace:Raycast(root.Position, Vector3.new(0, -3000, 0), rayCheck)
-        return ray and ray.Position.Y or nil
+
+        plainCheck.FilterDescendantsInstances = {lplr.Character, gameCamera, AntiFallPart}
+        local ray = workspace:Raycast(root.Position, Vector3.new(0, -3000, 0), plainCheck)
+        if ray then return ray.Position.Y end
+
+        local success, blockY = pcall(function()
+            local origin = root.Position
+            for step = 1, 200 do
+                local below = Vector3.new(origin.X, origin.Y - (step * 3), origin.Z)
+                if getPlacedBlock(below) then
+                    -- Top face of the block we found, which is what we would stand on.
+                    return (bedwars.BlockController:getBlockPosition(below).Y * 3) + 1.5
+                end
+            end
+            return nil
+        end)
+        return success and blockY or nil
     end
 
-    -- TP mode. A fall only hurts because of how much of it the game has registered by the time
-    -- you land, so this keeps clearing that: drop to the floor with no speed for long enough
-    -- that the landing replicates and the fall resets, then carry on falling from where we
-    -- WOULD have been had we never stopped.
+    -- The distance from the root's centre down to the floor we stand on. entitylib already folds
+    -- half the root part into HipHeight, so adding it again (as this used to) put every floor
+    -- estimate a stud out.
+    local function standClearance(root, character)
+        local humanoid = character.Humanoid
+        return character.HipHeight or ((humanoid and humanoid.HipHeight or 2) + (root.Size.Y * 0.5))
+    end
+
+    -- The fall that has built up: the fastest we have been moving downwards since we were last on
+    -- the ground. This, not the speed at any one instant, is what a fall is worth - a drop that
+    -- has already reached 200 studs a second is a lethal fall even on the frame it happens to be
+    -- reading -3 because it clipped something. Every mode below decides off this one number.
+    local trackedFall = 0
+
+    local function updateTrackedFall(root, humanoid)
+        if humanoid and humanoid.FloorMaterial ~= Enum.Material.Air then
+            trackedFall = 0
+        else
+            trackedFall = math.min(trackedFall, root.AssemblyLinearVelocity.Y)
+        end
+        return trackedFall
+    end
+
+    -- TP mode. BedWars charges for the landing you report, so the way to clear a long drop is to
+    -- end it early: cast straight down, put the character on the floor it was heading for anyway
+    -- and take the touchdown there with no speed left on it.
     --
-    -- That last part is the fix. The old version snapped back to the exact spot it left, so the
-    -- character could never make any downward progress - every touch rewound the fall to the
-    -- same height and it just hovered and strobed in place, which is what "TP does nothing"
-    -- looked like. Resuming along the fall instead means the descent carries on normally and
-    -- each touch simply wipes the damage that had built up behind it.
+    -- The old version teleported down for a couple of frames and then teleported back UP to
+    -- "resume" the fall from where it would have got to. Moving upwards that fast is exactly what
+    -- the server's movement check rejects, so every touch was rubber-banded straight back to
+    -- where it started and the mode looked like it never teleported at all. A drop to the ground
+    -- is a move the server is already expecting, so this one lands.
     local function tpNoFall(root, character)
         local groundY = groundBelow(root, character)
         if not groundY then return false end
 
-        local humanoid = character.Humanoid
-        local startCFrame = root.CFrame
-        local startVel = root.AssemblyLinearVelocity
-        local clearance = (character.HipHeight or (humanoid and humanoid.HipHeight) or 2) + (root.Size.Y * 0.5)
-        local floorY = groundY + clearance
-        local drop = startCFrame.Position.Y - floorY
+        local floorY = groundY + standClearance(root, character)
+        local drop = root.Position.Y - floorY
+        -- Below the floor we found (inside a block, or it read a ceiling): leave it alone.
+        if drop <= 1 then return false end
 
-        -- Already low enough that the rest of the fall cannot hurt: just take the landing
-        -- softly rather than bouncing off the floor and back up for no reason.
-        if drop <= 8 then
-            root.AssemblyLinearVelocity = Vector3.new(startVel.X, math.max(startVel.Y, -20), startVel.Z)
-            return true
-        end
-
-        local touchCFrame = CFrame.new(startCFrame.X, floorY + 0.05, startCFrame.Z) * startCFrame.Rotation
-
-        -- Hold the touch until the landing has registered AND been held long enough to
-        -- replicate; a single-frame touch is never sampled by the server. Capped so we never
-        -- linger long enough to be visibly standing there.
-        local started = tick()
-        local landed = false
-        repeat
-            root.CFrame = touchCFrame
-            root.AssemblyLinearVelocity = Vector3.zero
-            task.wait()
-            if not NoFall.Enabled or not entitylib.isAlive or not root.Parent then return true end
-            if humanoid and humanoid.FloorMaterial ~= Enum.Material.Air then landed = true end
-        until (landed and (tick() - started) >= 0.08) or (tick() - started) >= 0.25
-
-        if not root.Parent then return true end
-
-        -- Resume along the fall, not back at the top of it.
-        local elapsed = tick() - started
-        local gravity = workspace.Gravity
-        local resume = startCFrame.Position
-            + Vector3.new(startVel.X * elapsed, (startVel.Y * elapsed) - (0.5 * gravity * elapsed * elapsed), startVel.Z * elapsed)
-        local resumeVel = Vector3.new(startVel.X, startVel.Y - (gravity * elapsed), startVel.Z)
-
-        -- Never resume underneath the floor we just stood on.
-        if resume.Y <= floorY then
-            root.AssemblyLinearVelocity = Vector3.new(resumeVel.X, 0, resumeVel.Z)
-            return true
-        end
-
-        root.CFrame = CFrame.new(resume) * startCFrame.Rotation
-        root.AssemblyLinearVelocity = resumeVel
+        local velocity = root.AssemblyLinearVelocity
+        root.CFrame -= Vector3.new(0, drop, 0)
+        -- Keep the horizontal travel so the landing spot is the one the fall was heading for,
+        -- and arrive with nothing vertical left for the game to charge for. Dropping to the
+        -- floor is a move the server is already expecting from someone who is falling, which is
+        -- why this replicates where the old build's teleport back UP was always rejected.
+        root.AssemblyLinearVelocity = Vector3.new(velocity.X, 0, velocity.Z)
+        -- The fall is over as far as we are concerned. Without this the next pass would still be
+        -- holding the old speed and would fire again before the humanoid has registered the
+        -- landing, which is what turns one teleport into a burst of them.
+        trackedFall = 0
         return true
     end
 
@@ -3877,66 +3898,113 @@ run(function()
         root.Velocity = Vector3.zero
     end
 
-    -- Impact speed to bleed a fall down to. BedWars gives roughly six blocks of grace, which is
-    -- an 84 stud/s landing, so arriving at 45 is a fall the game has nothing to charge for and
-    -- still looks like an ordinary drop off a block rather than a feather landing.
-    local SAFE_IMPACT = 45
-
-    -- Blatant. Two independent layers, neither of which is a humanoid state spoof:
+    -- Blatant. Nothing physical happens here at all: the character falls at full speed, lands
+    -- where and when it would have, and no velocity, position or humanoid state is ever touched.
+    -- The only thing that changes is what the server has on its books for the fall.
     --
-    --  1. Cancel the fall the client registers. BedWars works out fall damage from the landing
-    --     velocity it registers for you, and FallDamageController.additionalRegisteredVelocity
-    --     is the offset added to it, so holding that at the inverse of the drop means the
-    --     landing it reports is a harmless one. This is the game's own number, not a Roblox
-    --     property being lied to.
-    --  2. Make the landing genuinely soft, so there is nothing for anything - client or
-    --     server - to turn into damage in the first place.
+    -- BedWars settles fall damage off the ground-hit event the client sends it. So while a
+    -- dangerous fall is in progress we send that event ourselves, over and over, with no block
+    -- attached to it: the fall the server is holding for us is continuously settled and cleared,
+    -- and the real landing arrives with nothing left on the books to charge for.
     --
-    -- Layer 2 is what the old build got wrong. It ran off the module's 20-40ms poll, and at two
-    -- hundred studs a second that regularly stepped straight over the touchdown; when it did
-    -- catch one it pinned you to -10 studs a second a full ten studs up and floated you down in
-    -- plain sight. It now runs on PreSimulation with the real frame time, looks ahead by the
-    -- speed you are actually falling at, and only bleeds off in the last couple of frames.
-    local function blatantStep(dt)
-        local character, root, humanoid = validCharacter()
-        if not character or not root then return end
+    -- The cadence is the mechanism, not a detail. One packet and then silence leaves the fall
+    -- free to build straight back up before touchdown, which is why this is deliberately NOT
+    -- rate limited - it fires on every pass of the module's poll for as long as the fall is
+    -- dangerous, so at the moment of landing the server has at most one tick of drop recorded.
+    -- An earlier build here rate limited it to one send every 120ms and that is precisely the
+    -- kind of "tidying" that stops it working.
+    --
+    -- Every physical variant of this has now been tried and none of them hold: cancelling the
+    -- registered velocity, bleeding the impact off in the last frames, capping the fall speed
+    -- and giving the distance back. They all lose the same race against the landing frame, or
+    -- lean on a field the game does not have. This one does not race anything - it is simply
+    -- keeping the server's record of the fall empty the whole way down.
+    local groundHit
 
-        local velocity = root.AssemblyLinearVelocity
-
-        -- Layer 1, held the whole time we are in the air so the value is already in place
-        -- whenever the landing is registered.
-        pcall(function()
-            bedwars.FallDamageController.additionalRegisteredVelocity = math.max(-velocity.Y + 60, 60)
+    local function resolveGroundHit()
+        if groundHit then return groundHit end
+        local success, remote = pcall(function()
+            return bedwars.Client:Get(remotes.GroundHit).instance
         end)
-        blatantHeld = true
+        groundHit = success and remote or nil
+        return groundHit
+    end
+    task.spawn(resolveGroundHit)
 
-        -- Layer 2.
-        if not isnetworkowner(root) then return end
-        if velocity.Y >= -SAFE_IMPACT then return end
-        if humanoid and humanoid.FloorMaterial ~= Enum.Material.Air then return end
+    local function clearRegisteredFall(fall)
+        local remote = resolveGroundHit()
+        if not remote then return false end
+        pcall(function()
+            remote:FireServer(nil, Vector3.new(0, fall, 0), workspace:GetServerTimeNow())
+        end)
+        return true
+    end
 
-        local speed = -velocity.Y
-        local ground = getGround(root, character, math.max(speed * 0.5, 40))
-        if not ground then return end
+    -- RakNet mode. The only one that works underneath the game entirely: it edits the physics
+    -- packet on its way out of the client.
+    --
+    -- What a fall was worth is decided from what you replicate while you are in the air, and the
+    -- humanoid state rides along in the standard 0x1b physics packet - the same packet and the
+    -- same offset StateSpoofer writes to. So for as long as a dangerous fall is in progress this
+    -- rewrites that one byte to a grounded state: the server is told about someone running, never
+    -- about someone falling, and a fall that was never reported has nothing to settle on landing.
+    --
+    -- Nothing local changes. Not velocity, not position, not the state your own client is using -
+    -- the fall looks and feels exactly as it always did on your screen, and the only difference
+    -- is what leaves the machine.
+    --
+    -- A send hook runs on the network thread, where one error disconnects you, so there are two
+    -- hard rules here: everything is inside a pcall with an explicit length check, and while the
+    -- fall is not dangerous the hook returns immediately without touching the packet, so ordinary
+    -- movement replicates byte for byte the way it normally would.
+    local rakHook, spoofFall = nil, false
 
-        local clearance = (character.HipHeight or (humanoid and humanoid.HipHeight) or 2) + (root.Size.Y * 0.5)
-        local remaining = math.max((root.Position.Y - ground.Position.Y) - clearance, 0)
-
-        -- Two frames of margin: always ahead of the impact, never early enough to hang.
-        if remaining <= 3 or remaining <= speed * math.max(dt, 1 / 240) * 2 then
-            root.AssemblyLinearVelocity = Vector3.new(velocity.X, -SAFE_IMPACT, velocity.Z)
+    local function addRakHook()
+        if rakHook then return end
+        rakHook = function(packet)
+            if not spoofFall then return end
+            pcall(function()
+                if packet.AsArray and packet.AsArray[1] == 0x1b then
+                    local data = packet.AsBuffer
+                    local state = SpoofState and Enum.HumanoidStateType[SpoofState.Value]
+                    if data and state and buffer.len(data) >= 26 then
+                        buffer.writeu8(data, 25, state.Value + 32)
+                        packet:SetData(data)
+                    end
+                end
+            end)
         end
+        pcall(raknet.add_send_hook, rakHook)
+    end
+
+    local function removeRakHook()
+        spoofFall = false
+        if not rakHook then return end
+        pcall(raknet.remove_send_hook, rakHook)
+        rakHook = nil
     end
 
     local function setSettingsVisible()
         local legit = Mode and Mode.Value == 'Legit'
-        -- Blatant no longer uses per-second anchor attempts (it cancels the registered fall and
-        -- softens the touchdown instead), so that slider stays hidden.
+        -- Blatant holds the whole fall down rather than firing off attempts a few times a second,
+        -- so that slider stays hidden.
         if AnchorAttempts and AnchorAttempts.Object then AnchorAttempts.Object.Visible = false end
         for _, option in {BlockClutch, TelepearlClutch, DaoClutch, JadeHammerClutch, VoidAxeClutch, Zephyr} do
             if option and option.Object then
                 option.Object.Visible = legit
             end
+        end
+        -- Legit and TP act off Minimum Velocity, Blatant off its own threshold, so the two swap
+        -- over with the mode rather than both sitting there doing nothing for two thirds of it.
+        local packetMode = Mode and (Mode.Value == 'Blatant' or Mode.Value == 'RakNet') or false
+        if MinVelocity and MinVelocity.Object then
+            MinVelocity.Object.Visible = not packetMode
+        end
+        if FallThreshold and FallThreshold.Object then
+            FallThreshold.Object.Visible = packetMode
+        end
+        if SpoofState and SpoofState.Object then
+            SpoofState.Object.Visible = Mode and Mode.Value == 'RakNet' or false
         end
     end
 
@@ -3944,21 +4012,41 @@ run(function()
         Name = 'NoFallDamage',
         Function = function(callback)
             if callback then
-                if Mode.Value == 'Blatant' then
-                    -- Per frame, with the real step time, rather than inside the poll below.
-                    NoFall:Clean(runService.PreSimulation:Connect(blatantStep))
+                if Mode.Value == 'Blatant' and not resolveGroundHit() then
+                    notif('NoFallDamage', 'Could not reach the ground-hit event - Blatant has nothing to send', 8, 'alert')
+                end
+                if Mode.Value == 'RakNet' then
+                    if not rakNetCheck('NoFallDamage') then
+                        NoFall:Toggle()
+                        return
+                    end
+                    addRakHook()
                 end
 
                 repeat
                     local waitDelay = 0.04
                     local character, root, humanoid = validCharacter()
+                    if not character then
+                        -- No character to read: never leave the packet hook rewriting state for
+                        -- a fall that is no longer happening.
+                        spoofFall = false
+                    end
                     if character then
+                        local fall = updateTrackedFall(root, humanoid)
                         if Mode.Value == 'Blatant' then
-                            -- Driven by the PreSimulation connection above; nothing to poll for.
-                            waitDelay = 0.2
+                            -- Settle the fall the server is holding, every single pass, for as
+                            -- long as the drop is worth charging for. Nothing physical here.
+                            waitDelay = 0.03
+                            if fall < -(FallThreshold and FallThreshold.Value or 85) then
+                                clearRegisteredFall(fall)
+                            end
+                        elseif Mode.Value == 'RakNet' then
+                            -- The hook does the work; this only decides when it is armed, so the
+                            -- rewrite is confined to the part of the fall that would cost us.
+                            waitDelay = 0.03
+                            spoofFall = fall < -(FallThreshold and FallThreshold.Value or 85)
                         elseif humanoid.FloorMaterial ~= Enum.Material.Air then
                             usedPearl = false
-                            tpAnchorY = nil
                         elseif Mode.Value == 'Legit' then
                             local ground = getGround(root, character, HealthCheck and HealthCheck.Enabled and 300 or (GroundDistance and GroundDistance.Value or 30))
                             -- Zephyr is now a Legit sub-toggle: if it's on, try the
@@ -3975,35 +4063,13 @@ run(function()
                                 legitClutch(root, humanoid, ground)
                             end
                         elseif Mode.Value == 'TP' then
-                            -- Belt and braces: keep the registered fall velocity cancelled the
-                            -- whole time TP mode is airborne, so the fall is neutralised even on
-                            -- a touch that doesn't replicate a grounded state in time. Reset to 0
-                            -- on disable via the blatantHeld flag below.
-                            local vy = root.AssemblyLinearVelocity.Y
-                            pcall(function()
-                                bedwars.FallDamageController.additionalRegisteredVelocity = math.max(-vy + 60, 60)
-                            end)
-                            blatantHeld = true
-
-                            -- Anchored from the moment we leave the ground, not from the moment
-                            -- we are falling fast enough, so the first touch still happens inside
-                            -- the game's grace rather than a dozen studs past it.
-                            tpAnchorY = tpAnchorY or root.Position.Y
-
-                            if vy <= -(MinVelocity and MinVelocity.Value or 60) then
-                                -- Touch off every 12 studs of fall rather than on a timer. That is
-                                -- comfortably inside the game's own grace, so the fall on the books
-                                -- can never reach a damaging size no matter how far you actually
-                                -- drop - and unlike a fixed interval it does not depend on the poll
-                                -- rate keeping up with terminal velocity.
-                                if (tpAnchorY - root.Position.Y) >= 12 then
-                                    if tpNoFall(root, character) then
-                                        tpAnchorY = root.Position.Y
-                                    end
-                                    waitDelay = 0.02
-                                else
-                                    waitDelay = 0.03
-                                end
+                            -- Nothing is owed until the drop is worth something. Once it is, end
+                            -- the fall on the floor below us. Judged on the fall built up rather
+                            -- than this instant's reading, so a fast drop that momentarily reads
+                            -- slow - clipping a ledge, brushing a block - still counts.
+                            waitDelay = 0.03
+                            if fall <= -(MinVelocity and MinVelocity.Value or 60) then
+                                tpNoFall(root, character)
                             end
                         end
                     end
@@ -4018,21 +4084,15 @@ run(function()
                 lastZephyrJump = 0
                 zephyrFired = false
                 fallAnchorY = nil
-                tpAnchorY = nil
-                -- Always hand the fall-damage controller's offset back to normal if Blatant drove it.
-                if blatantHeld then
-                    pcall(function()
-                        bedwars.FallDamageController.additionalRegisteredVelocity = 0
-                    end)
-                    blatantHeld = false
-                end
+                trackedFall = 0
+                removeRakHook()
             end
         end,
-        Tooltip = 'Prevents fall damage. Legit uses clutch methods; TP touches the floor every 12 studs of fall to clear it, then resumes falling from where you would have been; Blatant cancels the fall the client registers and bleeds the last couple of frames of the drop so the landing is genuinely harmless.'
+        Tooltip = 'Prevents fall damage. Legit uses clutch methods; TP drops you onto the floor below so the fall ends there instead of at speed; Blatant keeps settling the fall on the server with the game\'s own ground-hit event the whole way down, so the landing has nothing left to charge for; RakNet edits the outgoing physics packet so the fall is never reported in the first place. Neither of them changes how you actually fall - no slowing, no floating, no teleporting.'
     })
     Mode = NoFall:CreateDropdown({
         Name = 'Mode',
-        List = {'Legit', 'Blatant', 'TP'},
+        List = {'Legit', 'Blatant', 'TP', 'RakNet'},
         Function = function()
             setSettingsVisible()
             if NoFall.Enabled then
@@ -4040,13 +4100,29 @@ run(function()
                 NoFall:Toggle()
             end
         end,
-        Tooltip = 'Legit uses a fixed clutch order: blocks, telepearls, then tools (enable Zephyr to jump-cancel the fall with the Zephyr/WindWalker kit instead). Blatant holds the registered fall velocity cancelled and softens the touchdown itself, so no damage registers. TP touches the floor every 12 studs of fall to clear it and then carries on falling from where the drop had reached.'
+        Tooltip = 'Legit uses a fixed clutch order: blocks, telepearls, then tools (enable Zephyr to jump-cancel the fall with the Zephyr/WindWalker kit instead). Blatant sends the game\'s own ground-hit event for you, continuously, while the fall is in the air - the fall the server is holding is cleared as fast as it builds, and your character is never touched, so you fall and land completely normally. TP puts you straight down on the floor below you the moment the drop gets dangerous, ending the fall where it was going to end anyway.'
     })
     MinVelocity = NoFall:CreateSlider({
         Name = 'Minimum Velocity',
         Min = 35,
         Max = 120,
-        Default = 60
+        Default = 60,
+        Tooltip = 'How fast the drop has to be before Legit clutches or TP puts you on the floor. Blatant does not use this - it caps a speed rather than waiting for one.'
+    })
+    FallThreshold = NoFall:CreateSlider({
+        Name = 'Fall threshold',
+        Min = 40,
+        Max = 120,
+        Default = 85,
+        Suffix = ' studs/s',
+        Visible = false,
+        Tooltip = 'Blatant and RakNet: how fast the fall has to get before either of them starts work. 85 is where BedWars itself starts charging, so anything slower needs no help. Lower it if a fall ever still registers.'
+    })
+    SpoofState = NoFall:CreateDropdown({
+        Name = 'Reported state',
+        List = {'Running', 'Landed', 'RunningNoPhysics'},
+        Visible = false,
+        Tooltip = 'RakNet only: the humanoid state written into the outgoing physics packet while a dangerous fall is in the air. Running is what an ordinary player on the ground reports and is the safest choice; try Landed if a fall still registers.'
     })
     GroundDistance = NoFall:CreateSlider({
         Name = 'Ground Check',
@@ -15517,13 +15593,13 @@ run(function()
 end)
 
 run(function()
-    -- AutoWin (v4 - full match cycle)
+    -- AutoWin (v5 - full match cycle, walked rather than teleported)
     --
     -- One fixed plan, run over and over until the game is won:
     --   1. Stand at the team iron generator and collect iron until we hold the target amount.
     --   2. Walk to the shop keeper and buy wool (16 wool per 8 iron).
-    --   3. Bridge to the nearest enemy bed - teleporting a fixed distance at a fixed interval and
-    --      guaranteeing footing under every single grid cell on the way, so the path is a
+    --   3. Bridge to the nearest enemy bed - walking the path a grid cell at a time and
+    --      guaranteeing footing under every single cell on the way, so the path is a
     --      continuous walkable bridge with no gaps.
     --   4. Break the bed, bank the loot, respawn, and repeat until every enemy bed is gone.
     --   5. Bridge to the closest player (buying exactly the number of blocks that crossing needs)
@@ -15537,8 +15613,6 @@ run(function()
     local AutoWin
     local IronAmount
     local WoolAmount
-    local HopDistance
-    local HopDelay
     local BedReach
     local PlayerReach
     local StartDelay
@@ -15747,15 +15821,29 @@ run(function()
         end
         return 0
     end
-    -- Place one block and wait for the server to confirm it before anyone stands on it.
+    -- The six cells sharing a face with this one. A block can only be placed against something
+    -- that is already there, so this is what decides whether a placement is worth sending.
+    local faceOffsets = {
+        Vector3.new(CELL, 0, 0), Vector3.new(-CELL, 0, 0),
+        Vector3.new(0, CELL, 0), Vector3.new(0, -CELL, 0),
+        Vector3.new(0, 0, CELL), Vector3.new(0, 0, -CELL)
+    }
+    local function hasNeighbour(world)
+        for _, offset in faceOffsets do
+            if cellSolid(world + offset) then return true end
+        end
+        return false
+    end
+    -- Ask for one block and move on. Placements are fired ahead of where we are walking rather
+    -- than waited on, and the caller only ever steps onto a cell once cellSolid agrees the block
+    -- has actually arrived, so nothing here has to block.
     local function placeAt(world)
         if cellSolid(world) then return true end
         local block = bridgeBlock()
         if not block then return false end
+        if not hasNeighbour(world) then return false end
         pcall(bedwars.placeBlock, world, block)
-        local deadline = tick() + 0.5
-        repeat task.wait() until getPlacedBlock(world) or tick() > deadline or not running()
-        return getPlacedBlock(world) and true or false
+        return true
     end
     local function breakAt(world)
         local block = getPlacedBlock(world)
@@ -15767,11 +15855,42 @@ run(function()
     end
 
     ----------------------------------------------------------------------------
-    -- Bridging. The single movement primitive: step one grid cell toward the target, guarantee
-    -- footing under it (placing a block when there is none), clear anything our body would be
-    -- inside, and repeat. A hop covers Hop Distance worth of cells, then we teleport onto the last
-    -- one and wait Hop Delay. Nothing here can ever cross a gap without filling it in.
+    -- Movement. The character WALKS. It is never teleported.
+    --
+    -- This is the fix for the run going nowhere. The old build hopped: it wrote root.CFrame
+    -- straight onto a cell up to Hop Distance studs away, waited Hop Delay, and did it again.
+    -- BedWars checks how far you move between position samples - the Speed module in this very
+    -- script is capped at 23 studs/s for exactly that reason - so a ten-stud jump inside a single
+    -- frame is always rejected. The server pulled us back, the next iteration measured the same
+    -- distance to the bed and hopped again, and the run sat in that loop forever: teleport, get
+    -- lagged back, teleport, never advance.
+    --
+    -- So the path is now walked. We point the humanoid at the next cell and let the game move us
+    -- at the speed it gives us, jump where the path steps up, tower where it goes straight up,
+    -- and stand still at the edge whenever the next block has not landed yet. There is nothing
+    -- here for the server to reject, and every cell is still bridged before it is walked on.
     ----------------------------------------------------------------------------
+
+    -- The direction handed to the humanoid each frame. `driving` is what makes the module take
+    -- the wheel at all: while it is false nothing is written, so the player keeps normal control
+    -- during the phases that are not travelling (mining the generator, breaking a bed, fighting).
+    local moveDir, driving = Vector3.zero, false
+
+    local function startDriving()
+        AutoWin:Clean(runService.Stepped:Connect(function()
+            if not driving then return end
+            local root, char = myRoot()
+            if not root or not char or not char.Humanoid then return end
+            char.Humanoid:Move(moveDir, false)
+        end))
+        AutoWin:Clean(function()
+            moveDir, driving = Vector3.zero, false
+        end)
+    end
+
+    local function stopMoving()
+        moveDir, driving = Vector3.zero, false
+    end
 
     -- Choose the next cell of the path. Returns nil once we are on top of the target column.
     local function nextCell(from, goal)
@@ -15818,104 +15937,152 @@ run(function()
         return ok and cost or 0
     end
 
-    -- Advance one hop toward `target`.
-    -- Returns: 'moved', 'reached', 'noblocks', 'blocked' or 'dead'.
-    local function hop(target, stopRange, allowBreak)
+    -- How many cells of the path to keep bridged in front of us. Walking covers a cell in about
+    -- a seventh of a second, which is not long enough to place a block and wait for it to come
+    -- back, so the blocks are always asked for a few cells early and are there by the time we
+    -- arrive. Standing still at the edge (below) is the fallback when they are not.
+    local LOOKAHEAD = 3
+
+    -- Climb one level straight up: jump, and drop a block into the cell our feet just left.
+    local function towerUp(cursor)
         local root, char = myRoot()
-        if not root then return 'dead' end
-        local hip = char.HipHeight or 3
-        local pos = root.Position
+        if not root or not char or not char.Humanoid then return end
+        if not bridgeBlock() then return end
+        -- Stand still for the climb; the caller is still driving, so this only kills the
+        -- horizontal push, it does not hand control back.
+        moveDir = Vector3.zero
+        local startY = root.Position.Y
+        pcall(function() char.Humanoid.Jump = true end)
+        local deadline = tick() + 0.7
+        repeat
+            task.wait()
+            local current = myRoot()
+            if not current then return end
+            -- Place as soon as we are clear of the cell, not at the top of the jump: waiting for
+            -- the apex is what leaves you falling back down before the block exists.
+            if current.Position.Y - startY >= CELL + 0.2 then
+                placeAt(worldOf(cursor + Vector3.new(0, 1, 0)))
+                return
+            end
+        until tick() > deadline or not running()
+    end
 
-        local flat = (target - pos) * Vector3.new(1, 0, 1)
-        if flat.Magnitude <= stopRange and math.abs(target.Y - pos.Y) <= 12 then return 'reached' end
+    -- Walk all the way to a (possibly moving) target, bridging the path as we go.
+    -- Returns true on arrival, or false plus a reason ('noblocks', 'blocked', 'stuck').
+    local function travelTo(getTarget, stopRange, allowBreak, label)
+        local stallSince, best = tick(), math.huge
+        local deadline = tick() + 240
+        local lastJump = 0
+        driving = true
 
-        local cursor = footCell(root, hip)
-        local goal = cellOf(Vector3.new(target.X, target.Y - STAND, target.Z))
-        local steps = math.max(1, math.floor(HopDistance.Value / CELL))
-        local moved = false
+        while running() and tick() < deadline do
+            if not alive() then
+                stopMoving()
+                return false
+            end
+            local target = getTarget()
+            local root, char = myRoot()
+            if not target or not root or not char then
+                stopMoving()
+                return false
+            end
+            local hip = char.HipHeight or 3
 
-        for _ = 1, steps do
-            if not running() then return 'dead' end
-            local cell = nextCell(cursor, goal)
-            if not cell then break end
-            local world = worldOf(cell)
-
-            -- Footing: this is the "no gaps" guarantee - every cell we walk over is solid, and if
-            -- it is not, we make it solid before moving.
-            if not cellSolid(world) then
-                if not bridgeBlock() then return 'noblocks' end
-                if not placeAt(world) then
-                    return bridgeBlock() and 'blocked' or 'noblocks'
-                end
+            local left = ((target - root.Position) * Vector3.new(1, 0, 1)).Magnitude
+            if left <= stopRange and math.abs(target.Y - root.Position.Y) <= 12 then
+                stopMoving()
+                return true
             end
 
-            -- Head room: we must not teleport inside a block. Break placed blocks in the way when
+            status(nil, label, string.format('%d studs left  |  %d blocks', math.floor(left), blockCount()))
+            -- Progress is measured in three dimensions, not on the flat. Towering straight up to
+            -- a bed on a high island closes no horizontal distance at all, and judging it on the
+            -- flat would call a climb that is working perfectly well a stall.
+            local progress = (target - root.Position).Magnitude
+            if progress < best - 1 then
+                best, stallSince = progress, tick()
+            elseif tick() - stallSince > 20 then
+                stopMoving()
+                return false, 'stuck'
+            end
+
+            local cursor = footCell(root, hip)
+            local goal = cellOf(Vector3.new(target.X, target.Y - STAND, target.Z))
+            local step = nextCell(cursor, goal)
+            if not step then
+                stopMoving()
+                return true
+            end
+            local world = worldOf(step)
+
+            -- Footing: this is the "no gaps" guarantee. Every cell we walk over is solid, and if
+            -- it is not, we ask for a block there - several cells before we need it.
+            local ahead = cursor
+            for _ = 1, LOOKAHEAD do
+                local cell = nextCell(ahead, goal)
+                if not cell then break end
+                if not cellSolid(worldOf(cell)) then
+                    if not bridgeBlock() then
+                        stopMoving()
+                        return false, 'noblocks'
+                    end
+                    placeAt(worldOf(cell))
+                end
+                ahead = cell
+            end
+
+            -- Head room: we must not walk into a block. Break placed ones out of the way when
             -- allowed (that is how we tunnel into a base); solid map geometry means stop.
-            local clear = true
+            local blocked = false
             for h = 1, 2 do
                 local above = world + Vector3.new(0, CELL * h, 0)
                 if cellSolid(above) then
                     if allowBreak and getPlacedBlock(above) then
                         status(nil, 'Tunnelling through blocks')
-                        if not breakAt(above) then
-                            clear = false
-                            break
-                        end
-                    else
-                        clear = false
+                        breakAt(above)
+                    end
+                    if cellSolid(above) then
+                        blocked = true
                         break
                     end
                 end
             end
-            if not clear then
-                return moved and 'moved' or 'blocked'
+            if blocked then
+                moveDir = Vector3.zero
+                if tick() - stallSince > 8 then
+                    stopMoving()
+                    return false, 'blocked'
+                end
+                task.wait(0.1)
+                continue
             end
 
-            cursor = cell
-            moved = true
-        end
-
-        if not moved then return 'blocked' end
-
-        -- One discrete teleport onto the last verified cell, facing the way we are going.
-        local dest = worldOf(cursor) + Vector3.new(0, STAND + hip, 0)
-        local look = Vector3.new(target.X, dest.Y, target.Z)
-        if (look - dest).Magnitude > 0.01 then
-            root.CFrame = CFrame.new(dest, look)
-        else
-            root.CFrame = CFrame.new(dest) * (root.CFrame - root.CFrame.Position)
-        end
-        root.AssemblyLinearVelocity = Vector3.new(0, root.AssemblyLinearVelocity.Y, 0)
-        return 'moved'
-    end
-
-    -- Bridge all the way to a (possibly moving) target. Returns true on arrival.
-    local function bridgeTo(getTarget, stopRange, allowBreak, label)
-        local stallSince, best = tick(), math.huge
-        local deadline = tick() + 240
-        while running() and tick() < deadline do
-            if not alive() then return false end
-            local target = getTarget()
-            if not target then return false end
-            local root = myRoot()
-            if not root then return false end
-
-            local left = ((target - root.Position) * Vector3.new(1, 0, 1)).Magnitude
-            status(nil, label, string.format('%d studs left  |  %d blocks', math.floor(left), blockCount()))
-            if left < best - 1 then
-                best, stallSince = left, tick()
-            elseif tick() - stallSince > 25 then
-                return false
+            -- Only ever step onto a cell that has actually got something under it. If the block
+            -- we asked for has not come back yet we hold position on the edge instead of walking
+            -- off it, and pick the walk back up on a later pass.
+            if not cellSolid(world) then
+                moveDir = Vector3.zero
+                task.wait(0.05)
+                continue
             end
 
-            local result = hop(target, stopRange, allowBreak)
-            if result == 'reached' then return true end
-            if result == 'dead' then return false end
-            if result == 'noblocks' then return false, 'noblocks' end
-            if result == 'blocked' and tick() - stallSince > 10 then return false end
+            local aim = world + Vector3.new(0, STAND + hip, 0)
+            local delta = (aim - root.Position) * Vector3.new(1, 0, 1)
+            moveDir = delta.Magnitude > 0.05 and delta.Unit or Vector3.zero
 
-            task.wait(HopDelay.Value)
+            if step.Y > cursor.Y and tick() - lastJump > 0.35 then
+                lastJump = tick()
+                if delta.Magnitude <= CELL * 0.5 then
+                    -- Straight up with nowhere to walk to: tower instead.
+                    towerUp(cursor)
+                else
+                    pcall(function() char.Humanoid.Jump = true end)
+                end
+            end
+
+            task.wait()
         end
+        stopMoving()
         return false
     end
 
@@ -15978,16 +16145,25 @@ run(function()
         if gen then
             local root = myRoot()
             if root and (gen.Position - root.Position).Magnitude > 10 then
-                bridgeTo(function()
+                travelTo(function()
                     return gen.Parent and gen.Position or nil
                 end, 8, false, 'Walking to the generator')
             end
         end
 
-        local deadline = tick() + 150
+        -- Wait at the generator, but only while iron is actually coming in. Standing somewhere
+        -- with no generator in reach used to burn two and a half minutes of the run doing
+        -- nothing at all before the cycle was allowed to carry on with what it already had.
+        local deadline = tick() + 90
+        local held, sinceGain = ironCount(), tick()
         while running() and alive() and ironCount() < target and tick() < deadline do
             status('Resources', 'Collecting iron', ironCount() .. '/' .. target .. ' iron')
             vacuum(18)
+            if ironCount() > held then
+                held, sinceGain = ironCount(), tick()
+            elseif tick() - sinceGain > 25 then
+                break
+            end
             task.wait(0.35)
         end
         refreshHUD()
@@ -16053,7 +16229,7 @@ run(function()
             status('Resources', 'Walking to the shop', '')
             local _, spos = nearestShop()
             if not spos then return blockCount() > 0 end
-            bridgeTo(function() return spos end, 8, false, 'Walking to the shop')
+            travelTo(function() return spos end, 8, false, 'Walking to the shop')
         end
         local id = shopIdNear(20)
         if not id then return blockCount() > 0 end
@@ -16264,7 +16440,7 @@ run(function()
         end
 
         status('Bridging', 'Bridging to ' .. bedName(bed), '')
-        local reached, why = bridgeTo(function()
+        local reached, why = travelTo(function()
             return bed.Parent and bedPart(bed) and bedPart(bed).Position or nil
         end, BedReach.Value, true, 'Bridging to ' .. bedName(bed))
 
@@ -16365,7 +16541,7 @@ run(function()
             end
 
             status('Combat', 'Bridging to ' .. name, '')
-            local reached = bridgeTo(function()
+            local reached = travelTo(function()
                 return ent.RootPart and ent.RootPart.Parent and ent.RootPart.Position or nil
             end, PlayerReach.Value, true, 'Bridging to ' .. name)
 
@@ -16388,6 +16564,9 @@ run(function()
             if callback then
                 phaseText, actionText, detailText = 'Starting', 'Waiting for the map', ''
                 refreshHUD()
+                -- Hook the humanoid up before anything can want to move.
+                stopMoving()
+                startDriving()
 
                 repeat task.wait() until (store.matchState ~= 0 and store.map and entitylib.isAlive) or not running()
                 if not running() then return end
@@ -16419,11 +16598,12 @@ run(function()
                     status('Done', 'Game won', '')
                 end
             else
+                stopMoving()
                 phaseText, actionText, detailText = 'Idle', 'Waiting...', ''
                 refreshHUD()
             end
         end,
-        Tooltip = 'Plays the whole match: gathers iron at the generator, buys wool, bridges to every enemy bed (filling in every gap - it never crosses a hole it has not blocked first), breaks the bed, banks the loot and respawns, then hunts down the remaining players with a silent aura. Progress is shown on the HUD; drag its title bar to move it.',
+        Tooltip = 'Plays the whole match: gathers iron at the generator, buys wool, walks and bridges to every enemy bed (filling in every gap - it never crosses a hole it has not blocked first), breaks the bed, banks the loot and respawns, then hunts down the remaining players with a silent aura. It walks the whole way rather than teleporting, so the server has nothing to lag it back for. Progress is shown on the HUD; drag its title bar to move it.',
         Size = UDim2.fromOffset(224, 92)
     })
 
@@ -16517,23 +16697,6 @@ run(function()
         Suffix = ' wool',
         Tooltip = 'The least wool to set off with. Longer crossings automatically buy more than this - the route is measured cell by cell first.'
     })
-    HopDistance = AutoWin:CreateSlider({
-        Name = 'Hop distance',
-        Min = 3,
-        Max = 24,
-        Default = 10,
-        Suffix = ' studs',
-        Tooltip = 'How far each teleport moves you. Every 3-stud cell in between is checked and bridged first, so a longer hop never skips over a gap.'
-    })
-    HopDelay = AutoWin:CreateSlider({
-        Name = 'Hop delay',
-        Min = 0.1,
-        Max = 2,
-        Default = 1,
-        Decimal = 100,
-        Suffix = ' seconds',
-        Tooltip = 'How long to wait between hops. 10 studs every second is roughly a walking pace, which is what keeps the movement plausible.'
-    })
     BedReach = AutoWin:CreateSlider({
         Name = 'Bed reach',
         Min = 3,
@@ -16579,6 +16742,532 @@ run(function()
     Notify = AutoWin:CreateToggle({
         Name = 'Notifications',
         Tooltip = 'Also send a notification each time the current action changes. Off by default - the HUD already shows what it is doing without filling the notification stack.'
+    })
+end)
+
+run(function()
+    -- EntityAnalyser
+    --
+    -- Works out how dangerous each player actually is from what they do in front of us - who they
+    -- kill, who kills them, how long they keep a combo running, what they are holding, whether
+    -- they have taken a bed - and does two quite separate things with the answer.
+    --
+    -- Everyone gets a colour over their head: green for skilled, yellow for average, red for
+    -- unskilled. For anyone below skilled that is the whole of it. Nothing about how the cheat
+    -- behaves changes for an average or a weak player - they are only ever labelled.
+    --
+    -- A skilled player, and only while one is actually near us or trading hits with us, also gets
+    -- a small, temporary loosening of whichever modules are opted in below. Every change is
+    -- applied as a delta, never past the slider's own maximum, recorded, and taken back off the
+    -- moment the fight ends - and again if the module is turned off, or the script unloads. Your
+    -- saved settings are never written to: what you set is what you get back.
+    --
+    -- The labels are BillboardGuis in their own folder. They are deliberately NOT Highlights and
+    -- NOT Drawings, which is what ESP, PlayerOutline, KitESP and the charm/aura visuals use, so
+    -- there is no object any of those modules and this one can fight over. They sit higher than
+    -- the +3 studs the other overhead tags use, so a nametag and a rating can be on together.
+    local EntityAnalyser
+    local SkilledAt
+    local UnskilledBelow
+    local TriggerRange
+    local HoldTime
+    local BoostAmount
+    local Tweak
+    local TweakKillaura
+    local TweakSilentAura
+    local TweakVelocity
+    local TweakAntiLagback
+    local Labels
+    local ShowScore
+    local ShowSkilled
+    local ShowAverage
+    local ShowUnskilled
+    local Teammates
+    local Notify
+
+    -- Hits that keep landing inside this gap are one combo. Long enough to cover a normal swing
+    -- cadence, short enough that two people trading single hits never reads as a combo.
+    local COMBO_WINDOW = 1.6
+    -- How long after a hit either way we still count as fighting someone.
+    local FIGHT_MEMORY = 5
+
+    local tierColor = {
+        Skilled = Color3.fromRGB(85, 220, 130),
+        Average = Color3.fromRGB(235, 205, 90),
+        Unskilled = Color3.fromRGB(235, 95, 95)
+    }
+
+    local stats, tags, applied, seen = {}, {}, {}, {}
+    local folder
+    local boosted, engagedSince = false, 0
+
+    local function statFor(plr)
+        if not plr then return nil end
+        local record = stats[plr]
+        if not record then
+            record = {
+                kills = 0,
+                deaths = 0,
+                hits = 0,
+                beds = 0,
+                combo = 0,
+                bestCombo = 0,
+                lastHit = 0,
+                lastVictim = nil,
+                lastFight = 0,
+                score = 50,
+                tier = 'Average'
+            }
+            stats[plr] = record
+        end
+        return record
+    end
+
+    ----------------------------------------------------------------------------
+    -- Scoring.
+    ----------------------------------------------------------------------------
+    -- 0-100, starting from 50 meaning "nothing known yet". Every term below only moves the score
+    -- off that baseline when there is actual evidence to move it with, so a player we have not
+    -- seen do anything is never labelled good or bad on nothing at all - they stay Average until
+    -- they show us something.
+    local function scoreOf(plr, record)
+        local score = 50
+
+        -- Trades. What they do to other people is the strongest single signal there is, but one
+        -- lucky kill is not a pattern - the weight climbs with how much we have actually watched.
+        local fights = record.kills + record.deaths
+        if fights > 0 then
+            local ratio = (record.kills - record.deaths) / fights
+            score += ratio * math.min(fights, 4) * 7
+        end
+
+        -- Combos. Anyone lands a hit; keeping someone in the air is a different skill entirely.
+        if record.bestCombo >= 3 then
+            score += math.min((record.bestCombo - 2) * 4, 16)
+        end
+
+        -- Gear. A diamond or emerald sword means they farmed for it rather than tripped over it.
+        local strength = 0
+        pcall(function()
+            strength = getStrength({Player = plr}) or 0
+        end)
+        if strength > 0 then
+            score += math.clamp((strength - 15) * 0.8, -6, 10)
+        end
+
+        -- Beds. Taking one is a whole successful push, start to finish.
+        score += math.min(record.beds * 6, 12)
+
+        return math.clamp(score, 0, 100)
+    end
+
+    local function tierOf(score)
+        if score >= (SkilledAt and SkilledAt.Value or 68) then return 'Skilled' end
+        if score <= (UnskilledBelow and UnskilledBelow.Value or 32) then return 'Unskilled' end
+        return 'Average'
+    end
+
+    ----------------------------------------------------------------------------
+    -- Labels.
+    ----------------------------------------------------------------------------
+    local function removeTag(plr)
+        local tag = tags[plr]
+        if tag then
+            tag:Destroy()
+        end
+        tags[plr] = nil
+    end
+
+    local function tierShown(tier)
+        if tier == 'Skilled' then return ShowSkilled.Enabled end
+        if tier == 'Unskilled' then return ShowUnskilled.Enabled end
+        return ShowAverage.Enabled
+    end
+
+    local function updateTag(plr, ent, record)
+        local adornee = ent.Head or ent.RootPart
+        if not folder or not Labels.Enabled or not adornee or not adornee.Parent or not tierShown(record.tier) then
+            removeTag(plr)
+            return
+        end
+
+        local tag = tags[plr]
+        if not tag or tag.Adornee ~= adornee or not tag.Parent then
+            removeTag(plr)
+            tag = Instance.new('BillboardGui')
+            tag.Name = 'EntityAnalyser'
+            tag.AlwaysOnTop = true
+            tag.ClipsDescendants = false
+            tag.Size = UDim2.fromOffset(150, 18)
+            -- Above the +3 the other overhead tags use, so nothing covers anything.
+            tag.StudsOffsetWorldSpace = Vector3.new(0, 4.4, 0)
+            tag.Adornee = adornee
+            tag.Parent = folder
+
+            local label = Instance.new('TextLabel')
+            label.Name = 'Label'
+            label.Size = UDim2.fromScale(1, 1)
+            label.BackgroundTransparency = 1
+            label.Font = Enum.Font.GothamBold
+            label.TextSize = 13
+            label.TextStrokeTransparency = 0.4
+            label.Parent = tag
+            tags[plr] = tag
+        end
+
+        local label = tag:FindFirstChild('Label')
+        if label then
+            label.TextColor3 = tierColor[record.tier] or tierColor.Average
+            label.Text = ShowScore.Enabled
+                and ('\u{25CF} ' .. record.tier .. ' ' .. math.floor(record.score))
+                or ('\u{25CF} ' .. record.tier)
+        end
+    end
+
+    local function clearTags()
+        for plr in tags do
+            removeTag(plr)
+        end
+        table.clear(tags)
+    end
+
+    ----------------------------------------------------------------------------
+    -- Module tweaks.
+    ----------------------------------------------------------------------------
+    -- Everything a skilled player is allowed to change, and by how much. Slider entries are an
+    -- addition, applied through the option's own SetValue so the module is told about it exactly
+    -- as if you had dragged the slider; module entries are a straight enable. Nothing outside
+    -- this list is ever touched, and nothing here is touched unless its toggle is on.
+    local function boostPlan()
+        local amount = BoostAmount and BoostAmount.Value or 1.5
+        local plan = {}
+        if TweakKillaura.Enabled then
+            table.insert(plan, {Module = 'Killaura', Option = 'Attack range', Add = amount})
+            table.insert(plan, {Module = 'Killaura', Option = 'Swing range', Add = amount})
+        end
+        if TweakSilentAura.Enabled then
+            table.insert(plan, {Module = 'SilentAura', Option = 'Extra swing distance', Add = amount})
+        end
+        if TweakVelocity.Enabled then
+            table.insert(plan, {Module = 'Velocity', Enable = true})
+        end
+        if TweakAntiLagback.Enabled then
+            table.insert(plan, {Module = 'AntiLagback', Enable = true})
+        end
+        return plan
+    end
+
+    local function setOption(option, value)
+        if option.SetValue then
+            pcall(option.SetValue, option, value)
+        else
+            option.Value = value
+        end
+    end
+
+    local function applyBoost()
+        if boosted then return end
+        boosted = true
+        for _, entry in boostPlan() do
+            local module = vape.Modules and vape.Modules[entry.Module]
+            if module then
+                if entry.Enable then
+                    -- Only ever our own doing: if it was already on, we leave it alone and
+                    -- remember nothing, so we cannot switch off something you turned on.
+                    if not module.Enabled then
+                        pcall(module.Toggle, module)
+                        table.insert(applied, {Module = module})
+                    end
+                else
+                    local option = module.Options and module.Options[entry.Option]
+                    if option and type(option.Value) == 'number' then
+                        -- Respect the slider's own ceiling. A boost is meant to be slight, not a
+                        -- way to push a module past a limit it was given for a reason.
+                        local target = option.Max and math.min(option.Value + entry.Add, option.Max) or (option.Value + entry.Add)
+                        local delta = target - option.Value
+                        if delta > 0 then
+                            setOption(option, target)
+                            table.insert(applied, {Option = option, Delta = delta})
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    local function restoreBoost()
+        boosted = false
+        for i = #applied, 1, -1 do
+            local entry = applied[i]
+            if entry.Option then
+                -- Subtract what we added rather than restoring a snapshot, so if you moved the
+                -- slider yourself while a boost was up, your change survives the restore.
+                setOption(entry.Option, entry.Option.Value - entry.Delta)
+            elseif entry.Module and entry.Module.Enabled then
+                pcall(entry.Module.Toggle, entry.Module)
+            end
+            applied[i] = nil
+        end
+    end
+
+    -- A skilled player counts as on us while they are inside Trigger range, or while either of us
+    -- has landed a hit on the other recently. Teammates never trigger this however they are
+    -- labelled - there is no fight to prepare for.
+    local function skilledEngaged()
+        if not entitylib.isAlive then return false end
+        local root = entitylib.character.RootPart
+        if not root then return false end
+        local now, range = tick(), TriggerRange.Value
+        for _, ent in entitylib.List do
+            local plr = ent.Player
+            local record = plr and stats[plr]
+            if record and record.tier == 'Skilled' and ent.Character and ent.Character.Parent and entitylib.targetCheck(ent) then
+                if now - record.lastFight <= FIGHT_MEMORY then return true end
+                if ent.RootPart and ent.RootPart.Parent and (ent.RootPart.Position - root.Position).Magnitude <= range then
+                    return true
+                end
+            end
+        end
+        return false
+    end
+
+    ----------------------------------------------------------------------------
+    -- Passes.
+    ----------------------------------------------------------------------------
+    local function refresh()
+        table.clear(seen)
+        for _, ent in entitylib.List do
+            local plr = ent.Player
+            if plr then
+                seen[plr] = true
+                local record = statFor(plr)
+                record.score = scoreOf(plr, record)
+                local tier = tierOf(record.score)
+                if tier ~= record.tier then
+                    record.tier = tier
+                    if tier == 'Skilled' and Notify.Enabled then
+                        notif('EntityAnalyser', plr.Name .. ' is playing well (' .. math.floor(record.score) .. ')', 4)
+                    end
+                end
+                if Teammates.Enabled or entitylib.targetCheck(ent) then
+                    updateTag(plr, ent, record)
+                else
+                    removeTag(plr)
+                end
+            end
+        end
+        -- Anyone who has left the entity list - died, left, streamed out - loses their label.
+        for plr in tags do
+            if not seen[plr] then
+                removeTag(plr)
+            end
+        end
+    end
+
+    EntityAnalyser = vape.Categories.Utility:CreateModule({
+        Name = 'EntityAnalyser',
+        Function = function(callback)
+            if callback then
+                folder = Instance.new('Folder')
+                folder.Name = 'EntityAnalyser'
+                folder.Parent = vape.gui
+                EntityAnalyser:Clean(folder)
+                -- Belt and braces: whatever happens to the loop below, the settings go back.
+                EntityAnalyser:Clean(restoreBoost)
+
+                EntityAnalyser:Clean(vapeEvents.EntityDeathEvent.Event:Connect(function(deathTable)
+                    local killer = deathTable.fromEntity and playersService:GetPlayerFromCharacter(deathTable.fromEntity)
+                    local killed = deathTable.entityInstance and playersService:GetPlayerFromCharacter(deathTable.entityInstance)
+                    if killer and killer ~= killed then
+                        statFor(killer).kills += 1
+                    end
+                    if killed then
+                        local record = statFor(killed)
+                        record.deaths += 1
+                        record.combo = 0
+                    end
+                end))
+
+                EntityAnalyser:Clean(vapeEvents.EntityDamageEvent.Event:Connect(function(damageTable)
+                    if (damageTable.damage or 0) <= 0 then return end
+                    local attacker = damageTable.fromEntity and playersService:GetPlayerFromCharacter(damageTable.fromEntity)
+                    local victim = damageTable.entityInstance and playersService:GetPlayerFromCharacter(damageTable.entityInstance)
+                    if not attacker or attacker == victim then return end
+
+                    local record, now = statFor(attacker), tick()
+                    -- A combo is hits that keep landing on the same person without a gap. Reset
+                    -- on a new victim or on any pause, so trading blows around a scrappy fight
+                    -- never adds up into one long combo.
+                    if record.lastVictim == victim and now - record.lastHit <= COMBO_WINDOW then
+                        record.combo += 1
+                    else
+                        record.combo = 1
+                    end
+                    record.lastVictim, record.lastHit = victim, now
+                    record.bestCombo = math.max(record.bestCombo, record.combo)
+                    record.hits += 1
+
+                    -- Remember who we are actually in a fight with, either direction.
+                    if victim == lplr then
+                        record.lastFight = now
+                    elseif attacker == lplr and victim then
+                        statFor(victim).lastFight = now
+                    end
+                end))
+
+                EntityAnalyser:Clean(vapeEvents.BedwarsBedBreak.Event:Connect(function(bedTable)
+                    if bedTable.player then
+                        statFor(bedTable.player).beds += 1
+                    end
+                end))
+
+                repeat
+                    refresh()
+                    if Tweak.Enabled then
+                        if skilledEngaged() then
+                            engagedSince = tick()
+                            applyBoost()
+                        elseif boosted and tick() - engagedSince > HoldTime.Value then
+                            restoreBoost()
+                        end
+                    elseif boosted then
+                        restoreBoost()
+                    end
+                    task.wait(0.25)
+                until not EntityAnalyser.Enabled
+            else
+                restoreBoost()
+                clearTags()
+                table.clear(stats)
+                folder = nil
+            end
+        end,
+        Tooltip = 'Reads how well every player is actually playing - kills and deaths, how long their combos run, their gear, beds they have taken - and marks them green, yellow or red over their head. A skilled player also gets a small, temporary loosening of the modules you tick below, but only while one is near you or fighting you, and every change is taken straight back off afterwards. Average and unskilled players are only ever labelled; nothing changes for them.'
+    })
+
+    SkilledAt = EntityAnalyser:CreateSlider({
+        Name = 'Skilled at',
+        Min = 50,
+        Max = 95,
+        Default = 68,
+        Tooltip = 'Score a player has to reach to count as skilled. Everyone starts at 50 with nothing known about them, and only moves once they have actually done something.'
+    })
+    UnskilledBelow = EntityAnalyser:CreateSlider({
+        Name = 'Unskilled below',
+        Min = 5,
+        Max = 50,
+        Default = 32,
+        Tooltip = 'Score a player has to drop under to be marked red. Purely a label - nothing about the cheat changes for them.'
+    })
+    Tweak = EntityAnalyser:CreateToggle({
+        Name = 'Tweak modules',
+        Default = true,
+        Function = function(callback)
+            for _, option in {TweakKillaura, TweakSilentAura, TweakVelocity, TweakAntiLagback, BoostAmount, TriggerRange, HoldTime} do
+                if option and option.Object then
+                    option.Object.Visible = callback
+                end
+            end
+            if not callback then
+                restoreBoost()
+            end
+        end,
+        Tooltip = 'Whether a skilled player is allowed to change anything at all. Off makes this a pure read-out: the labels still work, no setting is ever touched.'
+    })
+    TweakKillaura = EntityAnalyser:CreateToggle({
+        Name = 'Killaura',
+        Default = true,
+        Darker = true,
+        Tooltip = 'Adds the boost amount to Killaura\'s attack and swing range while a skilled player is on you.'
+    })
+    TweakSilentAura = EntityAnalyser:CreateToggle({
+        Name = 'SilentAura',
+        Default = true,
+        Darker = true,
+        Tooltip = 'Adds the boost amount to SilentAura\'s extra swing distance while a skilled player is on you.'
+    })
+    TweakVelocity = EntityAnalyser:CreateToggle({
+        Name = 'Velocity',
+        Darker = true,
+        Tooltip = 'Switches Velocity on for the fight and back off afterwards - only if it was off to begin with.'
+    })
+    TweakAntiLagback = EntityAnalyser:CreateToggle({
+        Name = 'AntiLagback',
+        Darker = true,
+        Tooltip = 'Switches AntiLagback on for the fight and back off afterwards - only if it was off to begin with.'
+    })
+    BoostAmount = EntityAnalyser:CreateSlider({
+        Name = 'Boost amount',
+        Min = 0.5,
+        Max = 4,
+        Default = 1.5,
+        Decimal = 10,
+        Darker = true,
+        Suffix = ' studs',
+        Tooltip = 'How much to add to the range sliders. Kept deliberately small - this is meant to be a nudge for a hard fight, and it never pushes a slider past its own maximum.'
+    })
+    TriggerRange = EntityAnalyser:CreateSlider({
+        Name = 'Trigger range',
+        Min = 10,
+        Max = 120,
+        Default = 45,
+        Darker = true,
+        Suffix = ' studs',
+        Tooltip = 'How close a skilled player has to be for the tweaks to come up. They also come up whenever you and a skilled player are trading hits, whatever the distance.'
+    })
+    HoldTime = EntityAnalyser:CreateSlider({
+        Name = 'Hold time',
+        Min = 0.5,
+        Max = 10,
+        Default = 3,
+        Decimal = 10,
+        Darker = true,
+        Suffix = ' seconds',
+        Tooltip = 'How long to keep the tweaks up after the skilled player breaks off, so a fight moving in and out of range does not flicker your settings on and off.'
+    })
+    Labels = EntityAnalyser:CreateToggle({
+        Name = 'Labels',
+        Default = true,
+        Function = function(callback)
+            for _, option in {ShowScore, ShowSkilled, ShowAverage, ShowUnskilled} do
+                if option and option.Object then
+                    option.Object.Visible = callback
+                end
+            end
+            if not callback then
+                clearTags()
+            end
+        end,
+        Tooltip = 'Show the rating over each player\'s head. These are billboards in their own folder, not highlights or drawings, so they cannot conflict with ESP, PlayerOutline, KitESP or any charm/aura visual.'
+    })
+    ShowScore = EntityAnalyser:CreateToggle({
+        Name = 'Show score',
+        Default = true,
+        Darker = true,
+        Tooltip = 'Put the number next to the rating.'
+    })
+    ShowSkilled = EntityAnalyser:CreateToggle({
+        Name = 'Label skilled',
+        Default = true,
+        Darker = true
+    })
+    ShowAverage = EntityAnalyser:CreateToggle({
+        Name = 'Label average',
+        Default = true,
+        Darker = true
+    })
+    ShowUnskilled = EntityAnalyser:CreateToggle({
+        Name = 'Label unskilled',
+        Default = true,
+        Darker = true
+    })
+    Teammates = EntityAnalyser:CreateToggle({
+        Name = 'Label teammates',
+        Tooltip = 'Also rate your own team. They never trigger a tweak either way - there is no fight to get ready for.'
+    })
+    Notify = EntityAnalyser:CreateToggle({
+        Name = 'Notifications',
+        Tooltip = 'Say something the first time a player crosses into skilled.'
     })
 end)
 
@@ -17670,9 +18359,15 @@ end)
 run(function()
     local AutoBank
     local UIToggle
+    local Range
     local UI
     local Chests
     local Items = {}
+    -- When the last deposit for a given tool went out. Nearby banking empties the inventory
+    -- almost immediately so this never matters there, but Infinite range keeps asking from
+    -- across the map, and without a cooldown a stack the server won't take would be re-sent
+    -- ten times a second for the rest of the match.
+    local sent = {}
 
     local function addItem(itemType, shop)
         local item = Instance.new('ImageLabel')
@@ -17703,12 +18398,17 @@ run(function()
     end
 
     local function nearChest()
-        if entitylib.isAlive then
-            local pos = entitylib.character.RootPart.Position
-            for _, chest in Chests do
-                if (chest.Position - pos).Magnitude < 20 then
-                    return true
-                end
+        if not entitylib.isAlive then return end
+        -- Infinite range: the deposit is addressed to your personal inventory in
+        -- ReplicatedStorage rather than to a chest in the world, so there is no position in the
+        -- request to be near anything. Dropping the proximity check is all the client can do -
+        -- if the server checks the distance itself, banking from across the map is simply
+        -- refused and nothing is lost by asking.
+        if Range and Range.Value == 'Infinite' then return true end
+        local pos = entitylib.character.RootPart.Position
+        for _, chest in Chests do
+            if (chest.Position - pos).Magnitude < 20 then
+                return true
             end
         end
     end
@@ -17723,7 +18423,8 @@ run(function()
         -- silently withdrew instead of banking - which is why nothing ever got banked.
         for _, v in store.inventory.inventory.items do
             local item = Items[v.itemType]
-            if item and v.tool then
+            if item and v.tool and tick() - (sent[v.tool] or 0) >= 1.5 then
+                sent[v.tool] = tick()
                 task.spawn(function()
                     bedwars.Client:GetNamespace('Inventory'):Get('ChestGiveItem'):CallServer(chest, v.tool)
                     refreshBank(chest)
@@ -17771,9 +18472,16 @@ run(function()
                 until (not AutoBank.Enabled)
             else
                 table.clear(Items)
+                table.clear(sent)
             end
         end,
-        Tooltip = 'Automatically puts resources in ender chest'
+        Tooltip = 'Automatically puts resources in your personal chest.'
+    })
+    Range = AutoBank:CreateDropdown({
+        Name = 'Range',
+        List = {'Nearby', 'Infinite'},
+        Default = 'Nearby',
+        Tooltip = 'Nearby banks while you are within 20 studs of a personal chest. Infinite banks from anywhere on the map - it stops checking where you are and just sends the deposit, since the request names your inventory rather than a chest in the world.'
     })
     UIToggle = AutoBank:CreateToggle({
         Name = 'UI',
