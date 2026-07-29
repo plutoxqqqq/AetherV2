@@ -3486,6 +3486,7 @@ run(function()
     local NoFall
     local Mode
     local MinVelocity
+    local RegisteredVelocity
     local GroundDistance
     local AnchorAttempts
     local BlockClutch
@@ -3846,100 +3847,93 @@ run(function()
         root.Velocity = Vector3.zero
     end
 
-    -- BedWars starts charging for a fall at roughly six blocks, which is an 84 stud/s landing.
-    -- FALL_VELOCITY is that threshold; SAFE_IMPACT is what we bleed a drop down to, far enough
-    -- under it that nothing is owed and still fast enough to look like stepping off a block
-    -- rather than floating down.
-    local FALL_VELOCITY = 85
-    local SAFE_IMPACT = 45
-
-    -- The event the game's own FallDamageController sends the server when you hit the ground. The
-    -- fall on the server's books is settled from what this reports, which is why sending it
-    -- ourselves is what actually clears a fall - see clearRegisteredFall below.
-    local groundHitRemote
-    local trackedFall = 0
-    local lastGroundHit = 0
-    task.spawn(function()
-        local success, remote = pcall(function()
-            return bedwars.Client:Get(remotes.GroundHit).instance
-        end)
-        groundHitRemote = success and remote or nil
-    end)
-
-    -- Hand in a ground hit for the fall built up so far, with no block attached to it. The server
-    -- settles and clears the fall it is tracking for us, and the hit itself goes nowhere because
-    -- there is no block to have landed on - so by the time we really touch down there is nothing
-    -- left on the books to charge for. This is the mechanism the shipped v4 script uses for its
-    -- Packet mode; it is the game's own event, not a spoofed Roblox property.
-    local function clearRegisteredFall()
-        if not groundHitRemote then return end
-        if tick() - lastGroundHit < 0.12 then return end
-        lastGroundHit = tick()
-        pcall(function()
-            groundHitRemote:FireServer(nil, Vector3.new(0, trackedFall, 0), workspace:GetServerTimeNow())
-        end)
-    end
-
-    -- Blatant. Two independent layers, neither of which is a humanoid state spoof:
+    -- Blatant, rebuilt from scratch.
     --
-    --  1. Clear the fall the server is tracking, by sending the ground hit for it while we are
-    --     still in the air (above).
-    --  2. Make the landing genuinely soft, so there is nothing for anything - client or
-    --     server - to turn into damage in the first place.
+    -- Every previous attempt tried to save the fall at the last moment - watch the drop build up,
+    -- then bleed it off, snap the velocity, or fire something at the game in the final frames
+    -- before touchdown. All of them are the same race: at two hundred studs a second a frame is
+    -- three and a half studs, and any version of "act just before landing" loses that race some
+    -- of the time. Landing on a slope, on a block placed under you mid-fall, or during a frame
+    -- spike, and the intervention is simply too late.
     --
-    -- The old build had neither working. Layer 1 wrote FallDamageController
-    -- .additionalRegisteredVelocity, which is not a field the controller has - the write went
-    -- into a pcall, created a key nothing reads and silently did nothing at all. Layer 2 looked
-    -- ahead by only two frames, which at two hundred studs a second is under seven studs of
-    -- warning and regularly missed the touchdown outright. It now settles the fall through the
-    -- game's own event and looks a full tenth of a second ahead, the same margin the shipped
-    -- script's Bounce mode uses.
+    -- This does not intervene at the landing at all. BedWars charges you for how fast you are
+    -- moving when you land, so the fall is never allowed to become fast in the first place: the
+    -- character's downward velocity is held at a harmless value for the whole descent, and the
+    -- speed that gets taken off it is added back as position instead. The game only ever sees a
+    -- gentle fall; you still drop at the speed you really would, land where you really would and
+    -- when you really would. There is no moment it can be late for, because it is doing its work
+    -- for the entire fall rather than at the end of it.
+    --
+    -- Two things it deliberately does not do: it never touches a humanoid state, and it never
+    -- sends the game anything. It only writes to your own character, and everything it writes is
+    -- something an ordinary fall does anyway.
+    local fallSpeed = 0
+
+    -- Never carry more than this. Real drops never get near it; the clamp is only so a bugged
+    -- reading can't turn into a position jump big enough to be rejected as teleporting.
+    local MAX_CARRY = 700
+
     local function blatantStep(dt)
         local character, root, humanoid = validCharacter()
         if not character or not root then
-            trackedFall = 0
+            fallSpeed = 0
             return
         end
-
-        -- Grounded: nothing owed, start the next fall from scratch.
-        if humanoid and humanoid.FloorMaterial ~= Enum.Material.Air then
-            trackedFall = 0
-            return
-        end
-
-        local velocity = root.AssemblyLinearVelocity
-        trackedFall = math.min(trackedFall, velocity.Y)
-        if trackedFall > -FALL_VELOCITY then return end
-
-        -- Layer 1.
-        clearRegisteredFall()
-
-        -- Layer 2.
         if not isnetworkowner(root) then return end
-        if velocity.Y >= -SAFE_IMPACT then return end
 
-        local speed = -velocity.Y
-        local ground = getGround(root, character, math.max(speed * 0.5, 40))
-        if not ground then return end
-
-        local remaining = math.max((root.Position.Y - ground.Position.Y) - standClearance(root, character), 0)
-
-        -- A tenth of a second of warning, or two frames if the game is running slower than that.
-        if remaining <= 3 or remaining <= speed * math.max(dt * 2, 0.1) then
-            root.AssemblyLinearVelocity = Vector3.new(velocity.X, -SAFE_IMPACT, velocity.Z)
-            trackedFall = 0
+        -- On the floor, or on the way up: there is no fall to hide.
+        local velocity = root.AssemblyLinearVelocity
+        if velocity.Y >= 0 or (humanoid and humanoid.FloorMaterial ~= Enum.Material.Air) then
+            fallSpeed = 0
+            return
         end
+
+        local cap = RegisteredVelocity and RegisteredVelocity.Value or 60
+        -- The speed we are really falling at. While the engine is still under the cap that is
+        -- just its own number; from the moment we pin it, the acceleration is ours to carry.
+        if -velocity.Y >= fallSpeed then
+            fallSpeed = -velocity.Y
+        else
+            fallSpeed = math.min(fallSpeed + (workspace.Gravity * dt), MAX_CARRY)
+        end
+        if fallSpeed <= cap then return end
+
+        root.AssemblyLinearVelocity = Vector3.new(velocity.X, -cap, velocity.Z)
+
+        -- Hand back the speed we just took off, as distance. Writing position skips collision, so
+        -- this checks the drop is clear first: once the floor is inside the next step we stop
+        -- compensating entirely and let the character land on its own at the capped speed, which
+        -- is the harmless landing we wanted in the first place. It can never be pushed through a
+        -- floor, and the last stretch of the fall is real physics.
+        local carry = (fallSpeed - cap) * dt
+        if carry <= 0 then return end
+
+        updateRay(root)
+        local clearance = standClearance(root, character)
+        if workspace:Raycast(root.Position, Vector3.new(0, -(carry + clearance + 1), 0), rayCheck) then
+            fallSpeed = cap
+            return
+        end
+        root.CFrame -= Vector3.new(0, carry, 0)
     end
 
     local function setSettingsVisible()
         local legit = Mode and Mode.Value == 'Legit'
-        -- Blatant no longer uses per-second anchor attempts (it cancels the registered fall and
-        -- softens the touchdown instead), so that slider stays hidden.
+        -- Blatant holds the whole fall down rather than firing off attempts a few times a second,
+        -- so that slider stays hidden.
         if AnchorAttempts and AnchorAttempts.Object then AnchorAttempts.Object.Visible = false end
         for _, option in {BlockClutch, TelepearlClutch, DaoClutch, JadeHammerClutch, VoidAxeClutch, Zephyr} do
             if option and option.Object then
                 option.Object.Visible = legit
             end
+        end
+        -- Legit and TP both decide when to act off Minimum Velocity; Blatant never waits for a
+        -- speed to be reached, it caps one, so the two swap over with the mode.
+        if MinVelocity and MinVelocity.Object then
+            MinVelocity.Object.Visible = not (Mode and Mode.Value == 'Blatant')
+        end
+        if RegisteredVelocity and RegisteredVelocity.Object then
+            RegisteredVelocity.Object.Visible = Mode and Mode.Value == 'Blatant' or false
         end
     end
 
@@ -4000,10 +3994,10 @@ run(function()
                 lastZephyrJump = 0
                 zephyrFired = false
                 fallAnchorY = nil
-                trackedFall = 0
+                fallSpeed = 0
             end
         end,
-        Tooltip = 'Prevents fall damage. Legit uses clutch methods; TP drops you onto the floor below so the fall ends there instead of at speed; Blatant settles the fall with the game\'s own ground-hit event while you are still in the air and bleeds the last tenth of a second off the drop, so the landing is genuinely harmless.'
+        Tooltip = 'Prevents fall damage. Legit uses clutch methods; TP drops you onto the floor below so the fall ends there instead of at speed; Blatant holds the fall the game sees down to a harmless speed for the whole descent and gives the missing speed back as distance, so you still fall and land normally but never fast enough to be charged for it.'
     })
     Mode = NoFall:CreateDropdown({
         Name = 'Mode',
@@ -4015,13 +4009,23 @@ run(function()
                 NoFall:Toggle()
             end
         end,
-        Tooltip = 'Legit uses a fixed clutch order: blocks, telepearls, then tools (enable Zephyr to jump-cancel the fall with the Zephyr/WindWalker kit instead). Blatant settles the fall through the game\'s own ground-hit event mid-air and softens the touchdown itself, so no damage registers. TP puts you straight down on the floor below you the moment the drop gets dangerous, ending the fall where it was going to end anyway.'
+        Tooltip = 'Legit uses a fixed clutch order: blocks, telepearls, then tools (enable Zephyr to jump-cancel the fall with the Zephyr/WindWalker kit instead). Blatant never lets the fall get fast in the first place: it caps the speed the game sees for the whole drop and hands the difference back as distance, so nothing has to be timed and nothing is sent to the server. TP puts you straight down on the floor below you the moment the drop gets dangerous, ending the fall where it was going to end anyway.'
     })
     MinVelocity = NoFall:CreateSlider({
         Name = 'Minimum Velocity',
         Min = 35,
         Max = 120,
-        Default = 60
+        Default = 60,
+        Tooltip = 'How fast the drop has to be before Legit clutches or TP puts you on the floor. Blatant does not use this - it caps a speed rather than waiting for one.'
+    })
+    RegisteredVelocity = NoFall:CreateSlider({
+        Name = 'Registered velocity',
+        Min = 20,
+        Max = 80,
+        Default = 60,
+        Suffix = ' studs/s',
+        Visible = false,
+        Tooltip = 'Blatant only: the fastest the game is ever allowed to think you are falling. BedWars starts charging at about 85, so anything under that costs you nothing; the speed taken off is given straight back as distance, so this does not slow your actual fall down. Lower it if a fall ever still registers, raise it if the descent looks stepped.'
     })
     GroundDistance = NoFall:CreateSlider({
         Name = 'Ground Check',
@@ -17732,9 +17736,15 @@ end)
 run(function()
     local AutoBank
     local UIToggle
+    local Range
     local UI
     local Chests
     local Items = {}
+    -- When the last deposit for a given tool went out. Nearby banking empties the inventory
+    -- almost immediately so this never matters there, but Infinite range keeps asking from
+    -- across the map, and without a cooldown a stack the server won't take would be re-sent
+    -- ten times a second for the rest of the match.
+    local sent = {}
 
     local function addItem(itemType, shop)
         local item = Instance.new('ImageLabel')
@@ -17765,12 +17775,17 @@ run(function()
     end
 
     local function nearChest()
-        if entitylib.isAlive then
-            local pos = entitylib.character.RootPart.Position
-            for _, chest in Chests do
-                if (chest.Position - pos).Magnitude < 20 then
-                    return true
-                end
+        if not entitylib.isAlive then return end
+        -- Infinite range: the deposit is addressed to your personal inventory in
+        -- ReplicatedStorage rather than to a chest in the world, so there is no position in the
+        -- request to be near anything. Dropping the proximity check is all the client can do -
+        -- if the server checks the distance itself, banking from across the map is simply
+        -- refused and nothing is lost by asking.
+        if Range and Range.Value == 'Infinite' then return true end
+        local pos = entitylib.character.RootPart.Position
+        for _, chest in Chests do
+            if (chest.Position - pos).Magnitude < 20 then
+                return true
             end
         end
     end
@@ -17785,7 +17800,8 @@ run(function()
         -- silently withdrew instead of banking - which is why nothing ever got banked.
         for _, v in store.inventory.inventory.items do
             local item = Items[v.itemType]
-            if item and v.tool then
+            if item and v.tool and tick() - (sent[v.tool] or 0) >= 1.5 then
+                sent[v.tool] = tick()
                 task.spawn(function()
                     bedwars.Client:GetNamespace('Inventory'):Get('ChestGiveItem'):CallServer(chest, v.tool)
                     refreshBank(chest)
@@ -17833,9 +17849,16 @@ run(function()
                 until (not AutoBank.Enabled)
             else
                 table.clear(Items)
+                table.clear(sent)
             end
         end,
-        Tooltip = 'Automatically puts resources in ender chest'
+        Tooltip = 'Automatically puts resources in your personal chest.'
+    })
+    Range = AutoBank:CreateDropdown({
+        Name = 'Range',
+        List = {'Nearby', 'Infinite'},
+        Default = 'Nearby',
+        Tooltip = 'Nearby banks while you are within 20 studs of a personal chest. Infinite banks from anywhere on the map - it stops checking where you are and just sends the deposit, since the request names your inventory rather than a chest in the world.'
     })
     UIToggle = AutoBank:CreateToggle({
         Name = 'UI',
