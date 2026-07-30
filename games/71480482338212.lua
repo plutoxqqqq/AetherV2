@@ -1716,7 +1716,7 @@ run(function()
     end
     AimMode = AimAssist:CreateDropdown({
     	Name = 'Aim perspective',
-    	Tooltip = 'First person - Uses your camera to aim\nThird person - Moves your character to where your supposed to look\nMouse - Moves your mouse & camera\nDynamic - Uses first person mode if ur in first person, and uses third person if ur in third person',
+    	Tooltip = 'First person - aims with your camera\nThird person - turns your character to where you should be looking\nMouse - moves your mouse and camera\nDynamic - whichever of the two you are already in',
     	List = {'First person', 'Third person', 'Mouse', 'Dynamic'},
     	Default = 'First person'
     })
@@ -2649,7 +2649,7 @@ run(function()
                 bedwars.SprintController:stopSprinting()
             end
         end,
-        Tooltip = 'Sets your sprinting to true.'
+        Tooltip = 'Sets your sprinting to true'
     })
 end)
 
@@ -2883,7 +2883,7 @@ run(function()
     			old = nil
     		end
     	end,
-    	Tooltip = 'Redirects knockback you receive in a chosen direction.'
+    	Tooltip = 'Redirects knockback you receive in a chosen direction'
     })
     
     Mode = VelocityPlus:CreateDropdown({
@@ -3009,7 +3009,7 @@ run(function()
                 AntiFallDirection = nil
             end
         end,
-        Tooltip = 'Helps prevent you from falling into the void.'
+        Tooltip = 'Helps prevent you from falling into the void'
     })
     Mode = AntiFall:CreateDropdown({
         Name = 'Move Mode',
@@ -3098,7 +3098,7 @@ run(function()
             end
         end,
         ExtraText = function() return Mode.Value end,
-        Tooltip = 'Prevents taking fall damage.'
+        Tooltip = 'Prevents taking fall damage'
     })
     Mode = NoFall:CreateDropdown({Name = 'Mode', List = {'Ragdoll', 'TP'}, Default = 'Ragdoll'})
 end)
@@ -3360,7 +3360,7 @@ run(function()
     })
     Projectiles = AntiDeath:CreateToggle({
     	Name = 'Projectiles',
-		Tooltip = 'Triggers AntiDeath when an incoming projectile is about to hit, then waits for it to pass before returning.',
+		Tooltip = 'Triggers AntiDeath when an incoming projectile is about to hit, then waits for it to pass before returning',
     	Default = true,
         Function = function(call) pcall(function() ProjectileStretch.Object.Visible = call end) end,
     })
@@ -3618,7 +3618,7 @@ run(function()
 
     AntiDeathPlus = vape.Categories.Blatant:CreateModule({
         Name = 'AntiDeathPlus',
-        Tooltip = 'Dodges melee attacks and incoming projectiles with configurable safe hitbox movement.',
+        Tooltip = 'Dodges melee attacks and incoming projectiles with configurable safe hitbox movement',
         Function = function(call)
             if call then
                 repeat task.wait() until store.matchState ~= 0 and store.map or not AntiDeathPlus.Enabled
@@ -3684,12 +3684,12 @@ run(function()
     })
 
     Targets = AntiDeathPlus:CreateTargets({Players = true, NPCs = false, Walls = false})
-    DodgeMode = AntiDeathPlus:CreateDropdown({Name = 'Dodge Mode', Tooltip = 'How AntiDeathPlus moves the real hitbox.', List = {'FarTeleport', 'ShortOffset', 'NoClipGhost'}, Default = 'FarTeleport'})
-    Melee = AntiDeathPlus:CreateToggle({Name = 'Melee Dodge', Tooltip = 'Dodges nearby melee threats.', Default = true, Function = function(call) pcall(function() MeleeRange.Object.Visible = call end) end})
+    DodgeMode = AntiDeathPlus:CreateDropdown({Name = 'Dodge Mode', Tooltip = 'How AntiDeathPlus moves the real hitbox', List = {'FarTeleport', 'ShortOffset', 'NoClipGhost'}, Default = 'FarTeleport'})
+    Melee = AntiDeathPlus:CreateToggle({Name = 'Melee Dodge', Tooltip = 'Dodges nearby melee threats', Default = true, Function = function(call) pcall(function() MeleeRange.Object.Visible = call end) end})
     MeleeRange = AntiDeathPlus:CreateSlider({Name = 'Melee Range', Min = 1, Max = 30, Default = 10, Decimal = 1, Darker = true})
-    Projectiles = AntiDeathPlus:CreateToggle({Name = 'Projectile Dodge', Tooltip = 'Dodges incoming projectiles.', Default = true, Function = function(call) pcall(function() ProjectileRange.Object.Visible = call end) end})
+    Projectiles = AntiDeathPlus:CreateToggle({Name = 'Projectile Dodge', Tooltip = 'Dodges incoming projectiles', Default = true, Function = function(call) pcall(function() ProjectileRange.Object.Visible = call end) end})
     ProjectileRange = AntiDeathPlus:CreateSlider({Name = 'Projectile Detection Range', Min = 10, Max = 200, Default = 70, Decimal = 0, Darker = true})
-    ProjectileStretch = AntiDeathPlus:CreateSlider({Name = 'Projectile Stretch Time', Tooltip = 'How soon before impact projectile dodging can start.', Min = 0.05, Max = 1.5, Default = 0.55, Decimal = 2, Darker = true})
+    ProjectileStretch = AntiDeathPlus:CreateSlider({Name = 'Projectile Stretch Time', Tooltip = 'How soon before impact projectile dodging can start', Min = 0.05, Max = 1.5, Default = 0.55, Decimal = 2, Darker = true})
     DodgeDuration = AntiDeathPlus:CreateSlider({Name = 'Dodge Duration', Min = 0.2, Max = 3, Default = 0.85, Decimal = 2, Darker = true})
     Cooldown = AntiDeathPlus:CreateSlider({Name = 'Cooldown', Min = 0, Max = 5, Default = 0.3, Decimal = 2, Darker = true})
     OffsetDistance = AntiDeathPlus:CreateSlider({Name = 'Offset Distance (ShortOffset)', Min = 3, Max = 20, Default = 8, Decimal = 1, Darker = true})
@@ -3854,7 +3854,7 @@ run(function()
                 dodgeDirection = Vector3.zero
             end
         end,
-        Tooltip = 'Dodges incoming projectiles without stepping off edges.'
+        Tooltip = 'Dodges incoming projectiles without stepping off edges'
     })
     Range = ProjectileDodger:CreateSlider({Name = 'Range', Min = 10, Max = 80, Default = 45, Suffix = 'studs'})
     Mode = ProjectileDodger:CreateDropdown({Name = 'Mode', List = {'Teleport', 'Legit'}, Default = 'Teleport'})
@@ -3941,7 +3941,7 @@ run(function()
                 lockedTarget = nil
             end
         end,
-        Tooltip = 'Safely teleports near one target and faces it.'
+        Tooltip = 'Safely teleports near one target and faces it'
     })
     Targets = TPAura:CreateTargets({Players = true, NPCs = true})
     Mode = TPAura:CreateDropdown({Name = 'Mode', List = {'Single', 'Switch'}, Default = 'Single'})
@@ -3950,10 +3950,10 @@ run(function()
     Delay = TPAura:CreateSlider({Name = 'Teleport Delay', Min = 0.15, Max = 1, Default = 0.35, Decimal = 100, Suffix = 'seconds'})
     HoldTime = TPAura:CreateSlider({Name = 'Single Hold Time', Min = 0.5, Max = 8, Default = 3, Decimal = 10, Suffix = 'seconds'})
     SwitchAfter = TPAura:CreateSlider({Name = 'Switch Delay', Min = 0.35, Max = 4, Default = 1.25, Decimal = 100, Suffix = 'seconds'})
-    StructureCheck = TPAura:CreateToggle({Name = 'Structure Check', Tooltip = 'Rejects teleport spots on roofs, bridges, or tall structures above the target.', Default = true})
+    StructureCheck = TPAura:CreateToggle({Name = 'Structure Check', Tooltip = 'Rejects teleport spots on roofs, bridges, or tall structures above the target', Default = true})
     DodgeAttacks = TPAura:CreateToggle({
         Name = 'Dodge attacks',
-        Tooltip = 'Prioritizes teleporting behind where targets are facing.'
+        Tooltip = 'Prioritizes teleporting behind where targets are facing'
     })
 end)
 
@@ -4331,7 +4331,7 @@ run(function()
         ExtraText = function()
             return 'Heatseeker'
         end,
-        Tooltip = 'Makes you go zoom.'
+        Tooltip = 'Makes you go zoom'
     })
     Value = Fly:CreateSlider({
         Name = 'Speed',
@@ -4560,7 +4560,7 @@ run(function()
                 until not InstantKill.Enabled
             end
         end,
-        Tooltip = 'Automatically uses turret to instant kill targets.'
+        Tooltip = 'Automatically uses turret to instant kill targets'
     })
     
     Mode = InstantKill:CreateDropdown({
@@ -4579,7 +4579,7 @@ run(function()
     })
     Place = InstantKill:CreateToggle({
         Name = 'Auto place',
-        Tooltip = 'Automatically places turrets if can\'t find any on ground.',
+        Tooltip = 'Automatically places turrets if can\'t find any on ground',
         Default = true
     })
 end)
@@ -4591,7 +4591,7 @@ run(function()
             debug.setconstant(bedwars.SprintController.startSprinting, 5, callback and 'blockSprinting' or 'blockSprint')
             bedwars.SprintController:stopSprinting()
         end,
-        Tooltip = 'Lets you sprint with a speed potion.'
+        Tooltip = 'Lets you sprint with a speed potion'
     })
 end)
 
@@ -5000,7 +5000,7 @@ run(function()
                 end
             end
         end,
-        Tooltip = 'Attack players around you\nwithout aiming at them.',
+        Tooltip = 'Attack players around you\nwithout aiming at them',
         ExtraText = function()
             return Mode.Value
         end
@@ -5752,7 +5752,7 @@ run(function()
                 old = nil
             end
         end,
-        Tooltip = 'Prevents slowing down when using items.'
+        Tooltip = 'Prevents slowing down when using items'
     })
 end)
 
@@ -6447,7 +6447,7 @@ run(function()
         ExtraText = function()
             return 'Heatseeker'
         end,
-        Tooltip = 'Increases your movement with various methods.'
+        Tooltip = 'Increases your movement with various methods'
     })
     Mode = Speed:CreateDropdown({
         Name = 'Method',
@@ -6648,7 +6648,7 @@ run(function()
                 end
             end
         end,
-        Tooltip = 'Silently adjusts where terra blocks are heading towards.'
+        Tooltip = 'Silently adjusts where terra blocks are heading towards'
     })
     
     Mode = TerraAimbot:CreateDropdown({
@@ -6707,7 +6707,7 @@ run(function()
                 until not VulcanAimbot.Enabled
             end
         end,
-        Tooltip = 'Automatically aims ur camera toward opponents.'
+        Tooltip = 'Automatically aims ur camera toward opponents'
     })
     
     Targets = VulcanAimbot:CreateTargets({Walls = true, Players = true})
@@ -7498,7 +7498,7 @@ run(function()
     			end))
     		end
     	end,
-    	Tooltip = 'Displays your health in the center of your screen.'
+    	Tooltip = 'Displays your health in the center of your screen'
     })
 end)
 
@@ -8409,7 +8409,7 @@ run(function()
     			end
     		end
     	end,
-    	Tooltip = 'Renders nametags on entities through walls.'
+    	Tooltip = 'Renders nametags on entities through walls'
     })
     Targets = NameTags:CreateTargets({
     	Players = true,
@@ -8781,7 +8781,7 @@ run(function()
                 clearVisuals()
             end
         end,
-        Tooltip = 'Shows exact projectile landings and the held projectile\'s aiming landing point, then highlights entities that will be hit.'
+        Tooltip = 'Shows exact projectile landings and the held projectile\'s aiming landing point, then highlights entities that will be hit'
     })
     MarkerColor = ProjectileLanding:CreateColorSlider({Name = 'Marker Color', DefaultOpacity = 0})
 end)
@@ -9042,7 +9042,7 @@ run(function()
                 savedClockTime = nil
             end
         end,
-        Tooltip = 'Locks the world time for clearer, better-looking matches.'
+        Tooltip = 'Locks the world time for clearer, better-looking matches'
     })
     TimeValue = TimeChanger:CreateSlider({Name = 'Clock Time', Min = 0, Max = 24, Default = 18, Decimal = 10, Suffix = 'h', Function = function(val)
         if TimeChanger.Enabled then lightingService.ClockTime = val end
@@ -9127,7 +9127,7 @@ run(function()
                 restore()
             end
         end,
-        Tooltip = 'Transforms the map into a vivid aurora night with a custom sky, atmosphere, bloom and colour grading.'
+        Tooltip = 'Transforms the map into a vivid aurora night with a custom sky, atmosphere, bloom and colour grading'
     })
 end)
 
@@ -9201,7 +9201,7 @@ run(function()
                 restore()
             end
         end,
-        Tooltip = 'Creates a dramatic storm look with heavy atmosphere, fog, depth and cold cinematic grading.'
+        Tooltip = 'Creates a dramatic storm look with heavy atmosphere, fog, depth and cold cinematic grading'
     })
 end)
 
@@ -9277,7 +9277,7 @@ run(function()
                 restore()
             end
         end,
-        Tooltip = 'Turns the match into a deep aquatic atmosphere with dense teal fog, underwater haze, soft bloom and cool depth grading.'
+        Tooltip = 'Turns the match into a deep aquatic atmosphere with dense teal fog, underwater haze, soft bloom and cool depth grading'
     })
 end)
 
@@ -9565,7 +9565,7 @@ run(function()
                 if Settings.DayNightCycle.Enabled then cycleConnection = runService.Heartbeat:Connect(function(dt) lightingService.ClockTime = (lightingService.ClockTime + dt / 90) % 24 end) end
             else restore() end
         end,
-        Tooltip = 'Complete visual rewrite: realistic materials, cinematic lighting, weather, ambience, decorative world detail and four fully themed seasons without changing gameplay mechanics.'
+        Tooltip = 'Visual rewrite: realistic materials, cinematic lighting, weather, ambience and four themed seasons, with no gameplay change'
     })
 
     Settings.Season = IRLReplica:CreateDropdown({Name = 'Season', List = {'Spring', 'Summer', 'Autumn', 'Winter'}, Default = 'Spring', Function = function(v) setValue(Settings.Season, v); RealLifeBedWars.Config.Season = v; RealLifeBedWars.RefreshMap() end})
@@ -10727,7 +10727,7 @@ run(function()
                 until not TritonClutch.Enabled
             end
         end,
-        Tooltip = 'Automatically throws Triton\'s harpoon onto nearby ground after falling a certain distance.'
+        Tooltip = 'Automatically throws Triton\'s harpoon onto nearby ground after falling a certain distance'
     })
     Legit = TritonClutch:CreateToggle({Name = 'Legit Switch', Tooltip = 'Visualizes the switching clientside', Default = true})
     Back = TritonClutch:CreateToggle({Name = 'Switch back', Default = true, Function = function(callback)
@@ -10865,7 +10865,7 @@ run(function()
     			until not AutoPearl.Enabled
     		end
     	end,
-    	Tooltip = 'Automatically throws a pearl onto nearby ground after\nfalling a certain distance.'
+    	Tooltip = 'Automatically throws a pearl onto nearby ground after\nfalling a certain distance'
     })
     
     Legit = AutoPearl:CreateToggle({
@@ -10946,7 +10946,7 @@ run(function()
                 AutoPlay:Clean(vapeEvents.MatchEndEvent.Event:Connect(joinQueue))
             end
         end,
-        Tooltip = 'Automatically queues after the match ends.'
+        Tooltip = 'Automatically queues after the match ends'
     })
     Random = AutoPlay:CreateToggle({
         Name = 'Random',
@@ -11568,7 +11568,7 @@ run(function()
                 until not CheatDetector.Enabled
             end
         end,
-        Tooltip = 'Alerts for any possible cheaters.'
+        Tooltip = 'Alerts for any possible cheaters'
     })
     
     for i in Checks do
@@ -11822,7 +11822,7 @@ run(function()
                 momentumRemote = nil
             end
         end,
-        Tooltip = 'Reduces Krystal lagbacks by keeping momentum reported and suppressing local movement correction listeners.'
+        Tooltip = 'Reduces Krystal lagbacks by keeping momentum reported and suppressing local movement correction listeners'
     })
 end)
 
@@ -11863,7 +11863,7 @@ run(function()
                 end
             end
         end,
-        Tooltip = 'Spawns and teleports a missile to a player\nnear your mouse.'
+        Tooltip = 'Spawns and teleports a missile to a player\nnear your mouse'
     })
 end)
 
@@ -11968,7 +11968,7 @@ run(function()
                 end
             end
         end,
-        Tooltip = 'Spawns and teleports a raven to a player\nnear your mouse.'
+        Tooltip = 'Spawns and teleports a raven to a player\nnear your mouse'
     })
 end)
 
@@ -12101,7 +12101,7 @@ run(function()
                 Label = nil
             end
         end,
-        Tooltip = 'Helps you make bridges/scaffold walk.'
+        Tooltip = 'Helps you make bridges/scaffold walk'
     })
     Expand = Scaffold:CreateSlider({
         Name = 'Expand',
@@ -12189,7 +12189,7 @@ run(function()
                 table.clear(tiered)
             end
         end,
-        Tooltip = 'Lets you buy things like armor early.'
+        Tooltip = 'Lets you buy things like armor early'
     })
 end)
 
@@ -12802,7 +12802,7 @@ run(function()
                 until not BedProtector.Enabled
             end
         end,
-        Tooltip = 'Automatically places strong blocks around the bed.'
+        Tooltip = 'Automatically places strong blocks around the bed'
     })
 
     Mode = BedProtector:CreateDropdown({
@@ -13038,7 +13038,7 @@ run(function()
     			end
     		end
     	end,
-    	Tooltip = 'Automatically places strong blocks around yourself.'
+    	Tooltip = 'Automatically places strong blocks around yourself'
     })
     
     BreakSpeed = BlockIn:CreateSlider({
@@ -13141,7 +13141,7 @@ run(function()
                 end
             end
         end,
-        Tooltip = 'Grabs items from near chests.'
+        Tooltip = 'Grabs items from near chests'
     })
     Range = ChestSteal:CreateSlider({
         Name = 'Range',
@@ -13472,7 +13472,7 @@ run(function()
                 end
             end
         end,
-        Tooltip = 'Puts on / takes off armor when toggled for baiting.'
+        Tooltip = 'Puts on / takes off armor when toggled for baiting'
     })
     Mode = ArmorSwitch:CreateDropdown({
         Name = 'Mode',
@@ -14018,7 +14018,7 @@ run(function()
                 consumeCheck()
             end
         end,
-        Tooltip = 'Automatically heals for you when health or shield is under threshold.'
+        Tooltip = 'Automatically heals for you when health or shield is under threshold'
     })
     Health = AutoConsume:CreateSlider({
         Name = 'Health Percent',
@@ -14735,7 +14735,7 @@ run(function()
                 AutoHotbar:Clean(vapeEvents.InventoryAmountChanged.Event:Connect(sortCallback))
             end
         end,
-        Tooltip = 'Automatically arranges hotbar to your liking.'
+        Tooltip = 'Automatically arranges hotbar to your liking'
     })
     Mode = AutoHotbar:CreateDropdown({
         Name = 'Activation',
@@ -14914,7 +14914,7 @@ run(function()
                 oldshowprogress = nil
             end
         end,
-        Tooltip = 'Use/Consume items quicker.'
+        Tooltip = 'Use/Consume items quicker'
     })
     Value = FastConsume:CreateSlider({
         Name = 'Multiplier',
@@ -16175,7 +16175,7 @@ run(function()
     			table.clear(collectDebounce)
     		end
     	end,
-    	Tooltip = 'Automatically collects resources and attacks with placed drills.'
+    	Tooltip = 'Automatically collects resources and attacks with placed drills'
     })
     AutoCollect = AutoDrill:CreateToggle({
     	Name = 'Auto collect',
@@ -16450,7 +16450,7 @@ run(function()
     			hook = nil
     		end
     	end,
-    	Tooltip = 'Automatically handles Gingerbread Man launch pads.'
+    	Tooltip = 'Automatically handles Gingerbread Man launch pads'
     })
 
     Break = AutoGingerbread:CreateToggle({
@@ -16536,7 +16536,7 @@ run(function()
     			until not AutoHannah.Enabled
     		end
     	end,
-    	Tooltip = 'Automatically executes low health players with Hannah.'
+    	Tooltip = 'Automatically executes low health players with Hannah'
     })
 
     AutoHannah:CreateTargets({Players = true}) -- cosmetic settings lmao
@@ -17005,7 +17005,7 @@ run(function()
                 end
             end
         end,
-        Tooltip = 'Automatically uses kit abilities.'
+        Tooltip = 'Automatically uses kit abilities'
     })
     Legit = AutoKit:CreateToggle({Name = 'Legit Range'})
     local sortTable = {}
@@ -18426,7 +18426,7 @@ run(function()
                 until not AutoPickpocket.Enabled
             end
         end,
-        Tooltip = 'Automatically pickpockets with milo kit.'
+        Tooltip = 'Automatically pickpockets with milo kit'
     })
     
     Targets = AutoPickpocket:CreateTargets({Players = true, Walls = true})
@@ -18691,7 +18691,7 @@ run(function()
                 bedwars.ViewmodelController:showCrosshair()
             end
         end,
-        Tooltip = 'Custom first person crosshair depending on the image choosen.'
+        Tooltip = 'Custom first person crosshair depending on the image choosen'
     })
     Image = Crosshair:CreateTextBox({
         Name = 'Image',
@@ -19565,7 +19565,7 @@ run(function()
                 old = nil
             end
         end,
-        Tooltip = 'Change ingame sounds to custom ones.'
+        Tooltip = 'Change ingame sounds to custom ones'
     })
     List = SoundChanger:CreateTextList({
         Name = 'Sounds',
@@ -19656,7 +19656,7 @@ run(function()
                 oldkillfeed = nil
             end
         end,
-        Tooltip = 'Edits killfeed messages client-sided.'
+        Tooltip = 'Edits killfeed messages client-sided'
     })
     KillerName = KillfeedSpoofer:CreateTextBox({
         Name = 'Killer',

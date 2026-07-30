@@ -1187,7 +1187,29 @@ run(function()
 		end
 		return false
 	end
-	local function calculatePath(target, blockpos, method, angle, wallcheck)
+	-- How a finished path is scored, i.e. which of several ways in gets picked.
+	--
+	--   Blatant (the default, prefs nil)  - quickest, and nothing else. Lowest total hits wins.
+	--   Legit (prefs.Legit)               - must be in line of sight, then closest to the player,
+	--                                       while still preferring the efficient way in: distance is
+	--                                       added to the cost at half a hit per block, so a genuinely
+	--                                       cheaper path still beats a nearer one, and two comparable
+	--                                       paths are decided by which is nearer to you.
+	--   prefs.FewestBlocks (Health mode)  - number of blocks to break always wins, whatever they
+	--                                       cost, with cost only breaking ties.
+	local function pathScore(node, cost, depth, prefs)
+		local primary, secondary = cost, depth or 0
+		if prefs and prefs.FewestBlocks then
+			primary, secondary = depth or 0, cost
+		end
+		if prefs and prefs.Legit and entitylib.isAlive then
+			local from = entitylib.character.RootPart.Position
+			primary += ((node - from).Magnitude / 3) * 0.5
+		end
+		return primary, secondary
+	end
+
+	local function calculatePath(target, blockpos, method, angle, wallcheck, prefs)
 		-- Breaker's "Legit" mode passes a line-of-sight predicate function as `wallcheck`.
 		-- When present, only air nodes genuinely visible from the camera are eligible AND the
 		-- entire break path to that node must be visible, so we never blindly mine through walls.
@@ -1237,8 +1259,15 @@ run(function()
 		end
 
 		local pos, cost = nil, math.huge
+		local bestPrimary, bestSecondary = math.huge, math.huge
+		local function consider(node)
+			local primary, secondary = pathScore(node, distances[node], depths[node], prefs)
+			if primary < bestPrimary or (primary == bestPrimary and secondary < bestSecondary) then
+				pos, cost = node, distances[node]
+				bestPrimary, bestSecondary = primary, secondary
+			end
+		end
 		for node in air do
-			if distances[node] >= cost then continue end
 			if legitCheck then
 				local ok, cur, guard = true, node, 0
 				while cur ~= blockpos do
@@ -1250,10 +1279,10 @@ run(function()
 					cur = path[cur]
 				end
 				if ok then
-					pos, cost = node, distances[node]
+					consider(node)
 				end
 			elseif not wallcheck or isMinable(node) then
-				pos, cost = node, distances[node]
+				consider(node)
 			end
 		end
 
@@ -1276,8 +1305,9 @@ run(function()
 				pos,
 				cost,
 				path,
+				depths[pos],
 			}
-			return pos, cost, path
+			return pos, cost, path, depths[pos]
 		end
 		return nil
 	end
@@ -1289,16 +1319,23 @@ run(function()
 		end
 	end
 
-	bedwars.breakBlock = function(block, effects, anim, customHealthbar, visualise, sort, angle, wallcheck)
+	bedwars.breakBlock = function(block, effects, anim, customHealthbar, visualise, sort, angle, wallcheck, prefs)
 		if lplr:GetAttribute('DenyBlockBreak') or not entitylib.isAlive or InfiniteFly.Enabled then return end
 
 		local handler = bedwars.BlockController:getHandlerRegistry():getHandler(block.Name)
 		local cost, pos, target, path = math.huge, nil, nil, nil
+		local bestPrimary, bestSecondary = math.huge, math.huge
 
 		for _, v in (handler and handler:getContainedPositions(block) or {block.Position / 3}) do
-			local dpos, dcost, dpath = calculatePath(block, v * 3, sort, angle or 360, wallcheck)
-			if dpos and dcost < cost then
-				cost, pos, target, path = dcost, dpos, v * 3, dpath
+			local dpos, dcost, dpath, ddepth = calculatePath(block, v * 3, sort, angle or 360, wallcheck, prefs)
+			if dpos then
+				-- Score the whole entry the same way its nodes were scored, so a multi-cell block
+				-- (a bed) picks the cell whose way in matches the mode too, not just the cheapest.
+				local primary, secondary = pathScore(dpos, dcost, ddepth, prefs)
+				if primary < bestPrimary or (primary == bestPrimary and secondary < bestSecondary) then
+					cost, pos, target, path = dcost, dpos, v * 3, dpath
+					bestPrimary, bestSecondary = primary, secondary
+				end
 			end
 		end
 
@@ -1868,7 +1905,7 @@ run(function()
     end
     AimMode = AimAssist:CreateDropdown({
 	Name = 'Aim perspective',
-	Tooltip = 'First person - Uses your camera to aim\nThird person - Moves your character to where you are supposed to look\nMouse - Moves your mouse & camera\nDynamic - Uses first person mode if you are in first person, and uses third person if you are in third person',
+	Tooltip = 'First person - aims with your camera\nThird person - turns your character to where you should be looking\nMouse - moves your mouse and camera\nDynamic - whichever of the two you are already in',
 	List = {'First person', 'Third person', 'Mouse', 'Dynamic'},
 	Default = 'First person'
     })
@@ -2879,7 +2916,7 @@ run(function()
     })
     FaceTarget = SilentAura:CreateToggle({
         Name = 'Face target',
-        Tooltip = 'On (default): automatically turn to face the target (rotates your body with Silent Aim, or moves your camera without it).\nOff: never turn toward the target - your view/body is left alone. Hits still land for targets within Max angle, since they are computed from positions rather than from precise aim.',
+        Tooltip = 'On - turns to face the target (body with Silent Aim, camera without it)\nOff - never turns. Hits inside Max angle still land, since they are worked out from positions rather than aim',
         Default = true,
     })
     Show = SilentAura:CreateToggle({
@@ -2941,7 +2978,7 @@ run(function()
                 bedwars.SprintController:stopSprinting()
             end
         end,
-        Tooltip = 'Sets your sprinting to true.'
+        Tooltip = 'Sets your sprinting to true'
     })
 end)
 
@@ -3212,7 +3249,7 @@ run(function()
         Name = 'Direction',
         List = {'Default', 'Backwards', 'Up', 'Void', 'Left', 'Right', 'Reverse', 'Pull', 'Random'},
         Default = 'Default',
-        Tooltip = 'Redirects knockback direction inside the unified Velocity module.'
+        Tooltip = 'Redirects knockback direction inside the unified Velocity module'
     })
 end)
 
@@ -3221,8 +3258,12 @@ run(function()
     local Mode
     local Material
     local Color
+    local FlyRelease
+    local ClutchBlocks
     local rayCheck = RaycastParams.new()
     rayCheck.RespectCanCollide = true
+
+    local CELL = 3
 
     local function getLowGround()
         local mag = math.huge
@@ -3235,69 +3276,312 @@ run(function()
         return mag
     end
 
-    -- Clutch mode: when we land on the void barrier, find the nearest wall and lay a
-    -- bridge of blocks from that wall back to directly beneath us. Placements are snapped
-    -- to the block grid one level above the barrier so they never overlap it, and any
-    -- position that already holds a block (or was placed earlier this clutch) is skipped,
-    -- so there is no repetition or conflict between the blocks and the barrier.
-    local clutchUntil = 0
-    local function clutchToWall()
-        if tick() < clutchUntil or not entitylib.isAlive then return end
-        local wool, amount = getWool()
-        if not wool or (amount or 0) < 1 then return end
-        -- Short debounce so a bridge that doesn't quite catch is retried promptly instead of
-        -- leaving the player falling for over half a second before the next attempt.
-        clutchUntil = tick() + 0.3
+    -- getLowGround walks every block on the map, so it is far too heavy to call from a per-frame
+    -- check. The lowest block on a BedWars map barely moves, so cache it.
+    local lowestValue, lowestAt = math.huge, 0
+    local function lowestGround()
+        if tick() - lowestAt > 5 then
+            lowestValue = getLowGround()
+            lowestAt = tick()
+        end
+        return lowestValue
+    end
 
-        local root = entitylib.character.RootPart
-        local origin = root.Position
-        local barrierY = AntiFallPart and AntiFallPart.Position.Y or (origin.Y - 3)
-        -- Grid position one block above the barrier top.
-        local base = bedwars.BlockController:getBlockPosition(Vector3.new(origin.X, barrierY + 3, origin.Z)) * 3
-        local placeY = base.Y
+    -- Column results are cached for a few frames as well: the void check runs every frame while
+    -- airborne, and that is exactly when the ray finds nothing and the store walk is reached.
+    local columnKey, columnValue, columnAt = nil, nil, 0
 
-        rayCheck.FilterDescendantsInstances = {gameCamera, lplr.Character, AntiFallPart}
+    -- Is another module already flying/launching us? Nothing in here may fight those: they own the
+    -- character's velocity while they run, and both the old clutch and the old Normal mode used to
+    -- yank against them.
+    local function beingCarried()
+        local flyModule = Fly or vape.Modules.Fly
+        local longJumpModule = LongJump or vape.Modules.LongJump
+        if flyModule and flyModule.Enabled then return true end
+        if longJumpModule and longJumpModule.Enabled then return true end
+        if InfiniteFly and InfiniteFly.Enabled then return true end
+        return false
+    end
+
+    -- The one question both new modes hinge on: is there ANY land under us, or is this the void?
+    --
+    -- Answered two independent ways, because either one alone gives false answers that matter:
+    --   * a long downward ray, which sees map geometry the block store knows nothing about, and
+    --   * the block engine's own store walked down the column, which cannot be defeated by a
+    --     collision group, a CanQuery flag or a filter.
+    -- `drift` follows our horizontal velocity so the probe looks at the column we are actually
+    -- heading for. That is the false-place fix: running off a ledge toward a lower platform used to
+    -- read as "void" because the straight-down ray hit the ledge we were leaving.
+    local function landBelow(root, lookahead)
+        local pos = root.Position
+        local horiz = root.AssemblyLinearVelocity * Vector3.new(1, 0, 1)
+        local drift = horiz * math.clamp(lookahead or 0, 0, 2)
+        local from = Vector3.new(pos.X + drift.X, pos.Y, pos.Z + drift.Z)
+
+        rayCheck.FilterDescendantsInstances = {lplr.Character, gameCamera, AntiFallPart}
         rayCheck.CollisionGroup = root.CollisionGroup
-        local wallDir, wallDist
-        for i = 0, 15 do
-            local ang = (i / 16) * math.pi * 2
-            local dir = Vector3.new(math.cos(ang), 0, math.sin(ang))
-            local ray = workspace:Raycast(Vector3.new(origin.X, placeY + 1.5, origin.Z), dir * 64, rayCheck)
-            if ray and (not wallDist or ray.Distance < wallDist) then
-                wallDir, wallDist = dir, ray.Distance
+        local ray = workspace:Raycast(from, Vector3.new(0, -600, 0), rayCheck)
+        if ray then return ray.Position.Y end
+
+        -- Nothing physical: ask the block store, walking the column down to the lowest block on
+        -- the map. One lookup per 3 studs, stopping at the first hit.
+        local lowest = lowestGround()
+        if lowest == math.huge then return nil end
+        local cell = bedwars.BlockController:getBlockPosition(from)
+        local key = cell.X .. ',' .. cell.Z
+        if columnKey == key and (tick() - columnAt) < 0.15 then
+            return columnValue
+        end
+        local floor = math.max(math.floor(lowest / CELL), cell.Y - 400)
+        local found = nil
+        for y = cell.Y, floor, -1 do
+            if getPlacedBlock(Vector3.new(cell.X, y, cell.Z) * CELL) then
+                found = y * CELL
+                break
             end
         end
+        columnKey, columnValue, columnAt = key, found, tick()
+        return found
+    end
 
-        local placedHere = {}
-        local function placeAt(worldPos)
-            local grid = bedwars.BlockController:getBlockPosition(worldPos) * 3
-            local key = tostring(grid)
-            if placedHere[key] then return end
-            placedHere[key] = true
-            if math.abs(grid.Y - barrierY) < 2 then return end
-            if getPlacedBlock(grid) then return end
-            if (root.Position - grid).Magnitude > 52 then return end
-            task.spawn(bedwars.placeBlock, grid, wool, false)
+    ----------------------------------------------------------------------------
+    -- Clutch
+    --
+    -- Rebuilt. The old version waited until the barrier and then bridged in from a wall at BARRIER
+    -- height - hundreds of studs below where the fall started - firing a placement every 0.01s
+    -- without ever checking whether one landed. Over the void there is usually no wall within
+    -- range at that height either, so the common case was a burst of refused placements and a
+    -- death. It also had no idea whether the fall was real, so a hop off a ledge toward lower
+    -- ground threw down a bridge for nothing.
+    --
+    -- What it does now: the instant a genuine void fall starts - while the island we just left is
+    -- still beside us - it finds a real support block, lays a short platform in under our feet at
+    -- our CURRENT height, and confirms each block arrived before asking for the next.
+    ----------------------------------------------------------------------------
+    local clutchUntil, clutchBusy = 0, false
+
+    -- Wool first (it is what everything else buys), then any other sane block. Anything that
+    -- explodes, sticks, traps or cannot be stood on is no use as a floor.
+    local badBlocks = {'tnt', 'cannon', 'bed', 'trap', 'gumdrop', 'glue', 'ladder', 'sludge', 'bomb', 'beacon', 'spawner', 'chest', 'barrel'}
+    local function clutchBlock()
+        local wool, amount = getWool()
+        if wool and (amount or 0) > 0 then return wool end
+        for _, item in store.inventory.inventory.items do
+            local meta = bedwars.ItemMeta[item.itemType]
+            if meta and meta.block and (item.amount or 0) > 0 then
+                local bad = false
+                for _, name in badBlocks do
+                    if item.itemType:find(name) then
+                        bad = true
+                        break
+                    end
+                end
+                if not bad then return item.itemType end
+            end
+        end
+        return nil
+    end
+
+    local faceOffsets = {
+        Vector3.new(CELL, 0, 0), Vector3.new(-CELL, 0, 0),
+        Vector3.new(0, CELL, 0), Vector3.new(0, -CELL, 0),
+        Vector3.new(0, 0, CELL), Vector3.new(0, 0, -CELL)
+    }
+
+    -- A block needs something to lean on, so a cell is only worth asking for once one of its six
+    -- faces is filled. Blindly requesting mid-air placements is most of what made the old clutch
+    -- look broken.
+    local function hasSupport(world)
+        for _, offset in faceOffsets do
+            if getPlacedBlock(world + offset) then return true end
+        end
+        rayCheck.FilterDescendantsInstances = {lplr.Character, gameCamera, AntiFallPart}
+        for _, offset in faceOffsets do
+            local probe = world + offset
+            if workspace:Raycast(probe + Vector3.new(0, 1.4, 0), Vector3.new(0, -2.8, 0), rayCheck) then return true end
+        end
+        return false
+    end
+
+    -- Nearest cell we could build off, searched outward from our own column at the height we want
+    -- the floor. Right at the start of a fall that is the edge of the island we just walked off.
+    local function findSupportCell(centre)
+        local best, bestDist
+        local reach = math.clamp(ClutchBlocks and ClutchBlocks.Value or 6, 1, 10)
+        for radius = 1, reach do
+            for x = -radius, radius do
+                for z = -radius, radius do
+                    if math.max(math.abs(x), math.abs(z)) ~= radius then continue end
+                    for y = -1, 2 do
+                        local world = centre + Vector3.new(x * CELL, y * CELL, z * CELL)
+                        if getPlacedBlock(world) then
+                            local d = (world - centre).Magnitude
+                            if not bestDist or d < bestDist then
+                                best, bestDist = world, d
+                            end
+                        end
+                    end
+                end
+            end
+            if best then return best end
+        end
+        return best
+    end
+
+    local function placeClutch(world, block)
+        if getPlacedBlock(world) then return true end
+        if not hasSupport(world) then return false end
+        pcall(bedwars.placeBlock, world, block, false)
+        -- Confirm it actually arrived instead of firing the next one blind. A placement the server
+        -- refused has to be seen as refused, or the whole bridge is built on nothing.
+        local deadline = tick() + 0.35
+        repeat
+            task.wait(0.03)
+        until getPlacedBlock(world) or tick() > deadline or not AntiFall.Enabled
+        return getPlacedBlock(world) ~= nil
+    end
+
+    local function clutch()
+        if clutchBusy or tick() < clutchUntil or not entitylib.isAlive then return end
+        local root = entitylib.character.RootPart
+        if not root or not isnetworkowner(root) then return end
+        local block = clutchBlock()
+        if not block then return end
+
+        clutchBusy = true
+        clutchUntil = tick() + 0.25
+
+        -- Floor height: one cell under our feet, right where we are now. Catching us here instead
+        -- of at barrier level is the difference between losing a couple of studs and losing the
+        -- whole drop.
+        local hip = entitylib.character.HipHeight or 3
+        local feet = root.Position.Y - hip - (root.Size.Y * 0.5)
+        local barrierTop = AntiFallPart and (AntiFallPart.Position.Y + (AntiFallPart.Size.Y * 0.5)) or -math.huge
+        local floorCell = bedwars.BlockController:getBlockPosition(Vector3.new(root.Position.X, feet - 1.5, root.Position.Z))
+        local floorY = floorCell.Y * CELL
+        -- Never build into the barrier itself.
+        if floorY <= barrierTop + 1 then
+            floorY = math.floor((barrierTop + CELL + 1) / CELL) * CELL
         end
 
-        -- Blocks need a neighbouring block (or the wall) for support, so the
-        -- bridge has to grow from the wall back towards the player: each new
-        -- block leans on the previous one, and the final block lands directly
-        -- beneath us. Bridging outwards from the player would try to place the
-        -- first block in mid air and silently fail.
-        if wallDir then
-            local steps = math.clamp(math.ceil(wallDist / 3), 1, 16)
-            for s = steps, 0, -1 do
-                if not AntiFall.Enabled then break end
-                placeAt(Vector3.new(origin.X, placeY, origin.Z) + wallDir * (s * 3))
-                -- Lay the bridge as fast as the placement remote allows; a long bridge from a
-                -- far wall (or during a fast fall) has to finish before the player passes the
-                -- catch height, so keep the per-block spacing minimal.
-                task.wait(0.01)
+        local under = Vector3.new(floorCell.X * CELL, floorY, floorCell.Z * CELL)
+
+        -- Directly beneath us first: if the island edge is still within a block of us (the normal
+        -- case at the start of a fall) this single placement is the whole clutch.
+        if placeClutch(under, block) then
+            clutchBusy = false
+            return
+        end
+
+        -- Otherwise walk in from the nearest real support, one confirmed block at a time, so each
+        -- new block leans on the previous one.
+        local support = findSupportCell(under)
+        if not support then
+            clutchBusy = false
+            return
+        end
+
+        local delta = under - support
+        local steps = math.max(math.abs(delta.X), math.abs(delta.Z)) / CELL
+        steps = math.clamp(math.floor(steps + 0.5), 0, math.clamp(ClutchBlocks and ClutchBlocks.Value or 6, 1, 10))
+        local stepDir = Vector3.new(math.sign(delta.X), 0, math.sign(delta.Z))
+        local cursor = Vector3.new(support.X, floorY, support.Z)
+        for _ = 1, steps do
+            if not AntiFall.Enabled or Mode.Value ~= 'Clutch' then break end
+            cursor += Vector3.new(stepDir.X * CELL, 0, stepDir.Z * CELL)
+            if not placeClutch(cursor, block) then break end
+            -- Landed on it already: nothing more to build.
+            if entitylib.isAlive and entitylib.character.Humanoid.FloorMaterial ~= Enum.Material.Air then break end
+        end
+
+        -- Finish under our feet (we have drifted while building, so recompute).
+        if entitylib.isAlive and AntiFall.Enabled then
+            local now = entitylib.character.RootPart
+            if now then
+                local cell = bedwars.BlockController:getBlockPosition(Vector3.new(now.Position.X, floorY, now.Position.Z))
+                placeClutch(Vector3.new(cell.X * CELL, floorY, cell.Z * CELL), block)
+            end
+        end
+        clutchBusy = false
+    end
+
+    ----------------------------------------------------------------------------
+    -- Fly mode: hand the fall to the Fly module the instant there is no land under us.
+    --
+    -- Driven off Heartbeat and tested every single frame, with no barrier, no timer and no fall
+    -- speed threshold in the way, so it engages on the first frame the ground is gone - that is
+    -- what keeps the Y drop to a couple of studs. Fly is only switched back off if this mode is
+    -- what switched it on, so it can never take control away from you.
+    ----------------------------------------------------------------------------
+    local flyOwned, landSince = false, 0
+
+    local function flyModule()
+        return Fly or vape.Modules.Fly
+    end
+
+    local function stopFly(force)
+        local module = flyModule()
+        if not module then
+            flyOwned = false
+            return
+        end
+        if flyOwned and (force or module.Enabled) then
+            flyOwned = false
+            if module.Enabled then
+                task.spawn(function()
+                    module:Toggle()
+                end)
+            end
+        end
+    end
+
+    local function updateFlyMode()
+        if Mode.Value ~= 'Fly' then
+            stopFly(true)
+            return
+        end
+        if not entitylib.isAlive then
+            stopFly(true)
+            return
+        end
+        local root = entitylib.character.RootPart
+        local module = flyModule()
+        if not root or not module then return end
+
+        local grounded = entitylib.character.Humanoid.FloorMaterial ~= Enum.Material.Air
+        -- Look a fraction of a second ahead so stepping off an edge counts as "no land" on the
+        -- frame we leave it rather than a frame later.
+        local land = grounded and root.Position.Y or landBelow(root, 0.25)
+
+        if not land then
+            landSince = 0
+            if not module.Enabled then
+                flyOwned = true
+                -- Kill the drop we have already picked up before handing over, so Fly starts from
+                -- a standstill instead of having to arrest a fall.
+                root.AssemblyLinearVelocity = Vector3.new(root.AssemblyLinearVelocity.X, 0, root.AssemblyLinearVelocity.Z)
+                task.spawn(function()
+                    module:Toggle()
+                end)
+            elseif not flyOwned then
+                -- Already flying by your own choice: leave it entirely alone.
+                return
+            end
+            return
+        end
+
+        -- Land is back. Hold the release briefly so a one-frame reading over a gap does not drop
+        -- us, and only release once we are genuinely above something we can stand on.
+        if flyOwned then
+            if landSince == 0 then
+                landSince = tick()
+            end
+            local safeDrop = (FlyRelease and FlyRelease.Value or 12)
+            if (tick() - landSince) >= 0.2 and (root.Position.Y - land) <= safeDrop then
+                stopFly(false)
             end
         else
-            -- No wall in range: best-effort direct placement beneath us.
-            placeAt(Vector3.new(origin.X, placeY, origin.Z))
+            landSince = 0
         end
     end
 
@@ -3307,6 +3591,16 @@ run(function()
             if callback then
                 repeat task.wait() until store.matchState ~= 0 or (not AntiFall.Enabled)
                 if not AntiFall.Enabled then return end
+
+                flyOwned, landSince, clutchBusy = false, 0, false
+                AntiFall:Clean(function()
+                    stopFly(true)
+                    clutchBusy = false
+                end)
+
+                -- Fly mode owns the whole job itself, so it runs whether or not the map has a
+                -- barrier height to work out.
+                AntiFall:Clean(runService.Heartbeat:Connect(updateFlyMode))
 
                 local pos, debounce = getLowGround(), tick()
                 if pos ~= math.huge then
@@ -3333,9 +3627,7 @@ run(function()
                                     local lastTeleport = lplr:GetAttribute('LastTeleported')
                                     local connection
                                     connection = runService.PreSimulation:Connect(function()
-                                        local flyModule = vape.Modules.Fly
-                                        local longJumpModule = vape.Modules.LongJump or vape.Modules['LongJump']
-                                        if (flyModule and flyModule.Enabled) or (InfiniteFly and InfiniteFly.Enabled) or (longJumpModule and longJumpModule.Enabled) then
+                                        if beingCarried() then
                                             connection:Disconnect()
                                             AntiFallDirection = nil
                                             return
@@ -3379,81 +3671,80 @@ run(function()
                             elseif Mode.Value == 'Velocity' then
                                 entitylib.character.RootPart.Velocity = Vector3.new(entitylib.character.RootPart.Velocity.X, 100, entitylib.character.RootPart.Velocity.Z)
                             elseif Mode.Value == 'Clutch' then
-                                -- Safety net only: the predictive loop below normally fires
-                                -- first, well before this contact. clutchUntil debounces both.
-                                task.spawn(clutchToWall)
+                                -- Last resort only. The predictive check below normally has us
+                                -- caught long before the barrier is ever touched.
+                                if not beingCarried() then
+                                    task.spawn(clutch)
+                                end
                             end
                         end
                     end))
-
-                    -- Clutch has to catch the player BEFORE they reach the barrier. Waiting
-                    -- for Touched is too late - by then the character is already at barrier
-                    -- height and the freshly placed blocks land beneath their feet a beat
-                    -- after they've fallen past. Instead predict the fall every frame and
-                    -- start bridging while the player is still above the barrier, leaving
-                    -- enough lead for the whole bridge (including the block directly beneath
-                    -- us, which is placed last) to finish before impact.
-                    -- Start bridging this far before the player reaches the catch height.
-                    -- The bridge itself takes time to lay (one placement per block plus the
-                    -- network round trip), so on a fast fall or from a far wall a short lead
-                    -- meant the blocks were still going down as the player fell past them.
-                    -- Bias the lead generously and add the current ping - blocks placed early
-                    -- over the void simply wait at the catch level, so an early trigger is
-                    -- harmless while a late one is a death.
-                    local BASE_CLUTCH_LEAD = 1.3
-                    AntiFall:Clean(runService.Heartbeat:Connect(function()
-                        if Mode.Value ~= 'Clutch' or not entitylib.isAlive then return end
-                        if not AntiFallPart or not AntiFallPart.Parent then return end
-                        local root = entitylib.character and entitylib.character.RootPart
-                        if not root then return end
-                        local vy = root.AssemblyLinearVelocity.Y
-                        if vy >= -1 then return end -- not meaningfully falling
-                        local ping = 0
-                        pcall(function() ping = lplr:GetNetworkPing() end)
-                        local CLUTCH_LEAD = BASE_CLUTCH_LEAD + math.min(ping, 0.4)
-                        -- The bridge is laid one block level (~3 studs) above the barrier top;
-                        -- that height is where the player must be caught.
-                        local catchY = AntiFallPart.Position.Y + (AntiFallPart.Size.Y * 0.5) + 3
-                        local dist = root.Position.Y - catchY
-                        if dist <= 0 then return end -- already at/below the catch level
-                        -- Accurate free-fall time to the catch height (accounts for gravity, not
-                        -- just current speed) so the trigger fires the same lead ahead regardless
-                        -- of how fast we're already moving.
-                        local u = -vy
-                        local timeToCatch = (math.sqrt((u * u) + (2 * workspace.Gravity * dist)) - u) / workspace.Gravity
-                        if timeToCatch > CLUTCH_LEAD then return end
-                        -- Only clutch when we're genuinely going to land in the void. Probe the
-                        -- column below where we'll ACTUALLY be at catch time, following our
-                        -- horizontal drift. A straight-down probe (the old check) was wrong both
-                        -- ways: running off a ledge toward a lower platform still bridged because
-                        -- the down-ray hit the platform we were leaving (false alarm), and a
-                        -- glancing block in the straight-down column suppressed the early clutch so
-                        -- only the last-moment Touched net caught us (the "very slow" catch). If
-                        -- there's solid footing where we're headed, no void catch is needed.
-                        rayCheck.FilterDescendantsInstances = {gameCamera, lplr.Character, AntiFallPart}
-                        rayCheck.CollisionGroup = root.CollisionGroup
-                        local horiz = Vector3.new(root.AssemblyLinearVelocity.X, 0, root.AssemblyLinearVelocity.Z)
-                        local landing = root.Position + horiz * math.min(timeToCatch, 2)
-                        if workspace:Raycast(Vector3.new(landing.X, root.Position.Y, landing.Z), Vector3.new(0, -(dist + 6), 0), rayCheck) then return end
-                        task.spawn(clutchToWall)
-                    end))
                 end
+
+                -- Clutch trigger. Fires on the first frame of a real void fall, while the island
+                -- we just left is still next to us and its blocks can be built off, rather than
+                -- waiting for the barrier by which time there is nothing in reach.
+                AntiFall:Clean(runService.Heartbeat:Connect(function()
+                    if Mode.Value ~= 'Clutch' or not entitylib.isAlive or clutchBusy then return end
+                    if beingCarried() then return end
+                    local root = entitylib.character.RootPart
+                    if not root or not isnetworkowner(root) then return end
+                    if entitylib.character.Humanoid.FloorMaterial ~= Enum.Material.Air then return end
+                    -- A real fall, not a step down or a jump arc.
+                    if root.AssemblyLinearVelocity.Y >= -12 then return end
+                    -- And genuinely into the void: if there is anything at all to land on in the
+                    -- column we are heading for, there is nothing to clutch. This single check is
+                    -- what stops the false placing.
+                    if landBelow(root, 1.5) then return end
+                    task.spawn(clutch)
+                end))
             else
                 AntiFallDirection = nil
+                stopFly(true)
+                clutchBusy = false
             end
         end,
-        Tooltip = 'Helps prevent you from falling into the void.'
+        Tooltip = 'Helps prevent you from falling into the void'
     })
     Mode = AntiFall:CreateDropdown({
         Name = 'Move Mode',
-        List = {'Normal', 'Collide', 'Velocity', 'Clutch'},
+        List = {'Normal', 'Collide', 'Velocity', 'Clutch', 'Fly'},
         Function = function(val)
             if AntiFallPart then
                 -- Clutch stays non-colliding; only Collide mode walks on the barrier.
                 AntiFallPart.CanCollide = val == 'Collide'
             end
+            if val ~= 'Fly' then
+                stopFly(true)
+            end
+            pcall(function()
+                FlyRelease.Object.Visible = val == 'Fly'
+                ClutchBlocks.Object.Visible = val == 'Clutch'
+            end)
         end,
-    Tooltip = 'Normal - Smoothly moves you towards the nearest safe point\nVelocity - Launches you upward after touching\nCollide - Allows you to walk on the part\nClutch - Bridges blocks from the nearest wall to below you before you reach the barrier (non-solid)'
+        Tooltip = 'Normal - slides you to the nearest safe point\nVelocity - launches you up on contact\nCollide - lets you walk on the barrier\nClutch - places a floor under you the moment a void fall starts\nFly - switches Fly on the instant no land is under you, off again over land'
+    })
+    FlyRelease = AntiFall:CreateSlider({
+        Name = 'Release height',
+        Min = 3,
+        Max = 60,
+        Default = 12,
+        Suffix = ' studs',
+        Darker = true,
+        Visible = false,
+        Tooltip = 'How close above land Fly mode has to be before it hands control back'
+    })
+    ClutchBlocks = AntiFall:CreateSlider({
+        Name = 'Clutch reach',
+        Min = 1,
+        Max = 10,
+        Default = 6,
+        Suffix = function(val)
+            return val == 1 and ' block' or ' blocks'
+        end,
+        Darker = true,
+        Visible = false,
+        Tooltip = 'How far the clutch may build in from the nearest block it can lean on'
     })
     local materials = {'ForceField'}
     for _, v in Enum.Material:GetEnumItems() do
@@ -4088,7 +4379,7 @@ run(function()
                 removeRakHook()
             end
         end,
-        Tooltip = 'Prevents fall damage. Legit uses clutch methods; TP drops you onto the floor below so the fall ends there instead of at speed; Blatant keeps settling the fall on the server with the game\'s own ground-hit event the whole way down, so the landing has nothing left to charge for; RakNet edits the outgoing physics packet so the fall is never reported in the first place. Neither of them changes how you actually fall - no slowing, no floating, no teleporting.'
+        Tooltip = 'Prevents fall damage\nLegit clutches, TP drops you onto the floor below, Blatant clears the fall on the server as it builds, RakNet strips it from the outgoing physics packet\nNone of them change how you fall - no slowing, floating or teleporting'
     })
     Mode = NoFall:CreateDropdown({
         Name = 'Mode',
@@ -4100,14 +4391,14 @@ run(function()
                 NoFall:Toggle()
             end
         end,
-        Tooltip = 'Legit uses a fixed clutch order: blocks, telepearls, then tools (enable Zephyr to jump-cancel the fall with the Zephyr/WindWalker kit instead). Blatant sends the game\'s own ground-hit event for you, continuously, while the fall is in the air - the fall the server is holding is cleared as fast as it builds, and your character is never touched, so you fall and land completely normally. TP puts you straight down on the floor below you the moment the drop gets dangerous, ending the fall where it was going to end anyway.'
+        Tooltip = 'Legit clutches with blocks, telepearls then tools (Zephyr jump-cancels instead)\nBlatant keeps clearing the pending fall on the server all the way down, so you fall and land normally\nTP drops you onto the floor below the moment the fall turns dangerous'
     })
     MinVelocity = NoFall:CreateSlider({
         Name = 'Minimum Velocity',
         Min = 35,
         Max = 120,
         Default = 60,
-        Tooltip = 'How fast the drop has to be before Legit clutches or TP puts you on the floor. Blatant does not use this - it caps a speed rather than waiting for one.'
+        Tooltip = 'How fast the drop has to be before Legit clutches or TP puts you on the floor. Blatant does not use this - it caps a speed rather than waiting for one'
     })
     FallThreshold = NoFall:CreateSlider({
         Name = 'Fall threshold',
@@ -4116,13 +4407,13 @@ run(function()
         Default = 85,
         Suffix = ' studs/s',
         Visible = false,
-        Tooltip = 'Blatant and RakNet: how fast the fall has to get before either of them starts work. 85 is where BedWars itself starts charging, so anything slower needs no help. Lower it if a fall ever still registers.'
+        Tooltip = 'Blatant and RakNet: how fast the fall has to get before they start work. BedWars starts charging at 85, so anything slower needs no help'
     })
     SpoofState = NoFall:CreateDropdown({
         Name = 'Reported state',
         List = {'Running', 'Landed', 'RunningNoPhysics'},
         Visible = false,
-        Tooltip = 'RakNet only: the humanoid state written into the outgoing physics packet while a dangerous fall is in the air. Running is what an ordinary player on the ground reports and is the safest choice; try Landed if a fall still registers.'
+        Tooltip = 'RakNet only: the humanoid state written into the outgoing physics packet during a dangerous fall. Running is what a grounded player reports and is safest; try Landed if a fall still registers'
     })
     GroundDistance = NoFall:CreateSlider({
         Name = 'Ground Check',
@@ -4140,20 +4431,20 @@ run(function()
     BlockClutch = NoFall:CreateToggle({
         Name = 'Blocks',
         Default = true,
-        Tooltip = 'Places blocks directly beneath you shortly before fall damage would apply.'
+        Tooltip = 'Places blocks directly beneath you shortly before fall damage would apply'
     })
     HealthCheck = NoFall:CreateToggle({
         Name = 'Health check',
-        Tooltip = 'Only clutches when the estimated fall damage would be lethal.'
+        Tooltip = 'Only clutches when the estimated fall damage would be lethal'
     })
     Zephyr = NoFall:CreateToggle({
         Name = 'Zephyr',
-        Tooltip = 'Legit only: jumps in the instant before you land so the Zephyr/WindWalker kit negates the fall. Falls back to the normal block/pearl/tool clutch when it cannot fire.'
+        Tooltip = 'Legit only: jumps just before you land so the Zephyr/WindWalker kit negates the fall. Falls back to the normal clutch when it cannot fire'
     })
     TelepearlClutch = NoFall:CreateToggle({
         Name = 'Telepearl',
         Default = true,
-        Tooltip = 'Throws a telepearl to nearby safe ground after block clutching is unavailable.'
+        Tooltip = 'Throws a telepearl to nearby safe ground after block clutching is unavailable'
     })
     DaoClutch = NoFall:CreateToggle({
         Name = 'Dao',
@@ -4178,11 +4469,62 @@ run(function()
     local Projectiles
     local ProjectileStretch
     local Range
+    local Visualise
+    local VisualiseCamera
 
     local oldroot, clone, hip = nil, nil, 2.5
     local rayParams = RaycastParams.new()
     rayParams.FilterType = Enum.RaycastFilterType.Include
     rayParams.RespectCanCollide = true
+
+    -- Visualise teleporting.
+    --
+    -- Normally only the real RootPart teleports, and your visible body is the clone standing still,
+    -- so everyone else watches you flicker up and down while your own screen shows nothing. With
+    -- this on, the clone's HEIGHT is driven from the same teleport - so you see exactly what they
+    -- see - and horizontal control is untouched, because the teleport itself is only vertical.
+    -- Visualise camera then decides whether the camera rides along or stays put.
+    local visualY, visualising = nil, false
+    local camAnchor, camSubject = nil, nil
+
+    -- Park the camera on a fixed point so the body can teleport out from under it.
+    local function lockCamera(position)
+        if camAnchor then return end
+        camAnchor = Instance.new('Part')
+        camAnchor.Name = 'AntiDeathCameraAnchor'
+        camAnchor.Size = Vector3.one
+        camAnchor.Transparency = 1
+        camAnchor.Anchored = true
+        camAnchor.CanCollide = false
+        camAnchor.CanQuery = false
+        camAnchor.CanTouch = false
+        camAnchor.CFrame = CFrame.new(position)
+        camAnchor.Parent = gameCamera
+        camSubject = gameCamera.CameraSubject
+        gameCamera.CameraSubject = camAnchor
+    end
+
+    local function unlockCamera()
+        if camAnchor then
+            if gameCamera.CameraSubject == camAnchor then
+                gameCamera.CameraSubject = (camSubject and camSubject.Parent and camSubject)
+                    or (entitylib.isAlive and entitylib.character.Humanoid)
+                    or nil
+            end
+            camAnchor:Destroy()
+            camAnchor = nil
+        end
+        camSubject = nil
+    end
+
+    -- Put the body back where it was standing and hand the camera back. Safe to call at any time.
+    local function endVisualise()
+        if visualising and clone and clone.Parent and visualY then
+            clone.CFrame = CFrame.new(clone.Position.X, visualY, clone.Position.Z) * (clone.CFrame - clone.CFrame.Position)
+        end
+        visualising, visualY = false, nil
+        unlockCamera()
+    end
 
     local function doClone()
         if store.rootpart then return end
@@ -4354,6 +4696,7 @@ run(function()
 
     local function revertClone()
         if oldroot and oldroot.Parent and entitylib.isAlive then
+            endVisualise()
             lplr.Character.Parent = replicatedStorage
             oldroot.Parent = lplr.Character
             if clone then
@@ -4407,6 +4750,7 @@ run(function()
 				end
 			end
 
+                AntiDeath:Clean(endVisualise)
                 AntiDeath:Clean(runService.PostSimulation:Connect(function()
                     if oldroot and oldroot.Parent then
                         local newpoint, pos = lowestpoint, CFrame.new(clone.CFrame.X, lowestpoint - 6, clone.CFrame.Z)
@@ -4417,7 +4761,32 @@ run(function()
                             end
                         end
                         oldroot.Velocity = Vector3.zero
-                        oldroot.CFrame = Dodge and (newpoint or pos) or (clone.CFrame + Vector3.new(0, 1, 0)) * CFrame.Angles(math.rad(90), 0, 0)
+                        local target = Dodge and (newpoint or pos) or (clone.CFrame + Vector3.new(0, 1, 0)) * CFrame.Angles(math.rad(90), 0, 0)
+                        oldroot.CFrame = target
+
+                        -- Everything above is untouched, so with Visualise teleporting off this
+                        -- module behaves exactly as it always has. Below is the only addition: show
+                        -- the same teleport on our own screen.
+                        if Visualise.Enabled and clone and clone.Parent then
+                            if Dodge then
+                                if not visualising then
+                                    visualising = true
+                                    visualY = clone.Position.Y
+                                    if not VisualiseCamera.Enabled then
+                                        -- Camera locked: leave it behind at head height while the
+                                        -- body teleports out from under it.
+                                        lockCamera(clone.Position)
+                                    end
+                                end
+                                -- Height only. The teleport is vertical, so mirroring just Y shows
+                                -- exactly what everyone else sees while leaving you free to move.
+                                clone.CFrame = CFrame.new(clone.Position.X, target.Position.Y, clone.Position.Z) * (clone.CFrame - clone.CFrame.Position)
+                            elseif visualising then
+                                endVisualise()
+                            end
+                        elseif visualising then
+                            endVisualise()
+                        end
                     end
                 end))
 
@@ -4531,6 +4900,34 @@ run(function()
 	Decimal = 2,
 	Darker = true,
     })
+    Visualise = AntiDeath:CreateToggle({
+	Name = 'Visualise teleporting',
+	Tooltip = 'Off - only your hitbox teleports, so enemies see you flicker but your screen shows nothing\nOn - your body teleports on your screen too',
+	Function = function(call)
+		pcall(function()
+			VisualiseCamera.Object.Visible = call
+		end)
+		if not call then
+			endVisualise()
+		end
+	end,
+    })
+    VisualiseCamera = AntiDeath:CreateToggle({
+	Name = 'Visualise camera',
+	Default = true,
+	Darker = true,
+	Visible = false,
+	Tooltip = 'On: the camera rides along with the teleport\nOff: the camera stays where you were standing while your body teleports under it',
+	Function = function()
+		if not visualising then return end
+		-- Changed mid-dodge: settle the camera to match the new setting straight away.
+		if VisualiseCamera.Enabled then
+			unlockCamera()
+		elseif clone and clone.Parent and visualY then
+			lockCamera(Vector3.new(clone.Position.X, visualY, clone.Position.Z))
+		end
+	end,
+    })
 end)
 
 
@@ -4551,6 +4948,248 @@ run(function()
             end
         end,
         Tooltip = 'Changes the ambient lighting to a chill teal'
+    })
+end)
+
+-- Water: fills the void with real Roblox water, at exactly the height AntiFall puts its barrier.
+--
+-- Height comes from AntiFall's own barrier when that module is on, and is worked out the same way
+-- (lowest block on the map, minus two) when it is not - so the surface always sits where the
+-- barrier does, whether or not you use it.
+--
+-- Terrain mode is genuine Roblox water: waves, refraction, the lot. It is written locally, so it is
+-- yours alone and never replicates. It follows you in slabs and clears the one behind you, because
+-- filling a whole BedWars map at once is a lot of voxels for something you only ever see under your
+-- feet. Part mode is the cheap version - one plane with the water material and Roblox's own water
+-- texture on top - for anywhere terrain writes are unavailable.
+run(function()
+    local Water
+    local Mode
+    local Size
+    local Depth
+    local Waves
+    local Color
+    local part
+    local filled
+    local oldWater
+
+    local function barrierHeight()
+        if AntiFallPart and AntiFallPart.Parent then
+            return AntiFallPart.Position.Y
+        end
+        local mag = math.huge
+        pcall(function()
+            for _, pos in bedwars.BlockController:getStore():getAllBlockPositions() do
+                pos = pos * 3
+                if pos.Y < mag and not getPlacedBlock(pos + Vector3.new(0, 3, 0)) then
+                    mag = pos.Y
+                end
+            end
+        end)
+        if mag == math.huge then return nil end
+        return mag - 2
+    end
+
+    local function clearTerrain()
+        if not filled then return end
+        pcall(function()
+            workspace.Terrain:FillBlock(filled.CFrame, filled.Size, Enum.Material.Air)
+        end)
+        filled = nil
+    end
+
+    local function applyWaterLook()
+        local terrain = workspace.Terrain
+        if not oldWater then
+            oldWater = {
+                Color = terrain.WaterColor,
+                Transparency = terrain.WaterTransparency,
+                Reflectance = terrain.WaterReflectance,
+                WaveSize = terrain.WaterWaveSize,
+                WaveSpeed = terrain.WaterWaveSpeed
+            }
+        end
+        terrain.WaterColor = Color3.fromHSV(Color.Hue, Color.Sat, Color.Value)
+        terrain.WaterTransparency = math.clamp(1 - Color.Opacity, 0, 1)
+        terrain.WaterWaveSize = Waves.Enabled and 0.15 or 0
+        terrain.WaterWaveSpeed = Waves.Enabled and 12 or 0
+    end
+
+    local function restoreWaterLook()
+        if not oldWater then return end
+        local terrain = workspace.Terrain
+        pcall(function()
+            terrain.WaterColor = oldWater.Color
+            terrain.WaterTransparency = oldWater.Transparency
+            terrain.WaterReflectance = oldWater.Reflectance
+            terrain.WaterWaveSize = oldWater.WaveSize
+            terrain.WaterWaveSpeed = oldWater.WaveSpeed
+        end)
+        oldWater = nil
+    end
+
+    local function makePart(height)
+        if part then
+            part.Position = Vector3.new(0, height, 0)
+            return
+        end
+        part = Instance.new('Part')
+        part.Name = 'AetherWater'
+        part.Size = Vector3.new(10000, Depth.Value, 10000)
+        part.Position = Vector3.new(0, height, 0)
+        part.Anchored = true
+        part.CanCollide = false
+        part.CanQuery = false
+        part.CanTouch = false
+        part.Material = Enum.Material.Water
+        part.Color = Color3.fromHSV(Color.Hue, Color.Sat, Color.Value)
+        part.Transparency = math.clamp(1 - Color.Opacity, 0, 1)
+        part.Parent = workspace
+        -- Roblox's own water surface texture on the top face, so Part mode reads as water rather
+        -- than as a flat blue slab.
+        local texture = Instance.new('Texture')
+        texture.Name = 'WaterSurface'
+        texture.Face = Enum.NormalId.Top
+        texture.Texture = 'rbxasset://textures/water/normal_1.dds'
+        texture.StudsPerTileU = 24
+        texture.StudsPerTileV = 24
+        texture.Transparency = 0.35
+        texture.Parent = part
+        pcall(function()
+            bedwars.QueryUtil:setQueryIgnored(part, true)
+        end)
+    end
+
+    local function removePart()
+        if part then
+            part:Destroy()
+            part = nil
+        end
+    end
+
+    local function refresh()
+        local height = barrierHeight()
+        if not height then return end
+
+        if Mode.Value == 'Part' then
+            clearTerrain()
+            restoreWaterLook()
+            makePart(height)
+            part.Size = Vector3.new(10000, Depth.Value, 10000)
+            part.Color = Color3.fromHSV(Color.Hue, Color.Sat, Color.Value)
+            part.Transparency = math.clamp(1 - Color.Opacity, 0, 1)
+            return
+        end
+
+        removePart()
+        applyWaterLook()
+
+        local centre = Vector3.new(0, height, 0)
+        if entitylib.isAlive then
+            local root = entitylib.character.RootPart
+            centre = Vector3.new(root.Position.X, height, root.Position.Z)
+        end
+        -- Voxels are 4 studs, so snap to that grid: an unsnapped fill leaves seams between slabs.
+        centre = Vector3.new(math.floor(centre.X / 4) * 4, math.floor(centre.Y / 4) * 4, math.floor(centre.Z / 4) * 4)
+        local size = Vector3.new(Size.Value, math.max(Depth.Value, 4), Size.Value)
+
+        if filled and (filled.CFrame.Position - centre).Magnitude < (Size.Value * 0.25) and filled.Size == size then
+            return
+        end
+        clearTerrain()
+        local cframe = CFrame.new(centre)
+        local ok = pcall(function()
+            workspace.Terrain:FillBlock(cframe, size, Enum.Material.Water)
+        end)
+        if ok then
+            filled = {CFrame = cframe, Size = size}
+        else
+            -- Terrain writes refused: fall back to the plane rather than showing nothing.
+            makePart(height)
+        end
+    end
+
+    Water = (vape.Categories.Visuals or vape.Categories.Render):CreateModule({
+        Name = 'Water',
+        Function = function(callback)
+            if callback then
+                repeat task.wait() until (store.matchState ~= 0 and store.map) or not Water.Enabled
+                if not Water.Enabled then return end
+                Water:Clean(function()
+                    clearTerrain()
+                    restoreWaterLook()
+                    removePart()
+                end)
+                Water:Clean(task.spawn(function()
+                    while Water.Enabled do
+                        refresh()
+                        task.wait(0.5)
+                    end
+                end))
+            else
+                clearTerrain()
+                restoreWaterLook()
+                removePart()
+            end
+        end,
+        Tooltip = 'Fills the void with Roblox water at AntiFall\'s barrier height',
+        ExtraText = function()
+            return Mode.Value
+        end
+    })
+    Mode = Water:CreateDropdown({
+        Name = 'Mode',
+        List = {'Terrain', 'Part'},
+        Default = 'Terrain',
+        Tooltip = 'Terrain - real Roblox water with waves, filled in around you\nPart - one water-material plane across the map, cheaper and always available',
+        Function = function()
+            if Water.Enabled then
+                clearTerrain()
+                restoreWaterLook()
+                removePart()
+                task.spawn(refresh)
+            end
+        end
+    })
+    Size = Water:CreateSlider({
+        Name = 'Area',
+        Min = 128,
+        Max = 2048,
+        Default = 768,
+        Suffix = ' studs',
+        Tooltip = 'How wide a patch of water to keep filled around you, in Terrain mode'
+    })
+    Depth = Water:CreateSlider({
+        Name = 'Depth',
+        Min = 4,
+        Max = 60,
+        Default = 12,
+        Suffix = ' studs',
+        Tooltip = 'How deep the water goes below the surface'
+    })
+    Waves = Water:CreateToggle({
+        Name = 'Waves',
+        Default = true,
+        Tooltip = 'Animate the surface. Off gives you a still, flat sheet',
+        Function = function()
+            if Water.Enabled and Mode.Value == 'Terrain' then
+                applyWaterLook()
+            end
+        end
+    })
+    Color = Water:CreateColorSlider({
+        Name = 'Color',
+        DefaultHue = 0.55,
+        DefaultOpacity = 0.7,
+        Function = function()
+            if not Water.Enabled then return end
+            if Mode.Value == 'Terrain' then
+                applyWaterLook()
+            elseif part then
+                part.Color = Color3.fromHSV(Color.Hue, Color.Sat, Color.Value)
+                part.Transparency = math.clamp(1 - Color.Opacity, 0, 1)
+            end
+        end
     })
 end)
 
@@ -4622,7 +5261,7 @@ run(function()
         Max = 60,
         Default = 35,
         Suffix = ' studs/s',
-        Tooltip = 'Upward velocity added each tick while jump is held.'
+        Tooltip = 'Upward velocity added each tick while jump is held'
     })
 end)
 
@@ -4793,7 +5432,7 @@ run(function()
                 restoreSignals()
             end
         end,
-        Tooltip = 'Removes Krystal lagbacks: keeps momentum reported maxed and suppresses the local movement-correction listeners so the skate never snaps back.'
+        Tooltip = 'Removes Krystal lagbacks: keeps momentum reported maxed and suppresses the local movement-correction listeners so the skate never snaps back'
     })
 end)
 
@@ -4867,11 +5506,11 @@ run(function()
                 end))
             end
         end,
-        Tooltip = 'Towers you straight up: while you hold jump it fills the block cell under your feet on every cell you rise through, so you climb a gapless pillar as fast as you can jump.'
+        Tooltip = 'Towers you straight up: while you hold jump it fills the cell under your feet on every cell you rise through, so the pillar has no gaps'
     })
     LimitItems = AutoBuildUp:CreateToggle({
         Name = 'Limit to items',
-        Tooltip = 'Only builds while you are holding blocks. Switch to a sword (or anything that is not a block) and towering stops until you hold blocks again.'
+        Tooltip = 'Only builds while you are holding blocks. Switch to a sword (or anything that is not a block) and towering stops until you hold blocks again'
     })
 end)
 
@@ -4900,7 +5539,57 @@ run(function()
     local MaxCorrect
     local HoldTime
     local Vertical
+    local VoidFly
+    local FlySync
+    local TouchTime
     local Notify
+
+    local voidRay = RaycastParams.new()
+    voidRay.RespectCanCollide = true
+    voidRay.FilterType = Enum.RaycastFilterType.Exclude
+
+    -- Nearest real surface we could plausibly be standing on. Used by the void-fly bypass below.
+    --
+    -- getNearGround only looks in a small cube around us and gives up at 60 studs, which is
+    -- precisely nothing when you are out over the void - so when it comes back empty we fall back
+    -- to the closest block on the map from the block engine's own store. That scan is cached,
+    -- because it is only ever needed while we are already off the map.
+    local nearestValue, nearestAt, nearestFrom = nil, 0, nil
+    local function nearestSurface(root)
+        local pos = root.Position
+        voidRay.FilterDescendantsInstances = {lplr.Character, gameCamera, AntiFallPart}
+        voidRay.CollisionGroup = root.CollisionGroup
+        local straight = workspace:Raycast(pos, Vector3.new(0, -600, 0), voidRay)
+        if straight then
+            return straight.Position + Vector3.new(0, (entitylib.character.HipHeight or 3) + 0.2, 0)
+        end
+
+        local ok, near = pcall(getNearGround, 14)
+        if ok and near then return near end
+
+        if nearestValue and (tick() - nearestAt) < 1.5 and nearestFrom and (pos - nearestFrom).Magnitude < 60 then
+            return nearestValue
+        end
+        local best, bestDist
+        local ok2 = pcall(function()
+            for _, cell in bedwars.BlockController:getStore():getAllBlockPositions() do
+                local world = cell * 3
+                -- Only the top of a stack is standable.
+                if not getPlacedBlock(world + Vector3.new(0, 3, 0)) then
+                    local d = (world - pos).Magnitude
+                    if not bestDist or d < bestDist then
+                        best, bestDist = world, d
+                    end
+                end
+            end
+        end)
+        if ok2 and best then
+            nearestValue = best + Vector3.new(0, 3 + (entitylib.character.HipHeight or 3), 0)
+            nearestAt, nearestFrom = tick(), pos
+            return nearestValue
+        end
+        return nil
+    end
 
     AntiLagback = vape.Categories.Exploits:CreateModule({
         Name = 'AntiLagback',
@@ -5088,15 +5777,93 @@ run(function()
                         table.remove(history, 1)
                     end
                 end))
+
+                -- Void fly bypass.
+                --
+                -- The detector above is purely reactive: it undoes a pull after the server has
+                -- already made it, which is fine for a knockback yank but hopeless for flying over
+                -- the void. There the server is not rubber-banding a mistake, it is enforcing a
+                -- rule - you have been off the ground, over nothing, for too long - and it will
+                -- keep pulling for as long as that stays true, so undoing each pull is a fight you
+                -- lose. This stops the rule from ever tripping.
+                --
+                -- Fly already has the answer for flying over LAND: touch down on the floor below
+                -- for a couple of frames and pop back up, which resets the server's airtime. Over
+                -- the void that never fires, because there is no floor below to aim at - which is
+                -- exactly why fly over the void lagbacks and fly over the map does not. So we find
+                -- a real surface anywhere in reach instead of only straight down, touch down on it
+                -- and come straight back.
+                local groundedAt, lastBypass = tick(), 0
+                local bypassing = false
+                AntiLagback:Clean(runService.Heartbeat:Connect(function()
+                    if not (VoidFly and VoidFly.Enabled) then return end
+                    if bypassing or not entitylib.isAlive or store.rootpart then return end
+                    local root = entitylib.character.RootPart
+                    if not root or not root.Parent or not isnetworkowner(root) then return end
+
+                    if entitylib.character.Humanoid.FloorMaterial ~= Enum.Material.Air then
+                        groundedAt = tick()
+                        return
+                    end
+                    -- Only the void is a problem: with something under us the game's own touch-down
+                    -- (and the server's own checks) are happy already.
+                    voidRay.FilterDescendantsInstances = {lplr.Character, gameCamera, AntiFallPart}
+                    voidRay.CollisionGroup = root.CollisionGroup
+                    if workspace:Raycast(root.Position, Vector3.new(0, -80, 0), voidRay) then
+                        groundedAt = tick()
+                        return
+                    end
+
+                    if (tick() - groundedAt) < FlySync.Value then return end
+                    if (tick() - lastBypass) < 0.2 then return end
+
+                    local target = nearestSurface(root)
+                    if not target then return end
+
+                    bypassing = true
+                    lastBypass = tick()
+                    groundedAt = tick()
+                    local restore = root.CFrame
+                    local keep = root.AssemblyLinearVelocity
+                    -- Our own teleport is a huge single-frame jump, so make sure the detector above
+                    -- does not "correct" it right back.
+                    graceUntil = tick() + 0.8
+                    holdPos, holdUntil = nil, 0
+
+                    task.spawn(function()
+                        local hold = tick() + math.clamp(TouchTime.Value, 0.03, 0.5)
+                        local aim = CFrame.new(target) * (restore - restore.Position)
+                        while tick() < hold and AntiLagback.Enabled and entitylib.isAlive and VoidFly.Enabled do
+                            local current = entitylib.character.RootPart
+                            if not current or not current.Parent then break end
+                            current.CFrame = aim
+                            current.AssemblyLinearVelocity = Vector3.zero
+                            runService.Heartbeat:Wait()
+                        end
+                        if AntiLagback.Enabled and entitylib.isAlive then
+                            local current = entitylib.character.RootPart
+                            if current and current.Parent then
+                                current.CFrame = restore
+                                current.AssemblyLinearVelocity = keep
+                            end
+                        end
+                        graceUntil = tick() + 0.5
+                        groundedAt = tick()
+                        bypassing = false
+                        if Notify.Enabled then
+                            notif('AntiLagback', 'Void fly re-synced', 1.5)
+                        end
+                    end)
+                end))
             end
         end,
-        Tooltip = 'Detects a server rubber-band (an impossible single-frame jump that takes you backward, sideways onto ground you just left, or straight down) and undoes it for a short window so the whole pull is cancelled, not just its first frame.\nRestore keeps you on your path, Nearest Land drops you on the closest solid block so a yank can never void you, Freeze holds you still until the server settles.'
+        Tooltip = 'Spots a rubber-band - an impossible one-frame jump backward, sideways onto ground you just left, or straight down - and holds your own position for a moment so the whole pull is undone, not just its first frame'
     })
     Mode = AntiLagback:CreateDropdown({
         Name = 'Mode',
         List = {'Restore', 'Nearest Land', 'Freeze'},
         Default = 'Restore',
-        Tooltip = 'Restore - undo the rubber-band and keep your momentum so you stay on your path.\nNearest Land - teleport onto the nearest solid block the instant a lagback starts, so it cannot drop you into the void.\nFreeze - hold you where you were with no momentum until the server stops pulling.'
+        Tooltip = 'Restore - undo the pull and keep your momentum\nNearest Land - drop onto the closest solid block so a yank cannot void you\nFreeze - hold still until the server settles'
     })
     Sensitivity = AntiLagback:CreateSlider({
         Name = 'Sensitivity',
@@ -5105,7 +5872,7 @@ run(function()
         Default = 5,
         Decimal = 10,
         Suffix = ' studs',
-        Tooltip = 'How far backward a single frame has to move you before it counts as a lagback. Lower catches smaller pulls; raise it if normal movement ever gets corrected.'
+        Tooltip = 'How far backward one frame has to move you to count as a lagback. Lower catches smaller pulls'
     })
     MaxCorrect = AntiLagback:CreateSlider({
         Name = 'Max Correction',
@@ -5113,7 +5880,7 @@ run(function()
         Max = 150,
         Default = 80,
         Suffix = ' studs',
-        Tooltip = 'Jumps larger than this are treated as real teleports (pearls, going home, respawns) and left alone.'
+        Tooltip = 'Jumps larger than this are treated as real teleports (pearls, going home, respawns) and left alone'
     })
     HoldTime = AntiLagback:CreateSlider({
         Name = 'Hold time',
@@ -5122,20 +5889,334 @@ run(function()
         Default = 0.3,
         Decimal = 100,
         Suffix = ' seconds',
-        Tooltip = 'How long to keep re-asserting your position after a lagback. A rubber-band lasts several frames, so undoing only the first one lets the server win - raise this if pulls still get through, lower it if the correction feels sticky.'
+        Tooltip = 'How long to keep re-asserting your position after a lagback. A pull lasts several frames, so undoing only the first one lets the server win'
     })
     Vertical = AntiLagback:CreateToggle({
         Name = 'Vertical pulls',
         Default = true,
-        Tooltip = 'Also catch the server slamming you straight down (fly / glide / jump-boost lagbacks), not just horizontal yanks.'
+        Tooltip = 'Also catch the server slamming you straight down (fly / glide / jump-boost lagbacks), not just horizontal yanks'
+    })
+    VoidFly = AntiLagback:CreateToggle({
+        Name = 'Void fly',
+        Default = true,
+        Tooltip = 'Lets you fly over the void indefinitely. Undoing the pull never works out there, so this touches you down on the nearest real surface for a few frames, resetting the airtime check before it trips',
+        Function = function(callback)
+            pcall(function()
+                FlySync.Object.Visible = callback
+                TouchTime.Object.Visible = callback
+            end)
+        end
+    })
+    FlySync = AntiLagback:CreateSlider({
+        Name = 'Sync interval',
+        Min = 0.3,
+        Max = 4,
+        Default = 1.4,
+        Decimal = 10,
+        Suffix = ' seconds',
+        Darker = true,
+        Tooltip = 'How long you may be over the void before a touch-down. Lower it if you still get pulled'
+    })
+    TouchTime = AntiLagback:CreateSlider({
+        Name = 'Touch time',
+        Min = 0.03,
+        Max = 0.5,
+        Default = 0.11,
+        Decimal = 100,
+        Suffix = ' seconds',
+        Darker = true,
+        Tooltip = 'How long to stay on the surface. Long enough for the server to see it, short enough that nobody does'
     })
     Notify = AntiLagback:CreateToggle({
         Name = 'Notifications',
-        Tooltip = 'Show a notification whenever a lagback is caught and corrected.'
+        Tooltip = 'Show a notification whenever a lagback is caught and corrected'
     })
 end)
 
+-- GodMode
+--
+-- Nothing can damage you, because nothing the server tests ever touches you. Your real RootPart is
+-- moved off your visible body, so every sword raycast, arrow, trap and explosion the server
+-- resolves against your hitbox resolves against empty space. A local clone stays behind as your
+-- body, so your camera, controls, animations and your own hits carry on exactly as before.
+--
+-- The whole design point is the anticheat, because a hitbox parked away from your body forever is
+-- the one thing it definitely notices:
+--   * the desync is DUTY-CYCLED. It hides for Hide time, then puts the hitbox back on your body for
+--     Sync time, every cycle, forever. The server never sees a body that has been somewhere
+--     impossible for longer than one hide window.
+--   * Offset mode (the default) moves the hitbox only a few studs, which is small enough to read as
+--     ordinary jitter. Under map mode is the strong version and is deliberately given the shortest
+--     windows.
+--   * over the void it does not hide at all while Void guard is on. Being off the map is already
+--     the state the server scrutinises hardest, and stacking a desync on top of it is what gets you
+--     pulled, so out there the hitbox stays on your body.
+--   * it watches for the anticheat winning anyway - network ownership taken away, or the hitbox
+--     being moved somewhere we did not put it - and on either it reverts instantly and stands down
+--     for the Recover window rather than fighting back.
+--   * it hands the hitbox back for a moment around your own attacks, so your hits still validate.
+run(function()
+    local GodMode
+    local Mode
+    local Offset
+    local HideTime
+    local SyncTime
+    local Recover
+    local VoidGuard
+    local AttackSync
+    local Notify
 
+    local realroot, clone, hip = nil, nil, 2.5
+    local hiding, hideUntil, syncUntil, standDownUntil = false, 0, 0, 0
+    local lastWarn = 0
+    local lowestPoint = -9e9
+    local groundRay = RaycastParams.new()
+    groundRay.RespectCanCollide = true
+    groundRay.FilterType = Enum.RaycastFilterType.Exclude
+
+    local function refreshLowest()
+        local lowest = 9e9
+        for _, v in store.blocks do
+            local point = (v.Position.Y - (v.Size.Y / 2)) - 50
+            if point < lowest then
+                lowest = point
+            end
+        end
+        lowestPoint = lowest < 9e9 and lowest or -300
+    end
+
+    -- Take the swap. store.rootpart is the convention the whole script uses for "somebody already
+    -- owns this character's hitbox" (AntiDeath sets it too and checks it before cloning), so the two
+    -- modules can never both try to own it.
+    local function takeClone()
+        if store.rootpart then return realroot ~= nil end
+        if not entitylib.isAlive or entitylib.character.Humanoid.Health <= 0 then return false end
+        if realroot and realroot.Parent then return true end
+        if not lplr.Character or not lplr.Character.Parent then return false end
+
+        hip = entitylib.character.Humanoid.HipHeight
+        realroot = entitylib.character.HumanoidRootPart
+        lplr.Character.Parent = replicatedStorage
+        clone = realroot:Clone()
+        clone.Parent = lplr.Character
+        realroot.Transparency = 1
+        realroot.Parent = workspace
+        store.rootpart = realroot
+        lplr.Character.PrimaryPart = clone
+        lplr.Character.Parent = workspace
+        bedwars.QueryUtil:setQueryIgnored(clone, true)
+        bedwars.QueryUtil:setQueryIgnored(realroot, true)
+        return true
+    end
+
+    local function giveBack()
+        if realroot and realroot.Parent and entitylib.isAlive and lplr.Character then
+            lplr.Character.Parent = replicatedStorage
+            realroot.Parent = lplr.Character
+            if clone then
+                realroot.CFrame = clone.CFrame
+                realroot.Velocity = clone.Velocity
+                clone:Destroy()
+                clone = nil
+            end
+            lplr.Character.PrimaryPart = realroot
+            lplr.Character.Parent = workspace
+            realroot.CanCollide = true
+            entitylib.character.Humanoid.HipHeight = hip or 2.6
+            realroot.Transparency = 1
+        elseif realroot then
+            -- Died (or the character went away) while the hitbox was parked: there is nothing to
+            -- give it back to, so destroy it rather than leaving a stray part in workspace for
+            -- every death.
+            if realroot.Parent == workspace then
+                pcall(function() realroot:Destroy() end)
+            end
+            if clone and clone.Parent == nil then
+                pcall(function() clone:Destroy() end)
+            end
+        end
+        realroot, clone = nil, nil
+        if store.rootpart then
+            store.rootpart = nil
+        end
+        hiding, hideUntil, syncUntil = false, 0, 0
+    end
+
+    -- Over the void? Then the hitbox stays home - see the Void guard note above.
+    local function overVoid()
+        if not clone then return false end
+        -- Built by hand rather than as a literal: AntiFallPart is often nil, and a nil in the middle
+        -- of a filter list is not something to hand to Roblox.
+        local ignore = {lplr.Character, gameCamera}
+        if AntiFallPart then table.insert(ignore, AntiFallPart) end
+        if realroot then table.insert(ignore, realroot) end
+        groundRay.FilterDescendantsInstances = ignore
+        return workspace:Raycast(clone.Position, Vector3.new(0, -90, 0), groundRay) == nil
+    end
+
+    local function attacking()
+        if not AttackSync.Enabled then return false end
+        local last = bedwars.SwordController and bedwars.SwordController.lastAttack or 0
+        return (workspace:GetServerTimeNow() - last) <= 0.3
+    end
+
+    local function hideTarget()
+        if Mode.Value == 'Under map' then
+            return CFrame.new(clone.Position.X, lowestPoint - 6, clone.Position.Z) * CFrame.Angles(math.rad(90), 0, 0)
+        end
+        -- Offset: just far enough that a sword raycast and a projectile capsule both miss, lying
+        -- flat so there is even less of it in the way.
+        return CFrame.new(clone.Position - Vector3.new(0, Offset.Value, 0)) * CFrame.Angles(math.rad(90), 0, 0)
+    end
+
+    GodMode = vape.Categories.Exploits:CreateModule({
+        Name = 'GodMode',
+        Function = function(callback)
+            if callback then
+                repeat task.wait() until (store.matchState ~= 0 and store.map) or not GodMode.Enabled
+                if not GodMode.Enabled then return end
+                refreshLowest()
+                hiding, hideUntil, syncUntil, standDownUntil = false, 0, 0, 0
+
+                GodMode:Clean(function()
+                    giveBack()
+                end)
+                GodMode:Clean(task.spawn(function()
+                    while GodMode.Enabled do
+                        refreshLowest()
+                        task.wait(5)
+                    end
+                end))
+
+                GodMode:Clean(runService.PostSimulation:Connect(function()
+                    if not GodMode.Enabled then return end
+                    if not entitylib.isAlive then
+                        if realroot then giveBack() end
+                        return
+                    end
+                    -- Somebody else (AntiDeath) owns the hitbox: keep out of its way entirely.
+                    if store.rootpart and realroot == nil then return end
+
+                    if tick() < standDownUntil then
+                        if realroot then giveBack() end
+                        return
+                    end
+
+                    if not takeClone() then return end
+                    if not (realroot and realroot.Parent and clone and clone.Parent) then return end
+
+                    -- The anticheat got a word in: ownership taken away, or our hitbox moved
+                    -- somewhere we did not put it. Give up cleanly instead of fighting.
+                    local ownership = isnetworkowner(realroot)
+                    if not ownership then
+                        if Notify.Enabled and tick() - lastWarn > 2 then
+                            lastWarn = tick()
+                            notif('GodMode', 'Network ownership taken - standing down', 4, 'alert')
+                        end
+                        standDownUntil = tick() + Recover.Value
+                        giveBack()
+                        return
+                    end
+
+                    local now = tick()
+                    local blocked = overVoid() and VoidGuard.Enabled
+                    if blocked or attacking() then
+                        -- Forced sync: hitbox on the body, and the next hide window starts fresh.
+                        hiding = false
+                        hideUntil = 0
+                        syncUntil = now + SyncTime.Value
+                    elseif hiding then
+                        if now >= hideUntil then
+                            hiding = false
+                            syncUntil = now + SyncTime.Value
+                        end
+                    elseif now >= syncUntil then
+                        hiding = true
+                        hideUntil = now + HideTime.Value
+                    end
+
+                    realroot.Velocity = Vector3.zero
+                    if hiding then
+                        realroot.CFrame = hideTarget()
+                    else
+                        -- Synced: sit exactly on the visible body so the server sees a perfectly
+                        -- ordinary player who is standing where they look like they are standing.
+                        realroot.CFrame = clone.CFrame
+                        realroot.Velocity = clone.Velocity
+                    end
+                end))
+            else
+                giveBack()
+            end
+        end,
+        Tooltip = 'Moves your hitbox off your body so nothing can damage you, while your body, camera and hits carry on as normal. The desync is cycled, skipped over the void and dropped if the anticheat pushes back',
+        ExtraText = function()
+            return Mode.Value
+        end
+    })
+    Mode = GodMode:CreateDropdown({
+        Name = 'Mode',
+        List = {'Offset', 'Under map'},
+        Default = 'Offset',
+        Tooltip = 'Offset - hitbox a few studs off your body, small enough to pass for jitter so it can be held longer\nUnder map - parked below the world, unreachable but a big lie, so keep hide time short',
+        Function = function(val)
+            pcall(function()
+                Offset.Object.Visible = val == 'Offset'
+            end)
+        end
+    })
+    Offset = GodMode:CreateSlider({
+        Name = 'Offset',
+        Min = 3,
+        Max = 14,
+        Default = 6,
+        Decimal = 10,
+        Suffix = ' studs',
+        Darker = true,
+        Tooltip = 'How far off your body the hitbox sits. 6 clears a sword swing and an arrow without being a big enough jump to look like anything'
+    })
+    HideTime = GodMode:CreateSlider({
+        Name = 'Hide time',
+        Min = 0.1,
+        Max = 1.5,
+        Default = 0.55,
+        Decimal = 100,
+        Suffix = ' seconds',
+        Tooltip = 'Longest the hitbox may be away from your body in one go. This is the anticheat budget - raise it for more immunity, lower it if you ever get pulled'
+    })
+    SyncTime = GodMode:CreateSlider({
+        Name = 'Sync time',
+        Min = 0.05,
+        Max = 1,
+        Default = 0.25,
+        Decimal = 100,
+        Suffix = ' seconds',
+        Tooltip = 'How long the hitbox goes back on your body between hides. This is the window where you can actually be hit, so it is kept short'
+    })
+    Recover = GodMode:CreateSlider({
+        Name = 'Recover',
+        Min = 1,
+        Max = 10,
+        Default = 3,
+        Suffix = ' seconds',
+        Tooltip = 'How long to stay completely normal after the anticheat pushes back before trying again'
+    })
+    VoidGuard = GodMode:CreateToggle({
+        Name = 'Void guard',
+        Default = true,
+        Tooltip = 'Never hide the hitbox while you are over the void - that is where the anticheat watches hardest'
+    })
+    AttackSync = GodMode:CreateToggle({
+        Name = 'Sync on attack',
+        Default = true,
+        Tooltip = 'Put the hitbox back on your body for a moment around your own hits so the server still accepts them'
+    })
+    Notify = GodMode:CreateToggle({
+        Name = 'Notifications',
+        Default = true,
+        Tooltip = 'Tell you when the anticheat pushes back and GodMode stands down'
+    })
+end)
 
 run(function()
     local ProjectileDodger
@@ -5351,7 +6432,7 @@ run(function()
                 dodgeDirection = Vector3.zero
             end
         end,
-        Tooltip = 'Dodges incoming projectiles without stepping off edges.'
+        Tooltip = 'Dodges incoming projectiles without stepping off edges'
     })
     Range = ProjectileDodger:CreateSlider({Name = 'Range', Min = 10, Max = 80, Default = 45, Suffix = 'studs'})
     Mode = ProjectileDodger:CreateDropdown({Name = 'Mode', List = {'Teleport', 'Legit'}, Default = 'Teleport', Function = function(val)
@@ -5530,7 +6611,7 @@ run(function()
                 lockedTarget = nil
             end
         end,
-        Tooltip = 'Safely teleports around targets and faces them. Single locks one target for the hold time; Switch rotates between everyone in range.'
+        Tooltip = 'Safely teleports around targets and faces them. Single locks one target for the hold time; Switch rotates between everyone in range'
     })
     Targets = TPAura:CreateTargets({Players = true, NPCs = true})
     Mode = TPAura:CreateDropdown({Name = 'Mode', List = {'Single', 'Switch'}, Default = 'Single'})
@@ -5539,10 +6620,10 @@ run(function()
     Delay = TPAura:CreateSlider({Name = 'Teleport Delay', Min = 0.15, Max = 1, Default = 0.35, Decimal = 100, Suffix = 'seconds'})
     HoldTime = TPAura:CreateSlider({Name = 'Single Hold Time', Min = 0.5, Max = 8, Default = 3, Decimal = 10, Suffix = 'seconds'})
     SwitchAfter = TPAura:CreateSlider({Name = 'Switch Delay', Min = 0.35, Max = 4, Default = 1.25, Decimal = 100, Suffix = 'seconds'})
-    StructureCheck = TPAura:CreateToggle({Name = 'Structure Check', Tooltip = 'Rejects teleport spots on roofs, bridges, or tall structures above the target.', Default = true})
+    StructureCheck = TPAura:CreateToggle({Name = 'Structure Check', Tooltip = 'Rejects teleport spots on roofs, bridges, or tall structures above the target', Default = true})
     DodgeAttacks = TPAura:CreateToggle({
         Name = 'Dodge attacks',
-        Tooltip = 'Prioritizes teleporting behind where targets are facing.'
+        Tooltip = 'Prioritizes teleporting behind where targets are facing'
     })
 end)
 
@@ -5920,7 +7001,7 @@ run(function()
         ExtraText = function()
             return 'Heatseeker'
         end,
-        Tooltip = 'Makes you go zoom.'
+        Tooltip = 'Makes you go zoom'
     })
     Value = Fly:CreateSlider({
         Name = 'Speed',
@@ -6149,7 +7230,7 @@ run(function()
                 until not InstantKill.Enabled
             end
         end,
-        Tooltip = 'Automatically uses turret to instant kill targets.'
+        Tooltip = 'Automatically uses turret to instant kill targets'
     })
 
     Mode = InstantKill:CreateDropdown({
@@ -6168,7 +7249,7 @@ run(function()
     })
     Place = InstantKill:CreateToggle({
         Name = 'Auto place',
-        Tooltip = 'Automatically places turrets if can\'t find any on ground.',
+        Tooltip = 'Automatically places turrets if can\'t find any on ground',
         Default = true
     })
 end)
@@ -6180,7 +7261,7 @@ run(function()
             debug.setconstant(bedwars.SprintController.startSprinting, 5, callback and 'blockSprinting' or 'blockSprint')
             bedwars.SprintController:stopSprinting()
         end,
-        Tooltip = 'Lets you sprint with a speed potion.'
+        Tooltip = 'Lets you sprint with a speed potion'
     })
 end)
 
@@ -6899,7 +7980,7 @@ run(function()
                 end
             end
         end,
-        Tooltip = 'Attack players around you\nwithout aiming at them.',
+        Tooltip = 'Attack players around you\nwithout aiming at them',
         ExtraText = function()
             return Mode.Value
         end
@@ -6959,13 +8040,13 @@ run(function()
         Name = 'Hit method',
         List = {'Auto', 'Native', 'Remote', 'Request'},
         Default = 'Auto',
-        Tooltip = 'How each hit is delivered.\nAuto (recommended) - makes the GAME build and send the attack (the real unpatch: the server cannot tell it from a genuine click), and only forges a packet itself if the game refused to swing.\nNative - game-built only, never spams a forged packet unless this build has no usable native path at all.\nRemote - forged packet on the raw attack remote.\nRequest - forged packet handed to the game\'s own send wrapper.'
+        Tooltip = 'How each hit is delivered\nAuto - the game builds and sends it, so the server cannot tell it from a real click. Only forges one if the game refused to swing\nNative - game-built only\nRemote - forged packet on the attack remote\nRequest - forged packet through the game\'s own send wrapper'
     })
     HitRate = Killaura:CreateDropdown({
         Name = 'Hit rate',
         List = {'Swing Time', 'HitReg'},
         Default = 'Swing Time',
-        Tooltip = 'What paces the aura. Only one of the two is ever in charge.\nSwing Time - one clean hit per target per weapon swing. The server accepts one hit per swing window anyway, so this is full damage on a fraction of the packets.\nHitReg - free-runs at the update rate and repeats each hit HitReg times to punch through packet loss, at the cost of a lot more traffic.',
+        Tooltip = 'What paces the aura - only one is ever in charge\nSwing Time - one clean hit per target per swing, which is all the server accepts anyway, so full damage on far fewer packets\nHitReg - free-runs at the update rate and repeats each hit, for packet loss, at a lot more traffic',
         Function = function()
             -- Dropdowns fire this while they are being built, before the sliders below exist.
             if refreshHitRate then refreshHitRate() end
@@ -6975,30 +8056,31 @@ run(function()
         Name = 'Swing time',
         Min = 0,
         Max = 2,
-        Decimal = 100,
-        Default = 0.11,
+        Decimal = 1000,
+        Default = 0.299,
         Suffix = 'seconds',
-        Tooltip = 'One hit per target per this long, for weapons that do not report their own attack speed. Also paces the swing animation.'
+        Tooltip = 'One hit per target per this long, for weapons that do not report their own attack speed. Also paces the swing animation'
     })
     Hitreg = Killaura:CreateSlider({
         Name = 'HitReg',
         Min = 1,
         Max = 36,
         Default = 1,
-        Tooltip = 'How many attack packets each hit sends. Higher fights packet loss at the cost of a lot more traffic.'
+        Tooltip = 'How many attack packets each hit sends. Higher fights packet loss at the cost of a lot more traffic'
     })
     UpdateRate = Killaura:CreateSlider({
         Name = 'Update rate',
-        Min = 1,
+        Min = 0.5,
         Max = 120,
-        Default = 60,
+        Default = 3.4,
+        Decimal = 10,
         Suffix = 'hz',
-        Tooltip = 'How often hits are sent in HitReg mode.'
+        Tooltip = 'How often hits are sent in HitReg mode'
     })
     SyncAnim = Killaura:CreateToggle({
         Name = 'Sync to HitReg/Swing time',
         Default = true,
-        Tooltip = 'Paces the swing animation off whichever of HitReg and Swing time is driving the hits, so the arm moves at the rate you are actually attacking. Turn off to run the animation on the Swing time slider regardless of the hit rate.',
+        Tooltip = 'Paces the swing animation off whatever is driving the hits, so the arm moves at the rate you are really attacking. Off runs it on the Swing time slider instead',
         Function = function()
             if refreshHitRate then refreshHitRate() end
         end
@@ -7532,7 +8614,7 @@ run(function()
     })
     LimitItems = LongJump:CreateToggle({
         Name = 'Limit to items',
-        Tooltip = 'Only long-jumps from a long-jump item you are holding (dao, jade hammer, void axe, cannon, tnt, grappling hook, etc.) - never from a kit ability or the knockback Heatseeker boost. If you enable it without holding one, LongJump turns itself back off instead of freezing you.'
+        Tooltip = 'Only long-jumps from an item in your hand (dao, jade hammer, void axe, cannon, tnt, grappling hook). Enable it without one and LongJump turns itself back off instead of freezing you'
     })
 end)
 
@@ -7797,7 +8879,7 @@ run(function()
                 reset()
             end
         end,
-        Tooltip = 'Extends your kit\'s mobility ability. Detects the Jade hammer jump, Void Regent / Void Axe jump, Yuzi dao dash or Elektra teleport being cast and carries your speed on so the move takes you further.'
+        Tooltip = 'Carries your kit\'s mobility ability further. Detects the jade hammer jump, void axe jump, Yuzi dash or Elektra teleport being cast and holds your speed up'
     })
     Distance = Extender:CreateSlider({
         Name = 'Extra Distance',
@@ -7805,7 +8887,7 @@ run(function()
         Max = 80,
         Default = 20,
         Suffix = ' studs',
-        Tooltip = 'How much extra forward speed to carry during the ability so it takes you further.'
+        Tooltip = 'How much extra forward speed to carry during the ability so it takes you further'
     })
     Duration = Extender:CreateSlider({
         Name = 'Duration',
@@ -7814,16 +8896,16 @@ run(function()
         Decimal = 100,
         Default = 0.45,
         Suffix = 'seconds',
-        Tooltip = 'How long the ability is carried for. Shorter reads as a slightly longer dash; longer turns it into an obvious glide.'
+        Tooltip = 'How long the ability is carried for. Shorter reads as a slightly longer dash; longer turns it into an obvious glide'
     })
     Smooth = Extender:CreateToggle({
         Name = 'Smooth',
         Default = true,
-        Tooltip = 'Eases the extra speed in and lets it decay away instead of holding a flat speed for the whole duration and dropping it all at once.'
+        Tooltip = 'Eases the extra speed in and lets it decay away instead of holding a flat speed for the whole duration and dropping it all at once'
     })
     Fallback = Extender:CreateToggle({
         Name = 'Velocity fallback',
-        Tooltip = 'Also trigger on a large speed spike while no dash/jump item is held, for kits whose ability never shows up on the cooldown API. Off by default: knockback and explosions look the same as an ability from velocity alone, so this can fire when you were not the one moving.'
+        Tooltip = 'Also fire on a big speed spike with no dash or jump item held, for kits whose ability never reaches the cooldown API. Off by default - knockback looks the same from velocity alone'
     })
 end)
 
@@ -8048,7 +9130,7 @@ run(function()
                 old = nil
             end
         end,
-        Tooltip = 'Prevents slowing down when using items.'
+        Tooltip = 'Prevents slowing down when using items'
     })
 end)
 
@@ -8380,6 +9462,335 @@ run(function()
     })
 end)
 
+-- SilentAim: ProjectileAimbot's trajectory solve, with nothing on screen giving it away.
+--
+-- The game calls calculateImportantLaunchValues for two different jobs: the shot it is about to
+-- fire, and the PREDICTION pass it uses to draw its own trajectory preview (the call that asks for
+-- predictionLifetimeSec). ProjectileAimbot answers both, so the preview arc visibly bends onto the
+-- target - that is the lock you can see. SilentAim answers only the real launch and passes every
+-- prediction call straight through, so the arc, the crosshair and the camera all stay exactly
+-- where you pointed them while the projectile still lands on the target. Aim anywhere you like.
+run(function()
+    local SilentAim
+    local Targets
+    local TargetPart
+    local Sort
+    local Search
+    local FOV
+    local Range
+    local MaxAngle
+    local Prediction
+    local AutoCharge
+    local MouseDown
+    local HitChance
+    local OtherProjectiles
+    local Blacklist
+    local Preview
+    local Notify
+    local launchHook
+    local lastNotify = 0
+    local rayCheck = RaycastParams.new()
+    rayCheck.FilterType = Enum.RaycastFilterType.Include
+    rayCheck.FilterDescendantsInstances = {workspace:FindFirstChild('Map')}
+
+    -- Is this launch call the real shot, or the preview pass we must leave alone?
+    --
+    -- The third argument is the game's own "this is the prediction trajectory" flag - it is what
+    -- makes it ask for predictionLifetimeSec instead of lifetimeSec. Skipping those calls is what
+    -- keeps the lock off the screen.
+    --
+    -- But a build that never passes it as nil would turn a strict skip into "never redirect
+    -- anything", i.e. a module that silently does nothing. So Auto watches for that: if a long run
+    -- of launch calls goes by without a single real one, the distinction does not exist here and it
+    -- redirects everything rather than sitting idle.
+    local sawRealCall, previewCalls = false, 0
+
+    local function shouldRedirect(worldmeta)
+        local mode = Preview and Preview.Value or 'Auto'
+        if mode == 'Always redirect' then return true end
+        if not worldmeta then
+            sawRealCall = true
+            return true
+        end
+        previewCalls += 1
+        if mode == 'Auto' and not sawRealCall and previewCalls > 90 then
+            return true
+        end
+        return false
+    end
+
+    local function getMousePosition()
+        if inputService.TouchEnabled then
+            return gameCamera.ViewportSize / 2
+        end
+        return inputService.GetMouseLocation(inputService)
+    end
+
+    -- Which point on the target to solve for. Same options ProjectileAimbot offers; returning nil
+    -- means "use the part the dropdown names" (RootPart / Head).
+    local function getPosition(ent)
+        if TargetPart.Value == 'Closest' then
+            local localPosition, magnitude, part = getMousePosition(), 9e9, nil
+            for _, v in ent:GetChildren() do
+                if pcall(function() return v.Position end) then
+                    local position, vis = gameCamera.WorldToViewportPoint(gameCamera, v.Position)
+                    if vis then
+                        local mag = (localPosition - Vector2.new(position.x, position.y)).Magnitude
+                        if mag < magnitude then
+                            magnitude = mag
+                            part = v
+                        end
+                    end
+                end
+            end
+            return part and part.Position or ent.PrimaryPart.Position
+        elseif TargetPart.Value == 'Dynamic' then
+            local tool = store.hand and store.hand.tool
+            if tool and tool.Name:find('headhunter') then
+                return ent.Head.Position
+            end
+            return ent.PrimaryPart.Position
+        end
+        return nil
+    end
+
+    -- Find the target. 'Anywhere' is the whole point of a silent aim: it searches in world space,
+    -- so where you happen to be looking is irrelevant. 'Crosshair FOV' is ProjectileAimbot's
+    -- screen-space search, kept for anyone who wants the shot to stay near their cursor.
+    local function findTarget(from)
+        if Search.Value == 'Crosshair FOV' then
+            return entitylib.EntityMouse({
+                Part = 'RootPart',
+                Range = FOV.Value,
+                Players = Targets.Players.Enabled,
+                NPCs = Targets.NPCs.Enabled,
+                Wallcheck = Targets.Walls.Enabled,
+                Sort = sortmethods[Sort.Value or 'Distance'],
+                Origin = from
+            })
+        end
+        return entitylib.EntityPosition({
+            Part = 'RootPart',
+            Range = Range.Value,
+            Players = Targets.Players.Enabled,
+            NPCs = Targets.NPCs.Enabled,
+            Wallcheck = Targets.Walls.Enabled,
+            Sort = sortmethods[Sort.Value or 'Distance'],
+            Origin = from
+        })
+    end
+
+    SilentAim = vape.Categories.Combat:CreateModule({
+        Name = 'SilentAim',
+        Disabled = not canDebug,
+        Function = function(callback)
+            if callback then
+                if not bedwars.ProjectileLaunchHook then
+                    notif('SilentAim', 'This game build does not expose the projectile launch hook', 6, 'warning')
+                    return task.spawn(function()
+                        if SilentAim.Enabled then SilentAim:Toggle() end
+                    end)
+                end
+                sawRealCall, previewCalls = false, 0
+                -- Priority 90 keeps this outside ProjectileAimbot (100): a real launch is handled
+                -- here and never reaches the aimbot, while every prediction call falls through to
+                -- it untouched.
+                launchHook = bedwars.ProjectileLaunchHook:Add('SilentAim', 90, function(nextLaunch, ...)
+                    local self, projmeta, worldmeta, origin, shootpos = ...
+                    -- Prediction pass = the preview arc. Never touch it, or the lock is visible.
+                    if not shouldRedirect(worldmeta) then return nextLaunch(...) end
+                    if not entitylib.isAlive then return nextLaunch(...) end
+                    if MouseDown.Enabled and not inputService:IsMouseButtonPressed(0) then return nextLaunch(...) end
+                    if HitChance.Value < 100 and math.random(1, 100) > HitChance.Value then return nextLaunch(...) end
+                    if (not OtherProjectiles.Enabled) and not projmeta.projectile:find('arrow') then return nextLaunch(...) end
+                    if table.find(Blacklist.ListEnabled or {}, ((projmeta.projectile == 'glue_trap' or projmeta.projectile == 'glue_projectile') and 'gloop' or projmeta.projectile)) then
+                        return nextLaunch(...)
+                    end
+
+                    local pos = shootpos or self:getLaunchPosition(origin)
+                    if not pos then return nextLaunch(...) end
+
+                    local plr = findTarget(pos)
+                    if not plr then return nextLaunch(...) end
+
+                    local targetpos = getPosition(plr.Character) or plr[TargetPart.Value].Position
+                    if (targetpos - pos).Magnitude > Range.Value then return nextLaunch(...) end
+
+                    -- Max angle: how far off your real aim the shot is allowed to be bent. 360 (the
+                    -- default) means anywhere at all; lower it if you would rather the redirect stay
+                    -- somewhere near where you were actually pointing.
+                    if MaxAngle.Value < 360 then
+                        local look = gameCamera.CFrame.LookVector
+                        local delta = targetpos - pos
+                        if delta.Magnitude > 0 and math.acos(math.clamp(look:Dot(delta.Unit), -1, 1)) > (math.rad(MaxAngle.Value) / 2) then
+                            return nextLaunch(...)
+                        end
+                    end
+
+                    local meta = projmeta:getProjectileMeta()
+                    local lifetime = (meta.lifetimeSec or 3)
+                    local gravity = (meta.gravitationalAcceleration or 196.2) * projmeta.gravityMultiplier
+                    local projSpeed = (meta.launchVelocity or 100)
+                    local offsetpos = pos + (projmeta.projectile == 'owl_projectile' and Vector3.zero or projmeta.fromPositionOffset)
+                    local balloons = plr.Character:GetAttribute('InflatedBalloons')
+                    local playerGravity = workspace.Gravity
+
+                    if balloons and balloons > 0 then
+                        playerGravity = (workspace.Gravity * (1 - (balloons >= 4 and 1.2 or balloons >= 3 and 1 or 0.975)))
+                    end
+
+                    if plr.Character.PrimaryPart:FindFirstChild('rbxassetid://8200754399') then
+                        playerGravity = 6
+                    end
+
+                    if plr.Player and plr.Player:GetAttribute('IsOwlTarget') then
+                        for _, owl in collectionService:GetTagged('Owl') do
+                            if owl:GetAttribute('Target') == plr.Player.UserId and owl:GetAttribute('Status') == 2 then
+                                playerGravity = 0
+                            end
+                        end
+                    end
+
+                    local newlook = CFrame.new(offsetpos, targetpos) * CFrame.new(projmeta.projectile == 'owl_projectile' and Vector3.zero or Vector3.new(bedwars.BowConstantsTable.RelX, bedwars.BowConstantsTable.RelY, bedwars.BowConstantsTable.RelZ))
+                    local calc = prediction.SolveTrajectory(newlook.p, projSpeed * Prediction.Value, gravity, targetpos, projmeta.projectile == 'telepearl' and Vector3.zero or plr.RootPart.Velocity, playerGravity, plr.HipHeight, plr.Jumping and 42.6 or nil, rayCheck)
+                    if not calc then return nextLaunch(...) end
+
+                    targetinfo.Targets[plr] = tick() + 1
+                    if Notify.Enabled and tick() - lastNotify > 0.4 then
+                        lastNotify = tick()
+                        notif('SilentAim', 'Redirected onto ' .. (plr.Player and plr.Player.Name or 'target'), 2)
+                    end
+
+                    return {
+                        initialVelocity = CFrame.new(newlook.Position, calc).LookVector * (projSpeed * (AutoCharge.Enabled and 1 or projmeta.velocityMultiplier)),
+                        positionFrom = offsetpos,
+                        deltaT = lifetime,
+                        gravitationalAcceleration = gravity,
+                        drawDurationSeconds = AutoCharge.Enabled and 5 or projmeta.drawDurationSeconds
+                    }
+                end)
+            else
+                if launchHook then
+                    launchHook()
+                    launchHook = nil
+                end
+            end
+        end,
+        Tooltip = 'Lands your projectiles on the target while you aim anywhere. It never touches the game\'s preview arc, so nothing on screen shows the lock',
+        ExtraText = function()
+            return Search.Value == 'Anywhere' and 'Silent' or 'FOV'
+        end
+    })
+    Targets = SilentAim:CreateTargets({
+        Players = true,
+        Walls = true
+    })
+    TargetPart = SilentAim:CreateDropdown({
+        Name = 'Part',
+        List = {'RootPart', 'Head', 'Dynamic', 'Closest'},
+        Tooltip = 'Which part of the target to solve the shot onto'
+    })
+    local methods = {'Damage', 'Distance'}
+    for i in sortmethods do
+        if not table.find(methods, i) then
+            table.insert(methods, i)
+        end
+    end
+    Sort = SilentAim:CreateDropdown({
+        Name = 'Target Mode',
+        List = methods,
+        Default = 'Distance'
+    })
+    Search = SilentAim:CreateDropdown({
+        Name = 'Search',
+        List = {'Anywhere', 'Crosshair FOV'},
+        Default = 'Anywhere',
+        Tooltip = 'Anywhere - targets in world space, so where you look makes no difference\nCrosshair FOV - only near your cursor, like ProjectileAimbot',
+        Function = function(val)
+            pcall(function()
+                FOV.Object.Visible = val == 'Crosshair FOV'
+            end)
+        end
+    })
+    FOV = SilentAim:CreateSlider({
+        Name = 'FOV',
+        Min = 1,
+        Max = 1000,
+        Default = 1000,
+        Darker = true,
+        Visible = false,
+        Tooltip = 'Screen radius the target has to be inside, in Crosshair FOV search'
+    })
+    Range = SilentAim:CreateSlider({
+        Name = 'Range',
+        Min = 10,
+        Max = 1000,
+        Default = 400,
+        Suffix = ' studs',
+        Tooltip = 'How far away a target can be'
+    })
+    MaxAngle = SilentAim:CreateSlider({
+        Name = 'Max angle',
+        Min = 1,
+        Max = 360,
+        Default = 360,
+        Tooltip = 'How far off your real aim the shot may be bent. 360 is anywhere at all'
+    })
+    Prediction = SilentAim:CreateSlider({
+        Name = 'Prediction',
+        Min = 0.1,
+        Max = 2,
+        Default = 1,
+        Decimal = 10
+    })
+    HitChance = SilentAim:CreateSlider({
+        Name = 'Hit chance',
+        Min = 1,
+        Max = 100,
+        Default = 100,
+        Suffix = '%',
+        Tooltip = 'Chance each shot is redirected at all, so not every single arrow is perfect'
+    })
+    AutoCharge = SilentAim:CreateToggle({
+        Name = 'Auto Charge',
+        Default = true,
+        Tooltip = 'Fully charges your bow so the projectile deals full damage'
+    })
+    MouseDown = SilentAim:CreateToggle({
+        Name = 'Require mouse down',
+        Tooltip = 'Only redirect while the mouse is held'
+    })
+    OtherProjectiles = SilentAim:CreateToggle({
+        Name = 'Other Projectiles',
+        Default = true,
+        Function = function(call)
+            pcall(function()
+                Blacklist.Object.Visible = call
+            end)
+        end,
+        Tooltip = 'Redirect everything you throw, not just arrows'
+    })
+    Blacklist = SilentAim:CreateTextList({
+        Name = 'Blacklist',
+        Default = {'gloop', 'telepearl'},
+        Darker = true,
+        Placeholder = 'projectile'
+    })
+    Preview = SilentAim:CreateDropdown({
+        Name = 'Preview',
+        List = {'Auto', 'Never touch preview', 'Always redirect'},
+        Default = 'Auto',
+        Tooltip = 'Auto - leave the game\'s preview arc alone, unless this build turns out not to separate preview from real shots\nNever touch preview - always leave it alone, even if that means some shots are not redirected\nAlways redirect - redirect everything, exactly like ProjectileAimbot',
+        Function = function()
+            sawRealCall, previewCalls = false, 0
+        end
+    })
+    Notify = SilentAim:CreateToggle({
+        Name = 'Notifications',
+        Tooltip = 'Notify each time a shot is redirected'
+    })
+end)
+
 run(function()
     local ProjectileAura
     local InstaKill
@@ -8500,7 +9911,7 @@ run(function()
     end
     TargetMode = ProjectileAura:CreateDropdown({
         Name = 'Target Mode',
-        Tooltip = 'Who to shoot at: Distance (closest), Mouse (nearest crosshair), Damage (most recently hit), Threat, Health, Angle or Kit.',
+        Tooltip = 'Who to shoot at: Distance (closest), Mouse (nearest crosshair), Damage (most recently hit), Threat, Health, Angle or Kit',
         List = targetModes,
         Default = 'Distance'
     })
@@ -8520,7 +9931,7 @@ run(function()
     InstaKill = ProjectileAura:CreateToggle({
         Name = 'InstaKill',
         Patched = 'server-side projectile cooldown validation',
-        Tooltip = 'Manipulates projectile cooldown values to fire a volley instantly. Patched: the server validates projectile cooldowns and rejects the rapid shots.'
+        Tooltip = 'Manipulates projectile cooldown values to fire a volley instantly. Patched: the server validates projectile cooldowns and rejects the rapid shots'
     })
 end)
 
@@ -8715,7 +10126,7 @@ run(function()
         ExtraText = function()
             return 'Heatseeker'
         end,
-        Tooltip = 'Increases your movement with various methods.'
+        Tooltip = 'Increases your movement with various methods'
     })
     Mode = Speed:CreateDropdown({
         Name = 'Method',
@@ -8921,7 +10332,7 @@ run(function()
                 end
             end
         end,
-        Tooltip = 'Silently adjusts where terra blocks are heading towards.'
+        Tooltip = 'Silently adjusts where terra blocks are heading towards'
     })
 
     Mode = TerraAimbot:CreateDropdown({
@@ -8980,7 +10391,7 @@ run(function()
                 until not VulcanAimbot.Enabled
             end
         end,
-        Tooltip = 'Automatically aims your camera toward opponents.'
+        Tooltip = 'Automatically aims your camera toward opponents'
     })
 
     Targets = VulcanAimbot:CreateTargets({Walls = true, Players = true})
@@ -9771,7 +11182,7 @@ run(function()
 			end))
 		end
 	end,
-	Tooltip = 'Displays your health in the center of your screen.'
+	Tooltip = 'Displays your health in the center of your screen'
     })
 end)
 
@@ -10682,7 +12093,7 @@ run(function()
 			end
 		end
 	end,
-	Tooltip = 'Renders nametags on entities through walls.'
+	Tooltip = 'Renders nametags on entities through walls'
     })
     Targets = NameTags:CreateTargets({
 	Players = true,
@@ -10822,6 +12233,7 @@ end)
 run(function()
     local ProjectileLanding
     local MarkerColor
+    local launchHook
     local markers, highlights = {}, {}
     local rayParams = RaycastParams.new()
     rayParams.FilterType = Enum.RaycastFilterType.Exclude
@@ -10949,11 +12361,38 @@ run(function()
         end
     end
 
+    -- The game's own launch numbers, captured from calculateImportantLaunchValues.
+    --
+    -- Re-deriving the arc by hand is what made the aiming preview drift: the launch speed of a
+    -- bow is the LIVE draw ratio (the game mutates velocityMultiplier as you pull, which is what
+    -- AutoRelease reads to get a charge percentage), the muzzle is the viewmodel's launch
+    -- position rather than the root part, and the Rel offsets are applied in the game's own
+    -- direction. Guessing any of those puts the marker metres off at range. The game computes
+    -- all of it every frame while you draw, so we just read the answer: this hook sits at the
+    -- outermost priority so what it records is the final result after every other hook.
+    local lastLaunch
+    local function recordLaunch(nextLaunch, ...)
+        local res = nextLaunch(...)
+        if type(res) == 'table' and typeof(res.initialVelocity) == 'Vector3' and typeof(res.positionFrom) == 'Vector3' then
+            lastLaunch = {
+                Position = res.positionFrom,
+                Velocity = res.initialVelocity,
+                Gravity = res.gravitationalAcceleration or workspace.Gravity,
+                Time = tick()
+            }
+        end
+        return res
+    end
+
     local function getAimingLanding()
         local source = heldProjectileSource()
         if not source then return end
         local root = entitylib.character and (entitylib.character.RootPart or entitylib.character.HumanoidRootPart)
         if not root then return end
+        -- Straight from the game while it is drawing, so the preview matches the shot exactly.
+        if lastLaunch and (tick() - lastLaunch.Time) < 0.35 and lastLaunch.Velocity.Magnitude > 0.1 then
+            return traceLanding(lastLaunch.Position, lastLaunch.Velocity, lastLaunch.Gravity, {lplr.Character, gameCamera})
+        end
         -- Resolve the projectile this weapon fires. Prefer the loaded ammo, fall back
         -- to a plain arrow for bows and finally the tool itself, all guarded so an
         -- unexpected ammo type can never throw and silently kill the whole preview
@@ -10991,13 +12430,31 @@ run(function()
         local aimRay = lplr:GetMouse().UnitRay
         local rayResult = workspace:Raycast(aimRay.Origin, aimRay.Direction * 5000, rayParams)
         local aimPoint = rayResult and rayResult.Position or (aimRay.Origin + aimRay.Direction * 5000)
+        -- Fallback only (the hook above is the accurate path). Two things the old fallback got
+        -- wrong: it launched from the ROOT PART rather than the muzzle the game fires from, and
+        -- it aimed the arc from the root while starting it at an offset position, so the traced
+        -- line ran parallel to - not along - the real shot and the error grew with distance.
+        -- Ask the controller for its own launch position, then aim from THAT point at the cursor.
         local rootPos = root.Position
-        local direction = aimPoint - rootPos
-        direction = direction.Magnitude > 1e-3 and direction.Unit or aimRay.Direction
         local origin = rootPos
         pcall(function()
-            origin = (CFrame.new(rootPos, aimPoint) * CFrame.new(-bedwars.BowConstantsTable.RelX, -bedwars.BowConstantsTable.RelY, -bedwars.BowConstantsTable.RelZ)).Position
+            local launch = bedwars.ProjectileController:getLaunchPosition(gameCamera.CFrame)
+            if typeof(launch) == 'Vector3' then
+                origin = launch
+            elseif typeof(launch) == 'CFrame' then
+                origin = launch.Position
+            end
         end)
+        if origin == rootPos then
+            origin = gameCamera.CFrame.Position
+        end
+        pcall(function()
+            if typeof(source.fromPositionOffset) == 'Vector3' then
+                origin += source.fromPositionOffset
+            end
+        end)
+        local direction = aimPoint - origin
+        direction = direction.Magnitude > 1e-3 and direction.Unit or aimRay.Direction
         return traceLanding(origin, direction * speed, gravity, {lplr.Character, gameCamera})
     end
 
@@ -11075,6 +12532,18 @@ run(function()
         Function = function(callback)
             if callback then
                 aimingInput = false
+                lastLaunch = nil
+                -- Priority 1 = outermost hook, so this observes the final launch values after
+                -- ProjectileAimbot/BowAssist have had their say instead of the raw ones.
+                if bedwars.ProjectileLaunchHook then
+                    launchHook = bedwars.ProjectileLaunchHook:Add('ProjectileLanding', 1, recordLaunch)
+                end
+                ProjectileLanding:Clean(function()
+                    if launchHook then
+                        launchHook()
+                        launchHook = nil
+                    end
+                end)
                 ProjectileLanding:Clean(inputService.InputBegan:Connect(function(input, gameProcessed)
                     if not gameProcessed then setAimingInput(input, true) end
                 end))
@@ -11084,10 +12553,11 @@ run(function()
                 ProjectileLanding:Clean(runService.RenderStepped:Connect(updateLandings))
             else
                 aimingInput = false
+                lastLaunch = nil
                 clearVisuals()
             end
         end,
-        Tooltip = 'Shows exact projectile landings and the held projectile\'s aiming landing point, then highlights entities that will be hit.'
+        Tooltip = 'Shows exact projectile landings and the held projectile\'s aiming point, then highlights entities that will be hit'
     })
     MarkerColor = ProjectileLanding:CreateColorSlider({Name = 'Marker Color', DefaultOpacity = 0})
 end)
@@ -11348,7 +12818,7 @@ run(function()
                 savedClockTime = nil
             end
         end,
-        Tooltip = 'Locks the world time for clearer, better-looking matches.'
+        Tooltip = 'Locks the world time for clearer, better-looking matches'
     })
     TimeValue = TimeChanger:CreateSlider({Name = 'Clock Time', Min = 0, Max = 24, Default = 18, Decimal = 10, Suffix = 'h', Function = function(val)
         if TimeChanger.Enabled then lightingService.ClockTime = val end
@@ -11433,7 +12903,7 @@ run(function()
                 restore()
             end
         end,
-        Tooltip = 'Transforms the map into a vivid aurora night with a custom sky, atmosphere, bloom and colour grading.'
+        Tooltip = 'Transforms the map into a vivid aurora night with a custom sky, atmosphere, bloom and colour grading'
     })
 end)
 
@@ -11507,7 +12977,7 @@ run(function()
                 restore()
             end
         end,
-        Tooltip = 'Creates a dramatic storm look with heavy atmosphere, fog, depth and cold cinematic grading.'
+        Tooltip = 'Creates a dramatic storm look with heavy atmosphere, fog, depth and cold cinematic grading'
     })
 end)
 
@@ -11579,12 +13049,12 @@ run(function()
                 bloomEffect = nil
             end
         end,
-        Tooltip = 'Adds a soft bloom so bright surfaces glow, and optionally makes generators and emerald/diamond/iron/gold drops glow so they pop - without being overly bright or excessive.'
+        Tooltip = 'Soft bloom so bright surfaces glow, and optionally makes generators and ore drops glow, without going over the top'
     })
     Intensity = Bloom:CreateSlider({Name = 'Intensity', Min = 10, Max = 100, Default = 55, Suffix = '%', Function = apply})
     Size = Bloom:CreateSlider({Name = 'Size', Min = 8, Max = 56, Default = 24, Function = apply})
     Threshold = Bloom:CreateSlider({Name = 'Threshold', Min = 60, Max = 220, Default = 135, Suffix = '%', Function = apply})
-    Valuables = Bloom:CreateToggle({Name = 'Glow valuables', Default = true, Tooltip = 'Softly glow generators and resource drops (emerald/diamond/iron/gold) so they catch the bloom.', Function = refreshValuables})
+    Valuables = Bloom:CreateToggle({Name = 'Glow valuables', Default = true, Tooltip = 'Softly glow generators and resource drops (emerald/diamond/iron/gold) so they catch the bloom', Function = refreshValuables})
 end)
 
 run(function()
@@ -11659,7 +13129,7 @@ run(function()
                 restore()
             end
         end,
-        Tooltip = 'Turns the match into a deep aquatic atmosphere with dense teal fog, underwater haze, soft bloom and cool depth grading.'
+        Tooltip = 'Turns the match into a deep aquatic atmosphere with dense teal fog, underwater haze, soft bloom and cool depth grading'
     })
 end)
 
@@ -11947,7 +13417,7 @@ run(function()
                 if Settings.DayNightCycle.Enabled then cycleConnection = runService.Heartbeat:Connect(function(dt) lightingService.ClockTime = (lightingService.ClockTime + dt / 90) % 24 end) end
             else restore() end
         end,
-        Tooltip = 'Complete visual rewrite: realistic materials, cinematic lighting, weather, ambience, decorative world detail and four fully themed seasons without changing gameplay mechanics.'
+        Tooltip = 'Visual rewrite: realistic materials, cinematic lighting, weather, ambience and four themed seasons, with no gameplay change'
     })
 
     Settings.Season = IRLReplica:CreateDropdown({Name = 'Season', List = {'Spring', 'Summer', 'Autumn', 'Winter'}, Default = 'Spring', Function = function(v) setValue(Settings.Season, v); RealLifeBedWars.Config.Season = v; RealLifeBedWars.RefreshMap() end})
@@ -12410,7 +13880,7 @@ run(function()
 			pcall(function() bedwars.StreamerModeController:updateNametags(true) end)
 		end
 	end,
-	Tooltip = 'Reveals players hidden by streamer/disguise mode: sees through disguises and strips their disguised name locally.'
+	Tooltip = 'Reveals players hidden by streamer/disguise mode: sees through disguises and strips their disguised name locally'
     })
 end)
 
@@ -12592,6 +14062,569 @@ end)
     Utility
 ]]
 
+-- MP3Player: plays your own .mp3 files out of the aetherv2/songs folder the loader creates.
+--
+-- The folder is scanned live, so songs added or deleted while you are in a game are picked up
+-- without a reinject (Auto refresh, plus a Refresh button for right now). Anything the executor
+-- can turn into an asset works - mp3, wav, ogg.
+--
+-- Spotify mode is best-effort and honest about it: Spotify hands out no audio at all without a
+-- session, EXCEPT the 30-second preview its own web player uses. So a track link is resolved to
+-- that preview, saved into songs/spotify and played. Full tracks are not possible from here.
+run(function()
+    local MP3Player
+    local Volume
+    local Speed
+    local Shuffle
+    local Loop
+    local AutoRefresh
+    local PlayField
+    local Playlist
+    local SpotifyMode
+    local SpotifyLink
+    local ShowHUD
+    local HUDProgress
+    local HUDTime
+    local HUDColor
+
+    local SONGS = 'aetherv2/songs'
+    local SPOTIFY = 'aetherv2/songs/spotify'
+
+    local sound
+    local tracks, index = {}, 0
+    local hudName, hudTime, hudBarFill, hudBackground
+    local lastScan = 0
+    local scanKey = ''
+
+    -- Every filesystem call is optional: some executors ship none of them, and the module has to
+    -- degrade to "no songs found" rather than erroring on load.
+    local function fsList(path)
+        local ok, res = pcall(function()
+            if isfolder and not isfolder(path) then
+                if makefolder then makefolder(path) end
+                return {}
+            end
+            return listfiles and listfiles(path) or {}
+        end)
+        return ok and res or {}
+    end
+
+    local function isAudio(path)
+        path = tostring(path):lower()
+        return path:sub(-4) == '.mp3' or path:sub(-4) == '.wav' or path:sub(-4) == '.ogg'
+    end
+
+    local function fileName(path)
+        local normalised = tostring(path):gsub('\\', '/')
+        local name = normalised:match('([^/]+)$') or normalised
+        return (name:gsub('%.[^%.]+$', ''))
+    end
+
+    local function scan(announce)
+        local found = {}
+        for _, file in fsList(SONGS) do
+            if isAudio(file) then
+                table.insert(found, {Name = fileName(file), Path = tostring(file):gsub('\\', '/')})
+            end
+        end
+        for _, file in fsList(SPOTIFY) do
+            if isAudio(file) then
+                table.insert(found, {Name = fileName(file), Path = tostring(file):gsub('\\', '/')})
+            end
+        end
+        table.sort(found, function(a, b)
+            return a.Name:lower() < b.Name:lower()
+        end)
+
+        -- Playlist, when you have filled one in, is both the filter and the order.
+        local wanted = Playlist and Playlist.ListEnabled or {}
+        if #wanted > 0 then
+            local ordered = {}
+            for _, entry in wanted do
+                local needle = entry:lower()
+                for _, track in found do
+                    if track.Name:lower():find(needle, 1, true) then
+                        table.insert(ordered, track)
+                        break
+                    end
+                end
+            end
+            if #ordered > 0 then
+                found = ordered
+            end
+        end
+
+        local key = ''
+        for _, track in found do
+            key = key .. track.Path .. ';'
+        end
+        local changed = key ~= scanKey
+        scanKey = key
+        tracks = found
+        if changed and announce and MP3Player.Enabled then
+            notif('MP3Player', #tracks > 0 and (#tracks .. ' song' .. (#tracks == 1 and '' or 's') .. ' loaded') or 'No songs in the songs folder yet', 3)
+        end
+        return changed
+    end
+
+    local function assetFor(path)
+        local ok, asset = pcall(function()
+            return getcustomasset(path)
+        end)
+        return ok and asset or nil
+    end
+
+    local function refreshHUD()
+        if not hudName then return end
+        local track = tracks[index]
+        local colour = HUDColor and Color3.fromHSV(HUDColor.Hue, HUDColor.Sat, HUDColor.Value) or Color3.new(1, 1, 1)
+        hudName.TextColor3 = colour
+        hudName.Text = track and track.Name or 'No song loaded'
+        if hudBackground then
+            hudBackground.BackgroundTransparency = HUDColor and (1 - (HUDColor.Opacity * 0.65)) or 0.35
+        end
+
+        local length = sound and sound.TimeLength or 0
+        local at = sound and sound.TimePosition or 0
+        if hudTime then
+            hudTime.Visible = HUDTime == nil or HUDTime.Enabled
+            hudTime.TextColor3 = colour
+            local function clock(t)
+                t = math.max(math.floor(t), 0)
+                return string.format('%d:%02d', t // 60, t % 60)
+            end
+            hudTime.Text = track and (clock(at) .. ' / ' .. clock(length)) or ''
+        end
+        if hudBarFill then
+            hudBarFill.Parent.Visible = HUDProgress == nil or HUDProgress.Enabled
+            hudBarFill.BackgroundColor3 = colour
+            hudBarFill.Size = UDim2.fromScale(length > 0 and math.clamp(at / length, 0, 1) or 0, 1)
+        end
+    end
+
+    local function stop()
+        if sound then
+            pcall(function()
+                sound:Stop()
+            end)
+        end
+    end
+
+    local function play(newIndex)
+        if #tracks <= 0 then
+            index = 0
+            refreshHUD()
+            return
+        end
+        index = ((newIndex - 1) % #tracks) + 1
+        local track = tracks[index]
+        local asset = track and assetFor(track.Path)
+        if not asset then
+            notif('MP3Player', 'Could not load ' .. (track and track.Name or 'that song'), 4, 'warning')
+            return
+        end
+        if not sound then return end
+        sound.SoundId = asset
+        sound.Volume = Volume.Value / 100
+        sound.PlaybackSpeed = Speed.Value
+        sound.TimePosition = 0
+        pcall(function()
+            sound:Play()
+        end)
+        refreshHUD()
+    end
+
+    local function advance(step)
+        if #tracks <= 0 then return end
+        if Shuffle.Enabled and #tracks > 1 then
+            local pick = index
+            for _ = 1, 8 do
+                pick = math.random(1, #tracks)
+                if pick ~= index then break end
+            end
+            play(pick)
+            return
+        end
+        play(index + step)
+    end
+
+    -- Spotify: pull the track's own preview clip and keep it as a normal song file.
+    local function fetchSpotify(link)
+        local id = tostring(link):match('track[/:]([%w]+)')
+        if not id then
+            notif('MP3Player', 'That is not a Spotify track link', 5, 'warning')
+            return nil
+        end
+        local target = SPOTIFY .. '/' .. id .. '.mp3'
+        if isfile and isfile(target) then return target end
+
+        local page
+        local ok = pcall(function()
+            page = game:HttpGet('https://open.spotify.com/embed/track/' .. id, true)
+        end)
+        if not ok or type(page) ~= 'string' then
+            notif('MP3Player', 'Could not reach Spotify', 5, 'warning')
+            return nil
+        end
+        local url = page:match('"audioPreviewUrl":"(.-)"') or page:match('(https://p%.scdn%.co/mp3%-preview/[%w%-%._%?=]+)')
+        if url then
+            url = url:gsub('\\u002F', '/'):gsub('\\/', '/')
+        end
+        if not url then
+            notif('MP3Player', 'Spotify gave no preview for that track', 6, 'warning')
+            return nil
+        end
+
+        local data
+        local got = pcall(function()
+            data = game:HttpGet(url, true)
+        end)
+        if not got or type(data) ~= 'string' or #data < 1024 then
+            notif('MP3Player', 'Could not download that preview', 5, 'warning')
+            return nil
+        end
+        if isfolder and not isfolder(SPOTIFY) and makefolder then
+            makefolder(SPOTIFY)
+        end
+        local written = pcall(function()
+            writefile(target, data)
+        end)
+        if not written then
+            notif('MP3Player', 'Could not save that preview', 5, 'warning')
+            return nil
+        end
+        notif('MP3Player', 'Saved the Spotify preview (30 seconds is all Spotify gives out)', 6)
+        return target
+    end
+
+    local function playSpotify()
+        local target = fetchSpotify(SpotifyLink.Value)
+        if not target then return end
+        scan(false)
+        for i, track in tracks do
+            if track.Path:lower():find(tostring(target):lower(), 1, true) or track.Path == target then
+                play(i)
+                return
+            end
+        end
+        -- Not in the scanned list (a playlist filter is on): play it directly.
+        local asset = assetFor(target)
+        if asset and sound then
+            sound.SoundId = asset
+            sound.Volume = Volume.Value / 100
+            sound.PlaybackSpeed = Speed.Value
+            pcall(function()
+                sound:Play()
+            end)
+        end
+    end
+
+    MP3Player = vape.Categories.Utility:CreateModule({
+        Name = 'MP3Player',
+        Function = function(callback)
+            if callback then
+                if not (listfiles and getcustomasset) then
+                    notif('MP3Player', 'Your executor cannot read local files, so there is nothing to play', 6, 'warning')
+                    return task.spawn(function()
+                        if MP3Player.Enabled then MP3Player:Toggle() end
+                    end)
+                end
+                if isfolder and makefolder then
+                    if not isfolder(SONGS) then makefolder(SONGS) end
+                    if not isfolder(SPOTIFY) then makefolder(SPOTIFY) end
+                end
+
+                sound = Instance.new('Sound')
+                sound.Name = 'AetherMP3'
+                sound.Volume = Volume.Value / 100
+                sound.PlaybackSpeed = Speed.Value
+                sound.Parent = vape.gui
+                MP3Player:Clean(sound)
+                MP3Player:Clean(sound.Ended:Connect(function()
+                    if not MP3Player.Enabled then return end
+                    if Loop.Enabled and not Shuffle.Enabled then
+                        play(index)
+                    else
+                        advance(1)
+                    end
+                end))
+
+                -- Toggle() shows the HUD frame for any module with a Size, so put Show HUD back in
+                -- charge of it now that the module is on.
+                if MP3Player.Children then
+                    MP3Player.Children.Visible = ShowHUD.Enabled
+                end
+
+                scan(true)
+                if SpotifyMode.Enabled and (SpotifyLink.Value or '') ~= '' then
+                    task.spawn(playSpotify)
+                elseif #tracks > 0 then
+                    play(Shuffle.Enabled and math.random(1, #tracks) or 1)
+                end
+
+                MP3Player:Clean(task.spawn(function()
+                    while MP3Player.Enabled do
+                        if AutoRefresh.Enabled and tick() - lastScan > 3 then
+                            lastScan = tick()
+                            local changed = scan(true)
+                            -- Nothing playing and songs have just appeared: start on them.
+                            if changed and sound and not sound.IsPlaying and #tracks > 0 then
+                                play(index > 0 and index or 1)
+                            end
+                        end
+                        refreshHUD()
+                        task.wait(0.2)
+                    end
+                end))
+            else
+                stop()
+                sound = nil
+                index = 0
+                scanKey = ''
+                refreshHUD()
+            end
+        end,
+        Tooltip = 'Plays your own mp3 files from the aetherv2/songs folder, with a HUD and a live-refreshing playlist',
+        Size = UDim2.fromOffset(236, 66),
+        ExtraText = function()
+            local track = tracks[index]
+            return track and track.Name or nil
+        end
+    })
+
+    -- HUD, built into the draggable frame the GUI hands us (same pattern AutoWin uses).
+    if MP3Player.Children then
+        local hud = MP3Player.Children
+        if hud.Position == UDim2.new() then
+            hud.Position = UDim2.fromOffset(16, 340)
+        end
+        hudBackground = Instance.new('Frame')
+        hudBackground.Size = UDim2.fromScale(1, 1)
+        hudBackground.BackgroundColor3 = Color3.new()
+        hudBackground.BackgroundTransparency = 0.35
+        hudBackground.BorderSizePixel = 0
+        hudBackground.Parent = hud
+        local corner = Instance.new('UICorner')
+        corner.CornerRadius = UDim.new(0, 5)
+        corner.Parent = hudBackground
+
+        local title = Instance.new('TextLabel')
+        title.Size = UDim2.new(1, -14, 0, 16)
+        title.Position = UDim2.fromOffset(9, 5)
+        title.BackgroundTransparency = 1
+        title.Font = Enum.Font.GothamBold
+        title.TextSize = 12
+        title.TextXAlignment = Enum.TextXAlignment.Left
+        title.TextColor3 = Color3.fromRGB(170, 170, 170)
+        title.Text = 'MP3Player'
+        title.Parent = hudBackground
+
+        hudName = Instance.new('TextLabel')
+        hudName.Size = UDim2.new(1, -18, 0, 18)
+        hudName.Position = UDim2.fromOffset(9, 21)
+        hudName.BackgroundTransparency = 1
+        hudName.Font = Enum.Font.GothamMedium
+        hudName.TextSize = 13
+        hudName.TextXAlignment = Enum.TextXAlignment.Left
+        hudName.TextTruncate = Enum.TextTruncate.AtEnd
+        hudName.TextColor3 = Color3.new(1, 1, 1)
+        hudName.Text = 'No song loaded'
+        hudName.Parent = hudBackground
+
+        hudTime = Instance.new('TextLabel')
+        hudTime.Size = UDim2.new(1, -18, 0, 14)
+        hudTime.Position = UDim2.fromOffset(-9, 5)
+        hudTime.BackgroundTransparency = 1
+        hudTime.Font = Enum.Font.Gotham
+        hudTime.TextSize = 11
+        hudTime.TextXAlignment = Enum.TextXAlignment.Right
+        hudTime.TextColor3 = Color3.new(1, 1, 1)
+        hudTime.Text = ''
+        hudTime.Parent = hudBackground
+
+        local bar = Instance.new('Frame')
+        bar.Size = UDim2.new(1, -18, 0, 4)
+        bar.Position = UDim2.fromOffset(9, 46)
+        bar.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
+        bar.BorderSizePixel = 0
+        bar.Parent = hudBackground
+        local barCorner = Instance.new('UICorner')
+        barCorner.CornerRadius = UDim.new(1, 0)
+        barCorner.Parent = bar
+
+        hudBarFill = Instance.new('Frame')
+        hudBarFill.Size = UDim2.fromScale(0, 1)
+        hudBarFill.BackgroundColor3 = Color3.new(1, 1, 1)
+        hudBarFill.BorderSizePixel = 0
+        hudBarFill.Parent = bar
+        local fillCorner = Instance.new('UICorner')
+        fillCorner.CornerRadius = UDim.new(1, 0)
+        fillCorner.Parent = hudBarFill
+    end
+
+    MP3Player:CreateButton({
+        Name = 'Play / Pause',
+        Function = function()
+            if not sound then return end
+            if sound.IsPlaying then
+                sound:Pause()
+            elseif sound.SoundId ~= '' then
+                sound:Resume()
+            else
+                play(index > 0 and index or 1)
+            end
+        end,
+        Tooltip = 'Pause or resume the current song'
+    })
+    MP3Player:CreateButton({
+        Name = 'Next song',
+        Function = function()
+            advance(1)
+        end
+    })
+    MP3Player:CreateButton({
+        Name = 'Previous song',
+        Function = function()
+            advance(-1)
+        end
+    })
+    MP3Player:CreateButton({
+        Name = 'Refresh songs',
+        Function = function()
+            lastScan = tick()
+            scan(true)
+            refreshHUD()
+        end,
+        Tooltip = 'Re-read the songs folder right now'
+    })
+    Volume = MP3Player:CreateSlider({
+        Name = 'Volume',
+        Min = 0,
+        Max = 100,
+        Default = 40,
+        Suffix = '%',
+        Function = function(val)
+            if sound then
+                sound.Volume = val / 100
+            end
+        end
+    })
+    Speed = MP3Player:CreateSlider({
+        Name = 'Speed',
+        Min = 0.5,
+        Max = 2,
+        Default = 1,
+        Decimal = 100,
+        Suffix = 'x',
+        Function = function(val)
+            if sound then
+                sound.PlaybackSpeed = val
+            end
+        end,
+        Tooltip = 'Playback speed'
+    })
+    Shuffle = MP3Player:CreateToggle({
+        Name = 'Shuffle',
+        Tooltip = 'Pick the next song at random instead of in order'
+    })
+    Loop = MP3Player:CreateToggle({
+        Name = 'Loop song',
+        Tooltip = 'Repeat the current song instead of moving on'
+    })
+    AutoRefresh = MP3Player:CreateToggle({
+        Name = 'Auto refresh',
+        Default = true,
+        Tooltip = 'Watch the songs folder and pick up new or deleted files while you play'
+    })
+    PlayField = MP3Player:CreateTextBox({
+        Name = 'Play song',
+        Placeholder = 'song name',
+        -- TextBox hands us `enter`, not the text, and fires on every keystroke - so only act once
+        -- the name has actually been submitted.
+        Function = function(enter)
+            if not enter then return end
+            local val = PlayField and PlayField.Value or ''
+            if val == '' then return end
+            scan(false)
+            local needle = val:lower()
+            for i, track in tracks do
+                if track.Name:lower():find(needle, 1, true) then
+                    play(i)
+                    return
+                end
+            end
+            notif('MP3Player', 'No song matching "' .. val .. '"', 4, 'warning')
+        end,
+        Tooltip = 'Type part of a song name to jump straight to it'
+    })
+    Playlist = MP3Player:CreateTextList({
+        Name = 'Playlist',
+        Placeholder = 'song name',
+        Function = function()
+            scan(true)
+        end,
+        Tooltip = 'Leave empty to play everything in the folder. Add names and only those play, in the order you list them'
+    })
+    SpotifyMode = MP3Player:CreateToggle({
+        Name = 'Spotify mode',
+        Tooltip = 'Play a song from a Spotify link. Spotify only serves audio to a logged-in session, so you get its 30-second preview, saved into songs/spotify',
+        Function = function(callback)
+            pcall(function()
+                SpotifyLink.Object.Visible = callback
+            end)
+            if callback and MP3Player.Enabled and SpotifyLink.Value ~= '' then
+                task.spawn(playSpotify)
+            end
+        end
+    })
+    SpotifyLink = MP3Player:CreateTextBox({
+        Name = 'Spotify link',
+        Placeholder = 'open.spotify.com/track/...',
+        Darker = true,
+        Visible = false,
+        Function = function(enter)
+            if not enter then return end
+            if MP3Player.Enabled and SpotifyMode.Enabled and (SpotifyLink.Value or '') ~= '' then
+                task.spawn(playSpotify)
+            end
+        end
+    })
+    ShowHUD = MP3Player:CreateToggle({
+        Name = 'Show HUD',
+        Default = true,
+        Tooltip = 'Show the now-playing panel. Drag it by its own frame to move it',
+        Function = function(callback)
+            pcall(function()
+                HUDProgress.Object.Visible = callback
+                HUDTime.Object.Visible = callback
+                HUDColor.Object.Visible = callback
+            end)
+            if MP3Player.Children then
+                MP3Player.Children.Visible = callback and MP3Player.Enabled
+            end
+        end
+    })
+    HUDProgress = MP3Player:CreateToggle({
+        Name = 'Progress bar',
+        Default = true,
+        Darker = true,
+        Tooltip = 'Show how far through the song you are'
+    })
+    HUDTime = MP3Player:CreateToggle({
+        Name = 'Show time',
+        Default = true,
+        Darker = true,
+        Tooltip = 'Show elapsed and total time'
+    })
+    HUDColor = MP3Player:CreateColorSlider({
+        Name = 'HUD color',
+        Darker = true,
+        DefaultHue = 0.35,
+        DefaultOpacity = 0.55,
+        Function = refreshHUD
+    })
+end)
+
 run(function()
     local AntiSuffocate
     local Mode
@@ -12655,7 +14688,7 @@ run(function()
 	Name = 'Mode',
 	List = {'Push', 'TP'},
 	Default = 'Push',
-	Tooltip = 'Push nudges you upward each frame when fully buried. TP instantly teleports you to the top of the block column and also triggers on partial burials (e.g. only your legs inside a block).'
+	Tooltip = 'Push nudges you up each frame while fully buried. TP teleports you to the top of the block column and also fires on partial burials, like legs only'
     })
 end)
 
@@ -12972,7 +15005,7 @@ run(function()
                 if activeLasso then clearLasso(activeLasso) end
             end
         end,
-        Tooltip = 'Prevents you from getting pulled by lasso projectile.'
+        Tooltip = 'Prevents you from getting pulled by lasso projectile'
     })
 
     Chance = AntiLasso:CreateSlider({
@@ -13201,7 +15234,7 @@ run(function()
 			until not AutoPearl.Enabled
 		end
 	end,
-	Tooltip = 'Automatically throws a pearl onto nearby ground after\nfalling a certain distance.'
+	Tooltip = 'Automatically throws a pearl onto nearby ground after\nfalling a certain distance'
     })
 
     Legit = AutoPearl:CreateToggle({
@@ -13579,7 +15612,7 @@ run(function()
 			until not TritonClutch.Enabled
 		end
 	end,
-	Tooltip = 'Automatically throws Triton\'s harpoon onto nearby ground after falling a certain distance.'
+	Tooltip = 'Automatically throws Triton\'s harpoon onto nearby ground after falling a certain distance'
     })
 
     Legit = TritonClutch:CreateToggle({
@@ -13666,7 +15699,7 @@ run(function()
                 AutoPlay:Clean(vapeEvents.MatchEndEvent.Event:Connect(joinQueue))
             end
         end,
-        Tooltip = 'Automatically queues after the match ends.'
+        Tooltip = 'Automatically queues after the match ends'
     })
     Random = AutoPlay:CreateToggle({
         Name = 'Random',
@@ -14066,7 +16099,7 @@ run(function()
         Default = 0,
         Decimal = 10,
         Suffix = 's',
-        Tooltip = 'Waits this long after the triggering action before sending the message (0 = instant). Applies to every AutoToxic line, including AutoGG.'
+        Tooltip = 'Waits this long after the triggering action before sending the message (0 = instant). Applies to every AutoToxic line, including AutoGG'
     })
     for _, v in {'Kill', 'Death', 'Bed', 'BedDestroyed', 'Win'} do
         Toggles[v] = AutoToxic:CreateToggle({
@@ -14085,7 +16118,7 @@ run(function()
     end
     Toggles.Troll = AutoToxic:CreateToggle({
         Name = 'Troll ',
-        Tooltip = 'Detects when someone calls you a hacker/cheater in chat and automatically replies.',
+        Tooltip = 'Detects when someone calls you a hacker/cheater in chat and automatically replies',
         Function = function(callback)
             if TrollTriggers then TrollTriggers.Object.Visible = callback end
             if Lists.Troll then Lists.Troll.Object.Visible = callback end
@@ -14093,14 +16126,14 @@ run(function()
     })
     TrollTriggers = AutoToxic:CreateTextList({
         Name = 'Troll Triggers',
-        Tooltip = 'Phrases said by others that trigger a reply (matched anywhere in their message).',
+        Tooltip = 'Phrases said by others that trigger a reply (matched anywhere in their message)',
         Default = {'hacker', 'hacks', 'hacking', 'hax', 'cheater', 'cheating', 'cheat', 'exploiter', 'exploiting', 'aimbot'},
         Darker = true,
         Visible = false
     })
     Lists.Troll = AutoToxic:CreateTextList({
         Name = 'Troll Replies',
-        Tooltip = 'Replies to send. <obj> is replaced with the accuser\'s name.',
+        Tooltip = 'Replies to send. <obj> is replaced with the accuser\'s name',
         Default = {'mad cause bad | <obj>', 'skill issue <obj>', 'cry about it <obj>', 'not my fault youre bad', 'imagine losing to a "hacker" lol'},
         Darker = true,
         Visible = false
@@ -14332,7 +16365,7 @@ run(function()
                 until not CheatDetector.Enabled
             end
         end,
-        Tooltip = 'Alerts for any possible cheaters.'
+        Tooltip = 'Alerts for any possible cheaters'
     })
 
     for i in Checks do
@@ -14911,7 +16944,7 @@ run(function()
                 end
             end
         end,
-        Tooltip = 'Automatically uses kit abilities.'
+        Tooltip = 'Automatically uses kit abilities'
     })
     Legit = AutoKit:CreateToggle({Name = 'Legit Range'})
     local sortTable = {}
@@ -14933,16 +16966,16 @@ run(function()
         Max = 1000,
         Default = 1000,
         Suffix = ' studs',
-        Tooltip = 'The dimension size applied to Cobalt battery components (Auto Cobalt).'
+        Tooltip = 'The dimension size applied to Cobalt battery components (Auto Cobalt)'
     })
     CobaltRestore = AutoKit:CreateToggle({
         Name = 'Cobalt Restore On Disable',
         Default = true,
-        Tooltip = 'Reverts the size of active Cobalt batteries when Auto Cobalt is turned off.'
+        Tooltip = 'Reverts the size of active Cobalt batteries when Auto Cobalt is turned off'
     })
     Cobalt = AutoKit:CreateToggle({
         Name = 'Auto Cobalt',
-        Tooltip = 'Expands the touch detection area of Cobalt batteries to collect them instantly.',
+        Tooltip = 'Expands the touch detection area of Cobalt batteries to collect them instantly',
         Function = function(callback)
             if callback then
                 for _, descendant in workspace:GetDescendants() do
@@ -15002,7 +17035,7 @@ run(function()
                 end
             end
         end,
-        Tooltip = 'Spawns and teleports a missile to a player\nnear your mouse.'
+        Tooltip = 'Spawns and teleports a missile to a player\nnear your mouse'
     })
 end)
 
@@ -15107,7 +17140,7 @@ run(function()
                 end
             end
         end,
-        Tooltip = 'Spawns and teleports a raven to a player\nnear your mouse.'
+        Tooltip = 'Spawns and teleports a raven to a player\nnear your mouse'
     })
 end)
 
@@ -15308,7 +17341,7 @@ run(function()
                 Label = nil
             end
         end,
-        Tooltip = 'Helps you make bridges/scaffold walk.'
+        Tooltip = 'Helps you make bridges/scaffold walk'
     })
     Expand = Scaffold:CreateSlider({
         Name = 'Expand',
@@ -15397,7 +17430,7 @@ run(function()
                 table.clear(tiered)
             end
         end,
-        Tooltip = 'Lets you buy things like armor early.'
+        Tooltip = 'Lets you buy things like armor early'
     })
 end)
 
@@ -15570,7 +17603,7 @@ run(function()
     })
     NotifyLeave = StaffDetector:CreateToggle({
         Name = 'Notify on leave',
-        Tooltip = 'Notifies you when a flagged staff member leaves your game.',
+        Tooltip = 'Notifies you when a flagged staff member leaves your game',
         Default = true
     })
     Profile = StaffDetector:CreateTextBox({
@@ -15619,6 +17652,8 @@ run(function()
     local Respawn
     local BankLoot
     local KillPlayers
+    local YuziDash
+    local BoostTime
     local Notify
 
     -- BedWars blocks sit on a 3-stud grid: a block centre is at cell * 3 and you stand 1.5 studs
@@ -16435,6 +18470,118 @@ run(function()
     end
 
     ----------------------------------------------------------------------------
+    -- Yuzi: dash across instead of bridging across.
+    --
+    -- Detection is LongJump's own: a dao in your hand first, then any dao in the inventory. The
+    -- launch is LongJump's too - we point the body at the base, put the dao in hand and switch the
+    -- module on, so the dash, the arc and the speed are exactly what LongJump does when you use it
+    -- yourself. Nothing about it is re-implemented here.
+    --
+    -- What IS handled here is switching it back off. LongJump pins your velocity once its own boost
+    -- window closes, so left on it would hold the run frozen in place - so each launch is given a
+    -- hard ceiling (Boost time, never above 2.5 seconds) and control is handed straight back, and
+    -- the same ceiling ends the dash early the moment we are in range.
+    ----------------------------------------------------------------------------
+    local daoItems = {'wood_dao', 'stone_dao', 'iron_dao', 'diamond_dao', 'emerald_dao'}
+
+    local function getDao()
+        local hand = store.hand and store.hand.tool
+        if hand and table.find(daoItems, hand.Name) then
+            return getItem(hand.Name)
+        end
+        for _, name in daoItems do
+            local item = getItem(name)
+            if item then return item end
+        end
+        return nil
+    end
+
+    local function dashReady()
+        local ok, ready = pcall(function()
+            return (lplr.Character:GetAttribute('CanDashNext') or 0) < workspace:GetServerTimeNow()
+                and bedwars.AbilityController:canUseAbility('dash')
+        end)
+        return ok and ready or false
+    end
+
+    local function flatDistance(from, to)
+        return ((to - from) * Vector3.new(1, 0, 1)).Magnitude
+    end
+
+    -- Dash at a (possibly moving) target until we are in range. Returns whether we got there;
+    -- false simply means the caller carries on and bridges the rest, so this can never strand a run.
+    local function dashToward(getTarget, stopRange, label)
+        local module = LongJump or vape.Modules.LongJump
+        if not module then return false end
+        local cap = math.clamp(BoostTime.Value, 0.2, 2.5)
+        local best, stalled = math.huge, 0
+
+        for _ = 1, 12 do
+            if not running() or not alive() then break end
+            local target, root = getTarget(), myRoot()
+            if not target or not root then break end
+
+            local left = flatDistance(root.Position, target)
+            if left <= stopRange + 4 then break end
+            if left < best - 4 then
+                best, stalled = left, 0
+            else
+                stalled += 1
+                -- Two dashes that got us no closer: the way is blocked or the drop is wrong, so stop
+                -- wasting them and let the bridge take over.
+                if stalled >= 2 then break end
+            end
+
+            local dao = getDao()
+            if not dao then break end
+
+            local waitUntil = tick() + 6
+            while running() and alive() and not dashReady() and tick() < waitUntil do
+                status('Yuzi', 'Waiting for the dash', string.format('%d studs left', math.floor(left)))
+                task.wait(0.1)
+            end
+            if not dashReady() then break end
+
+            stopMoving()
+            -- The dao has to be genuinely IN HAND before LongJump is switched on: it picks its
+            -- method from store.hand first and only falls back to scanning the inventory, and that
+            -- scan is unordered - with a cannon or tnt on you it could place one of those instead of
+            -- dashing. store.hand only catches up on the next store update, so wait for it.
+            switchItem(dao.tool, 0.1)
+            local handDeadline = tick() + 0.6
+            while running() and tick() < handDeadline and not (store.hand and store.hand.tool == dao.tool) do
+                task.wait(0.05)
+            end
+            root = myRoot()
+            if not root then break end
+            root.CFrame = CFrame.lookAt(root.Position, Vector3.new(target.X, root.Position.Y, target.Z))
+            status('Yuzi', label or 'Dashing to the base', string.format('%d studs left', math.floor(left)))
+
+            if not module.Enabled then
+                module:Toggle()
+            end
+            local started = tick()
+            repeat
+                task.wait()
+                local now = myRoot()
+                local moving = getTarget()
+                if now and moving and flatDistance(now.Position, moving) <= stopRange then break end
+            until (tick() - started) >= cap or not running() or not alive() or not module.Enabled
+            if module.Enabled then
+                module:Toggle()
+            end
+            -- Let the launch settle before measuring, or the next pass reads mid-flight numbers.
+            task.wait(0.2)
+        end
+
+        local root, target = myRoot(), getTarget()
+        if root and target then
+            return flatDistance(root.Position, target) <= stopRange + 4
+        end
+        return false
+    end
+
+    ----------------------------------------------------------------------------
     -- Phase 1: one bed per cycle - gather, buy, bridge, break, bank, respawn.
     ----------------------------------------------------------------------------
     -- `attempts` maps bed -> failed tries. A bed is only passed over once two runs at it have
@@ -16468,10 +18615,18 @@ run(function()
             return true
         end
 
-        status('Bridging', 'Bridging to ' .. bedName(bed), '')
-        local reached, why = travelTo(function()
+        local bedPosition = function()
             return bed.Parent and bedPart(bed) and bedPart(bed).Position or nil
-        end, BedReach.Value, true, 'Bridging to ' .. bedName(bed))
+        end
+
+        -- Yuzi: dao in the inventory means we shoot ourselves at the base instead of building to it.
+        -- Anything the dash does not cover is bridged as usual below, so this only ever saves time.
+        if YuziDash.Enabled and getDao() then
+            dashToward(bedPosition, BedReach.Value, 'Dashing to ' .. bedName(bed))
+        end
+
+        status('Bridging', 'Bridging to ' .. bedName(bed), '')
+        local reached, why = travelTo(bedPosition, BedReach.Value, true, 'Bridging to ' .. bedName(bed))
 
         if not reached then
             attempts[bed] = (attempts[bed] or 0) + 1
@@ -16635,7 +18790,7 @@ run(function()
                 refreshHUD()
             end
         end,
-        Tooltip = 'Plays the whole match: gathers iron at the generator, buys wool, walks and bridges to every enemy bed (filling in every gap - it never crosses a hole it has not blocked first), breaks the bed, banks the loot and respawns, then hunts down the remaining players with a silent aura. It walks the whole way rather than teleporting, so the server has nothing to lag it back for. Progress is shown on the HUD; drag its title bar to move it.',
+        Tooltip = 'Plays the match for you: iron, wool, bridge to every enemy bed, break it, bank, respawn, then hunt the survivors. It walks rather than teleports, so there is nothing to lag back. Progress shows on the HUD',
         Size = UDim2.fromOffset(224, 92)
     })
 
@@ -16719,7 +18874,7 @@ run(function()
         Max = 64,
         Default = 16,
         Suffix = ' iron',
-        Tooltip = 'How much iron to collect at the generator before going to the shop. 8 iron buys 16 wool, so 16 iron is two bundles (32 wool).'
+        Tooltip = 'How much iron to collect at the generator before going to the shop. 8 iron buys 16 wool, so 16 iron is two bundles (32 wool)'
     })
     WoolAmount = AutoWin:CreateSlider({
         Name = 'Wool amount',
@@ -16727,7 +18882,7 @@ run(function()
         Max = 128,
         Default = 32,
         Suffix = ' wool',
-        Tooltip = 'The least wool to set off with. Longer crossings automatically buy more than this - the route is measured cell by cell first.'
+        Tooltip = 'The least wool to set off with. Longer crossings automatically buy more than this - the route is measured cell by cell first'
     })
     BedReach = AutoWin:CreateSlider({
         Name = 'Bed reach',
@@ -16736,7 +18891,7 @@ run(function()
         Default = 8,
         Decimal = 10,
         Suffix = ' studs',
-        Tooltip = 'How close to get to a bed before breaking it.'
+        Tooltip = 'How close to get to a bed before breaking it'
     })
     PlayerReach = AutoWin:CreateSlider({
         Name = 'Player reach',
@@ -16745,7 +18900,7 @@ run(function()
         Default = 8,
         Decimal = 10,
         Suffix = ' studs',
-        Tooltip = 'How close to get to a player before attacking.'
+        Tooltip = 'How close to get to a player before attacking'
     })
     StartDelay = AutoWin:CreateSlider({
         Name = 'Start delay',
@@ -16754,26 +18909,46 @@ run(function()
         Default = 2,
         Decimal = 10,
         Suffix = ' seconds',
-        Tooltip = 'How long to settle after the map loads before starting.'
+        Tooltip = 'How long to settle after the map loads before starting'
+    })
+    YuziDash = AutoWin:CreateToggle({
+        Name = 'Yuzi dash',
+        Default = true,
+        Tooltip = 'With a dao in your inventory, dash to the base with LongJump instead of bridging. Anything the dash misses is still bridged',
+        Function = function(callback)
+            pcall(function()
+                BoostTime.Object.Visible = callback
+            end)
+        end
+    })
+    BoostTime = AutoWin:CreateSlider({
+        Name = 'Boost time',
+        Min = 0.2,
+        Max = 2.5,
+        Default = 2.5,
+        Decimal = 10,
+        Darker = true,
+        Suffix = ' seconds',
+        Tooltip = 'Longest a single dash may boost for. Capped at 2.5 seconds, and never left running past the boost'
     })
     Respawn = AutoWin:CreateToggle({
         Name = 'Respawn after bed',
         Default = true,
-        Tooltip = 'Reset back to base after each bed so the next cycle starts at your generator and shop. Automatically skipped once your own bed is gone, because a respawn would then eliminate you.'
+        Tooltip = 'Reset to base after each bed so the next cycle starts at your generator and shop. Skipped once your own bed is gone, since a respawn would eliminate you'
     })
     BankLoot = AutoWin:CreateToggle({
         Name = 'Bank before respawn',
         Default = true,
-        Tooltip = 'Deposit iron, gold, diamonds, emeralds and void crystals into your personal chest before every respawn, so dying never costs you the run\'s resources.'
+        Tooltip = 'Deposit iron, gold, diamonds, emeralds and void crystals into your personal chest before every respawn, so dying never costs you the run\'s resources'
     })
     KillPlayers = AutoWin:CreateToggle({
         Name = 'Kill players',
         Default = true,
-        Tooltip = 'Once every enemy bed is destroyed, bridge to the remaining players and eliminate them.'
+        Tooltip = 'Once every enemy bed is destroyed, bridge to the remaining players and eliminate them'
     })
     Notify = AutoWin:CreateToggle({
         Name = 'Notifications',
-        Tooltip = 'Also send a notification each time the current action changes. Off by default - the HUD already shows what it is doing without filling the notification stack.'
+        Tooltip = 'Also notify on each action change. Off by default - the HUD already shows what it is doing'
     })
 end)
 
@@ -17174,7 +19349,7 @@ run(function()
                 folder = nil
             end
         end,
-        Tooltip = 'Reads how well every player is actually playing - kills and deaths, how long their combos run, their gear, beds they have taken - and marks them green, yellow or red over their head. A skilled player also gets a small, temporary loosening of the modules you tick below, but only while one is near you or fighting you, and every change is taken straight back off afterwards. Average and unskilled players are only ever labelled; nothing changes for them.'
+        Tooltip = 'Rates how well each player is playing and marks them green, yellow or red overhead. A skilled player also loosens the modules you tick below, only while near or fighting you, and every change is taken back off afterwards'
     })
 
     SkilledAt = EntityAnalyser:CreateSlider({
@@ -17182,14 +19357,14 @@ run(function()
         Min = 50,
         Max = 95,
         Default = 68,
-        Tooltip = 'Score a player has to reach to count as skilled. Everyone starts at 50 with nothing known about them, and only moves once they have actually done something.'
+        Tooltip = 'Score needed to count as skilled. Everyone starts at 50 and only moves once they have done something'
     })
     UnskilledBelow = EntityAnalyser:CreateSlider({
         Name = 'Unskilled below',
         Min = 5,
         Max = 50,
         Default = 32,
-        Tooltip = 'Score a player has to drop under to be marked red. Purely a label - nothing about the cheat changes for them.'
+        Tooltip = 'Score a player has to drop under to be marked red. Purely a label - nothing about the cheat changes for them'
     })
     Tweak = EntityAnalyser:CreateToggle({
         Name = 'Tweak modules',
@@ -17204,29 +19379,29 @@ run(function()
                 restoreBoost()
             end
         end,
-        Tooltip = 'Whether a skilled player is allowed to change anything at all. Off makes this a pure read-out: the labels still work, no setting is ever touched.'
+        Tooltip = 'Whether a skilled player is allowed to change anything at all. Off makes this a pure read-out: the labels still work, no setting is ever touched'
     })
     TweakKillaura = EntityAnalyser:CreateToggle({
         Name = 'Killaura',
         Default = true,
         Darker = true,
-        Tooltip = 'Adds the boost amount to Killaura\'s attack and swing range while a skilled player is on you.'
+        Tooltip = 'Adds the boost amount to Killaura\'s attack and swing range while a skilled player is on you'
     })
     TweakSilentAura = EntityAnalyser:CreateToggle({
         Name = 'SilentAura',
         Default = true,
         Darker = true,
-        Tooltip = 'Adds the boost amount to SilentAura\'s extra swing distance while a skilled player is on you.'
+        Tooltip = 'Adds the boost amount to SilentAura\'s extra swing distance while a skilled player is on you'
     })
     TweakVelocity = EntityAnalyser:CreateToggle({
         Name = 'Velocity',
         Darker = true,
-        Tooltip = 'Switches Velocity on for the fight and back off afterwards - only if it was off to begin with.'
+        Tooltip = 'Switches Velocity on for the fight and back off afterwards - only if it was off to begin with'
     })
     TweakAntiLagback = EntityAnalyser:CreateToggle({
         Name = 'AntiLagback',
         Darker = true,
-        Tooltip = 'Switches AntiLagback on for the fight and back off afterwards - only if it was off to begin with.'
+        Tooltip = 'Switches AntiLagback on for the fight and back off afterwards - only if it was off to begin with'
     })
     BoostAmount = EntityAnalyser:CreateSlider({
         Name = 'Boost amount',
@@ -17236,7 +19411,7 @@ run(function()
         Decimal = 10,
         Darker = true,
         Suffix = ' studs',
-        Tooltip = 'How much to add to the range sliders. Kept deliberately small - this is meant to be a nudge for a hard fight, and it never pushes a slider past its own maximum.'
+        Tooltip = 'How much to add to the range sliders. Deliberately small, and never past a slider\'s own maximum'
     })
     TriggerRange = EntityAnalyser:CreateSlider({
         Name = 'Trigger range',
@@ -17245,7 +19420,7 @@ run(function()
         Default = 45,
         Darker = true,
         Suffix = ' studs',
-        Tooltip = 'How close a skilled player has to be for the tweaks to come up. They also come up whenever you and a skilled player are trading hits, whatever the distance.'
+        Tooltip = 'How close a skilled player must be for the tweaks to come up. They also come up whenever you are trading hits'
     })
     HoldTime = EntityAnalyser:CreateSlider({
         Name = 'Hold time',
@@ -17255,7 +19430,7 @@ run(function()
         Decimal = 10,
         Darker = true,
         Suffix = ' seconds',
-        Tooltip = 'How long to keep the tweaks up after the skilled player breaks off, so a fight moving in and out of range does not flicker your settings on and off.'
+        Tooltip = 'How long to keep the tweaks up after the skilled player breaks off, so a fight moving in and out of range does not flicker your settings on and off'
     })
     Labels = EntityAnalyser:CreateToggle({
         Name = 'Labels',
@@ -17270,13 +19445,13 @@ run(function()
                 clearTags()
             end
         end,
-        Tooltip = 'Show the rating over each player\'s head. These are billboards in their own folder, not highlights or drawings, so they cannot conflict with ESP, PlayerOutline, KitESP or any charm/aura visual.'
+        Tooltip = 'Show the rating over each player\'s head. They are billboards in their own folder, so they cannot clash with ESP, PlayerOutline, KitESP or any aura visual'
     })
     ShowScore = EntityAnalyser:CreateToggle({
         Name = 'Show score',
         Default = true,
         Darker = true,
-        Tooltip = 'Put the number next to the rating.'
+        Tooltip = 'Put the number next to the rating'
     })
     ShowSkilled = EntityAnalyser:CreateToggle({
         Name = 'Label skilled',
@@ -17295,11 +19470,11 @@ run(function()
     })
     Teammates = EntityAnalyser:CreateToggle({
         Name = 'Label teammates',
-        Tooltip = 'Also rate your own team. They never trigger a tweak either way - there is no fight to get ready for.'
+        Tooltip = 'Also rate your own team. They never trigger a tweak either way - there is no fight to get ready for'
     })
     Notify = EntityAnalyser:CreateToggle({
         Name = 'Notifications',
-        Tooltip = 'Say something the first time a player crosses into skilled.'
+        Tooltip = 'Say something the first time a player crosses into skilled'
     })
 end)
 
@@ -17813,7 +19988,7 @@ run(function()
                 until not BedProtector.Enabled
             end
         end,
-        Tooltip = 'Automatically places strong blocks around the bed.'
+        Tooltip = 'Automatically places strong blocks around the bed'
     })
 
     -- Options (unchanged from original)
@@ -17821,7 +19996,7 @@ run(function()
         Name = 'Mode',
         List = {'Toggle', 'On Key', 'Bed patcher'},
         Default = 'Toggle',
-        Tooltip = 'Toggle builds/maintains the shell. On Key builds once. Bed patcher continuously repairs only the holes in your existing bed defence, checking every layer.',
+        Tooltip = 'Toggle builds and maintains the shell. On Key builds once. Bed patcher only repairs holes in your existing defence',
         Function = function(val)
             if Smart then Smart.Object.Visible = (val == 'Toggle') end
         end,
@@ -18042,7 +20217,7 @@ run(function()
 			end
 		end
 	end,
-	Tooltip = 'Automatically places strong blocks around yourself.'
+	Tooltip = 'Automatically places strong blocks around yourself'
     })
 
     BreakSpeed = BlockIn:CreateSlider({
@@ -18367,7 +20542,7 @@ run(function()
                 end
             end
         end,
-        Tooltip = 'Puts on / takes off armor when toggled for baiting.'
+        Tooltip = 'Puts on / takes off armor when toggled for baiting'
     })
     Targets = ArmorSwitch:CreateTargets({
         Players = true,
@@ -18507,13 +20682,13 @@ run(function()
                 table.clear(sent)
             end
         end,
-        Tooltip = 'Automatically puts resources in your personal chest.'
+        Tooltip = 'Automatically puts resources in your personal chest'
     })
     Range = AutoBank:CreateDropdown({
         Name = 'Range',
         List = {'Nearby', 'Infinite'},
         Default = 'Nearby',
-        Tooltip = 'Nearby banks while you are within 20 studs of a personal chest. Infinite banks from anywhere on the map - it stops checking where you are and just sends the deposit, since the request names your inventory rather than a chest in the world.'
+        Tooltip = 'Nearby banks within 20 studs of a personal chest. Infinite banks from anywhere, since the request names your inventory rather than a chest in the world'
     })
     UIToggle = AutoBank:CreateToggle({
         Name = 'UI',
@@ -18573,6 +20748,32 @@ run(function()
         'iron_pickaxe',
         'diamond_pickaxe'
     }
+
+    -- Bows and crossbows are not a tier ladder like swords or armour, and their item ids differ
+    -- between BedWars builds/queues, so they are resolved by name first and then by asking the
+    -- shop's own item list what it actually sells.
+    local bows = {'wood_bow', 'bow'}
+    local crossbows = {'crossbow', 'wood_crossbow', 'ice_crossbow'}
+
+    local function resolveShopItem(candidates, pattern, exclude)
+        for _, name in candidates do
+            local ok, item = pcall(bedwars.Shop.getShopItem, name, lplr)
+            if ok and item then return item, name end
+        end
+        if not pattern then return nil end
+        local found, foundType
+        pcall(function()
+            for _, entry in bedwars.Shop.ShopItems do
+                local itemType = type(entry) == 'table' and entry.itemType or nil
+                if itemType and itemType:find(pattern) and not (exclude and itemType:find(exclude)) then
+                    if not found or (entry.price or math.huge) < (found.price or math.huge) then
+                        found, foundType = entry, itemType
+                    end
+                end
+            end
+        end)
+        return found, foundType
+    end
 
     local function getShopNPC()
         local shop, items, upgrades, newid = nil, false, false, nil
@@ -18679,6 +20880,23 @@ run(function()
         return bought
     end
 
+    -- Buy the first of `candidates` this shop sells, unless we already hold it. `repeatable` is for
+    -- consumables (arrows), which are topped up even though one is already in the inventory.
+    local function buyWeapon(candidates, currencytable, repeatable)
+        local pattern, exclude
+        if candidates == bows then
+            pattern, exclude = 'bow', 'crossbow'
+        elseif candidates == crossbows then
+            pattern = 'crossbow'
+        end
+        local item, itemType = resolveShopItem(candidates, pattern, exclude)
+        if not item then return false end
+        if not repeatable and itemType and getItem(itemType) then return false end
+        if not canBuy(item, currencytable) then return false end
+        buyItem(item, currencytable)
+        return true
+    end
+
     AutoBuy = vape.Categories.Inventory:CreateModule({
         Name = 'AutoBuy',
         Function = function(callback)
@@ -18783,6 +21001,43 @@ run(function()
             Functions[4] = callback and function(currencytable, shop)
                 if not shop then return end
                 return buyTool(store.tools.stone, pickaxes, currencytable)
+            end or nil
+        end
+    })
+    AutoBuy:CreateToggle({
+        Name = 'Buy Bow',
+        Function = function(callback)
+            npctick = tick()
+            Functions[40] = callback and function(currencytable, shop)
+                if not shop then return end
+                return buyWeapon(bows, currencytable)
+            end or nil
+        end
+    })
+    AutoBuy:CreateToggle({
+        Name = 'Buy Crossbow',
+        Function = function(callback)
+            npctick = tick()
+            Functions[41] = callback and function(currencytable, shop)
+                if not shop then return end
+                return buyWeapon(crossbows, currencytable)
+            end or nil
+        end
+    })
+    AutoBuy:CreateToggle({
+        Name = 'Buy Arrows',
+        Default = true,
+        Darker = true,
+        Tooltip = 'Also keep a stack of arrows in for whichever of the two you bought',
+        Function = function(callback)
+            npctick = tick()
+            Functions[42] = callback and function(currencytable, shop)
+                if not shop then return end
+                -- Only worth arrows once something that fires them is actually in the inventory.
+                if not getBow() then return end
+                local arrows = getItem('arrow')
+                if arrows and (arrows.amount or 0) >= 8 then return end
+                return buyWeapon({'arrow'}, currencytable, true)
             end or nil
         end
     })
@@ -18918,7 +21173,7 @@ run(function()
                 consumeCheck()
             end
         end,
-        Tooltip = 'Automatically heals for you when health or shield is under threshold.'
+        Tooltip = 'Automatically heals for you when health or shield is under threshold'
     })
     Health = AutoConsume:CreateSlider({
         Name = 'Health Percent',
@@ -19635,7 +21890,7 @@ run(function()
                 AutoHotbar:Clean(vapeEvents.InventoryAmountChanged.Event:Connect(sortCallback))
             end
         end,
-        Tooltip = 'Automatically arranges hotbar to your liking.'
+        Tooltip = 'Automatically arranges hotbar to your liking'
     })
     Mode = AutoHotbar:CreateDropdown({
         Name = 'Activation',
@@ -19669,14 +21924,41 @@ run(function()
         return fv and fv.Value or nil
     end
 
+    -- Our own personal chest's inventory folder. This is the decisive test: whatever the world
+    -- object is tagged or named, the thing that actually holds banked loot is
+    -- ReplicatedStorage.Inventories.<name>_personal, so anything pointing at that folder is ours
+    -- and must never be looted.
+    local function ownPersonalFolder()
+        local inventories = replicatedStorage:FindFirstChild('Inventories')
+        return inventories and inventories:FindFirstChild(lplr.Name .. '_personal') or nil
+    end
+
     -- Personal chests carry the 'personal-chest' tag; skip them so banked loot is safe.
+    --
+    -- The tag/name test alone was not enough, and that is the bug: the chest a personal chest is
+    -- LOOTED through is its ChestFolderValue, and a base can expose that same folder through an
+    -- object that carries only the generic 'chest' tag (or a renamed model). When that happened the
+    -- loop looted our own banked inventory straight back out - so with 'Bank loot' on, every
+    -- deposit was immediately withdrawn and nothing ever stayed in the chest. Compare the folder
+    -- itself as well, which cannot be fooled by tags or names.
     local function isOwnPersonal(chest)
-        return collectionService:HasTag(chest, 'personal-chest')
-            or tostring(chest.Name):lower():find('personal') ~= nil
+        if collectionService:HasTag(chest, 'personal-chest') then return true end
+        if tostring(chest.Name):lower():find('personal') then return true end
+        local folder = getFolder(chest)
+        if folder then
+            local own = ownPersonalFolder()
+            if own and folder == own then return true end
+            if tostring(folder.Name) == (lplr.Name .. '_personal') then return true end
+        end
+        return false
     end
 
     local function lootFolder(folder, items)
         if not folder then return end
+        -- Last line of defence: never pull items out of our own personal inventory, whichever
+        -- caller got here.
+        local own = ownPersonalFolder()
+        if (own and folder == own) or tostring(folder.Name) == (lplr.Name .. '_personal') then return end
         inv():Get('SetObservedChest'):SendToServer(folder)
         for _, v2 in folder:GetChildren() do
             if v2:IsA('Accessory') then
@@ -19713,7 +21995,7 @@ run(function()
                     if (tick() - Start) >= Delay.Value and (not GUI.Enabled or bedwars.AppController:isAppOpen('ChestApp')) then
                         -- 1) Enemy team crates.
                         for _, v in crates do
-                            if (localPosition - v.Position).Magnitude <= Range.Value then
+                            if not isOwnPersonal(v) and (localPosition - v.Position).Magnitude <= Range.Value then
                                 lootFolder(getFolder(v), items)
                             end
                         end
@@ -19749,7 +22031,7 @@ run(function()
                 task.wait(0.1)
             until not AutoSteal.Enabled
         end,
-        Tooltip = 'Steals from enemy team crates and nearby chests (never your own personal chest), and can auto-bank the loot.'
+        Tooltip = 'Steals from enemy team crates and nearby chests (never your own personal chest), and can auto-bank the loot'
     })
 
     Range = AutoSteal:CreateSlider({
@@ -19767,9 +22049,9 @@ run(function()
         Suffix = 'seconds',
         Default = 0,
     })
-    Chests = AutoSteal:CreateToggle({Name = 'Nearby chests', Default = true, Tooltip = 'Also loot nearby non-personal chests (former ChestSteal).'})
-    Skywars = AutoSteal:CreateToggle({Name = 'Only Skywars', Tooltip = 'Only loot nearby chests while in Skywars.'})
-    Bank = AutoSteal:CreateToggle({Name = 'Bank loot', Default = true, Tooltip = 'Deposit stolen loot into your personal chest.'})
+    Chests = AutoSteal:CreateToggle({Name = 'Nearby chests', Default = true, Tooltip = 'Also loot nearby non-personal chests (former ChestSteal)'})
+    Skywars = AutoSteal:CreateToggle({Name = 'Only Skywars', Tooltip = 'Only loot nearby chests while in Skywars'})
+    Bank = AutoSteal:CreateToggle({Name = 'Bank loot', Default = true, Tooltip = 'Deposit stolen loot into your personal chest'})
     GUI = AutoSteal:CreateToggle({Name = 'GUI Check'})
 end)
 
@@ -19836,7 +22118,7 @@ run(function()
                 oldshowprogress = nil
             end
         end,
-        Tooltip = 'Use/Consume items quicker.'
+        Tooltip = 'Use/Consume items quicker'
     })
     Value = FastConsume:CreateSlider({
         Name = 'Multiplier',
@@ -19877,35 +22159,108 @@ run(function()
     local AutoHonor
     local Delay
 
+    -- BedWars lets you hand out two honors, so that cap stays - but it is a cap PER MATCH.
+    local MAX_HONORS = 2
     local Honored = {}
-    local function honor()
-        if #Honored > 1 then return end
-        local list, team = table.clone(entitylib.List), lplr:GetAttribute('Team')
-        table.sort(list, function(a, b)
-            return a.Player:GetAttribute('Team') == team and b.Player:GetAttribute('Team') ~= team
+    local honoring = false
+
+    local function teamOf(plr)
+        local ok, team = pcall(function()
+            return plr:GetAttribute('Team')
         end)
-        for _, v in list do
-            if #Honored > 1 then break end
-            if not table.find(Honored, v.Player) then
-                bedwars.HonorController:honorPlayer(v.Player.UserId)
-                table.insert(Honored, v.Player)
-                task.wait(Delay.Value)
+        return ok and team or nil
+    end
+
+    local function honor()
+        -- Re-entrancy guard: a final kill and the match ending can land in the same moment, and two
+        -- overlapping passes used to spend both honors on the same player.
+        if honoring or #Honored >= MAX_HONORS then return end
+        honoring = true
+
+        -- Candidates are collected by hand rather than sorting entitylib.List directly. That list
+        -- also holds NPCs, monsters and drones, which have no .Player - and the old comparator
+        -- indexed .Player on both sides without checking, so a single NPC anywhere in the game threw
+        -- inside table.sort and took the entire honor down. That is the "sometimes it just doesn't
+        -- work": nothing was broken about honoring, the list walk never got to it.
+        local team = teamOf(lplr)
+        local list = {}
+        for _, ent in entitylib.List do
+            local plr = ent.Player
+            if plr and plr ~= lplr and plr.Parent and not table.find(Honored, plr) then
+                table.insert(list, plr)
             end
         end
+
+        -- Teammates first, keyed off a precomputed flag so the comparator is total and cannot
+        -- error on a player whose team attribute disappears mid-sort.
+        local mate = {}
+        for _, plr in list do
+            mate[plr] = team ~= nil and teamOf(plr) == team
+        end
+        table.sort(list, function(a, b)
+            return mate[a] and not mate[b]
+        end)
+
+        -- The server refuses an honor sent in the same frame as the death that unlocked it, so
+        -- settle first and wait out the delay BEFORE each attempt rather than after it.
+        task.wait(0.2)
+        for _, plr in list do
+            if #Honored >= MAX_HONORS then break end
+            if Delay.Value > 0 then
+                task.wait(Delay.Value)
+            end
+            if plr.Parent and bedwars.HonorController then
+                local sent = false
+                for _ = 1, 3 do
+                    sent = pcall(function()
+                        bedwars.HonorController:honorPlayer(plr.UserId)
+                    end)
+                    if sent then break end
+                    task.wait(0.15)
+                end
+                if sent then
+                    table.insert(Honored, plr)
+                end
+            end
+        end
+
+        honoring = false
     end
 
     AutoHonor = vape.Categories.Minigames:CreateModule({
         Name = 'AutoHonor',
         Function = function(callback)
             if callback then
+                table.clear(Honored)
+                honoring = false
                 AutoHonor:Clean(vapeEvents.EntityDeathEvent.Event:Connect(function(deathTable)
                     if deathTable.finalKill and deathTable.entityInstance == lplr.Character and #bedwars.Store:getState().Party.members <= 0 and store.matchState ~= 2 then
-                        honor()
+                        task.spawn(honor)
                     end
                 end))
-                AutoHonor:Clean(vapeEvents.MatchEndEvent.Event:Connect(honor))
+                -- honor() waits internally, so it must not run ON the event thread: a yield inside a
+                -- BindableEvent handler is what stopped the match-end honor from finishing.
+                AutoHonor:Clean(vapeEvents.MatchEndEvent.Event:Connect(function()
+                    task.spawn(honor)
+                end))
+                -- The two-honor cap is per match, so clear the record whenever a new one starts.
+                -- Without this the module honored twice and then sat dead for the rest of the
+                -- session, which looked exactly like it had stopped working.
+                task.spawn(function()
+                    local lastState = store.matchState
+                    while AutoHonor.Enabled do
+                        if store.matchState ~= lastState then
+                            if store.matchState ~= 2 and lastState == 2 then
+                                table.clear(Honored)
+                            end
+                            lastState = store.matchState
+                        end
+                        task.wait(1)
+                    end
+                end)
             end
-        end
+        end,
+        Tooltip = 'Honors two players when you are finally killed or the match ends'
     })
 
     Delay = AutoHonor:CreateSlider({
@@ -19914,7 +22269,8 @@ run(function()
         Max = 2,
         Decimal = 100,
         Suffix = 'seconds',
-        Default = 0.1
+        Default = 0.1,
+        Tooltip = 'Extra wait before each honor. Raise it if the server is still refusing them'
     })
 end)
 
@@ -20341,27 +22697,132 @@ run(function()
         return false
     end
 
+    -- Auto tool: put the right tool in your hand as soon as a target is in break range, rather than
+    -- as a side effect of the first hit. getBreakTool resolves the best tool the inventory holds for
+    -- that break type - the axe for a bed frame, shears for wool - so this is "best compatible tool",
+    -- not just "a tool".
+    local function autoTool(block)
+        if not AutoTool.Enabled or not block then return end
+        local meta = bedwars.ItemMeta[block.Name]
+        local breaktype = block.Name == 'gumdrop_bounce_pad' and 'stone' or (meta and meta.block and meta.block.breakType)
+        if not breaktype then return end
+        local tool = getBreakTool(breaktype) or store.tools.stone
+        if not tool or not tool.tool then return end
+        if store.hand and store.hand.tool == tool.tool then return end
+        -- Same courtesy breakBlock shows: never rip a weapon out of your hand mid-swing or mid-shot.
+        local now = workspace:GetServerTimeNow()
+        local held = store.hand and store.hand.tool
+        if held and store.tools.sword and held == store.tools.sword.tool and (now - bedwars.SwordController.lastAttack) <= 0.4 then return end
+        if held and store.hand.toolType == 'bow' and (now - (store.lastProjectileFire or 0)) <= 0.35 then return end
+        local hotbar = getHotbar(tool.tool)
+        if hotbar then
+            hotbarSwitch(hotbar)
+        else
+            switchItem(tool.tool)
+        end
+    end
+
+    local function blockHealth(block)
+        local health = block:GetAttribute('Health')
+        if health then return health end
+        local meta = bedwars.ItemMeta[block.Name]
+        return meta and meta.block and meta.block.health or 0
+    end
+
+    -- Closest break marks ONE block and stays on it until it is gone. Re-picking every tick is what
+    -- made it hop between blocks and leave a trail of half-mined ones behind.
+    local locked = nil
+
+    local function lockValid(localPosition)
+        if not locked or not locked.Parent then return false end
+        if (locked.Position - localPosition).Magnitude >= Range.Value then return false end
+        if not bedwars.BlockController:isBlockBreakable({blockPosition = locked.Position / 3}, lplr) then return false end
+        if (locked:GetAttribute('BedShieldEndTime') or 0) > workspace:GetServerTimeNow() then return false end
+        return true
+    end
+
+    local function drawPath(target, path, endpos)
+        if not path then return end
+        local currentnode = target
+        for _, part in parts do
+            part.Position = currentnode or Vector3.zero
+            if currentnode then
+                part.BoxHandleAdornment.Color3 = currentnode == endpos and Color3.new(1, 0.2, 0.2) or currentnode == target and Color3.new(0.2, 0.2, 1) or Color3.new(0.2, 1, 0.2)
+            end
+            currentnode = path[currentnode]
+        end
+    end
+
+    local function breakOne(v, localPosition)
+        hit += 1
+        autoTool(v)
+        local target, path, endpos = bedwars.breakBlock(
+            v,
+            Effect.Enabled,
+            Animation.Enabled,
+            CustomHealth.Enabled and customHealthbar or nil,
+            AutoTool.Enabled,
+            Closest.Enabled and closestMethod or breakmethods[Mode.Value],
+            Angle.Value,
+            BreakerType.Value == 'Legit' and isVisible or nil,
+            -- Legit: line of sight, then closest to you, still preferring the efficient way in.
+            -- Blatant: quickest and nothing else.
+            -- Health mode: fewest blocks to break always wins, whatever they cost.
+            {
+                Legit = BreakerType.Value == 'Legit',
+                FewestBlocks = Mode.Value == 'Health'
+            }
+        )
+        return target, path, endpos
+    end
+
     local function attemptBreak(tab, localPosition)
         if not tab then return end
-        for _, v in tab do
+
+        -- Health mode targets the block with the MOST health first. Ties keep the list's own order,
+        -- which is what Legit/Blatant already decided (Legit only offers blocks it can see, Blatant
+        -- takes the quickest), so the mode still has the final say between equals.
+        local order = tab
+        if Mode.Value == 'Health' then
+            order = {}
+            for _, v in tab do
+                table.insert(order, v)
+            end
+            local health = {}
+            for _, v in order do
+                health[v] = blockHealth(v)
+            end
+            table.sort(order, function(a, b)
+                return health[a] > health[b]
+            end)
+        end
+
+        -- Locked onto a block: finish it, do not go looking for another one.
+        if Closest.Enabled and locked then
+            if lockValid(localPosition) and table.find(tab, locked) then
+                local target, path, endpos = breakOne(locked, localPosition)
+                if target then
+                    drawPath(target, path, endpos)
+                    task.wait(InstantBreak.Enabled and (store.damageBlockFail > tick() and 4.5 or 0) or BreakSpeed.Value)
+                    return true
+                end
+            else
+                locked = nil
+            end
+        end
+
+        for _, v in order do
             if (v.Position - localPosition).Magnitude < Range.Value and bedwars.BlockController:isBlockBreakable({blockPosition = v.Position / 3}, lplr) then
                 if not SelfBreak.Enabled and v:GetAttribute('PlacedByUserId') == lplr.UserId then continue end
                 if (v:GetAttribute('BedShieldEndTime') or 0) > workspace:GetServerTimeNow() then continue end
                 if LimitItem.Enabled and not (store.hand.tool and bedwars.ItemMeta[store.hand.tool.Name].breakBlock) then continue end
 
-                hit += 1
-                local target, path, endpos = bedwars.breakBlock(v, Effect.Enabled, Animation.Enabled, CustomHealth.Enabled and customHealthbar or nil, AutoTool.Enabled, Closest.Enabled and closestMethod or breakmethods[Mode.Value], Angle.Value, BreakerType.Value == 'Legit' and isVisible or nil)
+                local target, path, endpos = breakOne(v, localPosition)
                 if not target then continue end
-                if path then
-                    local currentnode = target
-                    for _, part in parts do
-                        part.Position = currentnode or Vector3.zero
-                        if currentnode then
-                            part.BoxHandleAdornment.Color3 = currentnode == endpos and Color3.new(1, 0.2, 0.2) or currentnode == target and Color3.new(0.2, 0.2, 1) or Color3.new(0.2, 1, 0.2)
-                        end
-                        currentnode = path[currentnode]
-                    end
+                if Closest.Enabled then
+                    locked = v
                 end
+                drawPath(target, path, endpos)
 
                 task.wait(InstantBreak.Enabled and (store.damageBlockFail > tick() and 4.5 or 0) or BreakSpeed.Value)
 
@@ -20441,6 +22902,7 @@ run(function()
                     end
                 until not Breaker.Enabled
             else
+                locked = nil
                 for _, v in parts do
                     v:ClearAllChildren()
                     v:Destroy()
@@ -20460,7 +22922,11 @@ run(function()
     Mode = Breaker:CreateDropdown({
         Name = 'Break mode',
         List = methods,
-        Default = methods[1]
+        Default = methods[1],
+        Tooltip = 'Health - most-health block first, always by the way in that needs the fewest blocks broken. Equal health is decided by Breaker Type\nDistance - nearest block first',
+        Function = function()
+            locked = nil
+        end
     })
     Range = Breaker:CreateSlider({
         Name = 'Break range',
@@ -20541,18 +23007,22 @@ run(function()
     Animation = Breaker:CreateToggle({Name = 'Animation'})
     SelfBreak = Breaker:CreateToggle({Name = 'Self Break'})
     InstantBreak = Breaker:CreateToggle({Name = 'Instant Break'})
-    AutoTool = Breaker:CreateToggle({Name = 'Auto Tool'})
+    AutoTool = Breaker:CreateToggle({
+        Name = 'Auto Tool',
+        Tooltip = 'Switches to the best tool for the block as soon as it is in break range - the axe for a bed, shears for wool'
+    })
     BreakerType = Breaker:CreateDropdown({
         Name = 'Breaker Type',
         List = {'Blatant', 'Legit'},
         Default = 'Blatant',
-        Tooltip = 'Blatant breaks any block in range regardless of visibility\nLegit only breaks blocks that are actually visible from your camera, never blindly through walls'
+        Tooltip = 'Blatant - always the quickest way in, visible or not\nLegit - only what you can see, preferring the way in closest to you while still favouring the efficient one'
     })
     Closest = Breaker:CreateToggle({
         Name = 'Closest break',
-        Tooltip = 'Uses your mouse position to get the closest block to you',
+        Tooltip = 'Marks one block as soon as it is in range and stays on it until it is broken, instead of switching between blocks and leaving them all half mined',
         Function = function(callback)
             Mode.Object.Visible = not callback
+            locked = nil
         end
     })
     LimitItem = Breaker:CreateToggle({
@@ -20811,7 +23281,7 @@ run(function()
                 bedwars.ViewmodelController:showCrosshair()
             end
         end,
-        Tooltip = 'Custom first person crosshair depending on the chosen image.'
+        Tooltip = 'Custom first person crosshair depending on the chosen image'
     })
     Image = Crosshair:CreateTextBox({
         Name = 'Image',
@@ -21685,7 +24155,7 @@ run(function()
                 old = nil
             end
         end,
-        Tooltip = 'Change ingame sounds to custom ones.'
+        Tooltip = 'Change ingame sounds to custom ones'
     })
     List = SoundChanger:CreateTextList({
         Name = 'Sounds',
@@ -21779,7 +24249,7 @@ run(function()
                 oldkillfeed = nil
             end
         end,
-        Tooltip = 'Locally edits killfeed messages (names/weapon/text) without removing them.'
+        Tooltip = 'Locally edits killfeed messages (names/weapon/text) without removing them'
     })
     KillerName = KillfeedSpoofer:CreateTextBox({
         Name = 'Killer',
@@ -23533,7 +26003,7 @@ run(function()
 	local customIcon = {Value = ''}
 	CustomCursor = vape.Categories.Utility:CreateModule({
 		Name = 'CustomCursor',
-		Tooltip = 'changes your cursor\'s image.',
+		Tooltip = 'changes your cursor\'s image',
 		Function = function(callback)
 			if callback then
 				task.spawn(function()

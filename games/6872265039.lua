@@ -159,7 +159,7 @@ run(function()
 				bedwars.SprintController:stopSprinting()
 			end
 		end,
-		Tooltip = 'Sets your sprinting to true.'
+		Tooltip = 'Sets your sprinting to true'
 	})
 end)
 	

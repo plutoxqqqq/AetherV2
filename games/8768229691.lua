@@ -514,7 +514,7 @@ run(function()
                 skywars.SprintingController:disableSprinting()
             end
         end,
-        Tooltip = 'Sets your sprinting to true.'
+        Tooltip = 'Sets your sprinting to true'
     })
 end)
 
@@ -640,7 +640,7 @@ run(function()
                 end
             end
         end,
-        Tooltip = 'Help\'s you with your Parkinson\'s\nPrevents you from falling into the void.'
+        Tooltip = 'Help\'s you with your Parkinson\'s\nPrevents you from falling into the void'
     })
     Mode = AntiFall:CreateDropdown({
         Name = 'Move Mode',
@@ -851,7 +851,7 @@ run(function()
                 end
             end
         end,
-        Tooltip = 'Attack players around you\nwithout aiming at them.'
+        Tooltip = 'Attack players around you\nwithout aiming at them'
     })
     Targets = Killaura:CreateTargets({Players = true})
     AttackRange = Killaura:CreateSlider({
@@ -1068,7 +1068,7 @@ run(function()
                 until not NoFall.Enabled
             end
         end,
-        Tooltip = 'Prevents taking fall damage.'
+        Tooltip = 'Prevents taking fall damage'
     })
 end)
 
@@ -1106,7 +1106,7 @@ run(function()
                 oldcheck = nil
             end
         end,
-        Tooltip = 'Prevents slowing down when using items.'
+        Tooltip = 'Prevents slowing down when using items'
     })
 end)
 
@@ -1381,7 +1381,7 @@ run(function()
                 until not Scaffold.Enabled
             end
         end,
-        Tooltip = 'Helps you make bridges/scaffold walk.'
+        Tooltip = 'Helps you make bridges/scaffold walk'
     })
     Expand = Scaffold:CreateSlider({
         Name = 'Expand',
@@ -1443,7 +1443,7 @@ run(function()
                 until not ChestSteal.Enabled
             end
         end,
-        Tooltip = 'Grabs items from near chests.'
+        Tooltip = 'Grabs items from near chests'
     })
     Range = ChestSteal:CreateSlider({
         Name = 'Range',
@@ -1589,7 +1589,7 @@ run(function()
                 consumeCheck()
             end
         end,
-        Tooltip = 'Automatically uses shield potions.'
+        Tooltip = 'Automatically uses shield potions'
     })
 end)
 

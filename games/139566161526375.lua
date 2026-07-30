@@ -280,7 +280,7 @@ run(function()
     			old = nil
     		end
     	end,
-    	Tooltip = 'Prevents slowing down when using items.',
+    	Tooltip = 'Prevents slowing down when using items',
     })
 end)
 
@@ -438,7 +438,7 @@ run(function()
     			end
     		end
     	end,
-    	Tooltip = 'Attack players around you\nwithout aiming at them.',
+    	Tooltip = 'Attack players around you\nwithout aiming at them',
     })
     Targets = Killaura:CreateTargets({ Players = true })
     CPS = Killaura:CreateTwoSlider({
@@ -649,7 +649,7 @@ run(function()
     			old = nil
     		end
     	end,
-    	Tooltip = 'Prevents taking fall damage.',
+    	Tooltip = 'Prevents taking fall damage',
     })
 end)
 
@@ -672,7 +672,7 @@ run(function()
     			table.clear(old)
     		end
     	end,
-    	Tooltip = 'Prevents slowing down when using items.',
+    	Tooltip = 'Prevents slowing down when using items',
     })
 end)
 
@@ -760,7 +760,7 @@ run(function()
     			end))
     		end
     	end,
-    	Tooltip = 'Automatically queues after the match ends.',
+    	Tooltip = 'Automatically queues after the match ends',
     })
 end)
 
@@ -959,7 +959,7 @@ run(function()
     			until not Scaffold.Enabled
     		end
     	end,
-    	Tooltip = 'Helps you make bridges/scaffold walk.',
+    	Tooltip = 'Helps you make bridges/scaffold walk',
     })
     Expand = Scaffold:CreateSlider({
     	Name = 'Expand',

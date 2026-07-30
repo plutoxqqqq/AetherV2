@@ -683,6 +683,13 @@ end
 if not isfolder('aetherv2/assets/'..gui) then
 	makefolder('aetherv2/assets/'..gui)
 end
+-- Songs live here for MP3Player. Created from main as well as init, so loading the script directly
+-- (without init) still leaves somewhere to put music.
+for _, folder in {'aetherv2/songs', 'aetherv2/songs/spotify'} do
+	if isfolder and not isfolder(folder) then
+		pcall(makefolder, folder)
+	end
+end
 if not isfile('aetherv2/profiles/commit.txt') then
 	writefile('aetherv2/profiles/commit.txt', 'main')
 end

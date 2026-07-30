@@ -302,7 +302,7 @@ run(function()
     			until not Sprint.Enabled
     		end
     	end,
-    	Tooltip = 'Sets your sprinting to true.'
+    	Tooltip = 'Sets your sprinting to true'
     })
 end)
 
@@ -453,7 +453,7 @@ run(function()
     			end
     		end
     	end,
-    	Tooltip = 'Makes you go zoom.'
+    	Tooltip = 'Makes you go zoom'
     })
     Keys = Fly:CreateDropdown({
     	Name = 'Keys',
@@ -708,7 +708,7 @@ run(function()
     			end
     		end
     	end,
-    	Tooltip = 'Attack players around you\nwithout aiming at them.'
+    	Tooltip = 'Attack players around you\nwithout aiming at them'
     })
     Targets = Killaura:CreateTargets({Players = true})
     AttackRange = Killaura:CreateSlider({
@@ -921,7 +921,7 @@ run(function()
                 end
             end
         end,
-        Tooltip = 'Prevent you from slowing down when using items.'
+        Tooltip = 'Prevent you from slowing down when using items'
     })
 end)
 
@@ -945,7 +945,7 @@ run(function()
     			end))
     		end
     	end,
-    	Tooltip = 'Increases your movement with various methods.'
+    	Tooltip = 'Increases your movement with various methods'
     })
     Value = Speed:CreateSlider({
     	Name = 'Speed',
@@ -1041,7 +1041,7 @@ run(function()
                 end
             end
         end,
-        Tooltip = 'Break blocks faster when mining.'
+        Tooltip = 'Break blocks faster when mining'
     })
     Value = FastBreak:CreateSlider({
         Name = 'Multiplier',
@@ -1070,7 +1070,7 @@ run(function()
                 end
             end
         end,
-        Tooltip = 'Place blocks faster while holding right click.'
+        Tooltip = 'Place blocks faster while holding right click'
     })
     Value = FastPlace:CreateSlider({
         Name = 'Delay',

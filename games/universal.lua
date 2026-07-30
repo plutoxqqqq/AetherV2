@@ -787,7 +787,7 @@ run(function()
 	})
 	Hide = SessionInfo:CreateTextList({
 		Name = 'Blacklist',
-		Tooltip = 'Name of entry to hide.',
+		Tooltip = 'Name of entry to hide',
 		Icon = getcustomasset('aetherv2/assets/new/blockedicon.png'),
 		Tab = getcustomasset('aetherv2/assets/new/blockedtab.png'),
 		TabSize = UDim2.fromOffset(21, 16),
@@ -1832,7 +1832,7 @@ run(function()
 			end
 		end
 	end,
-	Tooltip = "Help's you with your Parkinson's\nPrevents you from falling into the void.",
+	Tooltip = "Help's you with your Parkinson's\nPrevents you from falling into the void",
     })
     Method = AntiFall:CreateDropdown({
 	Name = 'Method',
@@ -1932,7 +1932,7 @@ run(function()
                 hook = nil
             end
         end,
-        Tooltip = 'Prevent the server from replicating your current position to other players.'
+        Tooltip = 'Prevent the server from replicating your current position to other players'
     })
 
     Desync:CreateButton({
@@ -2112,7 +2112,7 @@ run(function()
 	ExtraText = function()
 		return Mode.Value
 	end,
-	Tooltip = 'Makes you go zoom.',
+	Tooltip = 'Makes you go zoom',
     })
     Mode = Fly:CreateDropdown({
 	Name = 'Speed Mode',
@@ -2130,7 +2130,7 @@ run(function()
 			Fly:Toggle()
 		end
 	end,
-	Tooltip = 'Velocity - Uses smooth physics based movement\nImpulse - Same as velocity while using forces instead\nCFrame - Directly adjusts the position of the root\nTP - Large teleports within intervals\nPulse - Controllable bursts of speed\nWalkSpeed - The classic mode of speed, usually detected on most games.',
+	Tooltip = 'Velocity - Uses smooth physics based movement\nImpulse - Same as velocity while using forces instead\nCFrame - Directly adjusts the position of the root\nTP - Large teleports within intervals\nPulse - Controllable bursts of speed\nWalkSpeed - The classic mode of speed, usually detected on most games',
     })
     FloatMode = Fly:CreateDropdown({
 	Name = 'Float Mode',
@@ -2443,7 +2443,7 @@ run(function()
 
     InfiniteJump = vape.Categories.Blatant:CreateModule({
 	Name = 'InfiniteJump',
-	Tooltip = 'Allows you to jump infinitely.',
+	Tooltip = 'Allows you to jump infinitely',
 	Function = function(callback: boolean)
 		if callback then
 			jumps = 0
@@ -2570,7 +2570,7 @@ run(function()
 			end
 		end
 	end,
-	Tooltip = 'Turns you invisible.'
+	Tooltip = 'Turns you invisible'
     })
 end)
 
@@ -2695,7 +2695,7 @@ run(function()
 			end
 		end
 	end,
-	Tooltip = 'Attack players around you\nwithout aiming at them.',
+	Tooltip = 'Attack players around you\nwithout aiming at them',
     })
     Targets = Killaura:CreateTargets({ Players = true })
     CPS = Killaura:CreateTwoSlider({
@@ -3035,7 +3035,7 @@ run(function()
 			end
 		end
 	end,
-	Tooltip = 'Teleports to a selected position.',
+	Tooltip = 'Teleports to a selected position',
     })
     Mode = MouseTP:CreateDropdown({
 	Name = 'Mode',
@@ -3297,7 +3297,7 @@ run(function()
 	ExtraText = function()
 		return Mode.Value
 	end,
-	Tooltip = 'Increases your movement with various methods.',
+	Tooltip = 'Increases your movement with various methods',
     })
     Mode = Speed:CreateDropdown({
 	Name = 'Mode',
@@ -3312,7 +3312,7 @@ run(function()
 			Speed:Toggle()
 		end
 	end,
-	Tooltip = 'Velocity - Uses smooth physics based movement\nImpulse - Same as velocity while using forces instead\nCFrame - Directly adjusts the position of the root\nTP - Large teleports within intervals\nPulse - Controllable bursts of speed\nWalkSpeed - The classic mode of speed, usually detected on most games.',
+	Tooltip = 'Velocity - Uses smooth physics based movement\nImpulse - Same as velocity while using forces instead\nCFrame - Directly adjusts the position of the root\nTP - Large teleports within intervals\nPulse - Controllable bursts of speed\nWalkSpeed - The classic mode of speed, usually detected on most games',
     })
     Options = {
 	MoveMethod = Speed:CreateDropdown({
@@ -3788,7 +3788,7 @@ run(function()
 			end))
 		end
 	end,
-	Tooltip = 'Change the game speed.',
+	Tooltip = 'Change the game speed',
     })
     Value = Timer:CreateSlider({
 	Name = 'Value',
@@ -3909,7 +3909,7 @@ run(function()
 			end
 		end
 	end,
-	Tooltip = 'Draws arrows on screen when entities\nare out of your field of view.',
+	Tooltip = 'Draws arrows on screen when entities\nare out of your field of view',
     })
     Targets = Arrows:CreateTargets({
 	Players = true,
@@ -4668,7 +4668,7 @@ run(function()
 			end
 		end
 	end,
-	Tooltip = 'Extra Sensory Perception\nRenders an ESP on players.',
+	Tooltip = 'Extra Sensory Perception\nRenders an ESP on players',
     })
     Targets = ESP:CreateTargets({
 	Players = true,
@@ -4843,7 +4843,7 @@ run(function()
                 table.clear(oldsettings)
             end
         end,
-        Tooltip = 'Increase the lighting of the world around you.'
+        Tooltip = 'Increase the lighting of the world around you'
     })
     Mode = Fullbright:CreateDropdown({
         Name = 'Mode',
@@ -5084,7 +5084,7 @@ run(function()
 			end
 		end
 	end,
-	Tooltip = 'Sit in the best gaming chair known to mankind.',
+	Tooltip = 'Sit in the best gaming chair known to mankind',
     })
     Color = GamingChair:CreateColorSlider({
 	Name = 'Color',
@@ -5127,7 +5127,7 @@ run(function()
 			until not Health.Enabled
 		end
 	end,
-	Tooltip = 'Displays your health in the center of your screen.',
+	Tooltip = 'Displays your health in the center of your screen',
     })
 end)
 
@@ -5483,7 +5483,7 @@ run(function()
 			end
 		end
 	end,
-	Tooltip = 'Renders nametags on entities through walls.',
+	Tooltip = 'Renders nametags on entities through walls',
     })
     Targets = NameTags:CreateTargets({
 	Players = true,
@@ -5926,7 +5926,7 @@ run(function()
 			end
 		end
 	end,
-	Tooltip = 'Renders tracers on players.',
+	Tooltip = 'Renders tracers on players',
     })
     Targets = Tracers:CreateTargets({
 	Players = true,
@@ -6346,7 +6346,7 @@ run(function()
 			oldphys, oldsend = nil, nil
 		end
 	end,
-	Tooltip = 'Chokes packets until disabled.',
+	Tooltip = 'Chokes packets until disabled',
     })
     Type = Blink:CreateDropdown({
 	Name = 'Type',
@@ -6770,7 +6770,7 @@ run(function()
 			hook = nil
 		end
 	end,
-	Tooltip = 'Spoof humanoid states on the server.',
+	Tooltip = 'Spoof humanoid states on the server',
     })
     local states = {}
     for _, v in Enum.HumanoidStateType:GetEnumItems() do
@@ -6911,7 +6911,7 @@ run(function()
 			end
 		end
 	end,
-	Tooltip = 'Lets you fly and clip through walls freely\nwithout moving your player server-sided.',
+	Tooltip = 'Lets you fly and clip through walls freely\nwithout moving your player server-sided',
     })
     Value = Freecam:CreateSlider({
 	Name = 'Speed',
@@ -7135,7 +7135,7 @@ run(function()
 			table.clear(modified)
 		end
 	end,
-	Tooltip = 'Renders whitelisted parts through walls.',
+	Tooltip = 'Renders whitelisted parts through walls',
     })
     List = Xray:CreateTextList({
 	Name = 'Part',
@@ -7230,7 +7230,7 @@ run(function()
 			entitylib.refresh()
 		end
 	end,
-	Tooltip = 'Automatic murder mystery teaming based on equipped roblox tools.',
+	Tooltip = 'Automatic murder mystery teaming based on equipped roblox tools',
     })
 end)
 

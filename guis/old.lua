@@ -3673,7 +3673,7 @@ mainapi.Blur = topbar:CreateToggle({
 mainapi.Categories.Main.Options['GUI bind indicator'] = topbar:CreateToggle({
 	Name = 'GUI bind indicator',
 	Default = true,
-	Tooltip = "Displays a message indicating your GUI upon injecting.\nI.E. 'Press RSHIFT to open GUI'"
+	Tooltip = "Displays a message indicating your GUI upon injecting\nI.E. 'Press RSHIFT to open GUI'"
 })
 topbar:CreateToggle({
 	Name = 'Show tooltips',
@@ -3699,7 +3699,7 @@ mainapi.Notifications = topbar:CreateToggle({
 })
 mainapi.ToggleNotifications = topbar:CreateToggle({
 	Name = 'Toggle alert',
-	Tooltip = 'Notifies you if a module is enabled/disabled.',
+	Tooltip = 'Notifies you if a module is enabled/disabled',
 	Default = true,
 	Darker = true
 })
@@ -4045,7 +4045,7 @@ local textguiscale = textgui:CreateSlider({
 })
 local textguishadow = textgui:CreateToggle({
 	Name = 'Shadow',
-	Tooltip = 'Renders shadowed text.',
+	Tooltip = 'Renders shadowed text',
 	Function = function()
 		mainapi:UpdateTextGUI()
 	end
@@ -4066,7 +4066,7 @@ local textguibackground = textgui:CreateToggle({
 local textguimoduleslist
 local textguimodules = textgui:CreateToggle({
 	Name = 'Hide modules',
-	Tooltip = 'Allows you to blacklist certain modules from being shown.',
+	Tooltip = 'Allows you to blacklist certain modules from being shown',
 	Function = function(enabled)
 		textguimoduleslist.Object.Visible = enabled
 		mainapi:UpdateTextGUI()
@@ -4074,7 +4074,7 @@ local textguimodules = textgui:CreateToggle({
 })
 --[[textguimoduleslist = textgui:CreateTextList({
 	Name = 'Blacklist',
-	Tooltip = 'Name of module to hide.',
+	Tooltip = 'Name of module to hide',
 	Icon = getcustomasset('new/blockedicon.png'),
 	Tab = getcustomasset('new/blockedtab.png'),
 	TabSize = UDim2.fromOffset(21, 16),

@@ -494,7 +494,8 @@ local function wipeFolder(path)
 	if not isfolder(path) then return end
 	for _, file in listfiles(path) do
 		local normalized = tostring(file):gsub('\\', '/')
-		if normalized:find('/init%.lua$') or normalized:find('/profiles') or normalized:find('/configs') then continue end
+		-- songs is the user's own music, so an update must never touch it - same as profiles/configs.
+		if normalized:find('/init%.lua$') or normalized:find('/profiles') or normalized:find('/configs') or normalized:find('/songs') then continue end
 		if isfile(file) then
 			delfile(file)
 		elseif isfolder(file) then
@@ -504,11 +505,25 @@ local function wipeFolder(path)
 end
 
 
-for _, folder in {'aetherv2', 'aetherv2/games', 'aetherv2/profiles', 'aetherv2/assets', 'aetherv2/assets/new', 'aetherv2/libraries', 'aetherv2/guis', 'aetherv2/configs'} do
+for _, folder in {'aetherv2', 'aetherv2/games', 'aetherv2/profiles', 'aetherv2/assets', 'aetherv2/assets/new', 'aetherv2/libraries', 'aetherv2/guis', 'aetherv2/configs', 'aetherv2/songs', 'aetherv2/songs/spotify'} do
 	if not isfolder(folder) then
 		_G.AetherV2SetLoadingStatus('Creating '..folder, 0.18)
 		makefolder(folder)
 	end
+end
+
+-- Drop-a-song note, written once. MP3Player reads whatever is in aetherv2/songs, so the folder is
+-- no use to anyone who does not know it is there.
+if not isfile('aetherv2/songs/read me.txt') then
+	pcall(writefile, 'aetherv2/songs/read me.txt', table.concat({
+		'AetherV2 - MP3Player',
+		'',
+		'Put .mp3 (or .wav / .ogg) files in this folder and they show up in the MP3Player module',
+		'under Utility. Songs are picked up while you play - no reinject needed.',
+		'',
+		'aetherv2/songs/spotify holds clips fetched by Spotify mode.',
+		'This folder is never wiped by a script update.'
+	}, '\n'))
 end
 
 if not shared.VapeDeveloper then
