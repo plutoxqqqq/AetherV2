@@ -8109,9 +8109,9 @@ run(function()
         Tooltip = 'How often hits are sent in HitReg mode'
     })
     SyncAnim = Killaura:CreateToggle({
-        Name = 'Sync to HitReg/Swing time',
+        Name = 'Sync animation',
         Default = true,
-        Tooltip = 'Animation only, nothing to do with Sync to HitReg above: paces the arm off whatever is driving the hits so it moves at the rate you are really attacking. Off runs it on the Swing time slider instead',
+        Tooltip = 'Paces the arm off whatever is driving the hits, so it moves at the rate you are really attacking. Off runs it on the Swing time slider instead',
         Function = function()
             if refreshHitRate then refreshHitRate() end
         end
