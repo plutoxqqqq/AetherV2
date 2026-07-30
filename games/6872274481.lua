@@ -7590,6 +7590,7 @@ run(function()
     local FastHits
     local Legit
     local HitRate
+    local SyncHitReg
     local SyncAnim
     local refreshHitRate
     local FireRate
@@ -7610,7 +7611,12 @@ run(function()
             return 'HitReg', 1 / math.max(UpdateRate.Value, 1), math.clamp(Hitreg and Hitreg.Value or 1, 1, 36)
         end
         local speed = (meta and meta.sword and meta.sword.attackSpeed) or SwingTime.Value
-        return 'Swing Time', math.max(speed, 0.05), 1
+        -- Sync to HitReg: keep the one-hit-per-swing timing, but send each of those hits the number
+        -- of times the HitReg slider asks for. The pacing is still Swing time's - only the packet
+        -- count is borrowed - so this buys packet-loss resistance without the free-running traffic
+        -- of HitReg mode.
+        local repeats = (SyncHitReg and SyncHitReg.Enabled) and math.clamp(Hitreg and Hitreg.Value or 1, 1, 36) or 1
+        return 'Swing Time', math.max(speed, 0.05), repeats
     end
 
     -- How long to hold off the next swing animation. With Sync on it follows whichever of the
@@ -8079,6 +8085,13 @@ run(function()
         Suffix = 'seconds',
         Tooltip = 'One hit per target per this long, for weapons that do not report their own attack speed. Also paces the swing animation'
     })
+    SyncHitReg = Killaura:CreateToggle({
+        Name = 'Sync to HitReg',
+        Tooltip = 'Swing time keeps the timing, HitReg lends the packet count: still one hit per target per swing, but each one is sent HitReg times so a dropped packet does not cost the hit. Nothing like the traffic of HitReg mode, which free-runs at the update rate',
+        Function = function()
+            if refreshHitRate then refreshHitRate() end
+        end
+    })
     Hitreg = Killaura:CreateSlider({
         Name = 'HitReg',
         Min = 1,
@@ -8098,18 +8111,21 @@ run(function()
     SyncAnim = Killaura:CreateToggle({
         Name = 'Sync to HitReg/Swing time',
         Default = true,
-        Tooltip = 'Paces the swing animation off whatever is driving the hits, so the arm moves at the rate you are really attacking. Off runs it on the Swing time slider instead',
+        Tooltip = 'Animation only, nothing to do with Sync to HitReg above: paces the arm off whatever is driving the hits so it moves at the rate you are really attacking. Off runs it on the Swing time slider instead',
         Function = function()
             if refreshHitRate then refreshHitRate() end
         end
     })
-    -- Show only the slider that is actually in charge, so the two can never look like they are
-    -- both doing something. Swing time stays up in HitReg mode when the animation is not
-    -- synced, because pacing the animation is the one job it still has there.
+    -- Show only what is actually in charge, so no two options can look like they are both doing
+    -- something. Swing time stays up in HitReg mode when the animation is not synced, because
+    -- pacing the animation is the one job it still has there; the HitReg slider comes up in Swing
+    -- Time mode only when Sync to HitReg is on, since that is the one case where it means anything.
     refreshHitRate = function()
         pcall(function()
             local hitreg = HitRate and HitRate.Value == 'HitReg'
-            if Hitreg and Hitreg.Object then Hitreg.Object.Visible = hitreg end
+            local synced = SyncHitReg and SyncHitReg.Enabled
+            if SyncHitReg and SyncHitReg.Object then SyncHitReg.Object.Visible = not hitreg end
+            if Hitreg and Hitreg.Object then Hitreg.Object.Visible = hitreg or synced end
             if UpdateRate and UpdateRate.Object then UpdateRate.Object.Visible = hitreg end
             if SwingTime and SwingTime.Object then
                 SwingTime.Object.Visible = (not hitreg) or not (SyncAnim and SyncAnim.Enabled)
