@@ -15699,9 +15699,30 @@ run(function()
         if bed:IsA('BasePart') then return bed end
         return bed.PrimaryPart or bed:FindFirstChildWhichIsA('BasePart')
     end
-    local function isEnemyBed(bed)
+    -- Our own team id. BedWars stores it as a player attribute, but that can be momentarily
+    -- absent right after a spawn or teleport, so fall back to the match store (and then the
+    -- character) before giving up. Every bed and player team decision below keys off this, so a
+    -- wrong answer here is exactly what makes the cycle bridge to our own bed or hunt a teammate.
+    local function myTeam()
         local team = lplr:GetAttribute('Team')
-        if not team then return true end
+        if team == nil then
+            pcall(function()
+                local mt = bedwars.Store:getState().Game.myTeam
+                team = mt and mt.id
+            end)
+        end
+        if team == nil and lplr.Character then
+            team = lplr.Character:GetAttribute('Team')
+        end
+        return team
+    end
+    -- A bed is an enemy bed only when we actually know our team and this bed is not the one our
+    -- team cannot break (a bed's 'Team<id>NoBreak' attribute marks its owning team). When the team
+    -- is unknown we return false rather than true: skipping a bed for a moment is harmless, but
+    -- treating our own bed as fair game and bridging over to smash it is the reported bug.
+    local function isEnemyBed(bed)
+        local team = myTeam()
+        if team == nil then return false end
         return not bed:GetAttribute('Team' .. team .. 'NoBreak')
     end
     local function bedShielded(bed)
@@ -15719,8 +15740,8 @@ run(function()
     -- Our own bed still standing? If it is gone, a respawn is an elimination, so the cycle skips
     -- the respawn step entirely and carries on from wherever it is.
     local function ownBedAlive()
-        local team = lplr:GetAttribute('Team')
-        if not team then return false end
+        local team = myTeam()
+        if team == nil then return false end
         for _, bed in collectionService:GetTagged('bed') do
             if bed.Parent and bedPart(bed) and bed:GetAttribute('Team' .. team .. 'NoBreak') then
                 return true
@@ -15750,6 +15771,7 @@ run(function()
 
     local function nearestEnemy(skip)
         if not entitylib.isAlive then return nil end
+        local team = myTeam()
         local all = entitylib.AllPosition({
             Range = math.huge,
             Players = true,
@@ -15758,7 +15780,14 @@ run(function()
             Sort = sortmethods.Distance
         })
         for _, ent in all do
-            if not (skip and skip[ent.Character]) then
+            -- AllPosition already drops anything entitylib marks un-targetable, but that flag is
+            -- computed once when an entity spawns and can be stale for a player whose team was
+            -- assigned a frame later. Re-check the team here so a teammate is never the target.
+            if not (skip and skip[ent.Character])
+                and ent.Player
+                and ent.Targetable
+                and not (team ~= nil and ent.Player:GetAttribute('Team') == team)
+            then
                 return ent
             end
         end
@@ -16568,7 +16597,10 @@ run(function()
                 stopMoving()
                 startDriving()
 
-                repeat task.wait() until (store.matchState ~= 0 and store.map and entitylib.isAlive) or not running()
+                -- Wait for our team to be known too: the bed phase treats an unknown team as
+                -- "no enemy beds" (so it never smashes our own), and starting before the team
+                -- resolves would make it skip bed-breaking entirely.
+                repeat task.wait() until (store.matchState ~= 0 and store.map and entitylib.isAlive and myTeam() ~= nil) or not running()
                 if not running() then return end
                 task.wait(StartDelay.Value)
                 if not running() then return end
