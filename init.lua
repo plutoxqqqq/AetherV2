@@ -572,6 +572,40 @@ local function payloadProblem(path, body)
 	return nil
 end
 
+local function repoUrl(path, ref)
+	return 'https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..(ref or readfile('aetherv2/profiles/commit.txt'))..'/'..select(1, path:gsub('aetherv2/', ''))
+end
+
+-- Fetch with retries, returning the body or nil plus a reason. Most failures here are transient - a
+-- dropped connection, a moment of rate limiting - and one of them used to end the whole load.
+local function fetchFile(path, ref, attempts)
+	attempts = attempts or 3
+	local url = repoUrl(path, ref)
+	local problem
+	for attempt = 1, attempts do
+		local suc, res = pcall(function()
+			return game:HttpGet(url, true)
+		end)
+		if suc then
+			problem = payloadProblem(path, res)
+			if not problem then return res end
+		else
+			problem = tostring(res)
+		end
+		if attempt < attempts then
+			task.wait(attempt)
+		end
+	end
+	return nil, problem
+end
+
+local function storeFile(path, body)
+	if path:sub(-4) == '.lua' then
+		body = '--This watermark is used to delete the file if its cached, remove it to make the file persist after vape updates.\n'..body
+	end
+	writefile(path, body)
+end
+
 local function downloadFile(path, func)
 	-- Heal a broken cache instead of trusting it forever.
 	if isfile(path) and path:sub(-4) == '.lua' and not loadstring(readfile(path), path) then
@@ -582,48 +616,43 @@ local function downloadFile(path, func)
 		if not license.Closet then
 			_G.AetherV2SetLoadingStatus('Downloading '..path, 0.35)
 		end
-		local url = 'https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..readfile('aetherv2/profiles/commit.txt')..'/'..select(1, path:gsub('aetherv2/', ''))
-		local body, problem
-		-- Most failures here are transient - a dropped connection, a moment of rate limiting - and
-		-- one of them used to end the whole load.
-		for attempt = 1, 3 do
-			local suc, res = pcall(function()
-				return game:HttpGet(url, true)
-			end)
-			if suc then
-				problem = payloadProblem(path, res)
-				if not problem then
-					body = res
-					break
-				end
-			else
-				problem = tostring(res)
-			end
-			if attempt < 3 then
-				if not license.Closet then
-					_G.AetherV2SetLoadingStatus('Retrying '..path..' ('..attempt..'/3)', 0.35)
-				end
-				task.wait(attempt)
-			end
-		end
+		local body, problem = fetchFile(path)
 		if not body then
 			failLoad('Could not download '..path..' - '..tostring(problem))
 		end
-		if path:sub(-4) == '.lua' then
-			body = '--This watermark is used to delete the file if its cached, remove it to make the file persist after vape updates.\n'..body
-		end
-		writefile(path, body)
-		_G.AetherV2SetLoadingStatus('Downloaded '..path, 0.55)
+		storeFile(path, body)
 	end
 	return (func or readfile)(path)
+end
+
+-- Files under profiles/ that come FROM the repository rather than from the user.
+--
+-- This is the whole reason features.json went stale: profiles/ holds the user's configs, binds, GUI
+-- choice and colours, so a wipe skips the entire folder to protect them - and took these two along
+-- for the ride. Downloaded once on a fresh install, never updated again, for everyone.
+local repoProfileFiles = {
+	['aetherv2/profiles/features.json'] = true,
+	['aetherv2/profiles/packages.json'] = true
+}
+
+local function isUserFile(normalized)
+	if normalized:find('/init%.lua$') then return true end
+	if normalized:find('/configs') or normalized:find('/songs') then return true end
+	if normalized:find('/profiles') then
+		-- Everything in profiles/ is the user's, except the couple of files we ship.
+		for repoFile in repoProfileFiles do
+			if normalized:sub(-#repoFile) == repoFile then return false end
+		end
+		return true
+	end
+	return false
 end
 
 local function wipeFolder(path)
 	if not isfolder(path) then return end
 	for _, file in listfiles(path) do
 		local normalized = tostring(file):gsub('\\', '/')
-		-- songs is the user's own music, so an update must never touch it - same as profiles/configs.
-		if normalized:find('/init%.lua$') or normalized:find('/profiles') or normalized:find('/configs') or normalized:find('/songs') then continue end
+		if isUserFile(normalized) then continue end
 		if isfile(file) then
 			delfile(file)
 		elseif isfolder(file) then
@@ -635,7 +664,7 @@ end
 
 for _, folder in {'aetherv2', 'aetherv2/games', 'aetherv2/profiles', 'aetherv2/assets', 'aetherv2/assets/new', 'aetherv2/libraries', 'aetherv2/guis', 'aetherv2/configs', 'aetherv2/songs', 'aetherv2/songs/spotify'} do
 	if not isfolder(folder) then
-		_G.AetherV2SetLoadingStatus('Creating '..folder, 0.18)
+		_G.AetherV2SetLoadingStatus('Creating '..folder, 0.08)
 		makefolder(folder)
 	end
 end
@@ -654,49 +683,128 @@ if not isfile('aetherv2/songs/read me.txt') then
 	}, '\n'))
 end
 
-if not shared.VapeDeveloper then
-	local oldCommit = isfile('aetherv2/profiles/commit.txt') and readfile('aetherv2/profiles/commit.txt') or ''
-	local commit = license.Commit or nil
-	if not commit then
-		-- Resolve the newest commit, and be strict about what counts as an answer.
-		--
-		-- This used to read the response without checking whether the request even succeeded: on a
-		-- failed call `subbed` is the error message, the match fails, and the commit silently became
-		-- 'main'. That is not harmless - the block below then sees a different commit, wipes the
-		-- whole install and re-downloads every file. On a flaky connection that happened on every
-		-- single injection, which is most of what "it takes forever" and "it got stuck downloading"
-		-- actually was. A lookup that fails now changes nothing at all.
-		for attempt = 1, 3 do
-			local suc, page = pcall(function()
-				return game:HttpGet('https://github.com/plutoxqqqq/AetherV2')
-			end)
-			if suc and type(page) == 'string' then
-				local at = page:find('currentOid')
-				local found = at and page:sub(at + 13, at + 52) or nil
-				if found and #found == 40 and found:match('^%x+$') then
-					commit = found
-					break
-				end
-			end
-			if attempt < 3 then
-				task.wait(attempt)
+-- Which commit are we on?
+--
+-- This used to download the repository's GitHub LANDING PAGE - 279 KB of HTML - on every single
+-- execution, just to read one 40-character hash out of it. The sources below are the same answer for
+-- a fraction of the bytes, tried cheapest first: the commits API is ~5 KB, the commit feed ~38 KB,
+-- and the old HTML page is kept only as a last resort (the API is rate limited per IP, so it can
+-- genuinely be unavailable).
+--
+-- It also used to read the response without checking whether the request even succeeded: on a failed
+-- call the error message was parsed as if it were the page, the match failed, and the commit
+-- silently became 'main' - which then looked like an update and wiped the entire install. On a flaky
+-- connection that happened on every injection. A lookup that fails now changes nothing at all.
+local function resolveCommit()
+	local sources = {
+		{Url = 'https://api.github.com/repos/plutoxqqqq/AetherV2/commits/main', Pattern = '"sha"%s*:%s*"(%x+)"'},
+		{Url = 'https://github.com/plutoxqqqq/AetherV2/commits/main.atom', Pattern = 'Commit/(%x+)'},
+		{Url = 'https://github.com/plutoxqqqq/AetherV2', Pattern = 'currentOid[^%x]*(%x+)'}
+	}
+	for _, source in sources do
+		local suc, body = pcall(function()
+			return game:HttpGet(source.Url, true)
+		end)
+		if suc and type(body) == 'string' then
+			local found = body:match(source.Pattern)
+			if found and #found >= 40 then
+				return found:sub(1, 40)
 			end
 		end
 	end
+	return nil
+end
+
+-- Parse the manifest into path -> hash. Deliberately tiny and forgiving: anything unexpected returns
+-- nil, and the caller falls back to wiping everything, which is exactly what used to happen anyway.
+local function parseManifest(body)
+	if type(body) ~= 'string' or #body < 16 then return nil end
+	local files = {}
+	local count = 0
+	for path, hash in body:gmatch('"([^"]+)"%s*:%s*"(%x+)"') do
+		if path ~= 'version' then
+			files[path] = hash
+			count += 1
+		end
+	end
+	if count < 8 then return nil end
+	return files
+end
+
+local prefetchPaths = nil
+
+if not shared.VapeDeveloper then
+	local oldCommit = isfile('aetherv2/profiles/commit.txt') and readfile('aetherv2/profiles/commit.txt') or ''
+	_G.AetherV2SetLoadingStatus('Checking for updates', 0.12)
+	local commit = license.Commit or resolveCommit()
 
 	if commit and commit ~= oldCommit then
-		-- Only a real, resolved commit is allowed to wipe the cache.
 		if oldCommit ~= '' then
 			shared.updated = oldCommit
 		end
-		wipeFolder('aetherv2')
-		wipeFolder('aetherv2/games')
-		wipeFolder('aetherv2/guis')
-		wipeFolder('aetherv2/libraries')
+
+		-- Update only what actually changed.
+		--
+		-- The old behaviour was to delete the whole install and pull all ~2.3 MB back down for any
+		-- commit at all, however small. manifest.json lists a content hash per file, so comparing the
+		-- new one against the copy saved at the last install says exactly which files moved - usually
+		-- a handful - and only those are dropped. Everything else stays on disk.
+		--
+		-- Two cases fall back to the old full wipe, both on purpose:
+		--   * no manifest, or one we cannot read - nothing to compare against;
+		--   * a manifest identical to the one we already have, on a commit that IS different. The
+		--     manifest is regenerated by CI in a follow-up commit, so this means we have arrived
+		--     between the two and it has not caught up with this change yet. Trusting it there would
+		--     silently keep stale files, so we do the safe, slower thing instead.
+		local newManifest = fetchFile('aetherv2/manifest.json', commit, 2)
+		local newFiles = parseManifest(newManifest)
+		local oldRaw = isfile('aetherv2/profiles/manifest.json') and readfile('aetherv2/profiles/manifest.json') or nil
+		local oldFiles = parseManifest(oldRaw)
+		local incremental = newFiles ~= nil and oldFiles ~= nil and newManifest ~= oldRaw
+
+		if incremental then
+			local changed = 0
+			for path, hash in newFiles do
+				local target = 'aetherv2/'..path
+				if oldFiles[path] ~= hash and isfile(target) then
+					delfile(target)
+					changed += 1
+				end
+			end
+			-- Files that no longer exist upstream.
+			for path in oldFiles do
+				if not newFiles[path] then
+					local target = 'aetherv2/'..path
+					if isfile(target) and not isUserFile('/'..target) then
+						delfile(target)
+					end
+				end
+			end
+			_G.AetherV2SetLoadingStatus('Updating '..changed..' file'..(changed == 1 and '' or 's'), 0.16)
+		else
+			wipeFolder('aetherv2')
+			wipeFolder('aetherv2/games')
+			wipeFolder('aetherv2/guis')
+			wipeFolder('aetherv2/libraries')
+		end
+
 		writefile('aetherv2/profiles/commit.txt', commit)
+		if newManifest then
+			writefile('aetherv2/profiles/manifest.json', newManifest)
+		elseif isfile('aetherv2/profiles/manifest.json') then
+			-- Could not read the new manifest, so the stored one now describes an install that no
+			-- longer exists. Drop it: a stale baseline would let a later update skip files that had
+			-- genuinely changed. Without one, the next update simply wipes and refetches.
+			delfile('aetherv2/profiles/manifest.json')
+		end
+		prefetchPaths = newFiles
 	elseif oldCommit == '' then
 		-- First run with no answer from GitHub: fall back to main rather than having no ref at all.
 		writefile('aetherv2/profiles/commit.txt', commit or 'main')
+	else
+		-- Up to date. The manifest we already have is the file list for this commit, so it can drive
+		-- the prefetch below without another request.
+		prefetchPaths = parseManifest(isfile('aetherv2/profiles/manifest.json') and readfile('aetherv2/profiles/manifest.json') or nil)
 	end
 end
 
@@ -704,7 +812,93 @@ if not isfile('aetherv2/profiles/disableloading.txt') then
 	writefile('aetherv2/profiles/disableloading.txt', 'false')
 end
 
-_G.AetherV2SetLoadingStatus('Checking version...', 0.62)
+-- Pull every file this session will need, at the same time.
+--
+-- The GUI downloads its images through getcustomasset, one at a time, synchronously, while it is
+-- building itself - around sixty round trips in a row on a fresh install before the menu appears,
+-- each one a full request for a file of a few kilobytes. The libraries, universal.lua and the game
+-- module are the same story in series. Latency, not bandwidth, is what makes a cold start slow.
+--
+-- So the whole set is fetched up front through a pool of workers. Everything after this hits a warm
+-- cache and returns instantly, and the progress bar can finally show real progress. Nothing here is
+-- required to succeed: whatever is missed simply falls through to the old on-demand download.
+-- Big libraries only some games ever touch. They are left out of the prefetch on purpose: they are
+-- pulled in by the module that needs them, which now runs after the menu is already up, so keeping
+-- them off the critical path is worth more than having them early.
+local deferredFiles = {
+	['libraries/cheatenginelib.lua'] = true,
+	['libraries/vm.lua'] = true
+}
+
+local function neededFiles(files)
+	if not files then return {} end
+	local gui = selectedGui()
+	local place = tostring(game.PlaceId)
+	local wanted = {}
+	for path in files do
+		local include = false
+		-- assets/ is tested FIRST and by prefix, not by extension: the artwork folders hold the odd
+		-- .json (a font descriptor) as well as images, and letting the extension rule see those first
+		-- pulled another GUI's files down.
+		if path:sub(1, 7) == 'assets/' then
+			-- Only the selected GUI's artwork, plus the loading logo which is always shown.
+			include = path:sub(1, 8 + #gui) == 'assets/'..gui..'/' or path == 'assets/new/loading.png'
+		elseif path:sub(-4) == '.lua' or path:sub(-5) == '.json' or path:sub(-4) == '.txt' then
+			-- Only this game's module, never the other twenty-odd.
+			if path:sub(1, 6) == 'games/' then
+				include = path == 'games/universal.lua' or path == 'games/'..place..'.lua'
+			elseif path:sub(1, 5) == 'guis/' then
+				include = path == 'guis/'..gui..'.lua'
+			elseif path:sub(1, 6) == 'tools/' or path:sub(1, 1) == '.' then
+				include = false
+			elseif path == 'init.lua' then
+				-- Loaded straight from GitHub by the user's loadstring; a disk copy is never read.
+				include = false
+			else
+				include = path ~= 'manifest.json'
+			end
+		end
+		if include and not deferredFiles[path] then
+			local target = 'aetherv2/'..path
+			if not isfile(target) then
+				table.insert(wanted, target)
+			end
+		end
+	end
+	return wanted
+end
+
+local function prefetch(files)
+	local queue = neededFiles(files)
+	local total = #queue
+	if total == 0 then return end
+
+	local index, done, active = 0, 0, 0
+	local workers = math.min(8, total)
+	active = workers
+	for _ = 1, workers do
+		task.spawn(function()
+			while true do
+				index += 1
+				local path = queue[index]
+				if not path then break end
+				local body = fetchFile(path, nil, 2)
+				if body then
+					pcall(storeFile, path, body)
+				end
+				done += 1
+				_G.AetherV2SetLoadingStatus('Downloading files ('..done..'/'..total..')', 0.22 + (0.4 * (done / total)))
+			end
+			active -= 1
+		end)
+	end
+
+	-- Bounded: a worker that somehow never returns must not hold the load open.
+	local deadline = os.clock() + 90
+	repeat task.wait(0.05) until active <= 0 or os.clock() > deadline
+end
+
+_G.AetherV2SetLoadingStatus('Checking version', 0.18)
 downloadFile('aetherv2/version.txt')
 
 local versionData = readfile("aetherv2/version.txt")
@@ -727,6 +921,9 @@ if maintenance and maintenance:match("^%s*true%s*$") then
 
 	return
 end
+
+-- Only worth doing once we know the script is actually going to run.
+prefetch(prefetchPaths)
 
 _G.AetherV2SetLoadingStatus('Preparing loading artwork...', 0.70)
 pcall(downloadFile, 'aetherv2/assets/new/loading.png')
