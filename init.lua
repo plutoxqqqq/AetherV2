@@ -292,6 +292,213 @@ local function buildNewerLoadingScreen(screen)
 	end
 end
 
+-- Loading screen for the 'new' GUI: fullscreen, transparent and minimal.
+--
+-- Nothing but the logo in the middle of the screen, a thin bar under it, one line of text, and a
+-- light frame of detail around the edges - a vignette that keeps the middle of the screen clear, a
+-- hairline top and bottom, and a bracket in each corner. The bar is tweened rather than snapped and
+-- carries a slow shimmer, so a long step still visibly moves instead of looking frozen.
+--
+-- Kept in sync with the copy in the other loader file.
+local function buildNewLoadingScreen(screen)
+	local tweenService = game:GetService('TweenService')
+	local accent = Color3.fromRGB(120, 235, 215)
+	local faint = Color3.fromRGB(214, 224, 244)
+
+	-- Barely there: dark at the very top and bottom, clear through the middle, so the logo and bar
+	-- read on a bright map without the screen becoming a wall.
+	local scrim = Instance.new('Frame')
+	scrim.Name = 'Scrim'
+	scrim.Size = UDim2.fromScale(1, 1)
+	scrim.BackgroundColor3 = Color3.fromRGB(5, 7, 11)
+	scrim.BackgroundTransparency = 1
+	scrim.BorderSizePixel = 0
+	scrim.Parent = screen
+	local vignette = Instance.new('UIGradient')
+	vignette.Rotation = 90
+	vignette.Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0.55),
+		NumberSequenceKeypoint.new(0.5, 0.93),
+		NumberSequenceKeypoint.new(1, 0.55)
+	})
+	vignette.Parent = scrim
+	tweenService:Create(scrim, TweenInfo.new(0.4), {BackgroundTransparency = 0}):Play()
+
+	-- Edge detail: a hairline along the top and bottom that fades out at both ends.
+	for _, edge in {{0, 0, 20}, {1, 1, -20}} do
+		local line = Instance.new('Frame')
+		line.Name = 'EdgeLine'
+		line.AnchorPoint = Vector2.new(0.5, edge[2])
+		line.Position = UDim2.new(0.5, 0, edge[1], edge[3])
+		line.Size = UDim2.new(1, -160, 0, 1)
+		line.BackgroundColor3 = faint
+		line.BackgroundTransparency = 0.88
+		line.BorderSizePixel = 0
+		line.Parent = scrim
+		local fade = Instance.new('UIGradient')
+		fade.Transparency = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 1),
+			NumberSequenceKeypoint.new(0.5, 0),
+			NumberSequenceKeypoint.new(1, 1)
+		})
+		fade.Parent = line
+	end
+
+	-- Edge detail: a bracket in each corner.
+	for _, spec in {
+		{Vector2.new(0, 0), 30, 30},
+		{Vector2.new(1, 0), -30, 30},
+		{Vector2.new(0, 1), 30, -30},
+		{Vector2.new(1, 1), -30, -30}
+	} do
+		local anchor, ox, oy = spec[1], spec[2], spec[3]
+		local arm = Instance.new('Frame')
+		arm.Name = 'Bracket'
+		arm.AnchorPoint = anchor
+		arm.Position = UDim2.new(anchor.X, ox, anchor.Y, oy)
+		arm.Size = UDim2.fromOffset(30, 1)
+		arm.BackgroundColor3 = accent
+		arm.BackgroundTransparency = 0.8
+		arm.BorderSizePixel = 0
+		arm.Parent = scrim
+		local upright = arm:Clone()
+		upright.Size = UDim2.fromOffset(1, 30)
+		upright.Parent = scrim
+	end
+
+	local logo = Instance.new('ImageLabel')
+	logo.Name = 'Logo'
+	logo.AnchorPoint = Vector2.new(0.5, 1)
+	logo.Position = UDim2.new(0.5, 0, 0.5, -16)
+	logo.Size = UDim2.fromOffset(250, 96)
+	logo.BackgroundTransparency = 1
+	logo.ScaleType = Enum.ScaleType.Fit
+	logo.Image = isfile('aetherv2/assets/new/loading.png') and getcustomasset('aetherv2/assets/new/loading.png') or ''
+	logo.ImageTransparency = 1
+	logo.Parent = scrim
+	tweenService:Create(logo, TweenInfo.new(0.5), {ImageTransparency = 0}):Play()
+
+	local track = Instance.new('Frame')
+	track.Name = 'ProgressTrack'
+	track.AnchorPoint = Vector2.new(0.5, 0)
+	track.Position = UDim2.new(0.5, 0, 0.5, 6)
+	track.Size = UDim2.fromOffset(300, 3)
+	track.BackgroundColor3 = faint
+	track.BackgroundTransparency = 0.85
+	track.BorderSizePixel = 0
+	track.Parent = scrim
+	local trackCorner = Instance.new('UICorner')
+	trackCorner.CornerRadius = UDim.new(1, 0)
+	trackCorner.Parent = track
+
+	local fill = Instance.new('Frame')
+	fill.Name = 'ProgressFill'
+	fill.Size = UDim2.fromScale(0.04, 1)
+	fill.BackgroundColor3 = accent
+	fill.BorderSizePixel = 0
+	fill.Parent = track
+	local fillCorner = Instance.new('UICorner')
+	fillCorner.CornerRadius = UDim.new(1, 0)
+	fillCorner.Parent = fill
+	-- Slow shimmer along the fill. This is the "it is still alive" signal during a long step.
+	local shimmer = Instance.new('UIGradient')
+	shimmer.Color = ColorSequence.new({
+		ColorSequenceKeypoint.new(0, accent),
+		ColorSequenceKeypoint.new(0.5, Color3.fromRGB(240, 255, 252)),
+		ColorSequenceKeypoint.new(1, accent)
+	})
+	shimmer.Offset = Vector2.new(-1, 0)
+	shimmer.Parent = fill
+	tweenService:Create(shimmer, TweenInfo.new(1.6, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, false, 0.3), {Offset = Vector2.new(1, 0)}):Play()
+
+	local caption = Instance.new('TextLabel')
+	caption.Name = 'Caption'
+	caption.AnchorPoint = Vector2.new(0.5, 0)
+	caption.Position = UDim2.new(0.5, 0, 0.5, 22)
+	caption.Size = UDim2.fromOffset(520, 16)
+	caption.BackgroundTransparency = 1
+	caption.Font = Enum.Font.Gotham
+	caption.TextSize = 12
+	caption.TextColor3 = faint
+	caption.TextTransparency = 0.25
+	caption.TextTruncate = Enum.TextTruncate.AtEnd
+	caption.Text = 'Starting'
+	caption.Parent = scrim
+
+	local function readVersion()
+		if not isfile('aetherv2/version.txt') then return nil end
+		return (readfile('aetherv2/version.txt'):match('version%s*=%s*([^\r\n]+)'))
+	end
+
+	local version = Instance.new('TextLabel')
+	version.Name = 'Version'
+	version.AnchorPoint = Vector2.new(0.5, 1)
+	version.Position = UDim2.new(0.5, 0, 1, -30)
+	version.Size = UDim2.fromOffset(300, 14)
+	version.BackgroundTransparency = 1
+	version.Font = Enum.Font.Gotham
+	version.TextSize = 11
+	version.TextColor3 = faint
+	version.TextTransparency = 0.62
+	version.Text = 'AETHERV2  ' .. (readVersion() or '')
+	version.Parent = scrim
+
+	local lastProgress = 0.04
+	local fillTween
+
+	local function closeScreen()
+		if not screen or not screen.Parent then return end
+		local fade = TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+		tweenService:Create(scrim, fade, {BackgroundTransparency = 1}):Play()
+		for _, object in scrim:GetDescendants() do
+			if object:IsA('Frame') then
+				tweenService:Create(object, fade, {BackgroundTransparency = 1}):Play()
+			elseif object:IsA('TextLabel') then
+				tweenService:Create(object, fade, {TextTransparency = 1}):Play()
+			elseif object:IsA('ImageLabel') then
+				tweenService:Create(object, fade, {ImageTransparency = 1}):Play()
+			end
+		end
+		local closing = screen
+		task.delay(0.35, function()
+			if closing then
+				closing:Destroy()
+			end
+		end)
+	end
+
+	_G.AetherV2LoadingScreen = screen
+	_G.AetherV2CloseLoadingScreen = closeScreen
+	_G.AetherV2SetLoadingStatus = function(text, progress)
+		if not screen.Parent then return end
+		-- Only ever forward, so a step that reports a smaller number cannot make the bar jump back.
+		lastProgress = math.clamp(progress or lastProgress, lastProgress, 1)
+		if caption.Parent then
+			caption.Text = (text or 'Loading') .. '   ' .. math.floor(lastProgress * 100) .. '%'
+		end
+		if fill.Parent then
+			if fillTween then
+				fillTween:Cancel()
+			end
+			fillTween = tweenService:Create(fill, TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+				Size = UDim2.fromScale(lastProgress, 1)
+			})
+			fillTween:Play()
+		end
+		if version.Parent and version.Text == 'AETHERV2  ' then
+			local found = readVersion()
+			if found then
+				version.Text = 'AETHERV2  ' .. found
+			end
+		end
+		-- The logo is downloaded during the load, so pick it up as soon as it lands.
+		if logo.Parent and logo.Image == '' and isfile('aetherv2/assets/new/loading.png') then
+			logo.Image = getcustomasset('aetherv2/assets/new/loading.png')
+		end
+	end
+	return screen
+end
+
 local function createLoadingScreen()
 	if isLoadingScreenDisabled() then return nil end
 	-- Per-GUI loading screens: only 'new' and 'newer' show one at all.
@@ -310,159 +517,13 @@ local function createLoadingScreen()
 	screen.Parent = parent
 	screen:ClearAllChildren()
 
-	-- 'newer' gets its own redesigned screen; 'new' keeps the classic one below.
+	-- 'newer' keeps its own screen; 'new' uses the minimal fullscreen one.
 	if gui == 'newer' then
 		buildNewerLoadingScreen(screen)
 		return screen
 	end
 
-	local background = Instance.new('Frame')
-	background.Size = UDim2.fromScale(1, 1)
-	background.BackgroundColor3 = Color3.fromRGB(8, 9, 14)
-	background.BackgroundTransparency = 0.18
-	background.BorderSizePixel = 0
-	background.Parent = screen
-
-	local gradient = Instance.new('UIGradient')
-	gradient.Rotation = 25
-	gradient.Color = ColorSequence.new({
-		ColorSequenceKeypoint.new(0, Color3.fromRGB(8, 10, 18)),
-		ColorSequenceKeypoint.new(0.5, Color3.fromRGB(16, 22, 34)),
-		ColorSequenceKeypoint.new(1, Color3.fromRGB(8, 9, 14))
-	})
-	gradient.Parent = background
-
-	local card = Instance.new('Frame')
-	card.AnchorPoint = Vector2.new(0.5, 0.5)
-	card.Position = UDim2.fromScale(0.5, 0.5)
-	card.Size = UDim2.fromOffset(540, 330)
-	card.BackgroundColor3 = Color3.fromRGB(12, 15, 24)
-	card.BackgroundTransparency = 0.08
-	card.BorderSizePixel = 0
-	card.Parent = background
-	local cardCorner = Instance.new('UICorner')
-	cardCorner.CornerRadius = UDim.new(0, 18)
-	cardCorner.Parent = card
-	local stroke = Instance.new('UIStroke')
-	stroke.Color = Color3.fromRGB(90, 230, 210)
-	stroke.Transparency = 0.74
-	stroke.Thickness = 1
-	stroke.Parent = card
-
-	local glow = Instance.new('Frame')
-	glow.AnchorPoint = Vector2.new(0.5, 0.5)
-	glow.Position = UDim2.fromScale(0.5, 0.5)
-	glow.Size = UDim2.fromOffset(430, 3)
-	glow.BackgroundColor3 = Color3.fromRGB(90, 230, 210)
-	glow.BackgroundTransparency = 0.68
-	glow.BorderSizePixel = 0
-	glow.Parent = card
-	local glowCorner = Instance.new('UICorner')
-	glowCorner.CornerRadius = UDim.new(1, 0)
-	glowCorner.Parent = glow
-
-	local logo = Instance.new('ImageLabel')
-	logo.Name = 'Logo'
-	logo.AnchorPoint = Vector2.new(0.5, 0)
-	logo.Position = UDim2.new(0.5, 0, 0, 28)
-	logo.Size = UDim2.fromOffset(250, 108)
-	logo.BackgroundTransparency = 1
-	logo.ImageTransparency = 0.02
-	logo.ScaleType = Enum.ScaleType.Fit
-	logo.Image = isfile('aetherv2/assets/new/loading.png') and (getcustomasset and getcustomasset('aetherv2/assets/new/loading.png') or 'aetherv2/assets/new/loading.png') or ''
-	logo.Parent = card
-
-	local version = Instance.new('TextLabel')
-	version.Name = 'Version'
-	version.AnchorPoint = Vector2.new(0.5, 0)
-	version.Position = UDim2.new(0.5, 0, 0, 142)
-	version.Size = UDim2.fromOffset(260, 22)
-	version.BackgroundTransparency = 1
-	version.Font = Enum.Font.GothamMedium
-	version.TextSize = 14
-	version.TextColor3 = Color3.fromRGB(190, 196, 220)
-	
-	local versionText = "Unknown"
-
-	if isfile("aetherv2/version.txt") then
-    	local data = readfile("aetherv2/version.txt")
-    	versionText = data:match("version%s*=%s*([^\r\n]+)") or versionText
-	end
-
-	version.Text = "Version " .. versionText
-	
-	version.Parent = card
-
-	local status = Instance.new('TextLabel')
-	status.Name = 'Status'
-	status.Position = UDim2.fromOffset(54, 202)
-	status.Size = UDim2.fromOffset(432, 22)
-	status.BackgroundTransparency = 1
-	status.Font = Enum.Font.Gotham
-	status.TextSize = 14
-	status.TextXAlignment = Enum.TextXAlignment.Left
-	status.TextColor3 = Color3.fromRGB(235, 238, 255)
-	status.Text = 'Starting AetherV2...'
-	status.Parent = card
-
-	local track = Instance.new('Frame')
-	track.Name = 'ProgressTrack'
-	track.Position = UDim2.fromOffset(54, 238)
-	track.Size = UDim2.fromOffset(432, 10)
-	track.BackgroundColor3 = Color3.fromRGB(28, 34, 50)
-	track.BackgroundTransparency = 0.18
-	track.BorderSizePixel = 0
-	track.Parent = card
-	local trackCorner = Instance.new('UICorner')
-	trackCorner.CornerRadius = UDim.new(1, 0)
-	trackCorner.Parent = track
-
-	local fill = Instance.new('Frame')
-	fill.Name = 'ProgressFill'
-	fill.Size = UDim2.fromScale(0.06, 1)
-	fill.BackgroundColor3 = Color3.fromRGB(90, 230, 210)
-	fill.BorderSizePixel = 0
-	fill.Parent = track
-	local fillCorner = Instance.new('UICorner')
-	fillCorner.CornerRadius = UDim.new(1, 0)
-	fillCorner.Parent = fill
-
-	local detail = Instance.new('TextLabel')
-	detail.Name = 'Detail'
-	detail.Position = UDim2.fromOffset(54, 260)
-	detail.Size = UDim2.fromOffset(432, 20)
-	detail.BackgroundTransparency = 1
-	detail.Font = Enum.Font.Gotham
-	detail.TextSize = 12
-	detail.TextXAlignment = Enum.TextXAlignment.Left
-	detail.TextColor3 = Color3.fromRGB(130, 142, 170)
-	detail.Text = 'Preparing files and assets.'
-	detail.Parent = card
-
-	local lastProgress = 0.06
-	local function closeScreen()
-		if screen and screen.Parent then
-			screen:Destroy()
-		end
-	end
-	_G.AetherV2LoadingScreen = screen
-	_G.AetherV2CloseLoadingScreen = closeScreen
-	_G.AetherV2SetLoadingStatus = function(text, progress)
-		if not screen.Parent then return end
-		lastProgress = math.clamp(progress or lastProgress, lastProgress, 1)
-		if status.Parent then status.Text = text end
-		if detail.Parent then detail.Text = math.floor(lastProgress * 100)..'% complete' end
-		if fill.Parent then fill.Size = UDim2.fromScale(lastProgress, 1) end
-		if version.Parent and isfile("aetherv2/version.txt") then
-			local data = readfile("aetherv2/version.txt")
-			local versionText = data:match("version%s*=%s*([^\r\n]+)") or "Unknown"
-			version.Text = "Version "..versionText
-		end
-		if logo.Parent and logo.Image == '' and isfile('aetherv2/assets/new/loading.png') then
-			logo.Image = getcustomasset and getcustomasset('aetherv2/assets/new/loading.png') or 'aetherv2/assets/new/loading.png'
-		end
-	end
-	return screen
+	return buildNewLoadingScreen(screen)
 end
 
 local loadingScreen = createLoadingScreen()
@@ -470,21 +531,88 @@ if not _G.AetherV2SetLoadingStatus then
 	_G.AetherV2SetLoadingStatus = function() end
 end
 
+-- A load that dies here used to leave the loading screen sitting on the user's face forever, with
+-- the reason only in the console. Take the screen down and say what happened.
+local function failLoad(message)
+	if _G.AetherV2CloseLoadingScreen then
+		pcall(_G.AetherV2CloseLoadingScreen)
+	elseif _G.AetherV2LoadingScreen then
+		pcall(function() _G.AetherV2LoadingScreen:Destroy() end)
+	end
+	_G.AetherV2LoadingScreen = nil
+	_G.AetherV2SetLoadingStatus = nil
+	_G.AetherV2CloseLoadingScreen = nil
+	warn('[AetherV2] Load failed: '..tostring(message))
+	pcall(function()
+		game:GetService('StarterGui'):SetCore('SendNotification', {
+			Title = 'AetherV2 failed to load',
+			Text = tostring(message):sub(1, 180),
+			Duration = 12
+		})
+	end)
+	error(message, 0)
+end
+
+-- Did we get the file, or did GitHub hand us something else? A rate-limit page or a truncated body
+-- written to disk is a permanent break: isfile() says the file is there from then on, so every
+-- later injection loads the same broken copy and the script "just stops working".
+local function payloadProblem(path, body)
+	if type(body) ~= 'string' or #body < 8 then return 'empty response' end
+	local head = body:sub(1, 300)
+	if head:find('^%s*404') or head:find('^%s*429') or head:find('^%s*5%d%d:') then
+		return (head:match('^[^\r\n]*'))
+	end
+	local lowered = head:lower()
+	if lowered:find('<!doctype html') or lowered:find('<html') then
+		return 'received an HTML error page instead of the file'
+	end
+	if path:sub(-4) == '.lua' and not loadstring(body, path) then
+		return 'the downloaded file did not compile'
+	end
+	return nil
+end
+
 local function downloadFile(path, func)
+	-- Heal a broken cache instead of trusting it forever.
+	if isfile(path) and path:sub(-4) == '.lua' and not loadstring(readfile(path), path) then
+		warn('[AetherV2] Cached '..path..' is unusable, downloading it again')
+		delfile(path)
+	end
 	if not isfile(path) then
 		if not license.Closet then
 			_G.AetherV2SetLoadingStatus('Downloading '..path, 0.35)
 		end
-		local suc, res = pcall(function()
-			return game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..readfile('aetherv2/profiles/commit.txt')..'/'..select(1, path:gsub('aetherv2/', '')), true)
-		end)
-		if not suc or res == '404: Not Found' then
-			error(res)
+		local url = 'https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..readfile('aetherv2/profiles/commit.txt')..'/'..select(1, path:gsub('aetherv2/', ''))
+		local body, problem
+		-- Most failures here are transient - a dropped connection, a moment of rate limiting - and
+		-- one of them used to end the whole load.
+		for attempt = 1, 3 do
+			local suc, res = pcall(function()
+				return game:HttpGet(url, true)
+			end)
+			if suc then
+				problem = payloadProblem(path, res)
+				if not problem then
+					body = res
+					break
+				end
+			else
+				problem = tostring(res)
+			end
+			if attempt < 3 then
+				if not license.Closet then
+					_G.AetherV2SetLoadingStatus('Retrying '..path..' ('..attempt..'/3)', 0.35)
+				end
+				task.wait(attempt)
+			end
 		end
-		if path:find('.lua') then
-			res = '--This watermark is used to delete the file if its cached, remove it to make the file persist after vape updates.\n'..res
+		if not body then
+			failLoad('Could not download '..path..' - '..tostring(problem))
 		end
-		writefile(path, res)
+		if path:sub(-4) == '.lua' then
+			body = '--This watermark is used to delete the file if its cached, remove it to make the file persist after vape updates.\n'..body
+		end
+		writefile(path, body)
 		_G.AetherV2SetLoadingStatus('Downloaded '..path, 0.55)
 	end
 	return (func or readfile)(path)
@@ -527,26 +655,49 @@ if not isfile('aetherv2/songs/read me.txt') then
 end
 
 if not shared.VapeDeveloper then
+	local oldCommit = isfile('aetherv2/profiles/commit.txt') and readfile('aetherv2/profiles/commit.txt') or ''
 	local commit = license.Commit or nil
 	if not commit then
-		local _, subbed = pcall(function()
-			return game:HttpGet('https://github.com/plutoxqqqq/AetherV2')
-		end)
-		commit = subbed:find('currentOid')
-		commit = commit and subbed:sub(commit + 13, commit + 52) or nil
-		commit = commit and #commit == 40 and commit or 'main'
+		-- Resolve the newest commit, and be strict about what counts as an answer.
+		--
+		-- This used to read the response without checking whether the request even succeeded: on a
+		-- failed call `subbed` is the error message, the match fails, and the commit silently became
+		-- 'main'. That is not harmless - the block below then sees a different commit, wipes the
+		-- whole install and re-downloads every file. On a flaky connection that happened on every
+		-- single injection, which is most of what "it takes forever" and "it got stuck downloading"
+		-- actually was. A lookup that fails now changes nothing at all.
+		for attempt = 1, 3 do
+			local suc, page = pcall(function()
+				return game:HttpGet('https://github.com/plutoxqqqq/AetherV2')
+			end)
+			if suc and type(page) == 'string' then
+				local at = page:find('currentOid')
+				local found = at and page:sub(at + 13, at + 52) or nil
+				if found and #found == 40 and found:match('^%x+$') then
+					commit = found
+					break
+				end
+			end
+			if attempt < 3 then
+				task.wait(attempt)
+			end
+		end
 	end
-	local oldCommit = isfile('aetherv2/profiles/commit.txt') and readfile('aetherv2/profiles/commit.txt') or ''
-	if oldCommit ~= commit then
-		if commit ~= 'main' and oldCommit ~= '' then
+
+	if commit and commit ~= oldCommit then
+		-- Only a real, resolved commit is allowed to wipe the cache.
+		if oldCommit ~= '' then
 			shared.updated = oldCommit
 		end
 		wipeFolder('aetherv2')
 		wipeFolder('aetherv2/games')
 		wipeFolder('aetherv2/guis')
 		wipeFolder('aetherv2/libraries')
+		writefile('aetherv2/profiles/commit.txt', commit)
+	elseif oldCommit == '' then
+		-- First run with no answer from GitHub: fall back to main rather than having no ref at all.
+		writefile('aetherv2/profiles/commit.txt', commit or 'main')
 	end
-	writefile('aetherv2/profiles/commit.txt', commit)
 end
 
 if not isfile('aetherv2/profiles/disableloading.txt') then
@@ -580,5 +731,11 @@ end
 _G.AetherV2SetLoadingStatus('Preparing loading artwork...', 0.70)
 pcall(downloadFile, 'aetherv2/assets/new/loading.png')
 
-_G.AetherV2SetLoadingStatus('Loading main script...', 0.82)
-return loadstring(downloadFile('aetherv2/main.lua'), 'main')(license)
+_G.AetherV2SetLoadingStatus('Loading main script', 0.82)
+local mainChunk = loadstring(downloadFile('aetherv2/main.lua'), 'main')
+if not mainChunk then
+	-- The cache heal above should have caught this, so if it still will not compile the copy on
+	-- GitHub is genuinely broken - say so instead of erroring on a nil call with the screen up.
+	failLoad('main.lua did not compile')
+end
+return mainChunk(license)

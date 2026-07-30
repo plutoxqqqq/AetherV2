@@ -6618,7 +6618,11 @@ function mainapi:Load(skipgui, profile)
 			restorePosition(object, v.Position)
 		end
 
-		for i, object in self.Modules do
+		-- Snapshot the table first: a game module can still be registering itself on another
+		-- thread while this runs (the loader stops waiting on one that stalls), and adding to
+		-- the table mid-iteration would throw here and abort the whole config load.
+		local modulesSnapshot = table.clone(self.Modules)
+		for i, object in modulesSnapshot do
 			local v = savedata.Modules[i]
 			if not v then
 				if object.Enabled then
@@ -6647,7 +6651,11 @@ function mainapi:Load(skipgui, profile)
 		if self.Favourites and savedata.FavouritesOrder then
 			self.Favourites:ApplyOrder(savedata.FavouritesOrder)
 		end
-		for i, object in self.Legit.Modules do
+		-- Snapshot the table first: a game module can still be registering itself on another
+		-- thread while this runs (the loader stops waiting on one that stalls), and adding to
+		-- the table mid-iteration would throw here and abort the whole config load.
+		local legitSnapshot = table.clone(self.Legit.Modules)
+		for i, object in legitSnapshot do
 			local v = savedata.Legit[i]
 			if not v then
 				if object.Enabled then

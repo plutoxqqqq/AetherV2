@@ -829,17 +829,35 @@ end)
 
 local CheatersFlagged = {}
 run(function()
+	-- Both waits below are bounded, and that is the whole point.
+	--
+	-- This chunk runs on the loader's own thread, so anything that spins here spins the load. The
+	-- old loops had no exit at all: if the Knit require never resolved (a slow join, or a path moved
+	-- by a game update) or this executor's debug library never filled in the upvalue, the loading
+	-- screen sat at 88% forever and no GUI ever appeared. Now they give up and say so - run() reports
+	-- it, and the loader carries on to build the menu.
 	local KnitInit, Knit
+	local knitDeadline = tick() + 45
 	repeat
 		KnitInit, Knit = pcall(function()
 			return require(replicatedStorage.rbxts_include.node_modules["@easy-games"].knit.src).KnitClient
 		end)
-		if KnitInit then break end
+		if KnitInit and Knit then break end
 		task.wait()
-	until KnitInit
+	until tick() > knitDeadline
+	if not (KnitInit and Knit) then
+		error('BedWars Knit never became available - the game has not finished loading')
+	end
 
 	if canDebug and not debug.getupvalue(Knit.Start, 1) then
-		repeat task.wait() until debug.getupvalue(Knit.Start, 1)
+		local upvalueDeadline = tick() + 15
+		repeat task.wait() until debug.getupvalue(Knit.Start, 1) or tick() > upvalueDeadline
+		if not debug.getupvalue(Knit.Start, 1) then
+			-- This executor's debug library cannot read it. Everything that needs it is already
+			-- behind a canDebug check with a fallback, so carry on without rather than hang.
+			warn('[AetherV2] debug.getupvalue is unavailable here - modules that need it are disabled')
+			canDebug = false
+		end
 	end
 
 	local Flamework = require(replicatedStorage['rbxts_include']['node_modules']['@flamework'].core.out).Flamework
@@ -27177,17 +27195,27 @@ run(function()
 end)
 
 run(function()
+	-- Bounded for the same reason as the main Knit block above: this runs on the loader's thread,
+	-- so an unbounded wait here is a load that never finishes.
 	local KnitInit, Knit
+	local knitDeadline = tick() + 30
 	repeat
 		KnitInit, Knit = pcall(function()
 			return debug.getupvalue(require(lplr.PlayerScripts.TS.knit).setup, 9)
 		end)
-		if KnitInit then break end
+		if KnitInit and Knit then break end
 		task.wait()
-	until KnitInit
+	until tick() > knitDeadline
+	if not (KnitInit and Knit) then
+		error('Knit never became available for the anticheat view module')
+	end
 
 	if not debug.getupvalue(Knit.Start, 1) then
-		repeat task.wait() until debug.getupvalue(Knit.Start, 1)
+		local upvalueDeadline = tick() + 15
+		repeat task.wait() until debug.getupvalue(Knit.Start, 1) or tick() > upvalueDeadline
+		if not debug.getupvalue(Knit.Start, 1) then
+			error('debug.getupvalue is unavailable, so the anticheat view module cannot start')
+		end
 	end
 
 	local Players = game:GetService("Players")

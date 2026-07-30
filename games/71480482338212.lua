@@ -1,8 +1,15 @@
 -- BedFight support module (PlaceId: 71480482338212).
 -- Adapted from the BedWars module surface so BedFight exposes the same AetherV2 modules.
 local canDebug = true
+-- Each module registers through run(). A bare func() meant one bad module aborted the whole chunk
+-- part-way through, so a single error (a missing remote, a renamed controller) silently cost every
+-- module below it in the file. Isolate them: report the one that failed and keep loading.
 local run = function(func)
-	func()
+	local success, result = xpcall(func, debug and debug.traceback or tostring)
+	if not success then
+		warn('[AetherV2] Skipped a BedFight module during startup: '..tostring(result))
+	end
+	return success
 end
 local cloneref = cloneref or function(obj)
 	return obj
@@ -780,19 +787,30 @@ end)
 
 local CheatersFlagged = {}
 run(function()
+	-- Bounded waits: this chunk runs on the loader's own thread, so a wait with no exit here is a
+	-- load that never finishes (the loading screen stuck with no GUI).
 	local KnitInit, Knit
+	local knitDeadline = tick() + 45
 	repeat
 		KnitInit, Knit = pcall(function()
 			return require(replicatedStorage.rbxts_include.node_modules["@easy-games"].knit.src).KnitClient
 		end)
-		if KnitInit then break end
+		if KnitInit and Knit then break end
 		task.wait()
-	until KnitInit
+	until tick() > knitDeadline
+	if not (KnitInit and Knit) then
+		error('BedFight Knit never became available - the game has not finished loading')
+	end
 
 	if canDebug and not debug.getupvalue(Knit.Start, 1) then
-		repeat task.wait() until debug.getupvalue(Knit.Start, 1)
+		local upvalueDeadline = tick() + 15
+		repeat task.wait() until debug.getupvalue(Knit.Start, 1) or tick() > upvalueDeadline
+		if not debug.getupvalue(Knit.Start, 1) then
+			warn('[AetherV2] debug.getupvalue is unavailable here - modules that need it are disabled')
+			canDebug = false
+		end
 	end
-	
+
 	local Flamework = require(replicatedStorage['rbxts_include']['node_modules']['@flamework'].core.out).Flamework
 	local InventoryUtil = require(replicatedStorage.TS.inventory['inventory-util']).InventoryUtil
 	local Client = require(replicatedStorage.TS.remotes).default.Client

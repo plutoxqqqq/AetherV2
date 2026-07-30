@@ -1,5 +1,11 @@
+-- Each module registers through run(). A bare func() meant one bad module aborted the whole chunk
+-- part-way through; isolate them so a single failure only costs that module.
 local run = function(func)
-	func()
+	local success, result = xpcall(func, debug and debug.traceback or tostring)
+	if not success then
+		warn('[AetherV2] Skipped a module during startup: '..tostring(result))
+	end
+	return success
 end
 local cloneref = cloneref or function(obj)
 	return obj
@@ -277,8 +283,13 @@ run(function()
 	local Flamework = require(replicatedStorage['rbxts_include']['node_modules']['@flamework'].core.out).Flamework
 	local ControllerTable = {}
 
+	-- Bounded: this runs on the loader's thread, so a wait with no exit is a load that never ends.
 	if not debug.getupvalue(Flamework.ignite, 1) then
-		repeat task.wait() until debug.getupvalue(Flamework.ignite, 1)
+		local igniteDeadline = tick() + 30
+		repeat task.wait() until debug.getupvalue(Flamework.ignite, 1) or tick() > igniteDeadline
+		if not debug.getupvalue(Flamework.ignite, 1) then
+			error('Flamework never finished igniting - the game has not finished loading')
+		end
 	end
 
 	local function searchFunction(name, i2, v2)

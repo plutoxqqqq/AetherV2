@@ -1,4 +1,12 @@
-local run = function(func) func() end
+-- Each module registers through run(). A bare func() meant one bad module aborted the whole chunk
+-- part-way through; isolate them so a single failure only costs that module.
+local run = function(func)
+	local success, result = xpcall(func, debug and debug.traceback or tostring)
+	if not success then
+		warn('[AetherV2] Skipped a module during startup: '..tostring(result))
+	end
+	return success
+end
 local cloneref = cloneref or function(obj) return obj end
 
 local playersService = cloneref(game:GetService('Players'))
@@ -23,17 +31,26 @@ run(function()
 		local ind = table.find(tab, 'Client')
 		return ind and tab[ind + 1] or ''
 	end
+	-- Bounded: this runs on the loader's thread, so a wait with no exit is a load that never ends.
 	local KnitInit, Knit
+	local knitDeadline = tick() + 45
 	repeat
 		KnitInit, Knit = pcall(function()
 			return debug.getupvalue(require(lplr.PlayerScripts.TS.knit).setup, 9)
 		end)
-		if KnitInit then break end
+		if KnitInit and Knit then break end
 		task.wait(0.1)
-	until KnitInit
+	until tick() > knitDeadline
+	if not (KnitInit and Knit) then
+		error('Knit never became available - the game has not finished loading')
+	end
 
 	if not debug.getupvalue(Knit.Start, 1) then
-		repeat task.wait(0.1) until debug.getupvalue(Knit.Start, 1)
+		local upvalueDeadline = tick() + 15
+		repeat task.wait(0.1) until debug.getupvalue(Knit.Start, 1) or tick() > upvalueDeadline
+		if not debug.getupvalue(Knit.Start, 1) then
+			error('debug.getupvalue is unavailable on this executor')
+		end
 	end
 
 	local Flamework = require(replicatedStorage['rbxts_include']['node_modules']['@flamework'].core.out).Flamework
