@@ -8585,10 +8585,7 @@ run(function()
     local LimitItems
     local ChangeDir
     local LongJumpBypass
-    local BypassHeight, BypassBoost, BypassCamera, BypassSteer
-    -- Studs above the launch point where the anticheat pushed back last time (a pull-down or the
-    -- start of "you're too high" damage). Learned once, then every later arc stops just under it.
-    local learnedCeiling = nil
+    local BypassBoost
     local start
     local JumpTick, JumpSpeed, Direction = tick(), 0
     local projectileRemote = {InvokeServer = function() end}
@@ -8852,12 +8849,13 @@ run(function()
         Tooltip = 'Steer the boost while you are in the air with your movement keys, instead of flying in a straight line from where you set off. With Camera Direction on it also follows where you look when no keys are held'
     })
 
-    -- LongJumpBypass: LongJump's compatible-tool launch, then BoostAirJump's upward push, shaped
-    -- into a single clean arc. On key it fires a compatible tool for a legit-looking kick-off, then
-    -- eases you up to just under the height where the anticheat pushes back, arcs over the top and
-    -- lets gravity bring you down, and turns itself off the moment you land. It learns that ceiling
-    -- the first time it is hit (a pull-down or the onset of "too high" damage) and stays below it
-    -- afterwards. Lives in the same block as LongJump only so it can reuse LongJumpMethods.
+    -- LongJumpBypass: reuses two built-in behaviours back to back. On key it activates a compatible
+    -- tool the way LongJump does - by switching LongJump on, so the launch, arc and speed are
+    -- LongJump's own - and while that boost carries you it applies BoostAirJump's push (upward
+    -- velocity to beat the jump-height check) for you automatically, lifting you up without a held
+    -- jump. When LongJump's boost is spent it hands control back: LongJump is put back how it found
+    -- it and the maneuver ends. Lives in the same block as LongJump so it can watch the shared boost
+    -- window (JumpTick) and reuse LongJumpMethods to check you actually have a compatible tool.
     local function findBypassTool()
         if store.hand and store.hand.tool and LongJumpMethods[store.hand.tool.Name] then
             return store.hand.tool.Name, getItem(store.hand.tool.Name)
@@ -8877,123 +8875,72 @@ run(function()
                 repeat task.wait() until (store.matchState ~= 0 and store.map and entitylib.isAlive) or not LongJumpBypass.Enabled
                 if not LongJumpBypass.Enabled then return end
 
+                -- A compatible tool has to exist first: switched on with nothing to launch off,
+                -- LongJump just pins you in place waiting for a jump that never comes.
                 local toolName, item = findBypassTool()
                 if not toolName then
                     notif('LongJumpBypass', 'Hold or carry a compatible tool (dao, jade hammer, void axe, cannon, tnt, grappling hook).', 5)
                     return task.spawn(function() if LongJumpBypass.Enabled then LongJumpBypass:Toggle() end end)
                 end
 
-                local root = entitylib.character.RootPart
-                if not root then
+                -- Put the tool in hand before LongJump switches on: it picks its launch method from
+                -- store.hand first, so this makes the launch the tool we found rather than whatever an
+                -- unordered inventory scan lands on (and lets it work under 'Limit to items'). store.hand
+                -- catches up a beat later, so wait for it. Kit launches (cat) carry no tool - skip.
+                if item and item.tool and not (store.hand and store.hand.tool == item.tool) then
+                    switchItem(item.tool, 0.1)
+                    local handDeadline = tick() + 0.6
+                    repeat task.wait(0.05) until (store.hand and store.hand.tool == item.tool) or tick() > handDeadline or not LongJumpBypass.Enabled
+                    if not LongJumpBypass.Enabled then return end
+                end
+
+                -- 1. Activate the compatible tool with LongJump's own behaviour. Switching the module
+                --    on fires the launch and runs its boost driver, exactly as using LongJump yourself.
+                local longWasOn = LongJump.Enabled
+                if not LongJump.Enabled then LongJump:Toggle() end
+                -- 'Limit to items' with nothing in hand makes LongJump switch straight back off.
+                if not LongJump.Enabled then
                     return task.spawn(function() if LongJumpBypass.Enabled then LongJumpBypass:Toggle() end end)
                 end
 
-                local launchY = root.Position.Y
-                local look = (BypassCamera.Enabled and gameCamera or root).CFrame.LookVector
-                local forwardDir = Vector3.new(look.X, 0, look.Z)
-                forwardDir = forwardDir.Magnitude > 0 and forwardDir.Unit or root.CFrame.LookVector
-                -- Aim for the smaller of the slider cap and what we already learned is the limit, always
-                -- keeping a small margin below it.
-                local ceiling = learnedCeiling and math.min(learnedCeiling, BypassHeight.Value) or BypassHeight.Value
-                local targetY = launchY + math.max(ceiling - 4, 8)
-                local peakY = launchY
-                local startHealth = entitylib.character.Humanoid.Health
-                local phase = 'ascend'
+                -- 2. While that boost carries you, lift yourself with BoostAirJump's behaviour - the
+                --    same upward-velocity push that beats the jump-height check - only applied for you
+                --    automatically instead of while you hold jump. JumpTick (shared with LongJump
+                --    above) is the boost window: it goes into the future when the tool fires and lapses
+                --    when the boost is spent. Left on past that LongJump pins your velocity in place,
+                --    so hand control back the moment it lapses.
                 local bypassStart = tick()
-
-                -- Fire the compatible tool for the initial launch. Errors are swallowed by task.spawn,
-                -- and the arc below carries the jump either way, so a refused cast just means a
-                -- slightly weaker kick-off rather than a failed jump.
-                task.spawn(LongJumpMethods[toolName], item, root.Position, forwardDir)
-
-                LongJumpBypass:Clean(runService.PreSimulation:Connect(function()
-                    local body = entitylib.isAlive and entitylib.character.RootPart or nil
-                    if not body or not isnetworkowner(body) then return end
-
-                    local now = tick()
-                    if now - bypassStart > 8 then
-                        return task.spawn(function() if LongJumpBypass.Enabled then LongJumpBypass:Toggle() end end)
-                    end
-
-                    local y = body.Position.Y
-                    peakY = math.max(peakY, y)
-                    local vel = body.AssemblyLinearVelocity
-                    local flat = Vector3.new(vel.X, 0, vel.Z)
-
-                    -- Steer the arc with your movement keys if allowed, so it is not stuck on the line
-                    -- it set off along.
-                    if BypassSteer.Enabled then
-                        local steer = entitylib.character.Humanoid.MoveDirection
-                        steer = Vector3.new(steer.X, 0, steer.Z)
-                        if steer.Magnitude > 0.1 then
-                            forwardDir = steer.Unit
+                local launched = false
+                local nextLift = 0
+                repeat
+                    task.wait()
+                    local boosting = JumpTick > tick()
+                    if boosting then launched = true end
+                    -- BoostAirJump adds its push about every 0.1s; match that so the climb rate holds
+                    -- steady whatever the frame rate, and only while LongJump is actually boosting us.
+                    if boosting and entitylib.isAlive and tick() >= nextLift then
+                        local root = entitylib.character.RootPart
+                        if root then
+                            root.AssemblyLinearVelocity += Vector3.new(0, BypassBoost.Value, 0)
                         end
+                        nextLift = tick() + 0.1
                     end
+                until not LongJumpBypass.Enabled or (launched and JumpTick <= tick()) or tick() - bypassStart > 8
 
-                    if phase == 'ascend' then
-                        local climbed = peakY - launchY
-                        local pulled = climbed > 10 and (peakY - y) > 5           -- slammed back down
-                        local damaged = climbed > 10 and entitylib.character.Humanoid.Health < startHealth - 0.5
-                        if pulled or damaged then
-                            -- Found the ceiling the hard way. Remember it (with margin) and arc over.
-                            learnedCeiling = math.max(climbed - 6, 8)
-                            phase = 'descend'
-                        elseif y >= targetY then
-                            phase = 'descend'
-                        else
-                            -- Ease the climb out as we near the top so the path curves over cleanly
-                            -- instead of stopping dead, and keep forward speed for the arc's shape.
-                            local ease = math.clamp((targetY - y) / 24, 0, 1)
-                            local climb = BypassBoost.Value * ease
-                            local fwd = forwardDir * math.max(flat.Magnitude, getSpeed())
-                            body.AssemblyLinearVelocity = Vector3.new(fwd.X, math.max(vel.Y, climb), fwd.Z)
-                        end
-                    end
-
-                    if phase == 'descend' then
-                        -- Stop boosting: keep forward momentum and let gravity own the fall, so the
-                        -- top rounds off and comes down as one arc.
-                        local fwd = forwardDir * math.max(flat.Magnitude, getSpeed() * 0.8)
-                        body.AssemblyLinearVelocity = Vector3.new(fwd.X, vel.Y, fwd.Z)
-
-                        local grounded = entitylib.character.Humanoid.FloorMaterial ~= Enum.Material.Air
-                        if grounded and vel.Y <= 0.5 and (peakY - y) > 4 then
-                            -- Landed: the arc is done, so end the module exactly as asked.
-                            return task.spawn(function() if LongJumpBypass.Enabled then LongJumpBypass:Toggle() end end)
-                        end
-                    end
-                end))
+                -- Put LongJump back how we found it, then end the maneuver as asked.
+                if LongJump.Enabled and not longWasOn then LongJump:Toggle() end
+                return task.spawn(function() if LongJumpBypass.Enabled then LongJumpBypass:Toggle() end end)
             end
         end,
-        ExtraText = function()
-            return learnedCeiling and ('limit '..math.floor(learnedCeiling)) or ''
-        end,
-        Tooltip = 'On key: fires a compatible tool then arcs you up to just under the anticheat height limit and back down, ending when you land. Learns that limit the first time it is hit and stays below it after'
-    })
-    BypassHeight = LongJumpBypass:CreateSlider({
-        Name = 'Max height',
-        Min = 20,
-        Max = 400,
-        Default = 90,
-        Suffix = ' studs',
-        Tooltip = 'Highest the arc will try to climb above where you set off. It stops here or at the learned anticheat limit, whichever is lower'
+        Tooltip = 'On key: launches off a compatible tool with LongJump, then automatically lifts you up into the air (BoostAirJump boost) while the launch carries you. Ends when the boost is spent'
     })
     BypassBoost = LongJumpBypass:CreateSlider({
-        Name = 'Climb speed',
-        Min = 20,
-        Max = 120,
-        Default = 60,
+        Name = 'Boost',
+        Min = 5,
+        Max = 60,
+        Default = 35,
         Suffix = ' studs/s',
-        Tooltip = 'How hard it pushes you up on the way to the top. Eases off near the ceiling for a clean arc'
-    })
-    BypassCamera = LongJumpBypass:CreateToggle({
-        Name = 'Camera direction',
-        Tooltip = 'Set off toward where the camera looks rather than where you are moving'
-    })
-    BypassSteer = LongJumpBypass:CreateToggle({
-        Name = 'Change direction mid-air',
-        Default = true,
-        Tooltip = 'Steer the arc with your movement keys while it plays out'
+        Tooltip = 'Upward velocity added for you each tick while LongJump boosts you, lifting you into the air'
     })
 end)
 
