@@ -5797,57 +5797,12 @@ run(function()
     local MaxCorrect
     local HoldTime
     local Vertical
-    local VoidFly
-    local FlySync
-    local TouchTime
+    local ForcePosition
     local Notify
 
     local voidRay = RaycastParams.new()
     voidRay.RespectCanCollide = true
     voidRay.FilterType = Enum.RaycastFilterType.Exclude
-
-    -- Nearest real surface we could plausibly be standing on. Used by the void-fly bypass below.
-    --
-    -- getNearGround only looks in a small cube around us and gives up at 60 studs, which is
-    -- precisely nothing when you are out over the void - so when it comes back empty we fall back
-    -- to the closest block on the map from the block engine's own store. That scan is cached,
-    -- because it is only ever needed while we are already off the map.
-    local nearestValue, nearestAt, nearestFrom = nil, 0, nil
-    local function nearestSurface(root)
-        local pos = root.Position
-        voidRay.FilterDescendantsInstances = {lplr.Character, gameCamera, AntiFallPart}
-        voidRay.CollisionGroup = root.CollisionGroup
-        local straight = workspace:Raycast(pos, Vector3.new(0, -600, 0), voidRay)
-        if straight then
-            return straight.Position + Vector3.new(0, (entitylib.character.HipHeight or 3) + 0.2, 0)
-        end
-
-        local ok, near = pcall(getNearGround, 14)
-        if ok and near then return near end
-
-        if nearestValue and (tick() - nearestAt) < 1.5 and nearestFrom and (pos - nearestFrom).Magnitude < 60 then
-            return nearestValue
-        end
-        local best, bestDist
-        local ok2 = pcall(function()
-            for _, cell in bedwars.BlockController:getStore():getAllBlockPositions() do
-                local world = cell * 3
-                -- Only the top of a stack is standable.
-                if not getPlacedBlock(world + Vector3.new(0, 3, 0)) then
-                    local d = (world - pos).Magnitude
-                    if not bestDist or d < bestDist then
-                        best, bestDist = world, d
-                    end
-                end
-            end
-        end)
-        if ok2 and best then
-            nearestValue = best + Vector3.new(0, 3 + (entitylib.character.HipHeight or 3), 0)
-            nearestAt, nearestFrom = tick(), pos
-            return nearestValue
-        end
-        return nil
-    end
 
     AntiLagback = vape.Categories.Exploits:CreateModule({
         Name = 'AntiLagback',
@@ -5861,6 +5816,10 @@ run(function()
                 -- a single frame and handing the fight back to the server.
                 local holdPos, holdVel, holdUntil, holdY = nil, nil, 0, false
                 local holdCount, lastYank, lastNotify = 0, 0, 0
+                -- Force position: our own running copy of exactly where you are, advanced by your
+                -- own velocity every frame. It is never a teleport - we only ever put you back on
+                -- the position you already hold when the server has quietly nudged you off it.
+                local forcePos = nil
 
                 local function reset()
                     table.clear(history)
@@ -5868,6 +5827,7 @@ run(function()
                     lastChar = lplr.Character
                     holdPos, holdVel, holdUntil, holdY = nil, nil, 0, false
                     holdCount = 0
+                    forcePos = nil
                     -- Never judge the first frames after a respawn / character swap: the spawn
                     -- itself is a huge legitimate jump.
                     graceUntil = tick() + 0.75
@@ -6034,88 +5994,64 @@ run(function()
                     while history[1] and (#history > 60 or (now - history[1].Time) > 1.5) do
                         table.remove(history, 1)
                     end
-                end))
 
-                -- Void fly bypass.
-                --
-                -- The detector above is purely reactive: it undoes a pull after the server has
-                -- already made it, which is fine for a knockback yank but hopeless for flying over
-                -- the void. There the server is not rubber-banding a mistake, it is enforcing a
-                -- rule - you have been off the ground, over nothing, for too long - and it will
-                -- keep pulling for as long as that stays true, so undoing each pull is a fight you
-                -- lose. This stops the rule from ever tripping.
-                --
-                -- Fly already has the answer for flying over LAND: touch down on the floor below
-                -- for a couple of frames and pop back up, which resets the server's airtime. Over
-                -- the void that never fires, because there is no floor below to aim at - which is
-                -- exactly why fly over the void lagbacks and fly over the map does not. So we find
-                -- a real surface anywhere in reach instead of only straight down, touch down on it
-                -- and come straight back.
-                local groundedAt, lastBypass = tick(), 0
-                local bypassing = false
-                AntiLagback:Clean(runService.Heartbeat:Connect(function()
-                    if not (VoidFly and VoidFly.Enabled) then return end
-                    if bypassing or not entitylib.isAlive or store.rootpart then return end
-                    local root = entitylib.character.RootPart
-                    if not root or not root.Parent or not isnetworkowner(root) then return end
-
-                    if entitylib.character.Humanoid.FloorMaterial ~= Enum.Material.Air then
-                        groundedAt = tick()
-                        return
-                    end
-                    -- Only the void is a problem: with something under us the game's own touch-down
-                    -- (and the server's own checks) are happy already.
-                    voidRay.FilterDescendantsInstances = {lplr.Character, gameCamera, AntiFallPart}
-                    voidRay.CollisionGroup = root.CollisionGroup
-                    if workspace:Raycast(root.Position, Vector3.new(0, -80, 0), voidRay) then
-                        groundedAt = tick()
-                        return
-                    end
-
-                    if (tick() - groundedAt) < FlySync.Value then return end
-                    if (tick() - lastBypass) < 0.2 then return end
-
-                    local target = nearestSurface(root)
-                    if not target then return end
-
-                    bypassing = true
-                    lastBypass = tick()
-                    groundedAt = tick()
-                    local restore = root.CFrame
-                    local keep = root.AssemblyLinearVelocity
-                    -- Our own teleport is a huge single-frame jump, so make sure the detector above
-                    -- does not "correct" it right back.
-                    graceUntil = tick() + 0.8
-                    holdPos, holdUntil = nil, 0
-
-                    task.spawn(function()
-                        local hold = tick() + math.clamp(TouchTime.Value, 0.03, 0.5)
-                        local aim = CFrame.new(target) * (restore - restore.Position)
-                        while tick() < hold and AntiLagback.Enabled and entitylib.isAlive and VoidFly.Enabled do
-                            local current = entitylib.character.RootPart
-                            if not current or not current.Parent then break end
-                            current.CFrame = aim
-                            current.AssemblyLinearVelocity = Vector3.zero
-                            runService.Heartbeat:Wait()
+                    -- Force position (no teleport).
+                    --
+                    -- The block above is reactive: it only acts on a pull big enough to trip the
+                    -- detector, and between those the server's copy of you can lag a little behind
+                    -- your real position - the "delayed, doesn't replicate exactly" problem. This
+                    -- keeps a running copy of exactly where you are, advanced by your own velocity
+                    -- every single frame, and the moment the server has nudged you off it (a fly /
+                    -- glide pull, a scrappy micro rubber-band, the void slowly dragging you down) it
+                    -- puts you straight back onto it. It is never a teleport: the only place it ever
+                    -- moves you to is the position you already held, so replication stays exact
+                    -- instead of catching up a frame late.
+                    --
+                    -- Off the void this leaves your height alone so ordinary jumps and falls still
+                    -- feel normal; over the void (where the whole problem is the server dragging you
+                    -- down) it holds your height too, so you can fly out there without ever being
+                    -- pulled - and without the old touch-down teleport that yanked you sideways.
+                    if ForcePosition.Enabled and not yanked and now > graceUntil then
+                        local vel = root.AssemblyLinearVelocity
+                        local overVoid = false
+                        if entitylib.character.Humanoid.FloorMaterial == Enum.Material.Air then
+                            voidRay.FilterDescendantsInstances = {lplr.Character, gameCamera, AntiFallPart}
+                            voidRay.CollisionGroup = root.CollisionGroup
+                            overVoid = workspace:Raycast(root.Position, Vector3.new(0, -80, 0), voidRay) == nil
                         end
-                        if AntiLagback.Enabled and entitylib.isAlive then
-                            local current = entitylib.character.RootPart
-                            if current and current.Parent then
-                                current.CFrame = restore
-                                current.AssemblyLinearVelocity = keep
+
+                        if not forcePos then
+                            forcePos = pos
+                        else
+                            -- Advance our copy by our own motion so it tracks where WE are going.
+                            forcePos += vel * dt
+                            if not overVoid then
+                                -- Leave the vertical to gravity/jumps unless we are over the void.
+                                forcePos = Vector3.new(forcePos.X, pos.Y, forcePos.Z)
+                            end
+                            local deviation = overVoid and (forcePos - pos) or ((forcePos - pos) * Vector3.new(1, 0, 1))
+                            local off = deviation.Magnitude
+                            if off > sens and off < maxCorrect then
+                                -- Server moved us off our own path: put us back exactly, no teleport.
+                                root.CFrame += (forcePos - pos)
+                                pos = forcePos
+                                if overVoid then
+                                    root.AssemblyLinearVelocity = Vector3.new(vel.X, math.max(vel.Y, 0), vel.Z)
+                                end
+                            else
+                                -- In sync, or a real teleport we must not fight: adopt where we are.
+                                forcePos = pos
                             end
                         end
-                        graceUntil = tick() + 0.5
-                        groundedAt = tick()
-                        bypassing = false
-                        if Notify.Enabled then
-                            notif('AntiLagback', 'Void fly re-synced', 1.5)
-                        end
-                    end)
+                    elseif not ForcePosition.Enabled then
+                        forcePos = nil
+                    end
+
+                    lastPos = pos
                 end))
             end
         end,
-        Tooltip = 'Spots a rubber-band - an impossible one-frame jump backward, sideways onto ground you just left, or straight down - and holds your own position for a moment so the whole pull is undone, not just its first frame'
+        Tooltip = 'Spots a rubber-band - an impossible one-frame jump backward, sideways onto ground you just left, or straight down - and holds your own position for a moment so the whole pull is undone, not just its first frame. With Force position on it also keeps the server\'s copy of you exactly on your real position every frame (no teleport), which is what lets you fly the void without being dragged down'
     })
     Mode = AntiLagback:CreateDropdown({
         Name = 'Mode',
@@ -6154,36 +6090,10 @@ run(function()
         Default = true,
         Tooltip = 'Also catch the server slamming you straight down (fly / glide / jump-boost lagbacks), not just horizontal yanks'
     })
-    VoidFly = AntiLagback:CreateToggle({
-        Name = 'Void fly',
+    ForcePosition = AntiLagback:CreateToggle({
+        Name = 'Force position',
         Default = true,
-        Tooltip = 'Lets you fly over the void indefinitely. Undoing the pull never works out there, so this touches you down on the nearest real surface for a few frames, resetting the airtime check before it trips',
-        Function = function(callback)
-            pcall(function()
-                FlySync.Object.Visible = callback
-                TouchTime.Object.Visible = callback
-            end)
-        end
-    })
-    FlySync = AntiLagback:CreateSlider({
-        Name = 'Sync interval',
-        Min = 0.3,
-        Max = 4,
-        Default = 1.4,
-        Decimal = 10,
-        Suffix = ' seconds',
-        Darker = true,
-        Tooltip = 'How long you may be over the void before a touch-down. Lower it if you still get pulled'
-    })
-    TouchTime = AntiLagback:CreateSlider({
-        Name = 'Touch time',
-        Min = 0.03,
-        Max = 0.5,
-        Default = 0.11,
-        Decimal = 100,
-        Suffix = ' seconds',
-        Darker = true,
-        Tooltip = 'How long to stay on the surface. Long enough for the server to see it, short enough that nobody does'
+        Tooltip = 'Keep the server\'s copy of you sitting on your exact position every frame, so it never lags a step behind you and the void can never slowly drag you down. This is what replaces the old void-fly touch-down - it never teleports you: the only place it ever puts you is where you already are'
     })
     Notify = AntiLagback:CreateToggle({
         Name = 'Notifications',
