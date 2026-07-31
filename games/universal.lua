@@ -2594,6 +2594,10 @@ run(function()
     local Overlay = OverlapParams.new()
     Overlay.FilterType = Enum.RaycastFilterType.Include
     local Particles, Boxes, AttackDelay = {}, {}, tick()
+	local customSwing = game.PlaceId == 132768098780837
+	local customSwingEvent = customSwing and replicatedStorage:FindFirstChild('GameEvents')
+	customSwingEvent = customSwingEvent and customSwingEvent:FindFirstChild('CombatRemotes')
+	customSwingEvent = customSwingEvent and customSwingEvent:FindFirstChild('Combat_SwingStarted')
 
     local function getAttackData()
 	if Mouse.Enabled then
@@ -2602,6 +2606,11 @@ run(function()
 		end
 	end
 
+	if customSwing then
+		return customSwingEvent, {Activate = function()
+			if customSwingEvent then customSwingEvent:FireServer('Iron Sword') end
+		end}
+	end
 	local tool = getTool()
 	return tool and tool:FindFirstChildWhichIsA('TouchTransmitter', true) or nil, tool
     end
@@ -2652,6 +2661,7 @@ run(function()
 								continue
 							end
 
+							if customSwing then continue end
 							Overlay.FilterDescendantsInstances = { v.Character }
 							for _, part in
 								workspace:GetPartBoundsInBox(v.RootPart.CFrame, Vector3.new(4, 4, 4), Overlay)

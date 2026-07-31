@@ -7599,6 +7599,28 @@ general:CreateButton({
 ]]
 
 local modules = mainapi.Categories.Main:CreateSettingsPane({Name = 'Modules'})
+local forcedGameFile = modules:CreateTextBox({
+	Name = 'Game file',
+	Placeholder = 'Place ID (for example 132768098780837)',
+	Default = isfile('aetherv2/profiles/forcegameid.txt') and readfile('aetherv2/profiles/forcegameid.txt') or '',
+	Function = function(value)
+		local place = tostring(value or ''):match('^%s*(%d+)%s*$')
+		if place then writefile('aetherv2/profiles/forcegameid.txt', place) end
+	end,
+	Tooltip = 'The numeric games/<place ID>.lua file used when Force game file is enabled'
+})
+modules:CreateToggle({
+	Name = 'Force game file',
+	Default = isfile('aetherv2/profiles/forcegame.txt') and readfile('aetherv2/profiles/forcegame.txt') == 'true',
+	Function = function(enabled)
+		local place = tostring(forcedGameFile.Value or ''):match('^%s*(%d+)%s*$')
+		writefile('aetherv2/profiles/forcegame.txt', enabled and place and 'true' or 'false')
+		if enabled and not place then
+			mainapi:CreateNotification('Modules', 'Enter a numeric Game file before enabling this option.', 5, 'alert')
+		end
+	end,
+	Tooltip = 'Loads the selected games/ file on the next reinject, regardless of the current place'
+})
 modules:CreateToggle({
 	Name = 'Teams by server',
 	Tooltip = 'Ignore players on your team designated by the server',
