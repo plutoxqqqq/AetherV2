@@ -8585,6 +8585,7 @@ run(function()
     local LimitItems
     local ChangeDir
     local LongJumpBypass
+    local BypassBoost
     local start
     local JumpTick, JumpSpeed, Direction = tick(), 0
     local projectileRemote = {InvokeServer = function() end}
@@ -8850,11 +8851,11 @@ run(function()
 
     -- LongJumpBypass: reuses two built-in behaviours back to back. On key it activates a compatible
     -- tool the way LongJump does - by switching LongJump on, so the launch, arc and speed are
-    -- LongJump's own - and while that boost carries you it switches on BoostAirJump, so holding jump
-    -- lifts you up into the air past the jump-height check. When LongJump's boost is spent it hands
-    -- control back: both built-ins are put back how it found them and the maneuver ends. Lives in the
-    -- same block as LongJump so it can watch the shared boost window (JumpTick) and reuse
-    -- LongJumpMethods to check you actually have a compatible tool.
+    -- LongJump's own - and while that boost carries you it applies BoostAirJump's push (upward
+    -- velocity to beat the jump-height check) for you automatically, lifting you up without a held
+    -- jump. When LongJump's boost is spent it hands control back: LongJump is put back how it found
+    -- it and the maneuver ends. Lives in the same block as LongJump so it can watch the shared boost
+    -- window (JumpTick) and reuse LongJumpMethods to check you actually have a compatible tool.
     local function findBypassTool()
         if store.hand and store.hand.tool and LongJumpMethods[store.hand.tool.Name] then
             return store.hand.tool.Name, getItem(store.hand.tool.Name)
@@ -8895,7 +8896,6 @@ run(function()
 
                 -- 1. Activate the compatible tool with LongJump's own behaviour. Switching the module
                 --    on fires the launch and runs its boost driver, exactly as using LongJump yourself.
-                local boostAir = vape.Modules.BoostAirJump
                 local longWasOn = LongJump.Enabled
                 if not LongJump.Enabled then LongJump:Toggle() end
                 -- 'Limit to items' with nothing in hand makes LongJump switch straight back off.
@@ -8903,28 +8903,44 @@ run(function()
                     return task.spawn(function() if LongJumpBypass.Enabled then LongJumpBypass:Toggle() end end)
                 end
 
-                -- 2. While that boost carries you, add BoostAirJump's behaviour on top: hold jump and
-                --    it pushes you up into the air, past the jump-height check.
-                local boostWasOn = boostAir and boostAir.Enabled or false
-                if boostAir and not boostAir.Enabled then boostAir:Toggle() end
-
-                -- Ride the launch out. JumpTick (shared with LongJump above) is the boost window: it
-                -- goes into the future when the tool fires and lapses when the boost is spent. Left on
-                -- past that LongJump pins your velocity, so hand control back the moment it lapses.
+                -- 2. While that boost carries you, lift yourself with BoostAirJump's behaviour - the
+                --    same upward-velocity push that beats the jump-height check - only applied for you
+                --    automatically instead of while you hold jump. JumpTick (shared with LongJump
+                --    above) is the boost window: it goes into the future when the tool fires and lapses
+                --    when the boost is spent. Left on past that LongJump pins your velocity in place,
+                --    so hand control back the moment it lapses.
                 local bypassStart = tick()
                 local launched = false
+                local nextLift = 0
                 repeat
                     task.wait()
-                    if JumpTick > tick() then launched = true end
+                    local boosting = JumpTick > tick()
+                    if boosting then launched = true end
+                    -- BoostAirJump adds its push about every 0.1s; match that so the climb rate holds
+                    -- steady whatever the frame rate, and only while LongJump is actually boosting us.
+                    if boosting and entitylib.isAlive and tick() >= nextLift then
+                        local root = entitylib.character.RootPart
+                        if root then
+                            root.AssemblyLinearVelocity += Vector3.new(0, BypassBoost.Value, 0)
+                        end
+                        nextLift = tick() + 0.1
+                    end
                 until not LongJumpBypass.Enabled or (launched and JumpTick <= tick()) or tick() - bypassStart > 8
 
-                -- Put both built-ins back how we found them, then end the maneuver as asked.
-                if boostAir and boostAir.Enabled and not boostWasOn then boostAir:Toggle() end
+                -- Put LongJump back how we found it, then end the maneuver as asked.
                 if LongJump.Enabled and not longWasOn then LongJump:Toggle() end
                 return task.spawn(function() if LongJumpBypass.Enabled then LongJumpBypass:Toggle() end end)
             end
         end,
-        Tooltip = 'On key: launches off a compatible tool with LongJump, then lifts you into the air with BoostAirJump (hold jump) while the boost carries you. Ends when the boost is spent'
+        Tooltip = 'On key: launches off a compatible tool with LongJump, then automatically lifts you up into the air (BoostAirJump boost) while the launch carries you. Ends when the boost is spent'
+    })
+    BypassBoost = LongJumpBypass:CreateSlider({
+        Name = 'Boost',
+        Min = 5,
+        Max = 60,
+        Default = 35,
+        Suffix = ' studs/s',
+        Tooltip = 'Upward velocity added for you each tick while LongJump boosts you, lifting you into the air'
     })
 end)
 
