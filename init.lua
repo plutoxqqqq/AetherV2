@@ -834,6 +834,12 @@ local function neededFiles(files)
 	if not files then return {} end
 	local gui = selectedGui()
 	local place = tostring(game.PlaceId)
+	if isfile('aetherv2/profiles/forcegame.txt')
+		and readfile('aetherv2/profiles/forcegame.txt') == 'true'
+		and isfile('aetherv2/profiles/forcegameid.txt') then
+		local forced = readfile('aetherv2/profiles/forcegameid.txt'):match('^%s*(%d+)%s*$')
+		place = forced or place
+	end
 	local wanted = {}
 	for path in files do
 		local include = false
