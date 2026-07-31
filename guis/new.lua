@@ -7599,6 +7599,31 @@ general:CreateButton({
 ]]
 
 local modules = mainapi.Categories.Main:CreateSettingsPane({Name = 'Modules'})
+local supportedGameFiles = {
+	'142823291', '155615604', '606849621', '893973440', '5938036553', '6872265039',
+	'6872274481', '8444591321', '8542259458', '8542275097', '8560631822', '8592115909',
+	'8768229691', '8951451142', '11156779721', '13246639586', '71480482338212',
+	'77790193039862', '80041634734121', '123804558118054', '131465939650733',
+	'132768098780837', '135564683255158', '139566161526375'
+}
+local savedForcedGame = isfile('aetherv2/profiles/forcegameid.txt') and readfile('aetherv2/profiles/forcegameid.txt') or ''
+local forcedGameFile = modules:CreateDropdown({
+	Name = 'Game file',
+	List = supportedGameFiles,
+	Default = table.find(supportedGameFiles, savedForcedGame) and savedForcedGame or tostring(game.PlaceId),
+	Function = function(value)
+		writefile('aetherv2/profiles/forcegameid.txt', tostring(value))
+	end,
+	Tooltip = 'Select one of the currently supported games/ files'
+})
+modules:CreateToggle({
+	Name = 'Force game file',
+	Default = false,
+	Function = function(enabled)
+		writefile('aetherv2/profiles/forcegame.txt', enabled and 'true' or 'false')
+	end,
+	Tooltip = 'Loads the selected games/ file once on the next reinject, then resets automatically'
+})
 modules:CreateToggle({
 	Name = 'Teams by server',
 	Tooltip = 'Ignore players on your team designated by the server',

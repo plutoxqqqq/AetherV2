@@ -944,7 +944,18 @@ if not shared.VapeIndependent then
 	runWatchedChunk(downloadFile('aetherv2/games/universal.lua'), 'universal', 'Loading universal modules', 30, false, license)
 
 	setPhase('Loading game modules', 0.93, 0.97)
-	local placePath = 'aetherv2/games/'..game.PlaceId..'.lua'
+	local modulePlace = tostring(game.PlaceId)
+	if isfile('aetherv2/profiles/forcegame.txt')
+		and readfile('aetherv2/profiles/forcegame.txt') == 'true'
+		and isfile('aetherv2/profiles/forcegameid.txt') then
+		local forced = readfile('aetherv2/profiles/forcegameid.txt'):match('^%s*(%d+)%s*$')
+		modulePlace = forced or modulePlace
+	end
+	-- Force-loading is a one-shot debugging action. Consume it before running the chunk so even a
+	-- broken or stalled game module cannot leave the user permanently pinned to the wrong game.
+	writefile('aetherv2/profiles/forcegame.txt', 'false')
+	vape.Place = tonumber(modulePlace) or game.PlaceId
+	local placePath = 'aetherv2/games/'..modulePlace..'.lua'
 	local placeSource
 	if isfile(placePath) then
 		placeSource = downloadFile(placePath)
@@ -961,7 +972,7 @@ if not shared.VapeIndependent then
 	if placeSource then
 		-- Optional and watched: a game module that stalls (waiting on something the game has not
 		-- replicated yet) must never cost you the menu.
-		runWatchedChunk(placeSource, tostring(game.PlaceId), 'Loading module for this game', 15, true, license)
+		runWatchedChunk(placeSource, modulePlace, 'Loading module for this game', 15, true, license)
 	end
 	finishLoading()
 else
