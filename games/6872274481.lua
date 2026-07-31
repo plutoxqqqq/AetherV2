@@ -505,9 +505,25 @@ local function waitForChildYield(obj, timeout, ...)
 	return returned
 end
 
-local function rakNetCheck(module)
+-- `quiet` is for callers that only want raknet as an extra layer and work fine without it, so a
+-- missing raknet does not warn about a feature that is not actually missing.
+-- Our own teleports, declared.
+--
+-- AntiLagback works by spotting a move the player could not have made - which is exactly what our
+-- own teleports look like. A pearl, a dash, MouseTP, the void-fly touch-down: all of them read as an
+-- impossible jump, and "correcting" one drags you straight back out of it. Anything in here that
+-- moves the character on purpose says so, and the detector stands down for that moment.
+local selfTeleportUntil = 0
+local function markTeleport(duration)
+	selfTeleportUntil = math.max(selfTeleportUntil, tick() + (duration or 0.4))
+end
+getgenv().vapeMarkTeleport = markTeleport
+
+local function rakNetCheck(module, quiet)
 	if not (raknet and raknet.add_send_hook and pcall(raknet.add_send_hook, function() end)) then
-		notif(module, 'This feature requires raknet! (risky feature, please do not use on mains.)', 10, 'warning')
+		if not quiet then
+			notif(module, 'This feature requires raknet! (risky feature, please do not use on mains.)', 10, 'warning')
+		end
 		return false
 	end
 
@@ -3459,6 +3475,44 @@ run(function()
         return getPlacedBlock(world) ~= nil
     end
 
+    -- Where will we actually BE when a block placed now finishes arriving?
+    --
+    -- This is what the previous version got wrong. It aimed at the cell under your feet at the
+    -- instant it fired, but a placement is not instant: the request goes out, the server answers,
+    -- and at any real fall speed you are ten or twenty studs past that cell by the time the block
+    -- exists. So the floor kept being built above the falling player, who sailed straight through
+    -- where it was going to be. Aim at where the fall will have taken us instead, using the speed we
+    -- are actually doing and the round trip we are actually seeing.
+    local function catchLevel(root)
+        local ping = 0
+        pcall(function() ping = lplr:GetNetworkPing() end)
+        local lead = math.clamp(ping * 2 + 0.18, 0.18, 0.7)
+        local vy = math.min(root.AssemblyLinearVelocity.Y, 0)
+        -- Free fall over the lead time, not just the current speed: gravity keeps adding to it while
+        -- the placement is in flight.
+        local drop = (-vy * lead) + (0.5 * workspace.Gravity * lead * lead)
+        local hip = entitylib.character.HipHeight or 3
+        local feet = root.Position.Y - hip - (root.Size.Y * 0.5) - drop
+
+        local barrierTop = AntiFallPart and (AntiFallPart.Position.Y + (AntiFallPart.Size.Y * 0.5)) or -math.huge
+        local cell = bedwars.BlockController:getBlockPosition(Vector3.new(root.Position.X, feet - 1.5, root.Position.Z))
+        local floorY = cell.Y * CELL
+        -- Never build into the barrier itself.
+        if floorY <= barrierTop + 1 then
+            floorY = math.floor((barrierTop + CELL + 1) / CELL) * CELL
+        end
+        return floorY, drop
+    end
+
+    -- Where we will be horizontally too, so a run-off-the-edge fall is caught in front of us rather
+    -- than behind us.
+    local function catchColumn(root, drop)
+        local vy = math.min(root.AssemblyLinearVelocity.Y, -1)
+        local seconds = math.clamp(drop / -vy, 0, 0.7)
+        local horiz = root.AssemblyLinearVelocity * Vector3.new(1, 0, 1)
+        return root.Position + (horiz * seconds)
+    end
+
     local function clutch()
         if clutchBusy or tick() < clutchUntil or not entitylib.isAlive then return end
         local root = entitylib.character.RootPart
@@ -3467,59 +3521,56 @@ run(function()
         if not block then return end
 
         clutchBusy = true
-        clutchUntil = tick() + 0.25
+        clutchUntil = tick() + 0.2
 
-        -- Floor height: one cell under our feet, right where we are now. Catching us here instead
-        -- of at barrier level is the difference between losing a couple of studs and losing the
-        -- whole drop.
-        local hip = entitylib.character.HipHeight or 3
-        local feet = root.Position.Y - hip - (root.Size.Y * 0.5)
-        local barrierTop = AntiFallPart and (AntiFallPart.Position.Y + (AntiFallPart.Size.Y * 0.5)) or -math.huge
-        local floorCell = bedwars.BlockController:getBlockPosition(Vector3.new(root.Position.X, feet - 1.5, root.Position.Z))
-        local floorY = floorCell.Y * CELL
-        -- Never build into the barrier itself.
-        if floorY <= barrierTop + 1 then
-            floorY = math.floor((barrierTop + CELL + 1) / CELL) * CELL
-        end
+        local floorY, drop = catchLevel(root)
+        local aim = catchColumn(root, drop)
+        local centre = bedwars.BlockController:getBlockPosition(Vector3.new(aim.X, floorY, aim.Z)) * CELL
+        centre = Vector3.new(centre.X, floorY, centre.Z)
 
-        local under = Vector3.new(floorCell.X * CELL, floorY, floorCell.Z * CELL)
+        -- A platform, not a single cell. One block is a coin-toss against horizontal drift and the
+        -- rounding of the grid; a three-by-three under the predicted landing is not, and it costs
+        -- blocks you are about to stop needing anyway.
+        local pattern = {
+            Vector3.zero,
+            Vector3.new(CELL, 0, 0), Vector3.new(-CELL, 0, 0),
+            Vector3.new(0, 0, CELL), Vector3.new(0, 0, -CELL),
+            Vector3.new(CELL, 0, CELL), Vector3.new(CELL, 0, -CELL),
+            Vector3.new(-CELL, 0, CELL), Vector3.new(-CELL, 0, -CELL)
+        }
 
-        -- Directly beneath us first: if the island edge is still within a block of us (the normal
-        -- case at the start of a fall) this single placement is the whole clutch.
-        if placeClutch(under, block) then
-            clutchBusy = false
-            return
-        end
-
-        -- Otherwise walk in from the nearest real support, one confirmed block at a time, so each
-        -- new block leans on the previous one.
-        local support = findSupportCell(under)
-        if not support then
-            clutchBusy = false
-            return
-        end
-
-        local delta = under - support
-        local steps = math.max(math.abs(delta.X), math.abs(delta.Z)) / CELL
-        steps = math.clamp(math.floor(steps + 0.5), 0, math.clamp(ClutchBlocks and ClutchBlocks.Value or 6, 1, 10))
-        local stepDir = Vector3.new(math.sign(delta.X), 0, math.sign(delta.Z))
-        local cursor = Vector3.new(support.X, floorY, support.Z)
-        for _ = 1, steps do
-            if not AntiFall.Enabled or Mode.Value ~= 'Clutch' then break end
-            cursor += Vector3.new(stepDir.X * CELL, 0, stepDir.Z * CELL)
-            if not placeClutch(cursor, block) then break end
-            -- Landed on it already: nothing more to build.
-            if entitylib.isAlive and entitylib.character.Humanoid.FloorMaterial ~= Enum.Material.Air then break end
-        end
-
-        -- Finish under our feet (we have drifted while building, so recompute).
-        if entitylib.isAlive and AntiFall.Enabled then
-            local now = entitylib.character.RootPart
-            if now then
-                local cell = bedwars.BlockController:getBlockPosition(Vector3.new(now.Position.X, floorY, now.Position.Z))
-                placeClutch(Vector3.new(cell.X * CELL, floorY, cell.Z * CELL), block)
+        -- Fired together, not one confirmed at a time. Waiting for each block to come back before
+        -- asking for the next spent the whole fall on two or three placements; the placements are
+        -- cheap and the fall is not going to wait for them.
+        local placed = 0
+        for _, offset in pattern do
+            local cell = centre + offset
+            if not getPlacedBlock(cell) and hasSupport(cell) then
+                placed += 1
+                task.spawn(bedwars.placeBlock, cell, block, false)
             end
         end
+
+        -- Nothing had anything to lean on - we are already out past the island. Build in from the
+        -- nearest block that does, which is the only way to get a floor under open air, and confirm
+        -- these because each one is the support for the next.
+        if placed <= 0 then
+            local support = findSupportCell(centre)
+            if support then
+                local delta = centre - support
+                local steps = math.max(math.abs(delta.X), math.abs(delta.Z)) / CELL
+                steps = math.clamp(math.floor(steps + 0.5), 0, math.clamp(ClutchBlocks and ClutchBlocks.Value or 6, 1, 10))
+                local stepDir = Vector3.new(math.sign(delta.X), 0, math.sign(delta.Z))
+                local cursor = Vector3.new(support.X, floorY, support.Z)
+                for _ = 1, steps do
+                    if not AntiFall.Enabled or Mode.Value ~= 'Clutch' then break end
+                    cursor += Vector3.new(stepDir.X * CELL, 0, stepDir.Z * CELL)
+                    if not placeClutch(cursor, block) then break end
+                    if entitylib.isAlive and entitylib.character.Humanoid.FloorMaterial ~= Enum.Material.Air then break end
+                end
+            end
+        end
+
         clutchBusy = false
     end
 
@@ -3670,6 +3721,7 @@ run(function()
                                                 end
                                             end
 
+                                            markTeleport()
                                             root.CFrame += Vector3.new(0, top.Y - root.Position.Y, 0)
                                             if not frictionTable.Speed then
                                                 root.AssemblyLinearVelocity = (AntiFallDirection * getSpeed()) + Vector3.new(0, root.AssemblyLinearVelocity.Y, 0)
@@ -3708,8 +3760,13 @@ run(function()
                     local root = entitylib.character.RootPart
                     if not root or not isnetworkowner(root) then return end
                     if entitylib.character.Humanoid.FloorMaterial ~= Enum.Material.Air then return end
-                    -- A real fall, not a step down or a jump arc.
-                    if root.AssemblyLinearVelocity.Y >= -12 then return end
+                    -- Fire on the way off the edge, not once the fall is already fast.
+                    --
+                    -- The old -12 threshold meant a fifth of a second of falling before anything
+                    -- happened, and by then the island you stepped off is out of reach - so there is
+                    -- nothing left to build against and the clutch has already lost. Any downward
+                    -- movement at all over nothing is enough to start.
+                    if root.AssemblyLinearVelocity.Y >= -1 then return end
                     -- And genuinely into the void: if there is anything at all to land on in the
                     -- column we are heading for, there is nothing to clutch. This single check is
                     -- what stops the false placing.
@@ -3927,16 +3984,21 @@ run(function()
         if drop <= 1 then return false end
 
         local velocity = root.AssemblyLinearVelocity
-        root.CFrame -= Vector3.new(0, drop, 0)
+        -- In bites, not in one jump. A hundred-stud teleport inside a single frame is exactly the
+        -- move the server's movement check refuses, and a refused drop is a fall that carries on to
+        -- the bottom at full speed - which is what "TP mode does nothing" was. Forty studs a pass at
+        -- thirty passes a second still beats gravity comfortably.
+        local step = math.min(drop, 40)
+        markTeleport()
+        root.CFrame -= Vector3.new(0, step, 0)
         -- Keep the horizontal travel so the landing spot is the one the fall was heading for,
-        -- and arrive with nothing vertical left for the game to charge for. Dropping to the
-        -- floor is a move the server is already expecting from someone who is falling, which is
-        -- why this replicates where the old build's teleport back UP was always rejected.
+        -- and arrive with nothing vertical left for the game to charge for.
         root.AssemblyLinearVelocity = Vector3.new(velocity.X, 0, velocity.Z)
-        -- The fall is over as far as we are concerned. Without this the next pass would still be
-        -- holding the old speed and would fire again before the humanoid has registered the
-        -- landing, which is what turns one teleport into a burst of them.
-        trackedFall = 0
+        -- Only call the fall finished once we are actually down. While we are still stepping, the
+        -- tracked fall has to stay put or the next pass would not fire and we would hang in mid air.
+        if step >= drop - 1 then
+            trackedFall = 0
+        end
         return true
     end
 
@@ -4249,6 +4311,82 @@ run(function()
         return true
     end
 
+    -- The one thing the server actually charges from.
+    --
+    -- BedWars settles fall damage off the ground-hit report the CLIENT sends when it lands. Every
+    -- other approach in this module works AROUND that report - fabricating a clearing packet whose
+    -- argument shape we can only guess at, rewriting a byte in the physics packet, out-running the
+    -- landing with a teleport - and each of them loses to something, which is why none of the three
+    -- were landing. Intercepting the report itself cannot lose: a server that is never told you hit
+    -- the ground has nothing to charge you for.
+    --
+    -- Two ways to intercept, one per mode:
+    --   block - drop the report entirely (Blatant, and TP as a safety net under its teleport).
+    --   stall - hold it instead, and let it go the moment you die. The damage does arrive, just
+    --           after it can no longer cost you anything, which is what RakNet mode now does.
+    --
+    -- The hook sits on __namecall, which every call in the game passes through, so the very first
+    -- thing it does is one identity comparison against the remote. Anything else is off the path.
+    local groundHitOld, groundHitInstance
+    local swallowMode, swallowUntil = nil, 0
+    local stalledHits = {}
+
+    local function installGroundHitHook()
+        if groundHitOld then return true end
+        groundHitInstance = resolveGroundHit()
+        if not groundHitInstance then return false end
+        groundHitOld = hookmetamethod(game, '__namecall', newcclosure(function(self, ...)
+            if self == groundHitInstance and swallowMode and not checkcaller() then
+                local method = getnamecallmethod()
+                if method == 'FireServer' or method == 'InvokeServer' then
+                    if swallowMode == 'stall' and #stalledHits < 32 then
+                        table.insert(stalledHits, table.pack(...))
+                    end
+                    return
+                end
+            end
+            return groundHitOld(self, ...)
+        end))
+        return groundHitOld ~= nil
+    end
+
+    local function removeGroundHitHook()
+        swallowMode, swallowUntil = nil, 0
+        table.clear(stalledHits)
+        if groundHitOld then
+            pcall(hookmetamethod, game, '__namecall', groundHitOld)
+            groundHitOld = nil
+        end
+    end
+
+    -- Let every held report go. Fired from our own thread, so checkcaller() is true and the hook
+    -- waves them straight through.
+    local function releaseStalledHits()
+        if #stalledHits <= 0 or not groundHitInstance then return end
+        local queued = stalledHits
+        stalledHits = {}
+        for _, args in queued do
+            pcall(function()
+                groundHitInstance:FireServer(table.unpack(args, 1, args.n))
+            end)
+        end
+    end
+
+    -- Arm the intercept for a moment PAST the landing. The report goes out on the frame the
+    -- humanoid touches down, by which point the tracked fall has already reset to zero - so keying
+    -- the hook straight off "is a dangerous fall in progress" would disarm it a frame too early and
+    -- let the one report that matters through.
+    local function armSwallow(mode)
+        swallowMode = mode
+        swallowUntil = tick() + 0.7
+    end
+
+    local function updateSwallow()
+        if swallowMode and tick() > swallowUntil then
+            swallowMode = nil
+        end
+    end
+
     -- RakNet mode. The only one that works underneath the game entirely: it edits the physics
     -- packet on its way out of the client.
     --
@@ -4321,20 +4459,33 @@ run(function()
         Name = 'NoFallDamage',
         Function = function(callback)
             if callback then
-                if Mode.Value == 'Blatant' and not resolveGroundHit() then
-                    notif('NoFallDamage', 'Could not reach the ground-hit event - Blatant has nothing to send', 8, 'alert')
+                -- Blatant, TP and RakNet all lean on the ground-hit intercept now, so it goes in for
+                -- all three. Legit is the one mode that genuinely changes how you land, so it is
+                -- left alone.
+                if Mode.Value ~= 'Legit' then
+                    if not installGroundHitHook() then
+                        notif('NoFallDamage', 'Could not reach the ground-hit event on this build', 8, 'alert')
+                    end
                 end
                 if Mode.Value == 'RakNet' then
-                    if not rakNetCheck('NoFallDamage') then
-                        NoFall:Toggle()
-                        return
+                    -- The packet spoof is a bonus layer where raknet is available; the stall below
+                    -- is what the mode actually runs on, so a missing raknet is no longer fatal.
+                    if rakNetCheck('NoFallDamage', true) then
+                        addRakHook()
                     end
-                    addRakHook()
+                    NoFall:Clean(vapeEvents.EntityDeathEvent.Event:Connect(function(deathTable)
+                        if deathTable.entityInstance == lplr.Character then
+                            releaseStalledHits()
+                        end
+                    end))
                 end
 
                 repeat
                     local waitDelay = 0.04
                     local character, root, humanoid = validCharacter()
+                    -- Runs whatever happens, so an armed intercept always disarms itself even if the
+                    -- character went away mid-fall.
+                    updateSwallow()
                     if not character then
                         -- No character to read: never leave the packet hook rewriting state for
                         -- a fall that is no longer happening.
@@ -4343,17 +4494,25 @@ run(function()
                     if character then
                         local fall = updateTrackedFall(root, humanoid)
                         if Mode.Value == 'Blatant' then
-                            -- Settle the fall the server is holding, every single pass, for as
-                            -- long as the drop is worth charging for. Nothing physical here.
+                            -- Nothing physical: you fall and land exactly as you would have. The
+                            -- report that would have charged you simply never leaves the client,
+                            -- and the old clearing send goes out too in case this build settles
+                            -- the fall off that instead.
                             waitDelay = 0.03
                             if fall < -(FallThreshold and FallThreshold.Value or 85) then
+                                armSwallow('block')
                                 clearRegisteredFall(fall)
                             end
                         elseif Mode.Value == 'RakNet' then
-                            -- The hook does the work; this only decides when it is armed, so the
-                            -- rewrite is confined to the part of the fall that would cost us.
+                            -- Stall: hold the landing report back while the fall is dangerous. It is
+                            -- released when you die, so the damage is never lost - only made
+                            -- worthless. The packet spoof rides along where raknet exists.
                             waitDelay = 0.03
-                            spoofFall = fall < -(FallThreshold and FallThreshold.Value or 85)
+                            local dangerous = fall < -(FallThreshold and FallThreshold.Value or 85)
+                            spoofFall = dangerous
+                            if dangerous then
+                                armSwallow('stall')
+                            end
                         elseif humanoid.FloorMaterial ~= Enum.Material.Air then
                             usedPearl = false
                         elseif Mode.Value == 'Legit' then
@@ -4376,8 +4535,15 @@ run(function()
                             -- the fall on the floor below us. Judged on the fall built up rather
                             -- than this instant's reading, so a fast drop that momentarily reads
                             -- slow - clipping a ledge, brushing a block - still counts.
+                            --
+                            -- The intercept is armed alongside it. A single hundred-stud teleport
+                            -- is a big enough move for the server to refuse outright, which is why
+                            -- this mode looked like it did nothing: the drop got rubber-banded and
+                            -- the landing charged anyway. Now the drop is taken in bites the server
+                            -- will accept, and the report is blocked underneath it either way.
                             waitDelay = 0.03
                             if fall <= -(MinVelocity and MinVelocity.Value or 60) then
+                                armSwallow('block')
                                 tpNoFall(root, character)
                             end
                         end
@@ -4394,10 +4560,14 @@ run(function()
                 zephyrFired = false
                 fallAnchorY = nil
                 trackedFall = 0
+                -- Anything still held goes out on the way past: turning the module off must never
+                -- swallow a report for good.
+                releaseStalledHits()
+                removeGroundHitHook()
                 removeRakHook()
             end
         end,
-        Tooltip = 'Prevents fall damage\nLegit clutches, TP drops you onto the floor below, Blatant clears the fall on the server as it builds, RakNet strips it from the outgoing physics packet\nNone of them change how you fall - no slowing, floating or teleporting'
+        Tooltip = 'Prevents fall damage\nBlatant blocks the landing report the server charges from, TP walks you down to the floor under the same block, RakNet holds the report instead and lets it go when you die, Legit clutches with blocks, pearls and tools'
     })
     Mode = NoFall:CreateDropdown({
         Name = 'Mode',
@@ -4409,7 +4579,7 @@ run(function()
                 NoFall:Toggle()
             end
         end,
-        Tooltip = 'Legit clutches with blocks, telepearls then tools (Zephyr jump-cancels instead)\nBlatant keeps clearing the pending fall on the server all the way down, so you fall and land normally\nTP drops you onto the floor below the moment the fall turns dangerous'
+        Tooltip = 'Legit clutches with blocks, telepearls then tools (Zephyr jump-cancels instead)\nBlatant drops the landing report the server settles fall damage from, so you fall and land normally and it has nothing to charge\nTP steps you down to the floor below once the fall turns dangerous\nRakNet stalls the report rather than dropping it - the damage arrives when you die, by which point it costs nothing'
     })
     MinVelocity = NoFall:CreateSlider({
         Name = 'Minimum Velocity',
@@ -5027,10 +5197,113 @@ run(function()
                 WaveSpeed = terrain.WaterWaveSpeed
             }
         end
+        local realistic = Mode.Value == 'Realistic'
         terrain.WaterColor = Color3.fromHSV(Color.Hue, Color.Sat, Color.Value)
         terrain.WaterTransparency = math.clamp(1 - Color.Opacity, 0, 1)
-        terrain.WaterWaveSize = Waves.Enabled and 0.15 or 0
-        terrain.WaterWaveSpeed = Waves.Enabled and 12 or 0
+        terrain.WaterWaveSize = Waves.Enabled and (realistic and 0.28 or 0.15) or 0
+        terrain.WaterWaveSpeed = Waves.Enabled and (realistic and 8 or 12) or 0
+        -- Real water is a mirror at a glancing angle and clear straight down. Reflectance is what
+        -- sells that, and it is the single biggest difference between "a blue surface" and water.
+        terrain.WaterReflectance = realistic and 0.9 or 0.2
+    end
+
+    -- Realistic mode: the water is only half of it.
+    --
+    -- Terrain water on its own still reads as a flat blue sheet, because everything around it is
+    -- lit for a blockfight. This puts an ocean's worth of atmosphere behind it - haze on the
+    -- horizon, sun scatter off the surface, a colder cast to the light - and then, when your head
+    -- actually goes under, the screen behaves like it is underwater: blue-green, blurred and dim.
+    -- All of it is Lighting, all of it is restored exactly on the way out.
+    local realismObjects, oldLighting = {}, nil
+
+    local function addRealism()
+        if oldLighting then return end
+        oldLighting = {
+            Ambient = lightingService.Ambient,
+            OutdoorAmbient = lightingService.OutdoorAmbient,
+            Brightness = lightingService.Brightness,
+            EnvironmentDiffuseScale = lightingService.EnvironmentDiffuseScale,
+            EnvironmentSpecularScale = lightingService.EnvironmentSpecularScale
+        }
+        lightingService.EnvironmentDiffuseScale = 1
+        lightingService.EnvironmentSpecularScale = 1
+
+        local atmosphere = Instance.new('Atmosphere')
+        atmosphere.Name = 'AetherWaterAtmosphere'
+        atmosphere.Density = 0.36
+        atmosphere.Offset = 0.2
+        atmosphere.Haze = 1.8
+        atmosphere.Glare = 0.4
+        atmosphere.Color = Color3.fromRGB(199, 215, 226)
+        atmosphere.Decay = Color3.fromRGB(106, 140, 160)
+        atmosphere.Parent = lightingService
+        table.insert(realismObjects, atmosphere)
+
+        local rays = Instance.new('SunRaysEffect')
+        rays.Name = 'AetherWaterRays'
+        rays.Intensity = 0.12
+        rays.Spread = 0.6
+        rays.Parent = lightingService
+        table.insert(realismObjects, rays)
+
+        local grade = Instance.new('ColorCorrectionEffect')
+        grade.Name = 'AetherWaterGrade'
+        grade.Saturation = 0.08
+        grade.Contrast = 0.06
+        grade.TintColor = Color3.fromRGB(226, 240, 248)
+        grade.Parent = lightingService
+        table.insert(realismObjects, grade)
+
+        -- Only ever visible with your head under the surface.
+        local submerged = Instance.new('ColorCorrectionEffect')
+        submerged.Name = 'AetherWaterSubmerged'
+        submerged.Enabled = false
+        submerged.Saturation = -0.15
+        submerged.Contrast = -0.1
+        submerged.Brightness = -0.08
+        submerged.TintColor = Color3.fromRGB(120, 190, 215)
+        submerged.Parent = lightingService
+        table.insert(realismObjects, submerged)
+
+        local depth = Instance.new('BlurEffect')
+        depth.Name = 'AetherWaterBlur'
+        depth.Enabled = false
+        depth.Size = 14
+        depth.Parent = lightingService
+        table.insert(realismObjects, depth)
+
+        return submerged, depth
+    end
+
+    local function removeRealism()
+        for _, object in realismObjects do
+            pcall(function() object:Destroy() end)
+        end
+        table.clear(realismObjects)
+        if oldLighting then
+            pcall(function()
+                lightingService.Ambient = oldLighting.Ambient
+                lightingService.OutdoorAmbient = oldLighting.OutdoorAmbient
+                lightingService.Brightness = oldLighting.Brightness
+                lightingService.EnvironmentDiffuseScale = oldLighting.EnvironmentDiffuseScale
+                lightingService.EnvironmentSpecularScale = oldLighting.EnvironmentSpecularScale
+            end)
+            oldLighting = nil
+        end
+    end
+
+    -- Underwater is decided by where the CAMERA is, not the player: you can be stood on the surface
+    -- looking down into it, and the screen should only change when your view actually goes under.
+    local function updateSubmerged(height)
+        local submerged, depth
+        for _, object in realismObjects do
+            if object.Name == 'AetherWaterSubmerged' then submerged = object end
+            if object.Name == 'AetherWaterBlur' then depth = object end
+        end
+        if not submerged or not depth then return end
+        local under = gameCamera.CFrame.Position.Y < height
+        submerged.Enabled = under
+        depth.Enabled = under
     end
 
     local function restoreWaterLook()
@@ -5089,6 +5362,12 @@ run(function()
         local height = barrierHeight()
         if not height then return end
 
+        if Mode.Value == 'Realistic' then
+            addRealism()
+        else
+            removeRealism()
+        end
+
         if Mode.Value == 'Part' then
             clearTerrain()
             restoreWaterLook()
@@ -5101,6 +5380,9 @@ run(function()
 
         removePart()
         applyWaterLook()
+        if Mode.Value == 'Realistic' then
+            updateSubmerged(height)
+        end
 
         local centre = Vector3.new(0, height, 0)
         if entitylib.isAlive then
@@ -5137,17 +5419,21 @@ run(function()
                     clearTerrain()
                     restoreWaterLook()
                     removePart()
+                    removeRealism()
                 end)
                 Water:Clean(task.spawn(function()
                     while Water.Enabled do
                         refresh()
-                        task.wait(0.5)
+                        -- Realistic has to keep up with the camera crossing the surface, so it polls
+                        -- faster than the others need to.
+                        task.wait(Mode.Value == 'Realistic' and 0.1 or 0.5)
                     end
                 end))
             else
                 clearTerrain()
                 restoreWaterLook()
                 removePart()
+                removeRealism()
             end
         end,
         Tooltip = 'Fills the void with Roblox water at AntiFall\'s barrier height',
@@ -5157,14 +5443,15 @@ run(function()
     })
     Mode = Water:CreateDropdown({
         Name = 'Mode',
-        List = {'Terrain', 'Part'},
+        List = {'Realistic', 'Terrain', 'Part'},
         Default = 'Terrain',
-        Tooltip = 'Terrain - real Roblox water with waves, filled in around you\nPart - one water-material plane across the map, cheaper and always available',
+        Tooltip = 'Realistic - terrain water with real reflections, ocean haze, sun scatter, and a proper underwater screen when your head goes under\nTerrain - the same water, plain lighting\nPart - one water-material plane across the map, cheaper and always available',
         Function = function()
             if Water.Enabled then
                 clearTerrain()
                 restoreWaterLook()
                 removePart()
+                removeRealism()
                 task.spawn(refresh)
             end
         end
@@ -5572,6 +5859,40 @@ run(function()
     -- precisely nothing when you are out over the void - so when it comes back empty we fall back
     -- to the closest block on the map from the block engine's own store. That scan is cached,
     -- because it is only ever needed while we are already off the map.
+    -- Move EVERYTHING back, not just the root part.
+    --
+    -- A correction that only writes root.CFrame leaves the rest of the rig wherever the server put
+    -- it. The parts are welded so they usually catch up - but during a yank over the void they do
+    -- not always, and a limb left behind keeps falling and kills you even though "you" were
+    -- restored. So the whole model is pivoted to the target, every part in it has its velocity
+    -- killed, and the hidden root AntiDeath or GodMode is holding is dragged along with it.
+    local function restoreCharacter(root, target, velocity)
+        local delta = target - root.Position
+        local character = lplr.Character
+        if character then
+            pcall(function()
+                character:PivotTo(character:GetPivot() + delta)
+            end)
+            for _, part in character:GetDescendants() do
+                if part:IsA('BasePart') then
+                    part.AssemblyLinearVelocity = Vector3.zero
+                    part.Velocity = Vector3.zero
+                end
+            end
+        end
+        -- PivotTo may not have moved the root (a detached or re-parented rig), so make sure.
+        if (root.Position - target).Magnitude > 0.05 then
+            root.CFrame = CFrame.new(target) * (root.CFrame - root.CFrame.Position)
+        end
+        if store.rootpart and store.rootpart ~= root and store.rootpart.Parent then
+            store.rootpart.CFrame += delta
+            store.rootpart.Velocity = Vector3.zero
+        end
+        if velocity then
+            root.AssemblyLinearVelocity = velocity
+        end
+    end
+
     local nearestValue, nearestAt, nearestFrom = nil, 0, nil
     local function nearestSurface(root)
         local pos = root.Position
@@ -5671,13 +5992,29 @@ run(function()
                     pcall(function() walk = getSpeed() end)
                     local allowance = math.max(hVel.Magnitude, walk) * dt + 1.5
 
+                    -- Did this move put us back somewhere we already were? That is what a
+                    -- rubber-band IS - the server rewinding you onto ground you occupied a moment
+                    -- ago - and it is the one thing a teleport never does, because a teleport takes
+                    -- you somewhere new. Every horizontal rule below is gated on it, which is what
+                    -- stops your own sideways teleports (a pearl, MouseTP, a dash, the void-fly
+                    -- touch-down) being "corrected" straight back out from under you.
+                    local function rewound()
+                        for i = #history, 1, -1 do
+                            local entry = history[i]
+                            if (now - entry.Time) > 0.1 and ((entry.Position - pos) * Vector3.new(1, 0, 1)).Magnitude < 3.5 then
+                                return true
+                            end
+                        end
+                        return false
+                    end
+
                     local yanked, yankY = false, false
-                    if now > graceUntil then
+                    if now > graceUntil and now > selfTeleportUntil then
                         -- 1. Dragged backward along the heading we were actually travelling on.
                         local heading = (lastMoveVel or hVel) * Vector3.new(1, 0, 1)
                         if heading.Magnitude > 4 then
                             local backward = -(hMoved:Dot(heading.Unit))
-                            if backward > sens and backward < maxCorrect then
+                            if backward > sens and backward < maxCorrect and rewound() then
                                 yanked = true
                             end
                         end
@@ -5686,14 +6023,8 @@ run(function()
                         -- yanks while stationary - cases the heading test above can never see -
                         -- while leaving real teleports (pearls, /home, respawns) alone, because
                         -- those land somewhere we have not just been.
-                        if not yanked and hMoved.Magnitude > allowance + sens and hMoved.Magnitude < maxCorrect then
-                            for i = #history, 1, -1 do
-                                local entry = history[i]
-                                if (now - entry.Time) > 0.1 and ((entry.Position - pos) * Vector3.new(1, 0, 1)).Magnitude < 3 then
-                                    yanked = true
-                                    break
-                                end
-                            end
+                        if not yanked and hMoved.Magnitude > allowance + sens and hMoved.Magnitude < maxCorrect and rewound() then
+                            yanked = true
                         end
                         -- 3. Vertical snap: the server slamming us down far harder than gravity
                         -- could this frame. This is the fly/glide lagback the old detector missed
@@ -5736,16 +6067,15 @@ run(function()
                                 end
                             end
 
-                            root.CFrame += (restore - pos)
                             if Mode.Value == 'Restore' then
                                 -- The server usually kills your momentum as it yanks; hand it back
                                 -- so you keep moving instead of stopping dead.
                                 local keep = lastMoveVel or lastVel or Vector3.zero
-                                root.AssemblyLinearVelocity = Vector3.new(keep.X, root.AssemblyLinearVelocity.Y, keep.Z)
+                                restoreCharacter(root, restore, Vector3.new(keep.X, root.AssemblyLinearVelocity.Y, keep.Z))
                             else
                                 -- Nearest Land / Freeze: drop the horizontal momentum that was
                                 -- carrying us into trouble, keep the vertical so we settle.
-                                root.AssemblyLinearVelocity = Vector3.new(0, root.AssemblyLinearVelocity.Y, 0)
+                                restoreCharacter(root, restore, Vector3.new(0, root.AssemblyLinearVelocity.Y, 0))
                             end
 
                             pos = restore
@@ -5773,7 +6103,7 @@ run(function()
                             holdPos = Vector3.new(holdPos.X, pos.Y, holdPos.Z)
                         end
                         if (holdPos - pos).Magnitude > 1.5 then
-                            root.CFrame += (holdPos - pos)
+                            restoreCharacter(root, holdPos, root.AssemblyLinearVelocity)
                             pos = holdPos
                         else
                             holdPos = pos
@@ -5986,7 +6316,7 @@ run(function()
 
     local realroot, clone, hip = nil, nil, 2.5
     local hiding, hideUntil, syncUntil, standDownUntil = false, 0, 0, 0
-    local lastWarn = 0
+    local lastWarn, lastHealth = 0, nil
     local lowestPoint = -9e9
     local groundRay = RaycastParams.new()
     groundRay.RespectCanCollide = true
@@ -6058,6 +6388,7 @@ run(function()
             store.rootpart = nil
         end
         hiding, hideUntil, syncUntil = false, 0, 0
+        lastHealth = nil
     end
 
     -- Over the void? Then the hitbox stays home - see the Void guard note above.
@@ -6078,13 +6409,44 @@ run(function()
         return (workspace:GetServerTimeNow() - last) <= 0.3
     end
 
+    -- Is this somewhere the hitbox can actually sit?
+    --
+    -- This is the suffocation fix. Offset mode parked the hitbox a fixed distance straight DOWN,
+    -- which on any solid ground puts it inside the floor - and a body inside a block suffocates,
+    -- which is why it would occasionally drain you to death for no visible reason. A spot is only
+    -- usable if the block engine has nothing there and nothing solid overlaps it.
+    local function freeSpot(position)
+        if getPlacedBlock(position) then return false end
+        groundRay.FilterDescendantsInstances = {lplr.Character, gameCamera, AntiFallPart, realroot, clone}
+        local hit = workspace:Blockcast(CFrame.new(position), Vector3.new(2, 2, 2), Vector3.new(0, 0.05, 0), groundRay)
+        return hit == nil
+    end
+
+    -- Candidate offsets, nearest first. Down is tried first because it is the least visible, then
+    -- up (almost always open air), then sideways.
+    local hideOffsets = {
+        Vector3.new(0, -1, 0), Vector3.new(0, 1, 0),
+        Vector3.new(1, 0, 0), Vector3.new(-1, 0, 0),
+        Vector3.new(0, 0, 1), Vector3.new(0, 0, -1),
+        Vector3.new(0.7, 0.7, 0), Vector3.new(-0.7, 0.7, 0)
+    }
+
     local function hideTarget()
         if Mode.Value == 'Under map' then
-            return CFrame.new(clone.Position.X, lowestPoint - 6, clone.Position.Z) * CFrame.Angles(math.rad(90), 0, 0)
+            local under = Vector3.new(clone.Position.X, lowestPoint - 6, clone.Position.Z)
+            -- Below the world there is nothing to be buried in, so no search is needed.
+            return CFrame.new(under) * CFrame.Angles(math.rad(90), 0, 0)
         end
-        -- Offset: just far enough that a sword raycast and a projectile capsule both miss, lying
-        -- flat so there is even less of it in the way.
-        return CFrame.new(clone.Position - Vector3.new(0, Offset.Value, 0)) * CFrame.Angles(math.rad(90), 0, 0)
+        -- Offset: far enough that a sword raycast and a projectile capsule both miss, lying flat so
+        -- there is even less of it in the way - and in open air, never inside the floor.
+        for _, direction in hideOffsets do
+            local candidate = clone.Position + (direction * Offset.Value)
+            if freeSpot(candidate) then
+                return CFrame.new(candidate) * CFrame.Angles(math.rad(90), 0, 0)
+            end
+        end
+        -- Boxed in on every side: better to be hittable for a moment than to be buried.
+        return nil
     end
 
     GodMode = vape.Categories.Exploits:CreateModule({
@@ -6136,6 +6498,24 @@ run(function()
                         return
                     end
 
+                    -- Health watchdog. Nothing should be able to hurt us while the hitbox is away,
+                    -- so health going down during a hide means the hide itself is doing it - the
+                    -- classic case being a spot that turned out to be inside something and started
+                    -- suffocating us. Let go immediately rather than draining to death, and stand
+                    -- down long enough not to walk straight back into it.
+                    local health = entitylib.character.Humanoid.Health
+                    if hiding and lastHealth and health < lastHealth - 0.5 then
+                        if Notify.Enabled and tick() - lastWarn > 2 then
+                            lastWarn = tick()
+                            notif('GodMode', 'Taking damage while hidden - standing down', 4, 'warning')
+                        end
+                        standDownUntil = tick() + math.max(Recover.Value, 2)
+                        lastHealth = nil
+                        giveBack()
+                        return
+                    end
+                    lastHealth = health
+
                     local now = tick()
                     local blocked = overVoid() and VoidGuard.Enabled
                     if blocked or attacking() then
@@ -6154,11 +6534,14 @@ run(function()
                     end
 
                     realroot.Velocity = Vector3.zero
-                    if hiding then
-                        realroot.CFrame = hideTarget()
+                    local target = hiding and hideTarget() or nil
+                    if target then
+                        realroot.CFrame = target
                     else
-                        -- Synced: sit exactly on the visible body so the server sees a perfectly
-                        -- ordinary player who is standing where they look like they are standing.
+                        -- Synced, or nowhere free to hide: sit exactly on the visible body so the
+                        -- server sees a perfectly ordinary player standing where they look like
+                        -- they are standing.
+                        hiding = false
                         realroot.CFrame = clone.CFrame
                         realroot.Velocity = clone.Velocity
                     end
@@ -6302,6 +6685,7 @@ run(function()
         for _, direction in options do
             local target = root.Position + (direction * distance)
             if not EdgeCheck.Enabled or workspace:Raycast(target + Vector3.new(0, 2, 0), Vector3.new(0, -12, 0), rayCheck) then
+                markTeleport()
                 root.CFrame = CFrame.new(target, target + root.CFrame.LookVector)
                 root.AssemblyLinearVelocity = Vector3.new(0, root.AssemblyLinearVelocity.Y, 0)
                 return true
@@ -6617,6 +7001,7 @@ run(function()
                                 local position, targetPosition = findTeleportPosition(target)
                                 if position then
                                     -- Face the target on a level plane so we don't tilt.
+                                    markTeleport()
                                     root.CFrame = CFrame.lookAt(position, Vector3.new(targetPosition.X, position.Y, targetPosition.Z))
                                     root.AssemblyLinearVelocity = Vector3.new(0, root.AssemblyLinearVelocity.Y, 0)
                                 end
@@ -6961,6 +7346,7 @@ run(function()
                                             tpToggle = false
                                             oldy = root.Position.Y
                                             tpTick = tick() + 0.11
+                                            markTeleport()
                                             root.CFrame = CFrame.lookAlong(Vector3.new(root.Position.X, ray.Position.Y + entitylib.character.HipHeight, root.Position.Z), root.CFrame.LookVector)
                                         end
                                     end
@@ -6969,6 +7355,7 @@ run(function()
                                 if oldy then
                                     if tpTick < tick() then
                                         local newpos = Vector3.new(root.Position.X, oldy, root.Position.Z)
+                                        markTeleport()
                                         root.CFrame = CFrame.lookAlong(newpos, root.CFrame.LookVector)
                                         tpToggle = true
                                         oldy = nil
@@ -10260,6 +10647,7 @@ run(function()
 
                                 root.Velocity *= Vector3.new(1, 0, 1)
                                 if Mode.Value == 'CFrame' then
+                                    markTeleport()
                                     root.CFrame += Vector3.new(0, Value.Value * dt, 0)
                                 elseif Mode.Value == 'Impulse' then
                                     root:ApplyImpulse(Vector3.new(0, Value.Value, 0) * root.AssemblyMass)
@@ -14687,6 +15075,7 @@ run(function()
             local ground = getPlacedBlock(probe - Vector3.new(0, 2, 0))
             if ground and not getPlacedBlock(probe) and not getPlacedBlock(probe + Vector3.new(0, 2, 0)) then
                 local topY = ground.Position.Y + ground.Size.Y / 2
+                markTeleport()
                 root.CFrame = CFrame.new(base.X, topY + hip + 0.1, base.Z) * root.CFrame.Rotation
                 root.AssemblyLinearVelocity = Vector3.zero
                 return true
@@ -20600,6 +20989,7 @@ end)
 run(function()
     local AutoBank
     local UIToggle
+    local Activation
     local Range
     local UI
     local Chests
@@ -20654,9 +21044,32 @@ run(function()
         end
     end
 
+    local inv = function()
+        return bedwars.Client:GetNamespace('Inventory')
+    end
+
+    -- Infinite range was sending the deposit cold, from wherever you happened to be standing, and
+    -- getting nothing back. The one thing that differs from the flow that DOES work everywhere else
+    -- in this script (AutoSteal) is that the chest is observed first - the server is told which
+    -- container you are working with before you touch it - so Infinite now opens the chest the same
+    -- way before depositing, and closes it afterwards.
+    local refusals, warned = 0, false
+
     local function handleState()
-        local chest = replicatedStorage.Inventories:FindFirstChild(lplr.Name..'_personal')
+        local chest = replicatedStorage:FindFirstChild('Inventories')
+        chest = chest and chest:FindFirstChild(lplr.Name..'_personal')
         if not chest then return end
+
+        local infinite = Range and Range.Value == 'Infinite'
+        local before = 0
+        if infinite then
+            pcall(function()
+                inv():Get('SetObservedChest'):SendToServer(chest)
+            end)
+            for _, v in store.inventory.inventory.items do
+                if Items[v.itemType] then before += (v.amount or 0) end
+            end
+        end
 
         -- Always DEPOSIT the configured resources into the personal chest while we are
         -- near it. The old code gated depositing behind a "distance from spawn > 80"
@@ -20667,10 +21080,33 @@ run(function()
             if item and v.tool and tick() - (sent[v.tool] or 0) >= 1.5 then
                 sent[v.tool] = tick()
                 task.spawn(function()
-                    bedwars.Client:GetNamespace('Inventory'):Get('ChestGiveItem'):CallServer(chest, v.tool)
+                    inv():Get('ChestGiveItem'):CallServer(chest, v.tool)
                     refreshBank(chest)
                 end)
             end
+        end
+
+        if infinite then
+            task.delay(0.6, function()
+                local after = 0
+                for _, v in store.inventory.inventory.items do
+                    if Items[v.itemType] then after += (v.amount or 0) end
+                end
+                if before > 0 and after >= before then
+                    refusals += 1
+                elseif after < before then
+                    refusals = 0
+                end
+                -- Say so rather than looking broken: if the server is checking the distance itself,
+                -- no client can bank from across the map and the honest thing is to tell you.
+                if refusals >= 8 and not warned then
+                    warned = true
+                    notif('AutoBank', 'This server is refusing deposits from range - use Nearby', 8, 'warning')
+                end
+                pcall(function()
+                    inv():Get('SetObservedChest'):SendToServer(nil)
+                end)
+            end)
         end
     end
 
@@ -20697,9 +21133,26 @@ run(function()
                 addItem('emerald', true)
                 addItem('void_crystal', true)
 
+                -- On Key: the bind means "bank now" rather than a mode you leave running. One pass
+                -- deposits everything (the per-tool cooldown only stops repeats of the same stack),
+                -- then it switches itself back off.
+                if Activation.Value == 'On Key' then
+                    if nearChest() then
+                        handleState()
+                    end
+                    task.wait(0.4)
+                    if AutoBank.Enabled then
+                        AutoBank:Toggle()
+                    end
+                    return
+                end
+
                 repeat
                     local hotbar = lplr.PlayerGui:FindFirstChild('hotbar')
-                    hotbar = hotbar and hotbar['1']:FindFirstChild('HotbarHealthbarContainer')
+                    -- FindFirstChild, not an index: indexing a missing child throws, and this runs
+                    -- on the module's only thread, so one bad frame used to kill the whole loop.
+                    hotbar = hotbar and hotbar:FindFirstChild('1')
+                    hotbar = hotbar and hotbar:FindFirstChild('HotbarHealthbarContainer')
                     if hotbar then
                         UI.Position = UDim2.fromOffset(0, (hotbar.AbsolutePosition.Y + guiService:GetGuiInset().Y) - 40)
                     end
@@ -20717,6 +21170,18 @@ run(function()
             end
         end,
         Tooltip = 'Automatically puts resources in your personal chest'
+    })
+    Activation = AutoBank:CreateDropdown({
+        Name = 'Activation',
+        List = {'Toggle', 'On Key'},
+        Default = 'Toggle',
+        Tooltip = 'Toggle banks continuously while it is on\nOn Key banks once each time you press the bind and switches itself back off',
+        Function = function()
+            if AutoBank.Enabled then
+                AutoBank:Toggle()
+                AutoBank:Toggle()
+            end
+        end
     })
     Range = AutoBank:CreateDropdown({
         Name = 'Range',
