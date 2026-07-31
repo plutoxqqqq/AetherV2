@@ -8966,7 +8966,7 @@ run(function()
             end
         end,
         ExtraText = function()
-            return learnedCeiling and ('limit '..math.floor(learnedCeiling)) or nil
+            return learnedCeiling and ('limit '..math.floor(learnedCeiling)) or ''
         end,
         Tooltip = 'On key: fires a compatible tool then arcs you up to just under the anticheat height limit and back down, ending when you land. Learns that limit the first time it is hit and stays below it after'
     })
