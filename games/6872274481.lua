@@ -4990,6 +4990,9 @@ run(function()
     local part
     local filled
     local oldWater
+    local fx        -- underwater screen effects (ColorCorrection / Blur / SunRays), Realistic mode only
+    local oldFog    -- saved Lighting fog, put back the moment you surface
+    local submerged -- currently below the water surface
 
     local function barrierHeight()
         if AntiFallPart and AntiFallPart.Parent then
@@ -5085,6 +5088,135 @@ run(function()
         end
     end
 
+    ----------------------------------------------------------------------------
+    -- Realistic mode. Terrain water, but glassy and reflective, and it comes alive only while you
+    -- are actually in it: the look (fog, colour grade, god-rays, sway) and the buoyancy are applied
+    -- when your eyes / body go under the surface and taken straight back off when you surface, so
+    -- nothing here ever touches the world while you are stood on dry land.
+    ----------------------------------------------------------------------------
+    local FX_NAME = 'AetherWaterFX'
+
+    local function applyRealisticLook()
+        local terrain = workspace.Terrain
+        if not oldWater then
+            oldWater = {
+                Color = terrain.WaterColor,
+                Transparency = terrain.WaterTransparency,
+                Reflectance = terrain.WaterReflectance,
+                WaveSize = terrain.WaterWaveSize,
+                WaveSpeed = terrain.WaterWaveSpeed
+            }
+        end
+        terrain.WaterColor = Color3.fromHSV(Color.Hue, Color.Sat, Color.Value)
+        terrain.WaterTransparency = math.clamp(1 - Color.Opacity, 0, 1)
+        -- Glassy: reflect the sky and world off the surface, with livelier waves than the flat look.
+        terrain.WaterReflectance = Waves.Enabled and 0.7 or 0.4
+        terrain.WaterWaveSize = Waves.Enabled and 0.3 or 0.05
+        terrain.WaterWaveSpeed = Waves.Enabled and 18 or 4
+    end
+
+    local function ensureFX()
+        if fx then return end
+        fx = {}
+        local cc = Instance.new('ColorCorrectionEffect')
+        cc.Name = FX_NAME
+        cc.Enabled = false
+        cc.Parent = lightingService
+        fx.cc = cc
+        local blur = Instance.new('BlurEffect')
+        blur.Name = FX_NAME..'Blur'
+        blur.Enabled = false
+        blur.Size = 0
+        blur.Parent = lightingService
+        fx.blur = blur
+        local rays = Instance.new('SunRaysEffect')
+        rays.Name = FX_NAME..'Rays'
+        rays.Enabled = false
+        rays.Parent = lightingService
+        fx.rays = rays
+    end
+
+    local function restoreFog()
+        if not oldFog then return end
+        pcall(function()
+            lightingService.FogStart = oldFog.Start
+            lightingService.FogEnd = oldFog.End
+            lightingService.FogColor = oldFog.Color
+        end)
+        oldFog = nil
+    end
+
+    -- Came back up (or left Realistic mode): switch the look off and hand the fog back, but keep the
+    -- effect instances around so diving straight back in does not churn them.
+    local function surfaced()
+        if not submerged then return end
+        submerged = false
+        restoreFog()
+        if fx then
+            pcall(function()
+                fx.cc.Enabled = false
+                fx.blur.Enabled = false
+                fx.rays.Enabled = false
+            end)
+        end
+    end
+
+    local function removeFX()
+        surfaced()
+        if fx then
+            for _, effect in fx do
+                pcall(function() effect:Destroy() end)
+            end
+            fx = nil
+        end
+    end
+
+    -- Called every frame while Realistic is on. surface is the top of the water slab.
+    local function updateRealistic(surface)
+        ensureFX()
+        local cam = gameCamera
+        local under = cam and cam.CFrame.Position.Y < surface
+
+        if under then
+            if not submerged then
+                submerged = true
+                if not oldFog then
+                    oldFog = {Start = lightingService.FogStart, End = lightingService.FogEnd, Color = lightingService.FogColor}
+                end
+            end
+            local col = Color3.fromHSV(Color.Hue, Color.Sat, Color.Value)
+            local sway = 0.5 + 0.5 * math.sin(tick() * 1.4)
+            -- Fog closes in the deeper/less clear the water is, so it reads as real water rather
+            -- than a blue filter.
+            lightingService.FogColor = col
+            lightingService.FogStart = 0
+            lightingService.FogEnd = 55 + Color.Opacity * 55 + sway * 6
+            fx.cc.Enabled = true
+            fx.cc.TintColor = col:Lerp(Color3.new(1, 1, 1), 0.05 + 0.04 * sway)
+            fx.cc.Brightness = -0.04
+            fx.cc.Contrast = 0.12
+            fx.cc.Saturation = -0.08
+            fx.blur.Enabled = true
+            fx.blur.Size = 6 + sway * 3
+            fx.rays.Enabled = true
+            fx.rays.Intensity = 0.12
+            fx.rays.Spread = 0.9
+        else
+            surfaced()
+        end
+
+        -- Buoyancy: while your body is under the surface, water drags your speed and floats you back
+        -- up, so falling into it feels like water instead of air.
+        if entitylib.isAlive then
+            local root = entitylib.character.RootPart
+            if root and isnetworkowner(root) and root.Position.Y < surface then
+                local vel = root.AssemblyLinearVelocity
+                local lift = math.clamp(vel.Y * 0.6 + 6, -8, 10)
+                root.AssemblyLinearVelocity = Vector3.new(vel.X * 0.85, lift, vel.Z * 0.85)
+            end
+        end
+    end
+
     local function refresh()
         local height = barrierHeight()
         if not height then return end
@@ -5100,7 +5232,11 @@ run(function()
         end
 
         removePart()
-        applyWaterLook()
+        if Mode.Value == 'Realistic' then
+            applyRealisticLook()
+        else
+            applyWaterLook()
+        end
 
         local centre = Vector3.new(0, height, 0)
         if entitylib.isAlive then
@@ -5137,6 +5273,7 @@ run(function()
                     clearTerrain()
                     restoreWaterLook()
                     removePart()
+                    removeFX()
                 end)
                 Water:Clean(task.spawn(function()
                     while Water.Enabled do
@@ -5144,10 +5281,23 @@ run(function()
                         task.wait(0.5)
                     end
                 end))
+                -- Realistic mode's look and buoyancy have to react the instant you break the surface,
+                -- so they run every frame rather than on the half-second refresh. Idle for the other
+                -- modes, and it reverts itself the frame you surface or switch mode away.
+                Water:Clean(runService.RenderStepped:Connect(function()
+                    if not Water.Enabled or Mode.Value ~= 'Realistic' then
+                        surfaced()
+                        return
+                    end
+                    local height = barrierHeight()
+                    if not height then return end
+                    updateRealistic(height + math.max(Depth.Value, 4) / 2)
+                end))
             else
                 clearTerrain()
                 restoreWaterLook()
                 removePart()
+                removeFX()
             end
         end,
         Tooltip = 'Fills the void with Roblox water at AntiFall\'s barrier height',
@@ -5157,14 +5307,15 @@ run(function()
     })
     Mode = Water:CreateDropdown({
         Name = 'Mode',
-        List = {'Terrain', 'Part'},
+        List = {'Terrain', 'Part', 'Realistic'},
         Default = 'Terrain',
-        Tooltip = 'Terrain - real Roblox water with waves, filled in around you\nPart - one water-material plane across the map, cheaper and always available',
+        Tooltip = 'Terrain - real Roblox water with waves, filled in around you\nPart - one water-material plane across the map, cheaper and always available\nRealistic - glassy reflective terrain water that comes alive only when you go in it: underwater fog, colour, god-rays and sway, plus buoyancy that floats and slows you. All of it is dropped the moment you surface',
         Function = function()
             if Water.Enabled then
                 clearTerrain()
                 restoreWaterLook()
                 removePart()
+                removeFX()
                 task.spawn(refresh)
             end
         end
@@ -5213,18 +5364,107 @@ end)
 
 run(function()
     local ChatPosition
+    local Vertical
+    local Horizontal
+    local moved
+
+    -- The chat is one of two completely different systems and the old module only ever spoke to
+    -- the wrong one. SetCore('ChatWindowPosition') drives the legacy Lua chat; BedWars runs on
+    -- TextChatService (see ChatCrasher), which ignores SetCore entirely - so the module did
+    -- nothing. We drive both now: SetCore for the legacy chat, and for TextChatService we find the
+    -- window it actually rendered and move that frame ourselves, re-asserting it because the chat
+    -- rebuilds its GUI on respawn and channel changes.
+    local function targetOffset()
+        return Vector2.new(Horizontal and Horizontal.Value or 0, Vertical and Vertical.Value or 200)
+    end
+
+    -- Legacy chat is the supported path. Retry because the CoreScript registers the SetCore
+    -- callback a moment after join and a single early call is silently dropped.
+    local function applyLegacy()
+        local off = targetOffset()
+        pcall(function()
+            starterGui:SetCore('ChatWindowPosition', UDim2.fromOffset(off.X, off.Y))
+        end)
+    end
+
+    -- TextChatService's window has no public position property, so move the rendered frame. Its
+    -- name is randomised, so match it by shape: a GuiObject holding the message list (a
+    -- ScrollingFrame) under a chat-named ScreenGui in CoreGui or PlayerGui.
+    local function findChatFrame()
+        local roots = {coreGui}
+        local pg = lplr:FindFirstChild('PlayerGui')
+        if pg then table.insert(roots, pg) end
+        for _, root in roots do
+            for _, gui in root:GetChildren() do
+                if gui:IsA('ScreenGui') and gui.Name:lower():find('chat') then
+                    for _, child in gui:GetChildren() do
+                        if child:IsA('GuiObject') and child:FindFirstChildWhichIsA('ScrollingFrame', true) then
+                            return child
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    local function apply()
+        applyLegacy()
+        local frame = findChatFrame()
+        if frame then
+            moved = frame
+            pcall(function()
+                frame.Position = UDim2.fromOffset(targetOffset().X, targetOffset().Y)
+            end)
+        end
+    end
+
+    local function restore()
+        pcall(function()
+            starterGui:SetCore('ChatWindowPosition', UDim2.new())
+        end)
+        if moved and moved.Parent then
+            pcall(function() moved.Position = UDim2.new() end)
+        end
+        moved = nil
+    end
+
     ChatPosition = vape.Categories.Render:CreateModule({
         Name = 'ChatPosition',
         Function = function(callback)
-            pcall(function()
-                if callback then
-                    starterGui:SetCore('ChatWindowPosition', UDim2.new(0, 0, 0, 200))
-                else
-                    starterGui:SetCore('ChatWindowPosition', UDim2.new(0, 0, 0, 0))
-                end
-            end)
+            if callback then
+                ChatPosition:Clean(task.spawn(function()
+                    while ChatPosition.Enabled do
+                        apply()
+                        task.wait(1)
+                    end
+                end))
+            else
+                restore()
+            end
         end,
-        Tooltip = 'Repositions the chat window'
+        Tooltip = 'Repositions the chat window. Works with both the legacy chat and TextChatService'
+    })
+    Vertical = ChatPosition:CreateSlider({
+        Name = 'Vertical',
+        Min = 0,
+        Max = 700,
+        Default = 200,
+        Suffix = ' px',
+        Tooltip = 'How far down from the top-left the chat window sits',
+        Function = function()
+            if ChatPosition.Enabled then apply() end
+        end
+    })
+    Horizontal = ChatPosition:CreateSlider({
+        Name = 'Horizontal',
+        Min = 0,
+        Max = 700,
+        Default = 0,
+        Suffix = ' px',
+        Tooltip = 'How far right from the left edge the chat window sits',
+        Function = function()
+            if ChatPosition.Enabled then apply() end
+        end
     })
 end)
 
@@ -8407,6 +8647,12 @@ run(function()
     local Value
     local CameraDir
     local LimitItems
+    local ChangeDir
+    local LongJumpBypass
+    local BypassHeight, BypassBoost, BypassCamera, BypassSteer
+    -- Studs above the launch point where the anticheat pushed back last time (a pull-down or the
+    -- start of "you're too high" damage). Learned once, then every later arc stops just under it.
+    local learnedCeiling = nil
     local start
     local JumpTick, JumpSpeed, Direction = tick(), 0
     local projectileRemote = {InvokeServer = function() end}
@@ -8588,6 +8834,21 @@ run(function()
 
                     if root and isnetworkowner(root) then
                         if JumpTick > tick() then
+                            -- Change direction mid-air: while the boost is running, steer it with
+                            -- your movement keys (or where the camera looks) instead of riding the
+                            -- fixed line it launched on. MoveDirection is already camera-relative, so
+                            -- W/A/S/D bends the boost; with no keys down it holds its current heading.
+                            if ChangeDir and ChangeDir.Enabled and Direction then
+                                local steer = entitylib.character.Humanoid.MoveDirection
+                                steer = Vector3.new(steer.X, 0, steer.Z)
+                                if steer.Magnitude < 0.1 and CameraDir and CameraDir.Enabled then
+                                    local look = gameCamera.CFrame.LookVector
+                                    steer = Vector3.new(look.X, 0, look.Z)
+                                end
+                                if steer.Magnitude > 0.1 then
+                                    Direction = steer.Unit
+                                end
+                            end
                             root.AssemblyLinearVelocity = Direction * (getSpeed() + ((JumpTick - tick()) > 1.1 and JumpSpeed or 0)) + Vector3.new(0, root.AssemblyLinearVelocity.Y, 0)
                             if entitylib.character.Humanoid.FloorMaterial == Enum.Material.Air and not start then
                                 root.AssemblyLinearVelocity += Vector3.new(0, dt * (workspace.Gravity - 23), 0)
@@ -8650,6 +8911,154 @@ run(function()
         Name = 'Limit to items',
         Tooltip = 'Only long-jumps from an item in your hand (dao, jade hammer, void axe, cannon, tnt, grappling hook). Enable it without one and LongJump turns itself back off instead of freezing you'
     })
+    ChangeDir = LongJump:CreateToggle({
+        Name = 'Change direction mid-air',
+        Tooltip = 'Steer the boost while you are in the air with your movement keys, instead of flying in a straight line from where you set off. With Camera Direction on it also follows where you look when no keys are held'
+    })
+
+    -- LongJumpBypass: LongJump's compatible-tool launch, then BoostAirJump's upward push, shaped
+    -- into a single clean arc. On key it fires a compatible tool for a legit-looking kick-off, then
+    -- eases you up to just under the height where the anticheat pushes back, arcs over the top and
+    -- lets gravity bring you down, and turns itself off the moment you land. It learns that ceiling
+    -- the first time it is hit (a pull-down or the onset of "too high" damage) and stays below it
+    -- afterwards. Lives in the same block as LongJump only so it can reuse LongJumpMethods.
+    local function findBypassTool()
+        if store.hand and store.hand.tool and LongJumpMethods[store.hand.tool.Name] then
+            return store.hand.tool.Name, getItem(store.hand.tool.Name)
+        end
+        for name in LongJumpMethods do
+            local item = getItem(name)
+            if item or store.equippedKit == name then
+                return name, item
+            end
+        end
+    end
+
+    LongJumpBypass = vape.Categories.Exploits:CreateModule({
+        Name = 'LongJumpBypass',
+        Function = function(callback)
+            if callback then
+                repeat task.wait() until (store.matchState ~= 0 and store.map and entitylib.isAlive) or not LongJumpBypass.Enabled
+                if not LongJumpBypass.Enabled then return end
+
+                local toolName, item = findBypassTool()
+                if not toolName then
+                    notif('LongJumpBypass', 'Hold or carry a compatible tool (dao, jade hammer, void axe, cannon, tnt, grappling hook).', 5)
+                    return task.spawn(function() if LongJumpBypass.Enabled then LongJumpBypass:Toggle() end end)
+                end
+
+                local root = entitylib.character.RootPart
+                if not root then
+                    return task.spawn(function() if LongJumpBypass.Enabled then LongJumpBypass:Toggle() end end)
+                end
+
+                local launchY = root.Position.Y
+                local look = (BypassCamera.Enabled and gameCamera or root).CFrame.LookVector
+                local forwardDir = Vector3.new(look.X, 0, look.Z)
+                forwardDir = forwardDir.Magnitude > 0 and forwardDir.Unit or root.CFrame.LookVector
+                -- Aim for the smaller of the slider cap and what we already learned is the limit, always
+                -- keeping a small margin below it.
+                local ceiling = learnedCeiling and math.min(learnedCeiling, BypassHeight.Value) or BypassHeight.Value
+                local targetY = launchY + math.max(ceiling - 4, 8)
+                local peakY = launchY
+                local startHealth = entitylib.character.Humanoid.Health
+                local phase = 'ascend'
+                local bypassStart = tick()
+
+                -- Fire the compatible tool for the initial launch. Errors are swallowed by task.spawn,
+                -- and the arc below carries the jump either way, so a refused cast just means a
+                -- slightly weaker kick-off rather than a failed jump.
+                task.spawn(LongJumpMethods[toolName], item, root.Position, forwardDir)
+
+                LongJumpBypass:Clean(runService.PreSimulation:Connect(function()
+                    local body = entitylib.isAlive and entitylib.character.RootPart or nil
+                    if not body or not isnetworkowner(body) then return end
+
+                    local now = tick()
+                    if now - bypassStart > 8 then
+                        return task.spawn(function() if LongJumpBypass.Enabled then LongJumpBypass:Toggle() end end)
+                    end
+
+                    local y = body.Position.Y
+                    peakY = math.max(peakY, y)
+                    local vel = body.AssemblyLinearVelocity
+                    local flat = Vector3.new(vel.X, 0, vel.Z)
+
+                    -- Steer the arc with your movement keys if allowed, so it is not stuck on the line
+                    -- it set off along.
+                    if BypassSteer.Enabled then
+                        local steer = entitylib.character.Humanoid.MoveDirection
+                        steer = Vector3.new(steer.X, 0, steer.Z)
+                        if steer.Magnitude > 0.1 then
+                            forwardDir = steer.Unit
+                        end
+                    end
+
+                    if phase == 'ascend' then
+                        local climbed = peakY - launchY
+                        local pulled = climbed > 10 and (peakY - y) > 5           -- slammed back down
+                        local damaged = climbed > 10 and entitylib.character.Humanoid.Health < startHealth - 0.5
+                        if pulled or damaged then
+                            -- Found the ceiling the hard way. Remember it (with margin) and arc over.
+                            learnedCeiling = math.max(climbed - 6, 8)
+                            phase = 'descend'
+                        elseif y >= targetY then
+                            phase = 'descend'
+                        else
+                            -- Ease the climb out as we near the top so the path curves over cleanly
+                            -- instead of stopping dead, and keep forward speed for the arc's shape.
+                            local ease = math.clamp((targetY - y) / 24, 0, 1)
+                            local climb = BypassBoost.Value * ease
+                            local fwd = forwardDir * math.max(flat.Magnitude, getSpeed())
+                            body.AssemblyLinearVelocity = Vector3.new(fwd.X, math.max(vel.Y, climb), fwd.Z)
+                        end
+                    end
+
+                    if phase == 'descend' then
+                        -- Stop boosting: keep forward momentum and let gravity own the fall, so the
+                        -- top rounds off and comes down as one arc.
+                        local fwd = forwardDir * math.max(flat.Magnitude, getSpeed() * 0.8)
+                        body.AssemblyLinearVelocity = Vector3.new(fwd.X, vel.Y, fwd.Z)
+
+                        local grounded = entitylib.character.Humanoid.FloorMaterial ~= Enum.Material.Air
+                        if grounded and vel.Y <= 0.5 and (peakY - y) > 4 then
+                            -- Landed: the arc is done, so end the module exactly as asked.
+                            return task.spawn(function() if LongJumpBypass.Enabled then LongJumpBypass:Toggle() end end)
+                        end
+                    end
+                end))
+            end
+        end,
+        ExtraText = function()
+            return learnedCeiling and ('limit '..math.floor(learnedCeiling)) or nil
+        end,
+        Tooltip = 'On key: fires a compatible tool then arcs you up to just under the anticheat height limit and back down, ending when you land. Learns that limit the first time it is hit and stays below it after'
+    })
+    BypassHeight = LongJumpBypass:CreateSlider({
+        Name = 'Max height',
+        Min = 20,
+        Max = 400,
+        Default = 90,
+        Suffix = ' studs',
+        Tooltip = 'Highest the arc will try to climb above where you set off. It stops here or at the learned anticheat limit, whichever is lower'
+    })
+    BypassBoost = LongJumpBypass:CreateSlider({
+        Name = 'Climb speed',
+        Min = 20,
+        Max = 120,
+        Default = 60,
+        Suffix = ' studs/s',
+        Tooltip = 'How hard it pushes you up on the way to the top. Eases off near the ceiling for a clean arc'
+    })
+    BypassCamera = LongJumpBypass:CreateToggle({
+        Name = 'Camera direction',
+        Tooltip = 'Set off toward where the camera looks rather than where you are moving'
+    })
+    BypassSteer = LongJumpBypass:CreateToggle({
+        Name = 'Change direction mid-air',
+        Default = true,
+        Tooltip = 'Steer the arc with your movement keys while it plays out'
+    })
 end)
 
 run(function()
@@ -8682,7 +9091,7 @@ run(function()
         void_axe_jump = {void_axe = true},
         dash = {wood_dao = true, stone_dao = true, iron_dao = true, diamond_dao = true, emerald_dao = true}
     }
-    local KIT_ABILITIES = {'elektra_tp', 'ELEKTRA_TP'}
+    local KIT_ABILITIES = {'elektra_tp', 'ELEKTRA_TP', 'CAT_POUNCE', 'cat_pounce'}
 
     local ABILITIES = {}
     for ability in ABILITY_ITEMS do
@@ -8708,6 +9117,7 @@ run(function()
 
     local prevReady, lastHand = {}, nil
     local armedUntil, armSpeed = 0, 0
+    local armConfirmed, armPos, armStamp = false, nil, 0
     local boostStart, boostUntil, peakSpeed, boostDir = 0, 0, 0, nil
     local lastDash, prevSpeed = 0, 0
 
@@ -8744,16 +9154,37 @@ run(function()
 
     -- A cast was seen. Remember how fast we were BEFORE it so the launch check has something to
     -- compare against - the ability's velocity often lands on the very frame the cooldown edges,
-    -- and measuring after that would leave nothing to detect. Nothing touches the character yet.
-    local function arm(baseline)
+    -- and measuring after that would leave nothing to detect. `confirmed` marks the casts we are
+    -- sure of - a spent dash cooldown, or an ability that genuinely went ready->used while its item
+    -- was held - as opposed to the velocity fallback's guess. Also stash where we were, so a
+    -- teleport (which adds no speed at all) can still be recognised as the ability having moved us.
+    -- Nothing touches the character yet.
+    local function arm(baseline, confirmed)
         armedUntil = tick() + ARM_WINDOW
+        armStamp = tick()
         armSpeed = baseline
+        armConfirmed = confirmed or false
+        armPos = (entitylib.isAlive and entitylib.character.RootPart and entitylib.character.RootPart.Position) or nil
     end
 
-    -- Did the ability actually throw us?
+    -- Did the ability actually throw us? Strict version, for the velocity fallback where we are only
+    -- guessing a cast happened, so it demands a real speed spike to avoid firing on knockback.
     local function launched(root, speed, baseline)
         if speed >= LAUNCH_SPEED and speed >= baseline + LAUNCH_GAIN then return true end
         return root.AssemblyLinearVelocity.Y >= LAUNCH_LIFT
+    end
+
+    -- For a cast we already confirmed, the boost only has to prove the ability moved us at all -
+    -- not that it hit some big number. A dash adds speed, a jump throws us up, a teleport jumps our
+    -- position; any of the three is the move doing its job. This is what makes Extender carry the
+    -- jade hammer jump, the void axe jump and the Elektra / cat teleports too, instead of only the
+    -- dao dash that happened to clear the old speed gate. An ability the server refused produces
+    -- none of these, so a refused cast still never boosts.
+    local function launchedConfirmed(root, speed, baseline)
+        if speed >= baseline + 6 then return true end
+        if root.AssemblyLinearVelocity.Y >= 18 then return true end
+        if armPos and (root.Position - armPos).Magnitude >= 8 then return true end
+        return false
     end
 
     -- The ability really did throw us: start carrying it.
@@ -8780,6 +9211,7 @@ run(function()
         table.clear(prevReady)
         lastHand = nil
         armedUntil, armSpeed = 0, 0
+        armConfirmed, armPos, armStamp = false, nil, 0
         boostStart, boostUntil, peakSpeed, boostDir = 0, 0, 0, nil
         lastDash, prevSpeed = 0, 0
     end
@@ -8813,7 +9245,7 @@ run(function()
                     -- change cannot move it.
                     local stamp = dashStamp()
                     if stamp > lastDash + 0.01 then
-                        arm(baseline)
+                        arm(baseline, true)
                     end
                     if stamp ~= lastDash then
                         lastDash = stamp
@@ -8836,7 +9268,7 @@ run(function()
                                 prevReady[ability] = ready
                             else
                                 if prevReady[ability] and not ready then
-                                    arm(baseline)
+                                    arm(baseline, true)
                                 end
                                 prevReady[ability] = ready
                             end
@@ -8847,7 +9279,15 @@ run(function()
 
                     if boostUntil <= now then
                         if armedUntil > now then
-                            if launched(root, speed, armSpeed) then
+                            local confirm
+                            if armConfirmed then
+                                -- Give a confirmed cast the SAMPLE window to reach its peak, then
+                                -- carry it on the loose movement test so jumps and teleports count.
+                                confirm = (now - armStamp >= SAMPLE) and launchedConfirmed(root, speed, armSpeed)
+                            else
+                                confirm = launched(root, speed, armSpeed)
+                            end
+                            if confirm then
                                 launch(root)
                             end
                         else
