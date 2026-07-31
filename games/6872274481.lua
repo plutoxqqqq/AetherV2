@@ -6132,6 +6132,7 @@ run(function()
     local Recover
     local VoidGuard
     local AttackSync
+    local SyncAir
     local Notify
 
     local realroot, clone, hip = nil, nil, 2.5
@@ -6232,9 +6233,18 @@ run(function()
         if Mode.Value == 'Under map' then
             return CFrame.new(clone.Position.X, lowestPoint - 6, clone.Position.Z) * CFrame.Angles(math.rad(90), 0, 0)
         end
-        -- Offset: just far enough that a sword raycast and a projectile capsule both miss, lying
-        -- flat so there is even less of it in the way.
-        return CFrame.new(clone.Position - Vector3.new(0, Offset.Value, 0)) * CFrame.Angles(math.rad(90), 0, 0)
+        -- Offset: far enough off the body that a sword raycast and a projectile capsule both miss,
+        -- but into OPEN AIR - never into a block. The old version parked it straight DOWN into the
+        -- floor you were standing on, which embedded the hitbox in a block and is what suffocated
+        -- you to death. Prefer up (usually clear sky); only drop if something is right above.
+        local off = Offset.Value
+        local ignore = {lplr.Character, gameCamera}
+        if AntiFallPart then table.insert(ignore, AntiFallPart) end
+        if realroot then table.insert(ignore, realroot) end
+        groundRay.FilterDescendantsInstances = ignore
+        local blockedAbove = workspace:Raycast(clone.Position, Vector3.new(0, off + 2, 0), groundRay)
+        local dir = blockedAbove and -1 or 1
+        return CFrame.new(clone.Position + Vector3.new(0, off * dir, 0)) * CFrame.Angles(math.rad(90), 0, 0)
     end
 
     GodMode = vape.Categories.Exploits:CreateModule({
@@ -6288,7 +6298,12 @@ run(function()
 
                     local now = tick()
                     local blocked = overVoid() and VoidGuard.Enabled
-                    if blocked or attacking() then
+                    -- While you are off the ground the hidden hitbox has to travel with your body
+                    -- every frame, and a fast jump makes that motion large. Parked away from the
+                    -- body that reads as impossible movement and the server lags you back mid-jump,
+                    -- so for the airtime we put the hitbox back on the body. That is the jump lagback.
+                    local airborne = SyncAir.Enabled and entitylib.character.Humanoid.FloorMaterial == Enum.Material.Air
+                    if blocked or attacking() or airborne then
                         -- Forced sync: hitbox on the body, and the next hide window starts fresh.
                         hiding = false
                         hideUntil = 0
@@ -6303,14 +6318,20 @@ run(function()
                         hideUntil = now + HideTime.Value
                     end
 
-                    realroot.Velocity = Vector3.zero
                     if hiding then
                         realroot.CFrame = hideTarget()
+                        -- Carry the hidden hitbox at your body's own velocity rather than freezing it
+                        -- at zero: a part whose position shifts every frame while it claims to be
+                        -- standing still is exactly the impossible motion the anticheat pulls you for.
+                        realroot.Velocity = clone.Velocity
+                        -- Cannot be shoved into or crushed by geometry while it is off on its own.
+                        realroot.CanCollide = false
                     else
                         -- Synced: sit exactly on the visible body so the server sees a perfectly
                         -- ordinary player who is standing where they look like they are standing.
                         realroot.CFrame = clone.CFrame
                         realroot.Velocity = clone.Velocity
+                        realroot.CanCollide = true
                     end
                 end))
             else
@@ -6378,6 +6399,11 @@ run(function()
         Name = 'Sync on attack',
         Default = true,
         Tooltip = 'Put the hitbox back on your body for a moment around your own hits so the server still accepts them'
+    })
+    SyncAir = GodMode:CreateToggle({
+        Name = 'Sync while airborne',
+        Default = true,
+        Tooltip = 'Put the hitbox back on your body whenever you are off the ground. A jump moves the hidden hitbox fast enough to look impossible, which is what lagged you back mid-jump. Off gives more immunity in the air but the jump lagback can come back'
     })
     Notify = GodMode:CreateToggle({
         Name = 'Notifications',
