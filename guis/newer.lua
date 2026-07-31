@@ -7948,6 +7948,19 @@ function mainapi:Load(skipgui, profile)
 			end
 		end
 
+		-- Keybinds and GUI colour saved with this config take precedence over the shared gui file,
+		-- so each config carries its own menu key and accent, applied even on a plain config switch
+		-- (skipgui), which deliberately never touches the shared gui settings.
+		if savedata.Keybind then
+			self.Keybind = savedata.Keybind
+		end
+		if savedata.GUIColor and self.GUIColor and self.GUIColor.Load then
+			pcall(function()
+				self.GUIColor:Load(savedata.GUIColor)
+				self:UpdateGUI(self.GUIColor.Hue, self.GUIColor.Sat, self.GUIColor.Value)
+			end)
+		end
+
 		self:UpdateTextGUI(true)
 	else
 		local previousLoaded = self.Loaded
@@ -8065,6 +8078,20 @@ function mainapi:Save(newprofile)
 		Categories = {},
 		Legit = {}
 	}
+
+	-- Keybinds and the GUI accent travel WITH the config now, not only in the shared gui file, so
+	-- switching or importing a config restores the menu key and colour it was saved with.
+	savedata.Keybind = self.Keybind
+	if self.GUIColor then
+		savedata.GUIColor = {
+			Hue = self.GUIColor.Hue,
+			Sat = self.GUIColor.Sat,
+			Value = self.GUIColor.Value,
+			Notch = self.GUIColor.Notch,
+			CustomColor = self.GUIColor.CustomColor,
+			Rainbow = self.GUIColor.Rainbow
+		}
+	end
 
 	for i, v in self.Categories do
 		(v.Type ~= 'Category' and i ~= 'Main' and savedata or guidata).Categories[i] = {

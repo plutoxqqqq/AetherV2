@@ -4990,6 +4990,9 @@ run(function()
     local part
     local filled
     local oldWater
+    local fx        -- underwater screen effects (ColorCorrection / Blur / SunRays), Realistic mode only
+    local oldFog    -- saved Lighting fog, put back the moment you surface
+    local submerged -- currently below the water surface
 
     local function barrierHeight()
         if AntiFallPart and AntiFallPart.Parent then
@@ -5085,6 +5088,135 @@ run(function()
         end
     end
 
+    ----------------------------------------------------------------------------
+    -- Realistic mode. Terrain water, but glassy and reflective, and it comes alive only while you
+    -- are actually in it: the look (fog, colour grade, god-rays, sway) and the buoyancy are applied
+    -- when your eyes / body go under the surface and taken straight back off when you surface, so
+    -- nothing here ever touches the world while you are stood on dry land.
+    ----------------------------------------------------------------------------
+    local FX_NAME = 'AetherWaterFX'
+
+    local function applyRealisticLook()
+        local terrain = workspace.Terrain
+        if not oldWater then
+            oldWater = {
+                Color = terrain.WaterColor,
+                Transparency = terrain.WaterTransparency,
+                Reflectance = terrain.WaterReflectance,
+                WaveSize = terrain.WaterWaveSize,
+                WaveSpeed = terrain.WaterWaveSpeed
+            }
+        end
+        terrain.WaterColor = Color3.fromHSV(Color.Hue, Color.Sat, Color.Value)
+        terrain.WaterTransparency = math.clamp(1 - Color.Opacity, 0, 1)
+        -- Glassy: reflect the sky and world off the surface, with livelier waves than the flat look.
+        terrain.WaterReflectance = Waves.Enabled and 0.7 or 0.4
+        terrain.WaterWaveSize = Waves.Enabled and 0.3 or 0.05
+        terrain.WaterWaveSpeed = Waves.Enabled and 18 or 4
+    end
+
+    local function ensureFX()
+        if fx then return end
+        fx = {}
+        local cc = Instance.new('ColorCorrectionEffect')
+        cc.Name = FX_NAME
+        cc.Enabled = false
+        cc.Parent = lightingService
+        fx.cc = cc
+        local blur = Instance.new('BlurEffect')
+        blur.Name = FX_NAME..'Blur'
+        blur.Enabled = false
+        blur.Size = 0
+        blur.Parent = lightingService
+        fx.blur = blur
+        local rays = Instance.new('SunRaysEffect')
+        rays.Name = FX_NAME..'Rays'
+        rays.Enabled = false
+        rays.Parent = lightingService
+        fx.rays = rays
+    end
+
+    local function restoreFog()
+        if not oldFog then return end
+        pcall(function()
+            lightingService.FogStart = oldFog.Start
+            lightingService.FogEnd = oldFog.End
+            lightingService.FogColor = oldFog.Color
+        end)
+        oldFog = nil
+    end
+
+    -- Came back up (or left Realistic mode): switch the look off and hand the fog back, but keep the
+    -- effect instances around so diving straight back in does not churn them.
+    local function surfaced()
+        if not submerged then return end
+        submerged = false
+        restoreFog()
+        if fx then
+            pcall(function()
+                fx.cc.Enabled = false
+                fx.blur.Enabled = false
+                fx.rays.Enabled = false
+            end)
+        end
+    end
+
+    local function removeFX()
+        surfaced()
+        if fx then
+            for _, effect in fx do
+                pcall(function() effect:Destroy() end)
+            end
+            fx = nil
+        end
+    end
+
+    -- Called every frame while Realistic is on. surface is the top of the water slab.
+    local function updateRealistic(surface)
+        ensureFX()
+        local cam = gameCamera
+        local under = cam and cam.CFrame.Position.Y < surface
+
+        if under then
+            if not submerged then
+                submerged = true
+                if not oldFog then
+                    oldFog = {Start = lightingService.FogStart, End = lightingService.FogEnd, Color = lightingService.FogColor}
+                end
+            end
+            local col = Color3.fromHSV(Color.Hue, Color.Sat, Color.Value)
+            local sway = 0.5 + 0.5 * math.sin(tick() * 1.4)
+            -- Fog closes in the deeper/less clear the water is, so it reads as real water rather
+            -- than a blue filter.
+            lightingService.FogColor = col
+            lightingService.FogStart = 0
+            lightingService.FogEnd = 55 + Color.Opacity * 55 + sway * 6
+            fx.cc.Enabled = true
+            fx.cc.TintColor = col:Lerp(Color3.new(1, 1, 1), 0.05 + 0.04 * sway)
+            fx.cc.Brightness = -0.04
+            fx.cc.Contrast = 0.12
+            fx.cc.Saturation = -0.08
+            fx.blur.Enabled = true
+            fx.blur.Size = 6 + sway * 3
+            fx.rays.Enabled = true
+            fx.rays.Intensity = 0.12
+            fx.rays.Spread = 0.9
+        else
+            surfaced()
+        end
+
+        -- Buoyancy: while your body is under the surface, water drags your speed and floats you back
+        -- up, so falling into it feels like water instead of air.
+        if entitylib.isAlive then
+            local root = entitylib.character.RootPart
+            if root and isnetworkowner(root) and root.Position.Y < surface then
+                local vel = root.AssemblyLinearVelocity
+                local lift = math.clamp(vel.Y * 0.6 + 6, -8, 10)
+                root.AssemblyLinearVelocity = Vector3.new(vel.X * 0.85, lift, vel.Z * 0.85)
+            end
+        end
+    end
+
     local function refresh()
         local height = barrierHeight()
         if not height then return end
@@ -5100,7 +5232,11 @@ run(function()
         end
 
         removePart()
-        applyWaterLook()
+        if Mode.Value == 'Realistic' then
+            applyRealisticLook()
+        else
+            applyWaterLook()
+        end
 
         local centre = Vector3.new(0, height, 0)
         if entitylib.isAlive then
@@ -5137,6 +5273,7 @@ run(function()
                     clearTerrain()
                     restoreWaterLook()
                     removePart()
+                    removeFX()
                 end)
                 Water:Clean(task.spawn(function()
                     while Water.Enabled do
@@ -5144,10 +5281,23 @@ run(function()
                         task.wait(0.5)
                     end
                 end))
+                -- Realistic mode's look and buoyancy have to react the instant you break the surface,
+                -- so they run every frame rather than on the half-second refresh. Idle for the other
+                -- modes, and it reverts itself the frame you surface or switch mode away.
+                Water:Clean(runService.RenderStepped:Connect(function()
+                    if not Water.Enabled or Mode.Value ~= 'Realistic' then
+                        surfaced()
+                        return
+                    end
+                    local height = barrierHeight()
+                    if not height then return end
+                    updateRealistic(height + math.max(Depth.Value, 4) / 2)
+                end))
             else
                 clearTerrain()
                 restoreWaterLook()
                 removePart()
+                removeFX()
             end
         end,
         Tooltip = 'Fills the void with Roblox water at AntiFall\'s barrier height',
@@ -5157,14 +5307,15 @@ run(function()
     })
     Mode = Water:CreateDropdown({
         Name = 'Mode',
-        List = {'Terrain', 'Part'},
+        List = {'Terrain', 'Part', 'Realistic'},
         Default = 'Terrain',
-        Tooltip = 'Terrain - real Roblox water with waves, filled in around you\nPart - one water-material plane across the map, cheaper and always available',
+        Tooltip = 'Terrain - real Roblox water with waves, filled in around you\nPart - one water-material plane across the map, cheaper and always available\nRealistic - glassy reflective terrain water that comes alive only when you go in it: underwater fog, colour, god-rays and sway, plus buoyancy that floats and slows you. All of it is dropped the moment you surface',
         Function = function()
             if Water.Enabled then
                 clearTerrain()
                 restoreWaterLook()
                 removePart()
+                removeFX()
                 task.spawn(refresh)
             end
         end
@@ -5213,18 +5364,107 @@ end)
 
 run(function()
     local ChatPosition
+    local Vertical
+    local Horizontal
+    local moved
+
+    -- The chat is one of two completely different systems and the old module only ever spoke to
+    -- the wrong one. SetCore('ChatWindowPosition') drives the legacy Lua chat; BedWars runs on
+    -- TextChatService (see ChatCrasher), which ignores SetCore entirely - so the module did
+    -- nothing. We drive both now: SetCore for the legacy chat, and for TextChatService we find the
+    -- window it actually rendered and move that frame ourselves, re-asserting it because the chat
+    -- rebuilds its GUI on respawn and channel changes.
+    local function targetOffset()
+        return Vector2.new(Horizontal and Horizontal.Value or 0, Vertical and Vertical.Value or 200)
+    end
+
+    -- Legacy chat is the supported path. Retry because the CoreScript registers the SetCore
+    -- callback a moment after join and a single early call is silently dropped.
+    local function applyLegacy()
+        local off = targetOffset()
+        pcall(function()
+            starterGui:SetCore('ChatWindowPosition', UDim2.fromOffset(off.X, off.Y))
+        end)
+    end
+
+    -- TextChatService's window has no public position property, so move the rendered frame. Its
+    -- name is randomised, so match it by shape: a GuiObject holding the message list (a
+    -- ScrollingFrame) under a chat-named ScreenGui in CoreGui or PlayerGui.
+    local function findChatFrame()
+        local roots = {coreGui}
+        local pg = lplr:FindFirstChild('PlayerGui')
+        if pg then table.insert(roots, pg) end
+        for _, root in roots do
+            for _, gui in root:GetChildren() do
+                if gui:IsA('ScreenGui') and gui.Name:lower():find('chat') then
+                    for _, child in gui:GetChildren() do
+                        if child:IsA('GuiObject') and child:FindFirstChildWhichIsA('ScrollingFrame', true) then
+                            return child
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    local function apply()
+        applyLegacy()
+        local frame = findChatFrame()
+        if frame then
+            moved = frame
+            pcall(function()
+                frame.Position = UDim2.fromOffset(targetOffset().X, targetOffset().Y)
+            end)
+        end
+    end
+
+    local function restore()
+        pcall(function()
+            starterGui:SetCore('ChatWindowPosition', UDim2.new())
+        end)
+        if moved and moved.Parent then
+            pcall(function() moved.Position = UDim2.new() end)
+        end
+        moved = nil
+    end
+
     ChatPosition = vape.Categories.Render:CreateModule({
         Name = 'ChatPosition',
         Function = function(callback)
-            pcall(function()
-                if callback then
-                    starterGui:SetCore('ChatWindowPosition', UDim2.new(0, 0, 0, 200))
-                else
-                    starterGui:SetCore('ChatWindowPosition', UDim2.new(0, 0, 0, 0))
-                end
-            end)
+            if callback then
+                ChatPosition:Clean(task.spawn(function()
+                    while ChatPosition.Enabled do
+                        apply()
+                        task.wait(1)
+                    end
+                end))
+            else
+                restore()
+            end
         end,
-        Tooltip = 'Repositions the chat window'
+        Tooltip = 'Repositions the chat window. Works with both the legacy chat and TextChatService'
+    })
+    Vertical = ChatPosition:CreateSlider({
+        Name = 'Vertical',
+        Min = 0,
+        Max = 700,
+        Default = 200,
+        Suffix = ' px',
+        Tooltip = 'How far down from the top-left the chat window sits',
+        Function = function()
+            if ChatPosition.Enabled then apply() end
+        end
+    })
+    Horizontal = ChatPosition:CreateSlider({
+        Name = 'Horizontal',
+        Min = 0,
+        Max = 700,
+        Default = 0,
+        Suffix = ' px',
+        Tooltip = 'How far right from the left edge the chat window sits',
+        Function = function()
+            if ChatPosition.Enabled then apply() end
+        end
     })
 end)
 
@@ -5557,57 +5797,12 @@ run(function()
     local MaxCorrect
     local HoldTime
     local Vertical
-    local VoidFly
-    local FlySync
-    local TouchTime
+    local ForcePosition
     local Notify
 
     local voidRay = RaycastParams.new()
     voidRay.RespectCanCollide = true
     voidRay.FilterType = Enum.RaycastFilterType.Exclude
-
-    -- Nearest real surface we could plausibly be standing on. Used by the void-fly bypass below.
-    --
-    -- getNearGround only looks in a small cube around us and gives up at 60 studs, which is
-    -- precisely nothing when you are out over the void - so when it comes back empty we fall back
-    -- to the closest block on the map from the block engine's own store. That scan is cached,
-    -- because it is only ever needed while we are already off the map.
-    local nearestValue, nearestAt, nearestFrom = nil, 0, nil
-    local function nearestSurface(root)
-        local pos = root.Position
-        voidRay.FilterDescendantsInstances = {lplr.Character, gameCamera, AntiFallPart}
-        voidRay.CollisionGroup = root.CollisionGroup
-        local straight = workspace:Raycast(pos, Vector3.new(0, -600, 0), voidRay)
-        if straight then
-            return straight.Position + Vector3.new(0, (entitylib.character.HipHeight or 3) + 0.2, 0)
-        end
-
-        local ok, near = pcall(getNearGround, 14)
-        if ok and near then return near end
-
-        if nearestValue and (tick() - nearestAt) < 1.5 and nearestFrom and (pos - nearestFrom).Magnitude < 60 then
-            return nearestValue
-        end
-        local best, bestDist
-        local ok2 = pcall(function()
-            for _, cell in bedwars.BlockController:getStore():getAllBlockPositions() do
-                local world = cell * 3
-                -- Only the top of a stack is standable.
-                if not getPlacedBlock(world + Vector3.new(0, 3, 0)) then
-                    local d = (world - pos).Magnitude
-                    if not bestDist or d < bestDist then
-                        best, bestDist = world, d
-                    end
-                end
-            end
-        end)
-        if ok2 and best then
-            nearestValue = best + Vector3.new(0, 3 + (entitylib.character.HipHeight or 3), 0)
-            nearestAt, nearestFrom = tick(), pos
-            return nearestValue
-        end
-        return nil
-    end
 
     AntiLagback = vape.Categories.Exploits:CreateModule({
         Name = 'AntiLagback',
@@ -5621,6 +5816,10 @@ run(function()
                 -- a single frame and handing the fight back to the server.
                 local holdPos, holdVel, holdUntil, holdY = nil, nil, 0, false
                 local holdCount, lastYank, lastNotify = 0, 0, 0
+                -- Force position: our own running copy of exactly where you are, advanced by your
+                -- own velocity every frame. It is never a teleport - we only ever put you back on
+                -- the position you already hold when the server has quietly nudged you off it.
+                local forcePos = nil
 
                 local function reset()
                     table.clear(history)
@@ -5628,6 +5827,7 @@ run(function()
                     lastChar = lplr.Character
                     holdPos, holdVel, holdUntil, holdY = nil, nil, 0, false
                     holdCount = 0
+                    forcePos = nil
                     -- Never judge the first frames after a respawn / character swap: the spawn
                     -- itself is a huge legitimate jump.
                     graceUntil = tick() + 0.75
@@ -5794,88 +5994,64 @@ run(function()
                     while history[1] and (#history > 60 or (now - history[1].Time) > 1.5) do
                         table.remove(history, 1)
                     end
-                end))
 
-                -- Void fly bypass.
-                --
-                -- The detector above is purely reactive: it undoes a pull after the server has
-                -- already made it, which is fine for a knockback yank but hopeless for flying over
-                -- the void. There the server is not rubber-banding a mistake, it is enforcing a
-                -- rule - you have been off the ground, over nothing, for too long - and it will
-                -- keep pulling for as long as that stays true, so undoing each pull is a fight you
-                -- lose. This stops the rule from ever tripping.
-                --
-                -- Fly already has the answer for flying over LAND: touch down on the floor below
-                -- for a couple of frames and pop back up, which resets the server's airtime. Over
-                -- the void that never fires, because there is no floor below to aim at - which is
-                -- exactly why fly over the void lagbacks and fly over the map does not. So we find
-                -- a real surface anywhere in reach instead of only straight down, touch down on it
-                -- and come straight back.
-                local groundedAt, lastBypass = tick(), 0
-                local bypassing = false
-                AntiLagback:Clean(runService.Heartbeat:Connect(function()
-                    if not (VoidFly and VoidFly.Enabled) then return end
-                    if bypassing or not entitylib.isAlive or store.rootpart then return end
-                    local root = entitylib.character.RootPart
-                    if not root or not root.Parent or not isnetworkowner(root) then return end
-
-                    if entitylib.character.Humanoid.FloorMaterial ~= Enum.Material.Air then
-                        groundedAt = tick()
-                        return
-                    end
-                    -- Only the void is a problem: with something under us the game's own touch-down
-                    -- (and the server's own checks) are happy already.
-                    voidRay.FilterDescendantsInstances = {lplr.Character, gameCamera, AntiFallPart}
-                    voidRay.CollisionGroup = root.CollisionGroup
-                    if workspace:Raycast(root.Position, Vector3.new(0, -80, 0), voidRay) then
-                        groundedAt = tick()
-                        return
-                    end
-
-                    if (tick() - groundedAt) < FlySync.Value then return end
-                    if (tick() - lastBypass) < 0.2 then return end
-
-                    local target = nearestSurface(root)
-                    if not target then return end
-
-                    bypassing = true
-                    lastBypass = tick()
-                    groundedAt = tick()
-                    local restore = root.CFrame
-                    local keep = root.AssemblyLinearVelocity
-                    -- Our own teleport is a huge single-frame jump, so make sure the detector above
-                    -- does not "correct" it right back.
-                    graceUntil = tick() + 0.8
-                    holdPos, holdUntil = nil, 0
-
-                    task.spawn(function()
-                        local hold = tick() + math.clamp(TouchTime.Value, 0.03, 0.5)
-                        local aim = CFrame.new(target) * (restore - restore.Position)
-                        while tick() < hold and AntiLagback.Enabled and entitylib.isAlive and VoidFly.Enabled do
-                            local current = entitylib.character.RootPart
-                            if not current or not current.Parent then break end
-                            current.CFrame = aim
-                            current.AssemblyLinearVelocity = Vector3.zero
-                            runService.Heartbeat:Wait()
+                    -- Force position (no teleport).
+                    --
+                    -- The block above is reactive: it only acts on a pull big enough to trip the
+                    -- detector, and between those the server's copy of you can lag a little behind
+                    -- your real position - the "delayed, doesn't replicate exactly" problem. This
+                    -- keeps a running copy of exactly where you are, advanced by your own velocity
+                    -- every single frame, and the moment the server has nudged you off it (a fly /
+                    -- glide pull, a scrappy micro rubber-band, the void slowly dragging you down) it
+                    -- puts you straight back onto it. It is never a teleport: the only place it ever
+                    -- moves you to is the position you already held, so replication stays exact
+                    -- instead of catching up a frame late.
+                    --
+                    -- Off the void this leaves your height alone so ordinary jumps and falls still
+                    -- feel normal; over the void (where the whole problem is the server dragging you
+                    -- down) it holds your height too, so you can fly out there without ever being
+                    -- pulled - and without the old touch-down teleport that yanked you sideways.
+                    if ForcePosition.Enabled and not yanked and now > graceUntil then
+                        local vel = root.AssemblyLinearVelocity
+                        local overVoid = false
+                        if entitylib.character.Humanoid.FloorMaterial == Enum.Material.Air then
+                            voidRay.FilterDescendantsInstances = {lplr.Character, gameCamera, AntiFallPart}
+                            voidRay.CollisionGroup = root.CollisionGroup
+                            overVoid = workspace:Raycast(root.Position, Vector3.new(0, -80, 0), voidRay) == nil
                         end
-                        if AntiLagback.Enabled and entitylib.isAlive then
-                            local current = entitylib.character.RootPart
-                            if current and current.Parent then
-                                current.CFrame = restore
-                                current.AssemblyLinearVelocity = keep
+
+                        if not forcePos then
+                            forcePos = pos
+                        else
+                            -- Advance our copy by our own motion so it tracks where WE are going.
+                            forcePos += vel * dt
+                            if not overVoid then
+                                -- Leave the vertical to gravity/jumps unless we are over the void.
+                                forcePos = Vector3.new(forcePos.X, pos.Y, forcePos.Z)
+                            end
+                            local deviation = overVoid and (forcePos - pos) or ((forcePos - pos) * Vector3.new(1, 0, 1))
+                            local off = deviation.Magnitude
+                            if off > sens and off < maxCorrect then
+                                -- Server moved us off our own path: put us back exactly, no teleport.
+                                root.CFrame += (forcePos - pos)
+                                pos = forcePos
+                                if overVoid then
+                                    root.AssemblyLinearVelocity = Vector3.new(vel.X, math.max(vel.Y, 0), vel.Z)
+                                end
+                            else
+                                -- In sync, or a real teleport we must not fight: adopt where we are.
+                                forcePos = pos
                             end
                         end
-                        graceUntil = tick() + 0.5
-                        groundedAt = tick()
-                        bypassing = false
-                        if Notify.Enabled then
-                            notif('AntiLagback', 'Void fly re-synced', 1.5)
-                        end
-                    end)
+                    elseif not ForcePosition.Enabled then
+                        forcePos = nil
+                    end
+
+                    lastPos = pos
                 end))
             end
         end,
-        Tooltip = 'Spots a rubber-band - an impossible one-frame jump backward, sideways onto ground you just left, or straight down - and holds your own position for a moment so the whole pull is undone, not just its first frame'
+        Tooltip = 'Spots a rubber-band - an impossible one-frame jump backward, sideways onto ground you just left, or straight down - and holds your own position for a moment so the whole pull is undone, not just its first frame. With Force position on it also keeps the server\'s copy of you exactly on your real position every frame (no teleport), which is what lets you fly the void without being dragged down'
     })
     Mode = AntiLagback:CreateDropdown({
         Name = 'Mode',
@@ -5914,36 +6090,10 @@ run(function()
         Default = true,
         Tooltip = 'Also catch the server slamming you straight down (fly / glide / jump-boost lagbacks), not just horizontal yanks'
     })
-    VoidFly = AntiLagback:CreateToggle({
-        Name = 'Void fly',
+    ForcePosition = AntiLagback:CreateToggle({
+        Name = 'Force position',
         Default = true,
-        Tooltip = 'Lets you fly over the void indefinitely. Undoing the pull never works out there, so this touches you down on the nearest real surface for a few frames, resetting the airtime check before it trips',
-        Function = function(callback)
-            pcall(function()
-                FlySync.Object.Visible = callback
-                TouchTime.Object.Visible = callback
-            end)
-        end
-    })
-    FlySync = AntiLagback:CreateSlider({
-        Name = 'Sync interval',
-        Min = 0.3,
-        Max = 4,
-        Default = 1.4,
-        Decimal = 10,
-        Suffix = ' seconds',
-        Darker = true,
-        Tooltip = 'How long you may be over the void before a touch-down. Lower it if you still get pulled'
-    })
-    TouchTime = AntiLagback:CreateSlider({
-        Name = 'Touch time',
-        Min = 0.03,
-        Max = 0.5,
-        Default = 0.11,
-        Decimal = 100,
-        Suffix = ' seconds',
-        Darker = true,
-        Tooltip = 'How long to stay on the surface. Long enough for the server to see it, short enough that nobody does'
+        Tooltip = 'Keep the server\'s copy of you sitting on your exact position every frame, so it never lags a step behind you and the void can never slowly drag you down. This is what replaces the old void-fly touch-down - it never teleports you: the only place it ever puts you is where you already are'
     })
     Notify = AntiLagback:CreateToggle({
         Name = 'Notifications',
@@ -5982,6 +6132,7 @@ run(function()
     local Recover
     local VoidGuard
     local AttackSync
+    local SyncAir
     local Notify
 
     local realroot, clone, hip = nil, nil, 2.5
@@ -6082,9 +6233,18 @@ run(function()
         if Mode.Value == 'Under map' then
             return CFrame.new(clone.Position.X, lowestPoint - 6, clone.Position.Z) * CFrame.Angles(math.rad(90), 0, 0)
         end
-        -- Offset: just far enough that a sword raycast and a projectile capsule both miss, lying
-        -- flat so there is even less of it in the way.
-        return CFrame.new(clone.Position - Vector3.new(0, Offset.Value, 0)) * CFrame.Angles(math.rad(90), 0, 0)
+        -- Offset: far enough off the body that a sword raycast and a projectile capsule both miss,
+        -- but into OPEN AIR - never into a block. The old version parked it straight DOWN into the
+        -- floor you were standing on, which embedded the hitbox in a block and is what suffocated
+        -- you to death. Prefer up (usually clear sky); only drop if something is right above.
+        local off = Offset.Value
+        local ignore = {lplr.Character, gameCamera}
+        if AntiFallPart then table.insert(ignore, AntiFallPart) end
+        if realroot then table.insert(ignore, realroot) end
+        groundRay.FilterDescendantsInstances = ignore
+        local blockedAbove = workspace:Raycast(clone.Position, Vector3.new(0, off + 2, 0), groundRay)
+        local dir = blockedAbove and -1 or 1
+        return CFrame.new(clone.Position + Vector3.new(0, off * dir, 0)) * CFrame.Angles(math.rad(90), 0, 0)
     end
 
     GodMode = vape.Categories.Exploits:CreateModule({
@@ -6138,7 +6298,12 @@ run(function()
 
                     local now = tick()
                     local blocked = overVoid() and VoidGuard.Enabled
-                    if blocked or attacking() then
+                    -- While you are off the ground the hidden hitbox has to travel with your body
+                    -- every frame, and a fast jump makes that motion large. Parked away from the
+                    -- body that reads as impossible movement and the server lags you back mid-jump,
+                    -- so for the airtime we put the hitbox back on the body. That is the jump lagback.
+                    local airborne = SyncAir.Enabled and entitylib.character.Humanoid.FloorMaterial == Enum.Material.Air
+                    if blocked or attacking() or airborne then
                         -- Forced sync: hitbox on the body, and the next hide window starts fresh.
                         hiding = false
                         hideUntil = 0
@@ -6153,14 +6318,20 @@ run(function()
                         hideUntil = now + HideTime.Value
                     end
 
-                    realroot.Velocity = Vector3.zero
                     if hiding then
                         realroot.CFrame = hideTarget()
+                        -- Carry the hidden hitbox at your body's own velocity rather than freezing it
+                        -- at zero: a part whose position shifts every frame while it claims to be
+                        -- standing still is exactly the impossible motion the anticheat pulls you for.
+                        realroot.Velocity = clone.Velocity
+                        -- Cannot be shoved into or crushed by geometry while it is off on its own.
+                        realroot.CanCollide = false
                     else
                         -- Synced: sit exactly on the visible body so the server sees a perfectly
                         -- ordinary player who is standing where they look like they are standing.
                         realroot.CFrame = clone.CFrame
                         realroot.Velocity = clone.Velocity
+                        realroot.CanCollide = true
                     end
                 end))
             else
@@ -6228,6 +6399,11 @@ run(function()
         Name = 'Sync on attack',
         Default = true,
         Tooltip = 'Put the hitbox back on your body for a moment around your own hits so the server still accepts them'
+    })
+    SyncAir = GodMode:CreateToggle({
+        Name = 'Sync while airborne',
+        Default = true,
+        Tooltip = 'Put the hitbox back on your body whenever you are off the ground. A jump moves the hidden hitbox fast enough to look impossible, which is what lagged you back mid-jump. Off gives more immunity in the air but the jump lagback can come back'
     })
     Notify = GodMode:CreateToggle({
         Name = 'Notifications',
@@ -8407,6 +8583,12 @@ run(function()
     local Value
     local CameraDir
     local LimitItems
+    local ChangeDir
+    local LongJumpBypass
+    local BypassHeight, BypassBoost, BypassCamera, BypassSteer
+    -- Studs above the launch point where the anticheat pushed back last time (a pull-down or the
+    -- start of "you're too high" damage). Learned once, then every later arc stops just under it.
+    local learnedCeiling = nil
     local start
     local JumpTick, JumpSpeed, Direction = tick(), 0
     local projectileRemote = {InvokeServer = function() end}
@@ -8588,6 +8770,21 @@ run(function()
 
                     if root and isnetworkowner(root) then
                         if JumpTick > tick() then
+                            -- Change direction mid-air: while the boost is running, steer it with
+                            -- your movement keys (or where the camera looks) instead of riding the
+                            -- fixed line it launched on. MoveDirection is already camera-relative, so
+                            -- W/A/S/D bends the boost; with no keys down it holds its current heading.
+                            if ChangeDir and ChangeDir.Enabled and Direction then
+                                local steer = entitylib.character.Humanoid.MoveDirection
+                                steer = Vector3.new(steer.X, 0, steer.Z)
+                                if steer.Magnitude < 0.1 and CameraDir and CameraDir.Enabled then
+                                    local look = gameCamera.CFrame.LookVector
+                                    steer = Vector3.new(look.X, 0, look.Z)
+                                end
+                                if steer.Magnitude > 0.1 then
+                                    Direction = steer.Unit
+                                end
+                            end
                             root.AssemblyLinearVelocity = Direction * (getSpeed() + ((JumpTick - tick()) > 1.1 and JumpSpeed or 0)) + Vector3.new(0, root.AssemblyLinearVelocity.Y, 0)
                             if entitylib.character.Humanoid.FloorMaterial == Enum.Material.Air and not start then
                                 root.AssemblyLinearVelocity += Vector3.new(0, dt * (workspace.Gravity - 23), 0)
@@ -8650,6 +8847,154 @@ run(function()
         Name = 'Limit to items',
         Tooltip = 'Only long-jumps from an item in your hand (dao, jade hammer, void axe, cannon, tnt, grappling hook). Enable it without one and LongJump turns itself back off instead of freezing you'
     })
+    ChangeDir = LongJump:CreateToggle({
+        Name = 'Change direction mid-air',
+        Tooltip = 'Steer the boost while you are in the air with your movement keys, instead of flying in a straight line from where you set off. With Camera Direction on it also follows where you look when no keys are held'
+    })
+
+    -- LongJumpBypass: LongJump's compatible-tool launch, then BoostAirJump's upward push, shaped
+    -- into a single clean arc. On key it fires a compatible tool for a legit-looking kick-off, then
+    -- eases you up to just under the height where the anticheat pushes back, arcs over the top and
+    -- lets gravity bring you down, and turns itself off the moment you land. It learns that ceiling
+    -- the first time it is hit (a pull-down or the onset of "too high" damage) and stays below it
+    -- afterwards. Lives in the same block as LongJump only so it can reuse LongJumpMethods.
+    local function findBypassTool()
+        if store.hand and store.hand.tool and LongJumpMethods[store.hand.tool.Name] then
+            return store.hand.tool.Name, getItem(store.hand.tool.Name)
+        end
+        for name in LongJumpMethods do
+            local item = getItem(name)
+            if item or store.equippedKit == name then
+                return name, item
+            end
+        end
+    end
+
+    LongJumpBypass = vape.Categories.Exploits:CreateModule({
+        Name = 'LongJumpBypass',
+        Function = function(callback)
+            if callback then
+                repeat task.wait() until (store.matchState ~= 0 and store.map and entitylib.isAlive) or not LongJumpBypass.Enabled
+                if not LongJumpBypass.Enabled then return end
+
+                local toolName, item = findBypassTool()
+                if not toolName then
+                    notif('LongJumpBypass', 'Hold or carry a compatible tool (dao, jade hammer, void axe, cannon, tnt, grappling hook).', 5)
+                    return task.spawn(function() if LongJumpBypass.Enabled then LongJumpBypass:Toggle() end end)
+                end
+
+                local root = entitylib.character.RootPart
+                if not root then
+                    return task.spawn(function() if LongJumpBypass.Enabled then LongJumpBypass:Toggle() end end)
+                end
+
+                local launchY = root.Position.Y
+                local look = (BypassCamera.Enabled and gameCamera or root).CFrame.LookVector
+                local forwardDir = Vector3.new(look.X, 0, look.Z)
+                forwardDir = forwardDir.Magnitude > 0 and forwardDir.Unit or root.CFrame.LookVector
+                -- Aim for the smaller of the slider cap and what we already learned is the limit, always
+                -- keeping a small margin below it.
+                local ceiling = learnedCeiling and math.min(learnedCeiling, BypassHeight.Value) or BypassHeight.Value
+                local targetY = launchY + math.max(ceiling - 4, 8)
+                local peakY = launchY
+                local startHealth = entitylib.character.Humanoid.Health
+                local phase = 'ascend'
+                local bypassStart = tick()
+
+                -- Fire the compatible tool for the initial launch. Errors are swallowed by task.spawn,
+                -- and the arc below carries the jump either way, so a refused cast just means a
+                -- slightly weaker kick-off rather than a failed jump.
+                task.spawn(LongJumpMethods[toolName], item, root.Position, forwardDir)
+
+                LongJumpBypass:Clean(runService.PreSimulation:Connect(function()
+                    local body = entitylib.isAlive and entitylib.character.RootPart or nil
+                    if not body or not isnetworkowner(body) then return end
+
+                    local now = tick()
+                    if now - bypassStart > 8 then
+                        return task.spawn(function() if LongJumpBypass.Enabled then LongJumpBypass:Toggle() end end)
+                    end
+
+                    local y = body.Position.Y
+                    peakY = math.max(peakY, y)
+                    local vel = body.AssemblyLinearVelocity
+                    local flat = Vector3.new(vel.X, 0, vel.Z)
+
+                    -- Steer the arc with your movement keys if allowed, so it is not stuck on the line
+                    -- it set off along.
+                    if BypassSteer.Enabled then
+                        local steer = entitylib.character.Humanoid.MoveDirection
+                        steer = Vector3.new(steer.X, 0, steer.Z)
+                        if steer.Magnitude > 0.1 then
+                            forwardDir = steer.Unit
+                        end
+                    end
+
+                    if phase == 'ascend' then
+                        local climbed = peakY - launchY
+                        local pulled = climbed > 10 and (peakY - y) > 5           -- slammed back down
+                        local damaged = climbed > 10 and entitylib.character.Humanoid.Health < startHealth - 0.5
+                        if pulled or damaged then
+                            -- Found the ceiling the hard way. Remember it (with margin) and arc over.
+                            learnedCeiling = math.max(climbed - 6, 8)
+                            phase = 'descend'
+                        elseif y >= targetY then
+                            phase = 'descend'
+                        else
+                            -- Ease the climb out as we near the top so the path curves over cleanly
+                            -- instead of stopping dead, and keep forward speed for the arc's shape.
+                            local ease = math.clamp((targetY - y) / 24, 0, 1)
+                            local climb = BypassBoost.Value * ease
+                            local fwd = forwardDir * math.max(flat.Magnitude, getSpeed())
+                            body.AssemblyLinearVelocity = Vector3.new(fwd.X, math.max(vel.Y, climb), fwd.Z)
+                        end
+                    end
+
+                    if phase == 'descend' then
+                        -- Stop boosting: keep forward momentum and let gravity own the fall, so the
+                        -- top rounds off and comes down as one arc.
+                        local fwd = forwardDir * math.max(flat.Magnitude, getSpeed() * 0.8)
+                        body.AssemblyLinearVelocity = Vector3.new(fwd.X, vel.Y, fwd.Z)
+
+                        local grounded = entitylib.character.Humanoid.FloorMaterial ~= Enum.Material.Air
+                        if grounded and vel.Y <= 0.5 and (peakY - y) > 4 then
+                            -- Landed: the arc is done, so end the module exactly as asked.
+                            return task.spawn(function() if LongJumpBypass.Enabled then LongJumpBypass:Toggle() end end)
+                        end
+                    end
+                end))
+            end
+        end,
+        ExtraText = function()
+            return learnedCeiling and ('limit '..math.floor(learnedCeiling)) or ''
+        end,
+        Tooltip = 'On key: fires a compatible tool then arcs you up to just under the anticheat height limit and back down, ending when you land. Learns that limit the first time it is hit and stays below it after'
+    })
+    BypassHeight = LongJumpBypass:CreateSlider({
+        Name = 'Max height',
+        Min = 20,
+        Max = 400,
+        Default = 90,
+        Suffix = ' studs',
+        Tooltip = 'Highest the arc will try to climb above where you set off. It stops here or at the learned anticheat limit, whichever is lower'
+    })
+    BypassBoost = LongJumpBypass:CreateSlider({
+        Name = 'Climb speed',
+        Min = 20,
+        Max = 120,
+        Default = 60,
+        Suffix = ' studs/s',
+        Tooltip = 'How hard it pushes you up on the way to the top. Eases off near the ceiling for a clean arc'
+    })
+    BypassCamera = LongJumpBypass:CreateToggle({
+        Name = 'Camera direction',
+        Tooltip = 'Set off toward where the camera looks rather than where you are moving'
+    })
+    BypassSteer = LongJumpBypass:CreateToggle({
+        Name = 'Change direction mid-air',
+        Default = true,
+        Tooltip = 'Steer the arc with your movement keys while it plays out'
+    })
 end)
 
 run(function()
@@ -8682,7 +9027,7 @@ run(function()
         void_axe_jump = {void_axe = true},
         dash = {wood_dao = true, stone_dao = true, iron_dao = true, diamond_dao = true, emerald_dao = true}
     }
-    local KIT_ABILITIES = {'elektra_tp', 'ELEKTRA_TP'}
+    local KIT_ABILITIES = {'elektra_tp', 'ELEKTRA_TP', 'CAT_POUNCE', 'cat_pounce'}
 
     local ABILITIES = {}
     for ability in ABILITY_ITEMS do
@@ -8708,6 +9053,7 @@ run(function()
 
     local prevReady, lastHand = {}, nil
     local armedUntil, armSpeed = 0, 0
+    local armConfirmed, armPos, armStamp = false, nil, 0
     local boostStart, boostUntil, peakSpeed, boostDir = 0, 0, 0, nil
     local lastDash, prevSpeed = 0, 0
 
@@ -8744,16 +9090,37 @@ run(function()
 
     -- A cast was seen. Remember how fast we were BEFORE it so the launch check has something to
     -- compare against - the ability's velocity often lands on the very frame the cooldown edges,
-    -- and measuring after that would leave nothing to detect. Nothing touches the character yet.
-    local function arm(baseline)
+    -- and measuring after that would leave nothing to detect. `confirmed` marks the casts we are
+    -- sure of - a spent dash cooldown, or an ability that genuinely went ready->used while its item
+    -- was held - as opposed to the velocity fallback's guess. Also stash where we were, so a
+    -- teleport (which adds no speed at all) can still be recognised as the ability having moved us.
+    -- Nothing touches the character yet.
+    local function arm(baseline, confirmed)
         armedUntil = tick() + ARM_WINDOW
+        armStamp = tick()
         armSpeed = baseline
+        armConfirmed = confirmed or false
+        armPos = (entitylib.isAlive and entitylib.character.RootPart and entitylib.character.RootPart.Position) or nil
     end
 
-    -- Did the ability actually throw us?
+    -- Did the ability actually throw us? Strict version, for the velocity fallback where we are only
+    -- guessing a cast happened, so it demands a real speed spike to avoid firing on knockback.
     local function launched(root, speed, baseline)
         if speed >= LAUNCH_SPEED and speed >= baseline + LAUNCH_GAIN then return true end
         return root.AssemblyLinearVelocity.Y >= LAUNCH_LIFT
+    end
+
+    -- For a cast we already confirmed, the boost only has to prove the ability moved us at all -
+    -- not that it hit some big number. A dash adds speed, a jump throws us up, a teleport jumps our
+    -- position; any of the three is the move doing its job. This is what makes Extender carry the
+    -- jade hammer jump, the void axe jump and the Elektra / cat teleports too, instead of only the
+    -- dao dash that happened to clear the old speed gate. An ability the server refused produces
+    -- none of these, so a refused cast still never boosts.
+    local function launchedConfirmed(root, speed, baseline)
+        if speed >= baseline + 6 then return true end
+        if root.AssemblyLinearVelocity.Y >= 18 then return true end
+        if armPos and (root.Position - armPos).Magnitude >= 8 then return true end
+        return false
     end
 
     -- The ability really did throw us: start carrying it.
@@ -8780,6 +9147,7 @@ run(function()
         table.clear(prevReady)
         lastHand = nil
         armedUntil, armSpeed = 0, 0
+        armConfirmed, armPos, armStamp = false, nil, 0
         boostStart, boostUntil, peakSpeed, boostDir = 0, 0, 0, nil
         lastDash, prevSpeed = 0, 0
     end
@@ -8813,7 +9181,7 @@ run(function()
                     -- change cannot move it.
                     local stamp = dashStamp()
                     if stamp > lastDash + 0.01 then
-                        arm(baseline)
+                        arm(baseline, true)
                     end
                     if stamp ~= lastDash then
                         lastDash = stamp
@@ -8836,7 +9204,7 @@ run(function()
                                 prevReady[ability] = ready
                             else
                                 if prevReady[ability] and not ready then
-                                    arm(baseline)
+                                    arm(baseline, true)
                                 end
                                 prevReady[ability] = ready
                             end
@@ -8847,7 +9215,15 @@ run(function()
 
                     if boostUntil <= now then
                         if armedUntil > now then
-                            if launched(root, speed, armSpeed) then
+                            local confirm
+                            if armConfirmed then
+                                -- Give a confirmed cast the SAMPLE window to reach its peak, then
+                                -- carry it on the loose movement test so jumps and teleports count.
+                                confirm = (now - armStamp >= SAMPLE) and launchedConfirmed(root, speed, armSpeed)
+                            else
+                                confirm = launched(root, speed, armSpeed)
+                            end
+                            if confirm then
                                 launch(root)
                             end
                         else
@@ -17977,9 +18353,32 @@ run(function()
     local function startDriving()
         AutoWin:Clean(runService.Stepped:Connect(function()
             if not driving then return end
+            -- Leave the hitbox alone if GodMode/AntiDeath has parked it - moving it then would
+            -- fight them and drag the real root around.
+            if store.rootpart then return end
             local root, char = myRoot()
             if not root or not char or not char.Humanoid then return end
+
+            -- Point the humanoid so it turns to face the way we are going and plays the walk.
             char.Humanoid:Move(moveDir, false)
+
+            -- ...but do not trust Humanoid:Move on its own. BedWars drives the character through its
+            -- own block-engine controller, which can leave a scripted Move doing nothing at all -
+            -- which is exactly why the walk never started. So we also assert the movement as
+            -- velocity: forward at the humanoid's own walk speed (well inside the server's speed
+            -- check, nothing to lag back), and a hard stop when we are meant to be still on an edge
+            -- or towering. Y is left to gravity and jumps.
+            if isnetworkowner(root) then
+                local vel = root.AssemblyLinearVelocity
+                if moveDir.Magnitude > 0 then
+                    local speed = char.Humanoid.WalkSpeed
+                    if speed <= 0 then speed = 16 end
+                    local horiz = moveDir.Unit * speed
+                    root.AssemblyLinearVelocity = Vector3.new(horiz.X, vel.Y, horiz.Z)
+                else
+                    root.AssemblyLinearVelocity = Vector3.new(0, vel.Y, 0)
+                end
+            end
         end))
         AutoWin:Clean(function()
             moveDir, driving = Vector3.zero, false
@@ -19056,6 +19455,22 @@ run(function()
                 lastHit = 0,
                 lastVictim = nil,
                 lastFight = 0,
+                -- Everything below is the "scan thoroughly" set: more than a kill count, so the
+                -- score has to be earned across several different things rather than spiking off one.
+                damageDealt = 0,      -- total damage they have put on other people
+                damageTaken = 0,      -- total damage other people have put on them
+                killStreak = 0,       -- kills since they last died (carrying)
+                bestStreak = 0,
+                comboCount = 0,       -- how many separate 3+ combos they have strung
+                comboHits = 0,        -- total hits that were part of a combo (combo consistency)
+                blockClutches = 0,    -- blocks placed under themselves mid-fight (clutch / bridge)
+                projectileHits = 0,   -- ranged hits they have landed
+                lastSample = 0,       -- last movement sample time
+                lastVel = nil,        -- last sampled horizontal velocity direction
+                lastMoveDir = nil,
+                moveScore = 0,        -- rolling 0..1 measure of active strafing while fighting
+                moveSamples = 0,
+                firstSeen = tick(),
                 score = 50,
                 tier = 'Average'
             }
@@ -19071,33 +19486,81 @@ run(function()
     -- off that baseline when there is actual evidence to move it with, so a player we have not
     -- seen do anything is never labelled good or bad on nothing at all - they stay Average until
     -- they show us something.
+    -- Score is built from many different signals, each one deliberately slow. No single term can
+    -- carry a player to Skilled on its own the way one lucky kill used to - it takes a spread of
+    -- them, sustained. On top of that the whole deviation from 50 is scaled by how much we have
+    -- actually watched the player (`evidence`), so early on everyone sits near Average and only
+    -- pulls away once there is a real body of play to judge. That is the "conservative" half; the
+    -- long list of terms is the "thorough" half.
     local function scoreOf(plr, record)
         local score = 50
-
-        -- Trades. What they do to other people is the strongest single signal there is, but one
-        -- lucky kill is not a pattern - the weight climbs with how much we have actually watched.
         local fights = record.kills + record.deaths
+        local totalDamage = record.damageDealt + record.damageTaken
+
+        -- 1. Trades. The strongest single signal, but weighted by how many we have seen and kept
+        -- small per fight, so it climbs over a match instead of jumping after four kills.
         if fights > 0 then
             local ratio = (record.kills - record.deaths) / fights
-            score += ratio * math.min(fights, 4) * 7
+            score += ratio * math.min(fights, 12) * 1.5
         end
 
-        -- Combos. Anyone lands a hit; keeping someone in the air is a different skill entirely.
+        -- 2. Kill streaks. Stringing kills without dying is carrying, not luck.
+        if record.bestStreak >= 2 then
+            score += math.min(record.bestStreak - 1, 6) * 2
+        end
+
+        -- 3. Combos. Keeping someone in the air is a different skill from landing a hit; reward the
+        -- best one and, separately, doing it repeatedly.
         if record.bestCombo >= 3 then
-            score += math.min((record.bestCombo - 2) * 4, 16)
+            score += math.min(record.bestCombo - 2, 5) * 1.8
+        end
+        if record.comboCount >= 2 then
+            score += math.min(record.comboCount, 6)
         end
 
-        -- Gear. A diamond or emerald sword means they farmed for it rather than tripped over it.
+        -- 4. Damage efficiency. Dealing far more than you take is control of a fight. Needs a real
+        -- amount of damage on the clock before it counts for much.
+        if totalDamage > 0 then
+            local eff = (record.damageDealt - record.damageTaken) / totalDamage
+            score += eff * math.clamp(totalDamage / 300, 0, 1) * 8
+        end
+
+        -- 5. Ranged. Landing arrows/fireballs on people is an aim skill of its own.
+        if record.projectileHits > 0 then
+            score += math.min(record.projectileHits, 6)
+        end
+
+        -- 6. Clutching. Blocks thrown down under themselves in a fight - MLG saves, bridging out of
+        -- trouble - are one of the clearest tells of a good player.
+        if record.blockClutches > 0 then
+            score += math.min(record.blockClutches * 1.5, 8)
+        end
+
+        -- 7. Movement. Strafing and juking mid-fight rather than walking in a straight line, sampled
+        -- over time so a single dodge does not count.
+        if record.moveSamples >= 6 then
+            score += math.clamp(record.moveScore, 0, 1) * 6
+        end
+
+        -- 8. Gear / economy. A diamond or emerald sword was farmed for, not tripped over.
         local strength = 0
         pcall(function()
             strength = getStrength({Player = plr}) or 0
         end)
         if strength > 0 then
-            score += math.clamp((strength - 15) * 0.8, -6, 10)
+            score += math.clamp((strength - 15) * 0.7, -5, 8)
         end
 
-        -- Beds. Taking one is a whole successful push, start to finish.
-        score += math.min(record.beds * 6, 12)
+        -- 9. Beds. Taking one is a whole successful push, start to finish.
+        score += math.min(record.beds * 5, 10)
+
+        -- Confidence gate. Until we have watched a real amount of play, hold the score close to
+        -- Average so nobody is branded off a handful of events.
+        local evidence = math.clamp(
+            (fights + record.comboCount * 2 + record.beds * 2 + record.blockClutches
+                + totalDamage / 120 + record.moveSamples / 8) / 9,
+            0, 1)
+        score = 50 + (score - 50) * (0.45 + 0.55 * evidence)
 
         return math.clamp(score, 0, 100)
     end
@@ -19275,6 +19738,38 @@ run(function()
     ----------------------------------------------------------------------------
     -- Passes.
     ----------------------------------------------------------------------------
+    -- Per-pass movement read. Only judged while the player is actually in a fight, so ordinary
+    -- walking around the map never counts. Strafing and juking (big direction changes frame to
+    -- frame) build the movement score; a hard arrest of a fast fall reads as a clutch / MLG save.
+    local function sampleMovement(ent, record)
+        local root = ent.RootPart
+        if not root or not root.Parent then return end
+        local now = tick()
+        if now - record.lastSample < 0.2 then return end
+        record.lastSample = now
+
+        local vel = root.AssemblyLinearVelocity
+        local horiz = Vector3.new(vel.X, 0, vel.Z)
+        local fighting = now - record.lastFight <= FIGHT_MEMORY
+
+        if fighting and record.lastMoveDir and horiz.Magnitude > 4 then
+            local dir = horiz.Unit
+            local change = 1 - math.clamp(dir:Dot(record.lastMoveDir), -1, 1) -- 0 (straight) .. 2 (reversed)
+            local sample = math.clamp(change / 1.2, 0, 1)
+            record.moveScore = record.moveScore + (sample - record.moveScore) * 0.15
+            record.moveSamples += 1
+        end
+        if horiz.Magnitude > 1 then
+            record.lastMoveDir = horiz.Unit
+        end
+
+        local prevY = record.lastVel and record.lastVel.Y or 0
+        if fighting and prevY < -45 and vel.Y > -3 then
+            record.blockClutches += 1
+        end
+        record.lastVel = vel
+    end
+
     local function refresh()
         table.clear(seen)
         for _, ent in entitylib.List do
@@ -19282,6 +19777,7 @@ run(function()
             if plr then
                 seen[plr] = true
                 local record = statFor(plr)
+                sampleMovement(ent, record)
                 record.score = scoreOf(plr, record)
                 local tier = tierOf(record.score)
                 if tier ~= record.tier then
@@ -19320,27 +19816,47 @@ run(function()
                     local killer = deathTable.fromEntity and playersService:GetPlayerFromCharacter(deathTable.fromEntity)
                     local killed = deathTable.entityInstance and playersService:GetPlayerFromCharacter(deathTable.entityInstance)
                     if killer and killer ~= killed then
-                        statFor(killer).kills += 1
+                        local rec = statFor(killer)
+                        rec.kills += 1
+                        rec.killStreak += 1
+                        rec.bestStreak = math.max(rec.bestStreak, rec.killStreak)
                     end
                     if killed then
                         local record = statFor(killed)
                         record.deaths += 1
                         record.combo = 0
+                        record.killStreak = 0
                     end
                 end))
 
                 EntityAnalyser:Clean(vapeEvents.EntityDamageEvent.Event:Connect(function(damageTable)
-                    if (damageTable.damage or 0) <= 0 then return end
+                    local dmg = damageTable.damage or 0
+                    if dmg <= 0 then return end
                     local attacker = damageTable.fromEntity and playersService:GetPlayerFromCharacter(damageTable.fromEntity)
                     local victim = damageTable.entityInstance and playersService:GetPlayerFromCharacter(damageTable.entityInstance)
                     if not attacker or attacker == victim then return end
 
                     local record, now = statFor(attacker), tick()
+                    record.damageDealt += dmg
+                    if victim then
+                        statFor(victim).damageTaken += dmg
+                    end
+                    -- Ranged hit: the damage came from a bow/crossbow/fireball rather than a swing, so
+                    -- it is an aim skill of its own.
+                    local weapon = tostring(damageTable.itemType or damageTable.weaponType or ''):lower()
+                    if weapon:find('bow') or weapon:find('arrow') or weapon:find('fireball') or weapon:find('projectile') then
+                        record.projectileHits += 1
+                    end
+
                     -- A combo is hits that keep landing on the same person without a gap. Reset
                     -- on a new victim or on any pause, so trading blows around a scrappy fight
                     -- never adds up into one long combo.
                     if record.lastVictim == victim and now - record.lastHit <= COMBO_WINDOW then
                         record.combo += 1
+                        -- Count each distinct 3+ combo once, the moment it becomes one.
+                        if record.combo == 3 then
+                            record.comboCount += 1
+                        end
                     else
                         record.combo = 1
                     end
@@ -20601,9 +21117,14 @@ run(function()
     local AutoBank
     local UIToggle
     local Range
+    local SilentBank
     local UI
     local Chests
     local Items = {}
+    -- Hidden-hitbox bank state (Infinite range). We own the character's root only while a far bank
+    -- is in flight; bankRevert always puts it back, on success or on any error.
+    local bankBusy = false
+    local bankRoot, bankClone, bankHip, bankOwnsRoot = nil, nil, nil, false
     -- When the last deposit for a given tool went out. Nearby banking empties the inventory
     -- almost immediately so this never matters there, but Infinite range keeps asking from
     -- across the map, and without a cooldown a stack the server won't take would be re-sent
@@ -20654,23 +21175,129 @@ run(function()
         end
     end
 
+    local function bankTools(chest, tools)
+        for _, tool in tools do
+            task.spawn(function()
+                pcall(function()
+                    bedwars.Client:GetNamespace('Inventory'):Get('ChestGiveItem'):CallServer(chest, tool)
+                end)
+            end)
+        end
+    end
+
+    local function nearestChest()
+        if not entitylib.isAlive then return nil end
+        local pos = entitylib.character.RootPart.Position
+        local best, bestd = nil, math.huge
+        for _, c in Chests do
+            local d = (c.Position - pos).Magnitude
+            if d < bestd then best, bestd = c, d end
+        end
+        return best, bestd
+    end
+
+    -- Always puts the character back the way we found it, whatever happened during the bank, so a
+    -- failure mid-swap can never leave you stuck with a clone for a body.
+    local function bankRevert()
+        pcall(function()
+            if bankRoot and bankRoot.Parent and lplr.Character then
+                lplr.Character.Parent = replicatedStorage
+                bankRoot.Parent = lplr.Character
+                if bankClone then
+                    bankRoot.CFrame = bankClone.CFrame
+                    bankRoot.AssemblyLinearVelocity = bankClone.AssemblyLinearVelocity
+                end
+                lplr.Character.PrimaryPart = bankRoot
+                lplr.Character.Parent = workspace
+                bankRoot.CanCollide = true
+                bankRoot.Transparency = 1
+                if bankHip and entitylib.isAlive then
+                    entitylib.character.Humanoid.HipHeight = bankHip
+                end
+            end
+        end)
+        if bankClone then
+            pcall(function() bankClone:Destroy() end)
+            bankClone = nil
+        end
+        bankRoot, bankHip = nil, nil
+        if bankOwnsRoot then
+            store.rootpart = nil
+            bankOwnsRoot = false
+        end
+    end
+
+    -- Bank from across the map with nothing visibly moving: park the network-owned root on the
+    -- nearest personal chest for a fraction of a second (a local clone stays behind as your body) so
+    -- the server's own range check on ChestGiveItem passes, fire the deposits, then put the root
+    -- straight back. Same proven swap AntiDeath/GodMode use, guarded by store.rootpart so it never
+    -- fights them, and every path ends in bankRevert.
+    local function silentBank(chest, tools, target)
+        bankBusy = true
+        task.spawn(function()
+            local ok = pcall(function()
+                local character = lplr.Character
+                bankRoot = entitylib.character.HumanoidRootPart
+                bankHip = entitylib.character.Humanoid.HipHeight
+                if not character or not character.Parent or not bankRoot then error('no character') end
+
+                character.Parent = replicatedStorage
+                bankClone = bankRoot:Clone()
+                bankClone.Parent = character
+                bankRoot.Transparency = 1
+                bankRoot.Parent = workspace
+                store.rootpart = bankRoot
+                bankOwnsRoot = true
+                character.PrimaryPart = bankClone
+                character.Parent = workspace
+                pcall(function() bedwars.QueryUtil:setQueryIgnored(bankClone, true) end)
+                pcall(function() bedwars.QueryUtil:setQueryIgnored(bankRoot, true) end)
+
+                local aim = CFrame.new(target.Position + Vector3.new(0, 3, 0))
+                local hold = runService.Heartbeat:Connect(function()
+                    if bankRoot and bankRoot.Parent then
+                        bankRoot.CFrame = aim
+                        bankRoot.AssemblyLinearVelocity = Vector3.zero
+                    end
+                end)
+                bankTools(chest, tools)
+                task.wait(0.3)
+                hold:Disconnect()
+            end)
+            bankRevert()
+            bankBusy = false
+            if ok then
+                pcall(function() refreshBank(chest) end)
+            end
+        end)
+    end
+
     local function handleState()
         local chest = replicatedStorage.Inventories:FindFirstChild(lplr.Name..'_personal')
         if not chest then return end
 
-        -- Always DEPOSIT the configured resources into the personal chest while we are
-        -- near it. The old code gated depositing behind a "distance from spawn > 80"
-        -- check, but the personal chest sits AT spawn, so that branch never ran and it
-        -- silently withdrew instead of banking - which is why nothing ever got banked.
+        -- Always DEPOSIT the configured resources into the personal chest. The old code gated
+        -- depositing behind a "distance from spawn > 80" check, but the personal chest sits AT
+        -- spawn, so that branch never ran and it silently withdrew instead of banking.
+        local tools = {}
         for _, v in store.inventory.inventory.items do
             local item = Items[v.itemType]
             if item and v.tool and tick() - (sent[v.tool] or 0) >= 1.5 then
                 sent[v.tool] = tick()
-                task.spawn(function()
-                    bedwars.Client:GetNamespace('Inventory'):Get('ChestGiveItem'):CallServer(chest, v.tool)
-                    refreshBank(chest)
-                end)
+                table.insert(tools, v.tool)
             end
+        end
+        if #tools == 0 then return end
+
+        -- Infinite range from afar goes through the silent hitbox bank (unless you turn it off);
+        -- Nearby, or already standing on the chest, just fires the remote as before.
+        local target, dist = nearestChest()
+        if Range and Range.Value == 'Infinite' and SilentBank.Enabled
+            and target and dist and dist > 20 and not store.rootpart and not bankBusy then
+            silentBank(chest, tools, target)
+        else
+            bankTools(chest, tools)
+            task.spawn(function() refreshBank(chest) end)
         end
     end
 
@@ -20712,6 +21339,9 @@ run(function()
                     task.wait(0.1)
                 until (not AutoBank.Enabled)
             else
+                -- Put the hitbox back if a far bank was still in flight when we turned off.
+                bankRevert()
+                bankBusy = false
                 table.clear(Items)
                 table.clear(sent)
             end
@@ -20722,7 +21352,12 @@ run(function()
         Name = 'Range',
         List = {'Nearby', 'Infinite'},
         Default = 'Nearby',
-        Tooltip = 'Nearby banks within 20 studs of a personal chest. Infinite banks from anywhere, since the request names your inventory rather than a chest in the world'
+        Tooltip = 'Nearby banks within 20 studs of a personal chest.\nInfinite banks from anywhere: it briefly parks your hidden hitbox on the nearest chest so the server accepts the deposit, with nothing visibly moving'
+    })
+    SilentBank = AutoBank:CreateToggle({
+        Name = 'Silent bank',
+        Default = true,
+        Tooltip = 'Infinite range only. On: park the hidden hitbox on the chest for a split second so far deposits go through with nothing visibly moving. Off: just ask the server (which usually refuses from range), leaving your body where it is'
     })
     UIToggle = AutoBank:CreateToggle({
         Name = 'UI',
