@@ -19519,6 +19519,22 @@ run(function()
                 lastHit = 0,
                 lastVictim = nil,
                 lastFight = 0,
+                -- Everything below is the "scan thoroughly" set: more than a kill count, so the
+                -- score has to be earned across several different things rather than spiking off one.
+                damageDealt = 0,      -- total damage they have put on other people
+                damageTaken = 0,      -- total damage other people have put on them
+                killStreak = 0,       -- kills since they last died (carrying)
+                bestStreak = 0,
+                comboCount = 0,       -- how many separate 3+ combos they have strung
+                comboHits = 0,        -- total hits that were part of a combo (combo consistency)
+                blockClutches = 0,    -- blocks placed under themselves mid-fight (clutch / bridge)
+                projectileHits = 0,   -- ranged hits they have landed
+                lastSample = 0,       -- last movement sample time
+                lastVel = nil,        -- last sampled horizontal velocity direction
+                lastMoveDir = nil,
+                moveScore = 0,        -- rolling 0..1 measure of active strafing while fighting
+                moveSamples = 0,
+                firstSeen = tick(),
                 score = 50,
                 tier = 'Average'
             }
@@ -19534,33 +19550,81 @@ run(function()
     -- off that baseline when there is actual evidence to move it with, so a player we have not
     -- seen do anything is never labelled good or bad on nothing at all - they stay Average until
     -- they show us something.
+    -- Score is built from many different signals, each one deliberately slow. No single term can
+    -- carry a player to Skilled on its own the way one lucky kill used to - it takes a spread of
+    -- them, sustained. On top of that the whole deviation from 50 is scaled by how much we have
+    -- actually watched the player (`evidence`), so early on everyone sits near Average and only
+    -- pulls away once there is a real body of play to judge. That is the "conservative" half; the
+    -- long list of terms is the "thorough" half.
     local function scoreOf(plr, record)
         local score = 50
-
-        -- Trades. What they do to other people is the strongest single signal there is, but one
-        -- lucky kill is not a pattern - the weight climbs with how much we have actually watched.
         local fights = record.kills + record.deaths
+        local totalDamage = record.damageDealt + record.damageTaken
+
+        -- 1. Trades. The strongest single signal, but weighted by how many we have seen and kept
+        -- small per fight, so it climbs over a match instead of jumping after four kills.
         if fights > 0 then
             local ratio = (record.kills - record.deaths) / fights
-            score += ratio * math.min(fights, 4) * 7
+            score += ratio * math.min(fights, 12) * 1.5
         end
 
-        -- Combos. Anyone lands a hit; keeping someone in the air is a different skill entirely.
+        -- 2. Kill streaks. Stringing kills without dying is carrying, not luck.
+        if record.bestStreak >= 2 then
+            score += math.min(record.bestStreak - 1, 6) * 2
+        end
+
+        -- 3. Combos. Keeping someone in the air is a different skill from landing a hit; reward the
+        -- best one and, separately, doing it repeatedly.
         if record.bestCombo >= 3 then
-            score += math.min((record.bestCombo - 2) * 4, 16)
+            score += math.min(record.bestCombo - 2, 5) * 1.8
+        end
+        if record.comboCount >= 2 then
+            score += math.min(record.comboCount, 6)
         end
 
-        -- Gear. A diamond or emerald sword means they farmed for it rather than tripped over it.
+        -- 4. Damage efficiency. Dealing far more than you take is control of a fight. Needs a real
+        -- amount of damage on the clock before it counts for much.
+        if totalDamage > 0 then
+            local eff = (record.damageDealt - record.damageTaken) / totalDamage
+            score += eff * math.clamp(totalDamage / 300, 0, 1) * 8
+        end
+
+        -- 5. Ranged. Landing arrows/fireballs on people is an aim skill of its own.
+        if record.projectileHits > 0 then
+            score += math.min(record.projectileHits, 6)
+        end
+
+        -- 6. Clutching. Blocks thrown down under themselves in a fight - MLG saves, bridging out of
+        -- trouble - are one of the clearest tells of a good player.
+        if record.blockClutches > 0 then
+            score += math.min(record.blockClutches * 1.5, 8)
+        end
+
+        -- 7. Movement. Strafing and juking mid-fight rather than walking in a straight line, sampled
+        -- over time so a single dodge does not count.
+        if record.moveSamples >= 6 then
+            score += math.clamp(record.moveScore, 0, 1) * 6
+        end
+
+        -- 8. Gear / economy. A diamond or emerald sword was farmed for, not tripped over.
         local strength = 0
         pcall(function()
             strength = getStrength({Player = plr}) or 0
         end)
         if strength > 0 then
-            score += math.clamp((strength - 15) * 0.8, -6, 10)
+            score += math.clamp((strength - 15) * 0.7, -5, 8)
         end
 
-        -- Beds. Taking one is a whole successful push, start to finish.
-        score += math.min(record.beds * 6, 12)
+        -- 9. Beds. Taking one is a whole successful push, start to finish.
+        score += math.min(record.beds * 5, 10)
+
+        -- Confidence gate. Until we have watched a real amount of play, hold the score close to
+        -- Average so nobody is branded off a handful of events.
+        local evidence = math.clamp(
+            (fights + record.comboCount * 2 + record.beds * 2 + record.blockClutches
+                + totalDamage / 120 + record.moveSamples / 8) / 9,
+            0, 1)
+        score = 50 + (score - 50) * (0.45 + 0.55 * evidence)
 
         return math.clamp(score, 0, 100)
     end
@@ -19738,6 +19802,38 @@ run(function()
     ----------------------------------------------------------------------------
     -- Passes.
     ----------------------------------------------------------------------------
+    -- Per-pass movement read. Only judged while the player is actually in a fight, so ordinary
+    -- walking around the map never counts. Strafing and juking (big direction changes frame to
+    -- frame) build the movement score; a hard arrest of a fast fall reads as a clutch / MLG save.
+    local function sampleMovement(ent, record)
+        local root = ent.RootPart
+        if not root or not root.Parent then return end
+        local now = tick()
+        if now - record.lastSample < 0.2 then return end
+        record.lastSample = now
+
+        local vel = root.AssemblyLinearVelocity
+        local horiz = Vector3.new(vel.X, 0, vel.Z)
+        local fighting = now - record.lastFight <= FIGHT_MEMORY
+
+        if fighting and record.lastMoveDir and horiz.Magnitude > 4 then
+            local dir = horiz.Unit
+            local change = 1 - math.clamp(dir:Dot(record.lastMoveDir), -1, 1) -- 0 (straight) .. 2 (reversed)
+            local sample = math.clamp(change / 1.2, 0, 1)
+            record.moveScore = record.moveScore + (sample - record.moveScore) * 0.15
+            record.moveSamples += 1
+        end
+        if horiz.Magnitude > 1 then
+            record.lastMoveDir = horiz.Unit
+        end
+
+        local prevY = record.lastVel and record.lastVel.Y or 0
+        if fighting and prevY < -45 and vel.Y > -3 then
+            record.blockClutches += 1
+        end
+        record.lastVel = vel
+    end
+
     local function refresh()
         table.clear(seen)
         for _, ent in entitylib.List do
@@ -19745,6 +19841,7 @@ run(function()
             if plr then
                 seen[plr] = true
                 local record = statFor(plr)
+                sampleMovement(ent, record)
                 record.score = scoreOf(plr, record)
                 local tier = tierOf(record.score)
                 if tier ~= record.tier then
@@ -19783,27 +19880,47 @@ run(function()
                     local killer = deathTable.fromEntity and playersService:GetPlayerFromCharacter(deathTable.fromEntity)
                     local killed = deathTable.entityInstance and playersService:GetPlayerFromCharacter(deathTable.entityInstance)
                     if killer and killer ~= killed then
-                        statFor(killer).kills += 1
+                        local rec = statFor(killer)
+                        rec.kills += 1
+                        rec.killStreak += 1
+                        rec.bestStreak = math.max(rec.bestStreak, rec.killStreak)
                     end
                     if killed then
                         local record = statFor(killed)
                         record.deaths += 1
                         record.combo = 0
+                        record.killStreak = 0
                     end
                 end))
 
                 EntityAnalyser:Clean(vapeEvents.EntityDamageEvent.Event:Connect(function(damageTable)
-                    if (damageTable.damage or 0) <= 0 then return end
+                    local dmg = damageTable.damage or 0
+                    if dmg <= 0 then return end
                     local attacker = damageTable.fromEntity and playersService:GetPlayerFromCharacter(damageTable.fromEntity)
                     local victim = damageTable.entityInstance and playersService:GetPlayerFromCharacter(damageTable.entityInstance)
                     if not attacker or attacker == victim then return end
 
                     local record, now = statFor(attacker), tick()
+                    record.damageDealt += dmg
+                    if victim then
+                        statFor(victim).damageTaken += dmg
+                    end
+                    -- Ranged hit: the damage came from a bow/crossbow/fireball rather than a swing, so
+                    -- it is an aim skill of its own.
+                    local weapon = tostring(damageTable.itemType or damageTable.weaponType or ''):lower()
+                    if weapon:find('bow') or weapon:find('arrow') or weapon:find('fireball') or weapon:find('projectile') then
+                        record.projectileHits += 1
+                    end
+
                     -- A combo is hits that keep landing on the same person without a gap. Reset
                     -- on a new victim or on any pause, so trading blows around a scrappy fight
                     -- never adds up into one long combo.
                     if record.lastVictim == victim and now - record.lastHit <= COMBO_WINDOW then
                         record.combo += 1
+                        -- Count each distinct 3+ combo once, the moment it becomes one.
+                        if record.combo == 3 then
+                            record.comboCount += 1
+                        end
                     else
                         record.combo = 1
                     end
