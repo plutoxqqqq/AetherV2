@@ -7599,27 +7599,30 @@ general:CreateButton({
 ]]
 
 local modules = mainapi.Categories.Main:CreateSettingsPane({Name = 'Modules'})
-local forcedGameFile = modules:CreateTextBox({
+local supportedGameFiles = {
+	'142823291', '155615604', '606849621', '893973440', '5938036553', '6872265039',
+	'6872274481', '8444591321', '8542259458', '8542275097', '8560631822', '8592115909',
+	'8768229691', '8951451142', '11156779721', '13246639586', '71480482338212',
+	'77790193039862', '80041634734121', '123804558118054', '131465939650733',
+	'132768098780837', '135564683255158', '139566161526375'
+}
+local savedForcedGame = isfile('aetherv2/profiles/forcegameid.txt') and readfile('aetherv2/profiles/forcegameid.txt') or ''
+local forcedGameFile = modules:CreateDropdown({
 	Name = 'Game file',
-	Placeholder = 'Place ID (for example 132768098780837)',
-	Default = isfile('aetherv2/profiles/forcegameid.txt') and readfile('aetherv2/profiles/forcegameid.txt') or '',
+	List = supportedGameFiles,
+	Default = table.find(supportedGameFiles, savedForcedGame) and savedForcedGame or tostring(game.PlaceId),
 	Function = function(value)
-		local place = tostring(value or ''):match('^%s*(%d+)%s*$')
-		if place then writefile('aetherv2/profiles/forcegameid.txt', place) end
+		writefile('aetherv2/profiles/forcegameid.txt', tostring(value))
 	end,
-	Tooltip = 'The numeric games/<place ID>.lua file used when Force game file is enabled'
+	Tooltip = 'Select one of the currently supported games/ files'
 })
 modules:CreateToggle({
 	Name = 'Force game file',
-	Default = isfile('aetherv2/profiles/forcegame.txt') and readfile('aetherv2/profiles/forcegame.txt') == 'true',
+	Default = false,
 	Function = function(enabled)
-		local place = tostring(forcedGameFile.Value or ''):match('^%s*(%d+)%s*$')
-		writefile('aetherv2/profiles/forcegame.txt', enabled and place and 'true' or 'false')
-		if enabled and not place then
-			mainapi:CreateNotification('Modules', 'Enter a numeric Game file before enabling this option.', 5, 'alert')
-		end
+		writefile('aetherv2/profiles/forcegame.txt', enabled and 'true' or 'false')
 	end,
-	Tooltip = 'Loads the selected games/ file on the next reinject, regardless of the current place'
+	Tooltip = 'Loads the selected games/ file once on the next reinject, then resets automatically'
 })
 modules:CreateToggle({
 	Name = 'Teams by server',

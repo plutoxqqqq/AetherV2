@@ -951,6 +951,9 @@ if not shared.VapeIndependent then
 		local forced = readfile('aetherv2/profiles/forcegameid.txt'):match('^%s*(%d+)%s*$')
 		modulePlace = forced or modulePlace
 	end
+	-- Force-loading is a one-shot debugging action. Consume it before running the chunk so even a
+	-- broken or stalled game module cannot leave the user permanently pinned to the wrong game.
+	writefile('aetherv2/profiles/forcegame.txt', 'false')
 	vape.Place = tonumber(modulePlace) or game.PlaceId
 	local placePath = 'aetherv2/games/'..modulePlace..'.lua'
 	local placeSource

@@ -2595,9 +2595,11 @@ run(function()
     Overlay.FilterType = Enum.RaycastFilterType.Include
     local Particles, Boxes, AttackDelay = {}, {}, tick()
 	local customSwing = game.PlaceId == 132768098780837
-	local customSwingEvent = customSwing and replicatedStorage:FindFirstChild('GameEvents')
-	customSwingEvent = customSwingEvent and customSwingEvent:FindFirstChild('CombatRemotes')
-	customSwingEvent = customSwingEvent and customSwingEvent:FindFirstChild('Combat_SwingStarted')
+	local function getCustomSwingEvent()
+		local events = customSwing and replicatedStorage:FindFirstChild('GameEvents')
+		local combat = events and events:FindFirstChild('CombatRemotes')
+		return combat and combat:FindFirstChild('Combat_SwingStarted')
+	end
 
     local function getAttackData()
 	if Mouse.Enabled then
@@ -2607,7 +2609,8 @@ run(function()
 	end
 
 	if customSwing then
-		return customSwingEvent, {Activate = function()
+		local customSwingEvent = getCustomSwingEvent()
+		return customSwingEvent, {GripUp = Vector3.yAxis, Activate = function()
 			if customSwingEvent then customSwingEvent:FireServer('Iron Sword') end
 		end}
 	end
