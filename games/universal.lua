@@ -2600,6 +2600,19 @@ run(function()
 		local combat = events and events:FindFirstChild('CombatRemotes')
 		return combat and combat:FindFirstChild('Combat_SwingStarted')
 	end
+	local function customAttack(target, tool)
+		local events = replicatedStorage:FindFirstChild('GameEvents')
+		local combat = events and events:FindFirstChild('CombatRemotes')
+		local remote = combat and (combat:FindFirstChild('Combat_AttemptHit') or combat:FindFirstChild('Combat_Hit'))
+		if remote then
+			remote:FireServer({
+				target = target.Character,
+				targetCharacter = target.Character,
+				weapon = tool,
+				hitPosition = target.RootPart.Position
+			})
+		end
+	end
 
     local function getAttackData()
 	if Mouse.Enabled then
@@ -2610,8 +2623,9 @@ run(function()
 
 	if customSwing then
 		local customSwingEvent = getCustomSwingEvent()
-		return customSwingEvent, {GripUp = Vector3.yAxis, Activate = function()
-			if customSwingEvent then customSwingEvent:FireServer('Iron Sword') end
+		local equipped = getTool()
+		return customSwingEvent, {GripUp = Vector3.yAxis, Tool = equipped, Activate = function()
+			if customSwingEvent and equipped then customSwingEvent:FireServer(equipped.Name) end
 		end}
 	end
 	local tool = getTool()
@@ -2664,7 +2678,10 @@ run(function()
 								continue
 							end
 
-							if customSwing then continue end
+							if customSwing then
+								customAttack(v, tool.Tool)
+								continue
+							end
 							Overlay.FilterDescendantsInstances = { v.Character }
 							for _, part in
 								workspace:GetPartBoundsInBox(v.RootPart.CFrame, Vector3.new(4, 4, 4), Overlay)
