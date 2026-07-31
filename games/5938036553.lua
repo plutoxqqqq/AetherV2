@@ -1139,7 +1139,7 @@ run(function()
     			end
     		end
     	end,
-    	Tooltip = 'Attack players around you\nwithout aiming at them.',
+    	Tooltip = 'Attack players around you\nwithout aiming at them',
     })
     Targets = Killaura:CreateTargets({ Players = true })
     SwingRange = Killaura:CreateSlider({
@@ -1343,7 +1343,7 @@ run(function()
     			end
     		end
     	end,
-    	Tooltip = 'Lets you Phase/Clip through walls.',
+    	Tooltip = 'Lets you Phase/Clip through walls',
     })
 end)
 

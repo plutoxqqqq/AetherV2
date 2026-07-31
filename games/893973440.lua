@@ -244,7 +244,7 @@ run(function()
     				end
                 end
             end,
-            Tooltip = 'Attack players around you\nwithout aiming at them.',
+            Tooltip = 'Attack players around you\nwithout aiming at them',
         })
     	Targets = Killaura:CreateTargets({Players = true})
     	CPS = Killaura:CreateTwoSlider({
@@ -539,7 +539,7 @@ run(function()
     })
     Self = RopeDisabler:CreateToggle({
         Name = 'Only you', 
-        Tooltip = 'Disable ropes for you only.', 
+        Tooltip = 'Disable ropes for you only', 
     })
 end)
 
@@ -673,7 +673,7 @@ run(function()
                 table.clear(Reference)
             end
         end,
-        Tooltip = 'Show nearby uncompleted computers.'
+        Tooltip = 'Show nearby uncompleted computers'
     })
     FillColor = ComputerESP:CreateColorSlider({
         Name = 'Color',
@@ -743,7 +743,7 @@ run(function()
                 until not AutoComputer.Enabled
             end
         end,
-        Tooltip = 'Automatically complete the computer skill check.'
+        Tooltip = 'Automatically complete the computer skill check'
     })
     
     Mode = AutoComputer:CreateDropdown({

@@ -315,6 +315,213 @@ local function buildNewerLoadingScreen(screen)
 	end
 end
 
+-- Loading screen for the 'new' GUI: fullscreen, transparent and minimal.
+--
+-- Nothing but the logo in the middle of the screen, a thin bar under it, one line of text, and a
+-- light frame of detail around the edges - a vignette that keeps the middle of the screen clear, a
+-- hairline top and bottom, and a bracket in each corner. The bar is tweened rather than snapped and
+-- carries a slow shimmer, so a long step still visibly moves instead of looking frozen.
+--
+-- Kept in sync with the copy in the other loader file.
+local function buildNewLoadingScreen(screen)
+	local tweenService = game:GetService('TweenService')
+	local accent = Color3.fromRGB(120, 235, 215)
+	local faint = Color3.fromRGB(214, 224, 244)
+
+	-- Barely there: dark at the very top and bottom, clear through the middle, so the logo and bar
+	-- read on a bright map without the screen becoming a wall.
+	local scrim = Instance.new('Frame')
+	scrim.Name = 'Scrim'
+	scrim.Size = UDim2.fromScale(1, 1)
+	scrim.BackgroundColor3 = Color3.fromRGB(5, 7, 11)
+	scrim.BackgroundTransparency = 1
+	scrim.BorderSizePixel = 0
+	scrim.Parent = screen
+	local vignette = Instance.new('UIGradient')
+	vignette.Rotation = 90
+	vignette.Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0.55),
+		NumberSequenceKeypoint.new(0.5, 0.93),
+		NumberSequenceKeypoint.new(1, 0.55)
+	})
+	vignette.Parent = scrim
+	tweenService:Create(scrim, TweenInfo.new(0.4), {BackgroundTransparency = 0}):Play()
+
+	-- Edge detail: a hairline along the top and bottom that fades out at both ends.
+	for _, edge in {{0, 0, 20}, {1, 1, -20}} do
+		local line = Instance.new('Frame')
+		line.Name = 'EdgeLine'
+		line.AnchorPoint = Vector2.new(0.5, edge[2])
+		line.Position = UDim2.new(0.5, 0, edge[1], edge[3])
+		line.Size = UDim2.new(1, -160, 0, 1)
+		line.BackgroundColor3 = faint
+		line.BackgroundTransparency = 0.88
+		line.BorderSizePixel = 0
+		line.Parent = scrim
+		local fade = Instance.new('UIGradient')
+		fade.Transparency = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 1),
+			NumberSequenceKeypoint.new(0.5, 0),
+			NumberSequenceKeypoint.new(1, 1)
+		})
+		fade.Parent = line
+	end
+
+	-- Edge detail: a bracket in each corner.
+	for _, spec in {
+		{Vector2.new(0, 0), 30, 30},
+		{Vector2.new(1, 0), -30, 30},
+		{Vector2.new(0, 1), 30, -30},
+		{Vector2.new(1, 1), -30, -30}
+	} do
+		local anchor, ox, oy = spec[1], spec[2], spec[3]
+		local arm = Instance.new('Frame')
+		arm.Name = 'Bracket'
+		arm.AnchorPoint = anchor
+		arm.Position = UDim2.new(anchor.X, ox, anchor.Y, oy)
+		arm.Size = UDim2.fromOffset(30, 1)
+		arm.BackgroundColor3 = accent
+		arm.BackgroundTransparency = 0.8
+		arm.BorderSizePixel = 0
+		arm.Parent = scrim
+		local upright = arm:Clone()
+		upright.Size = UDim2.fromOffset(1, 30)
+		upright.Parent = scrim
+	end
+
+	local logo = Instance.new('ImageLabel')
+	logo.Name = 'Logo'
+	logo.AnchorPoint = Vector2.new(0.5, 1)
+	logo.Position = UDim2.new(0.5, 0, 0.5, -16)
+	logo.Size = UDim2.fromOffset(250, 96)
+	logo.BackgroundTransparency = 1
+	logo.ScaleType = Enum.ScaleType.Fit
+	logo.Image = isfile('aetherv2/assets/new/loading.png') and getcustomasset('aetherv2/assets/new/loading.png') or ''
+	logo.ImageTransparency = 1
+	logo.Parent = scrim
+	tweenService:Create(logo, TweenInfo.new(0.5), {ImageTransparency = 0}):Play()
+
+	local track = Instance.new('Frame')
+	track.Name = 'ProgressTrack'
+	track.AnchorPoint = Vector2.new(0.5, 0)
+	track.Position = UDim2.new(0.5, 0, 0.5, 6)
+	track.Size = UDim2.fromOffset(300, 3)
+	track.BackgroundColor3 = faint
+	track.BackgroundTransparency = 0.85
+	track.BorderSizePixel = 0
+	track.Parent = scrim
+	local trackCorner = Instance.new('UICorner')
+	trackCorner.CornerRadius = UDim.new(1, 0)
+	trackCorner.Parent = track
+
+	local fill = Instance.new('Frame')
+	fill.Name = 'ProgressFill'
+	fill.Size = UDim2.fromScale(0.04, 1)
+	fill.BackgroundColor3 = accent
+	fill.BorderSizePixel = 0
+	fill.Parent = track
+	local fillCorner = Instance.new('UICorner')
+	fillCorner.CornerRadius = UDim.new(1, 0)
+	fillCorner.Parent = fill
+	-- Slow shimmer along the fill. This is the "it is still alive" signal during a long step.
+	local shimmer = Instance.new('UIGradient')
+	shimmer.Color = ColorSequence.new({
+		ColorSequenceKeypoint.new(0, accent),
+		ColorSequenceKeypoint.new(0.5, Color3.fromRGB(240, 255, 252)),
+		ColorSequenceKeypoint.new(1, accent)
+	})
+	shimmer.Offset = Vector2.new(-1, 0)
+	shimmer.Parent = fill
+	tweenService:Create(shimmer, TweenInfo.new(1.6, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, false, 0.3), {Offset = Vector2.new(1, 0)}):Play()
+
+	local caption = Instance.new('TextLabel')
+	caption.Name = 'Caption'
+	caption.AnchorPoint = Vector2.new(0.5, 0)
+	caption.Position = UDim2.new(0.5, 0, 0.5, 22)
+	caption.Size = UDim2.fromOffset(520, 16)
+	caption.BackgroundTransparency = 1
+	caption.Font = Enum.Font.Gotham
+	caption.TextSize = 12
+	caption.TextColor3 = faint
+	caption.TextTransparency = 0.25
+	caption.TextTruncate = Enum.TextTruncate.AtEnd
+	caption.Text = 'Starting'
+	caption.Parent = scrim
+
+	local function readVersion()
+		if not isfile('aetherv2/version.txt') then return nil end
+		return (readfile('aetherv2/version.txt'):match('version%s*=%s*([^\r\n]+)'))
+	end
+
+	local version = Instance.new('TextLabel')
+	version.Name = 'Version'
+	version.AnchorPoint = Vector2.new(0.5, 1)
+	version.Position = UDim2.new(0.5, 0, 1, -30)
+	version.Size = UDim2.fromOffset(300, 14)
+	version.BackgroundTransparency = 1
+	version.Font = Enum.Font.Gotham
+	version.TextSize = 11
+	version.TextColor3 = faint
+	version.TextTransparency = 0.62
+	version.Text = 'AETHERV2  ' .. (readVersion() or '')
+	version.Parent = scrim
+
+	local lastProgress = 0.04
+	local fillTween
+
+	local function closeScreen()
+		if not screen or not screen.Parent then return end
+		local fade = TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+		tweenService:Create(scrim, fade, {BackgroundTransparency = 1}):Play()
+		for _, object in scrim:GetDescendants() do
+			if object:IsA('Frame') then
+				tweenService:Create(object, fade, {BackgroundTransparency = 1}):Play()
+			elseif object:IsA('TextLabel') then
+				tweenService:Create(object, fade, {TextTransparency = 1}):Play()
+			elseif object:IsA('ImageLabel') then
+				tweenService:Create(object, fade, {ImageTransparency = 1}):Play()
+			end
+		end
+		local closing = screen
+		task.delay(0.35, function()
+			if closing then
+				closing:Destroy()
+			end
+		end)
+	end
+
+	_G.AetherV2LoadingScreen = screen
+	_G.AetherV2CloseLoadingScreen = closeScreen
+	_G.AetherV2SetLoadingStatus = function(text, progress)
+		if not screen.Parent then return end
+		-- Only ever forward, so a step that reports a smaller number cannot make the bar jump back.
+		lastProgress = math.clamp(progress or lastProgress, lastProgress, 1)
+		if caption.Parent then
+			caption.Text = (text or 'Loading') .. '   ' .. math.floor(lastProgress * 100) .. '%'
+		end
+		if fill.Parent then
+			if fillTween then
+				fillTween:Cancel()
+			end
+			fillTween = tweenService:Create(fill, TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+				Size = UDim2.fromScale(lastProgress, 1)
+			})
+			fillTween:Play()
+		end
+		if version.Parent and version.Text == 'AETHERV2  ' then
+			local found = readVersion()
+			if found then
+				version.Text = 'AETHERV2  ' .. found
+			end
+		end
+		-- The logo is downloaded during the load, so pick it up as soon as it lands.
+		if logo.Parent and logo.Image == '' and isfile('aetherv2/assets/new/loading.png') then
+			logo.Image = getcustomasset('aetherv2/assets/new/loading.png')
+		end
+	end
+	return screen
+end
+
 local function createInlineLoadingScreen()
 	if isLoadingScreenDisabled() then return nil end
 	-- Per-GUI loading screens: only 'new' and 'newer' show one at all.
@@ -344,140 +551,7 @@ local function createInlineLoadingScreen()
 	screen.Parent = parent
 	screen:ClearAllChildren()
 
-	local background = Instance.new('Frame')
-	background.Size = UDim2.fromScale(1, 1)
-	background.BackgroundColor3 = Color3.fromRGB(8, 9, 14)
-	background.BackgroundTransparency = 0.18
-	background.BorderSizePixel = 0
-	background.Parent = screen
-
-	local gradient = Instance.new('UIGradient')
-	gradient.Rotation = 25
-	gradient.Color = ColorSequence.new({
-		ColorSequenceKeypoint.new(0, Color3.fromRGB(8, 10, 18)),
-		ColorSequenceKeypoint.new(0.5, Color3.fromRGB(16, 22, 34)),
-		ColorSequenceKeypoint.new(1, Color3.fromRGB(8, 9, 14))
-	})
-	gradient.Parent = background
-
-	local card = Instance.new('Frame')
-	card.AnchorPoint = Vector2.new(0.5, 0.5)
-	card.Position = UDim2.fromScale(0.5, 0.5)
-	card.Size = UDim2.fromOffset(540, 330)
-	card.BackgroundColor3 = Color3.fromRGB(12, 15, 24)
-	card.BackgroundTransparency = 0.08
-	card.BorderSizePixel = 0
-	card.Parent = background
-	local cardCorner = Instance.new('UICorner')
-	cardCorner.CornerRadius = UDim.new(0, 18)
-	cardCorner.Parent = card
-	local stroke = Instance.new('UIStroke')
-	stroke.Color = Color3.fromRGB(90, 230, 210)
-	stroke.Transparency = 0.74
-	stroke.Thickness = 1
-	stroke.Parent = card
-
-	local glow = Instance.new('Frame')
-	glow.AnchorPoint = Vector2.new(0.5, 0.5)
-	glow.Position = UDim2.fromScale(0.5, 0.5)
-	glow.Size = UDim2.fromOffset(430, 3)
-	glow.BackgroundColor3 = Color3.fromRGB(90, 230, 210)
-	glow.BackgroundTransparency = 0.68
-	glow.BorderSizePixel = 0
-	glow.Parent = card
-	local glowCorner = Instance.new('UICorner')
-	glowCorner.CornerRadius = UDim.new(1, 0)
-	glowCorner.Parent = glow
-
-	local logo = Instance.new('ImageLabel')
-	logo.Name = 'Logo'
-	logo.AnchorPoint = Vector2.new(0.5, 0)
-	logo.Position = UDim2.new(0.5, 0, 0, 28)
-	logo.Size = UDim2.fromOffset(250, 108)
-	logo.BackgroundTransparency = 1
-	logo.ImageTransparency = 0.02
-	logo.ScaleType = Enum.ScaleType.Fit
-	logo.Image = isfile('aetherv2/assets/new/loading.png') and (getcustomasset and getcustomasset('aetherv2/assets/new/loading.png') or 'aetherv2/assets/new/loading.png') or ''
-	logo.Parent = card
-
-	local version = Instance.new('TextLabel')
-	version.Name = 'Version'
-	version.AnchorPoint = Vector2.new(0.5, 0)
-	version.Position = UDim2.new(0.5, 0, 0, 142)
-	version.Size = UDim2.fromOffset(260, 22)
-	version.BackgroundTransparency = 1
-	version.Font = Enum.Font.GothamMedium
-	version.TextSize = 14
-	version.TextColor3 = Color3.fromRGB(190, 196, 220)
-	version.Text = isfile('aetherv2/version.txt') and ('Version '..readfile('aetherv2/version.txt')) or 'Version loading...'
-	version.Parent = card
-
-	local status = Instance.new('TextLabel')
-	status.Name = 'Status'
-	status.Position = UDim2.fromOffset(54, 202)
-	status.Size = UDim2.fromOffset(432, 22)
-	status.BackgroundTransparency = 1
-	status.Font = Enum.Font.Gotham
-	status.TextSize = 14
-	status.TextXAlignment = Enum.TextXAlignment.Left
-	status.TextColor3 = Color3.fromRGB(235, 238, 255)
-	status.Text = 'Starting AetherV2...'
-	status.Parent = card
-
-	local track = Instance.new('Frame')
-	track.Name = 'ProgressTrack'
-	track.Position = UDim2.fromOffset(54, 238)
-	track.Size = UDim2.fromOffset(432, 10)
-	track.BackgroundColor3 = Color3.fromRGB(28, 34, 50)
-	track.BackgroundTransparency = 0.18
-	track.BorderSizePixel = 0
-	track.Parent = card
-	local trackCorner = Instance.new('UICorner')
-	trackCorner.CornerRadius = UDim.new(1, 0)
-	trackCorner.Parent = track
-
-	local fill = Instance.new('Frame')
-	fill.Name = 'ProgressFill'
-	fill.Size = UDim2.fromScale(0.06, 1)
-	fill.BackgroundColor3 = Color3.fromRGB(90, 230, 210)
-	fill.BorderSizePixel = 0
-	fill.Parent = track
-	local fillCorner = Instance.new('UICorner')
-	fillCorner.CornerRadius = UDim.new(1, 0)
-	fillCorner.Parent = fill
-
-	local detail = Instance.new('TextLabel')
-	detail.Name = 'Detail'
-	detail.Position = UDim2.fromOffset(54, 260)
-	detail.Size = UDim2.fromOffset(432, 20)
-	detail.BackgroundTransparency = 1
-	detail.Font = Enum.Font.Gotham
-	detail.TextSize = 12
-	detail.TextXAlignment = Enum.TextXAlignment.Left
-	detail.TextColor3 = Color3.fromRGB(130, 142, 170)
-	detail.Text = 'Preparing files and assets.'
-	detail.Parent = card
-
-	local lastProgress = 0.06
-	local function closeScreen()
-		if screen and screen.Parent then
-			screen:Destroy()
-		end
-	end
-	_G.AetherV2LoadingScreen = screen
-	_G.AetherV2CloseLoadingScreen = closeScreen
-	_G.AetherV2SetLoadingStatus = function(text, progress)
-		if not screen.Parent then return end
-		lastProgress = math.clamp(progress or lastProgress, lastProgress, 1)
-		if status.Parent then status.Text = text end
-		if detail.Parent then detail.Text = math.floor(lastProgress * 100)..'% complete' end
-		if fill.Parent then fill.Size = UDim2.fromScale(lastProgress, 1) end
-		if version.Parent and isfile('aetherv2/version.txt') then version.Text = 'Version '..readfile('aetherv2/version.txt') end
-		if logo.Parent and logo.Image == '' and isfile('aetherv2/assets/new/loading.png') then
-			logo.Image = getcustomasset and getcustomasset('aetherv2/assets/new/loading.png') or 'aetherv2/assets/new/loading.png'
-		end
-	end
-	return screen
+	return buildNewLoadingScreen(screen)
 end
 
 local closeLoadingScreen
@@ -509,6 +583,23 @@ closeLoadingScreen = function()
 	_G.AetherV2CloseLoadingScreen = nil
 end
 
+-- A load that dies silently is indistinguishable from one that never started, and that is most of
+-- what "the script just doesn't work" turns out to be. Every fatal path goes through here: the
+-- screen comes down so nothing is left frozen on it, the reason goes to the console AND to a Roblox
+-- notification so the user can actually report it, and only then does it raise.
+local function failLoad(message)
+	closeLoadingScreen()
+	warn('[AetherV2] Load failed: '..tostring(message))
+	pcall(function()
+		game:GetService('StarterGui'):SetCore('SendNotification', {
+			Title = 'AetherV2 failed to load',
+			Text = tostring(message):sub(1, 180),
+			Duration = 12
+		})
+	end)
+	error(message, 0)
+end
+
 local redirect = function()
 	local body = httpService:JSONEncode({
 		nonce = httpService:GenerateGUID(false),
@@ -534,23 +625,86 @@ local redirect = function()
 	end
 end
 
-local function downloadFile(path, func)
-	if not isfile(path) then
-		setLoadingStatus('Downloading '..path, 0.60)
+-- Loading phases.
+--
+-- Progress used to be reported with fixed numbers from wherever the code happened to be, so a
+-- download that ran during the 88% step reported 60% and then 72%. The screen only ever moves
+-- forward, so those updates were dropped entirely and the bar sat still - which is what "stuck at
+-- 88%" looks like from the outside even when work is happening. Each step now owns a slice of the
+-- bar and anything inside it reports within that slice, so the bar always moves and never jumps back.
+local phaseFrom, phaseTo = 0, 1
+
+local function setPhase(text, from, to)
+	phaseFrom, phaseTo = from, to
+	setLoadingStatus(text, from)
+end
+
+local function setPhaseProgress(text, alpha)
+	setLoadingStatus(text, phaseFrom + ((phaseTo - phaseFrom) * math.clamp(alpha or 0, 0, 1)))
+end
+
+-- Did we get the file we asked for, or did GitHub hand us something else? A rate-limit page, an
+-- error body or a half-received file written to disk is a permanent break: isfile() says the file
+-- is there forever after, so every later injection loads the same broken copy. Returns a reason
+-- when the payload is not usable.
+local function payloadProblem(path, body)
+	if type(body) ~= 'string' or #body < 8 then return 'empty response' end
+	local head = body:sub(1, 300)
+	if head:find('^%s*404') or head:find('^%s*429') or head:find('^%s*5%d%d:') then
+		return (head:match('^[^\r\n]*'))
+	end
+	local lowered = head:lower()
+	if lowered:find('<!doctype html') or lowered:find('<html') then
+		return 'received an HTML error page instead of the file'
+	end
+	if path:sub(-4) == '.lua' and not compile(body, path) then
+		return 'the downloaded file did not compile'
+	end
+	return nil
+end
+
+-- Fetch with retries. A single failed request used to end the whole load; most of them are
+-- transient (a dropped connection, a moment of rate limiting) and succeed on the next try.
+local function fetchFile(path, attempts)
+	attempts = attempts or 3
+	local url = 'https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..readfile('aetherv2/profiles/commit.txt')..'/'..select(1, path:gsub('aetherv2/', ''))
+	local problem
+	for attempt = 1, attempts do
 		local suc, res = pcall(function()
-			return game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..readfile('aetherv2/profiles/commit.txt')..'/'..select(1, path:gsub('aetherv2/', '')), true)
+			return game:HttpGet(url, true)
 		end)
-		if not suc or res == '404: Not Found' then
-			closeLoadingScreen()
-			error(res)
-		end
 		if suc then
-			if path:find('.lua') then
-				res = '--This watermark is used to delete the file if its cached, remove it to make the file persist after vape updates.\n'..res
-			end
-			writefile(path, res)
-			setLoadingStatus('Downloaded '..path, 0.72)
+			problem = payloadProblem(path, res)
+			if not problem then return res end
+		else
+			problem = tostring(res)
 		end
+		if attempt < attempts then
+			setPhaseProgress('Retrying '..path..' ('..attempt..'/'..attempts..')', 0.2 * attempt)
+			task.wait(attempt)
+		end
+	end
+	return nil, problem
+end
+
+local function downloadFile(path, func)
+	-- Heal a broken cache before trusting it. Without this, one interrupted write means the script
+	-- never loads again on that machine, however many times it is re-injected.
+	if isfile(path) and path:sub(-4) == '.lua' and not compile(readfile(path), path) then
+		warn('[AetherV2] Cached '..path..' is unusable, downloading it again')
+		delfile(path)
+	end
+	if not isfile(path) then
+		setPhaseProgress('Downloading '..path, 0.15)
+		local body, problem = fetchFile(path)
+		if not body then
+			failLoad('Could not download '..path..' - '..tostring(problem))
+		end
+		if path:sub(-4) == '.lua' then
+			body = '--This watermark is used to delete the file if its cached, remove it to make the file persist after vape updates.\n'..body
+		end
+		writefile(path, body)
+		setPhaseProgress('Downloaded '..path, 0.75)
 	end
 	return (func or readfile)(path)
 end
@@ -571,46 +725,117 @@ local loadingWarnings = {}
 local function runLoadingChunk(source, chunkName, ...)
 	local chunk = loadstring(source, chunkName)
 	if not chunk then
-		closeLoadingScreen()
-		error('Failed to compile '..chunkName)
+		failLoad('Failed to compile '..chunkName)
 	end
 	local args = {...}
 	local ok, result = xpcall(function()
 		return chunk(table.unpack(args))
 	end, debug.traceback)
 	if not ok then
-		closeLoadingScreen()
-		error(result)
+		failLoad(result)
 	end
 	return result
 end
 
-local function runOptionalLoadingChunk(source, chunkName, ...)
-	local chunk = loadstring(source, chunkName)
+-- Modules that arrived after the menu was already built. Their saved settings have to be applied
+-- again, because vape:Load ran while they did not exist yet.
+local lateModules = false
+
+local function applyLateModules(chunkName)
+	if not vape then return end
+	lateModules = true
+	task.spawn(function()
+		-- Wait for the menu to exist before re-applying, in case the chunk finished first.
+		local deadline = os.clock() + 30
+		repeat task.wait(0.2) until vape.Loaded or os.clock() > deadline
+		if not vape.Loaded then return end
+		-- Re-applying the config toggles modules, and each toggle announces itself. On a late load
+		-- that would be one notification per enabled module, so mute them for the pass.
+		local notifications = vape.ToggleNotifications
+		local wasEnabled = notifications and notifications.Enabled
+		if notifications then
+			notifications.Enabled = false
+		end
+		pcall(function()
+			vape:Load(true)
+		end)
+		if notifications then
+			notifications.Enabled = wasEnabled
+		end
+		pcall(function()
+			vape:CreateNotification('AetherV2', chunkName..' modules finished loading and have been added', 6, 'info')
+		end)
+	end)
+end
+
+-- Run a loading chunk on its own thread, watching it rather than waiting on it.
+--
+-- This is the other half of the "stuck at 88%" fix. Game modules run during the load, and a module
+-- that waits on something the game never provides used to take the whole load down with it: no
+-- menu, no error, just a percentage that never moved. Now the loader watches instead of blocking -
+-- the status text counts the seconds, so it is visibly alive - and if a chunk outstays its welcome
+-- we build the menu without it. The chunk is not killed; if it does finish later, its modules are
+-- added and their saved settings re-applied.
+local function runWatchedChunk(source, chunkName, label, timeout, optional, ...)
+	local chunk = compile(source, chunkName)
 	if not chunk then
-		table.insert(loadingWarnings, 'Failed to compile '..chunkName)
-		return nil
+		local message = 'Failed to compile '..chunkName
+		if optional then
+			table.insert(loadingWarnings, message)
+			return nil
+		end
+		failLoad(message)
 	end
-	local args = {...}
-	local ok, result = xpcall(function()
-		return chunk(table.unpack(args))
-	end, debug.traceback)
+
+	local args = table.pack(...)
+	local finished, ok, result = false, true, nil
+	task.spawn(function()
+		-- Same thread fix the GUI applies to its own spawned threads, so a chunk that now runs off
+		-- the main thread keeps the identity it needs for protected calls.
+		if vape and vape.ThreadFix then
+			setthreadidentity(8)
+		end
+		ok, result = xpcall(function()
+			return chunk(table.unpack(args, 1, args.n))
+		end, debug.traceback)
+		finished = true
+		if not ok then
+			warn('[AetherV2] '..chunkName..' failed: '..tostring(result))
+		end
+	end)
+
+	local started = os.clock()
+	while not finished do
+		local elapsed = os.clock() - started
+		if elapsed > timeout then
+			table.insert(loadingWarnings, chunkName..' is still loading after '..math.floor(elapsed)..' seconds - the menu was opened without it')
+			applyLateModules(chunkName)
+			return nil
+		end
+		if elapsed > 1.5 then
+			setPhaseProgress(label..'  ('..math.floor(elapsed)..'s)', elapsed / timeout)
+		end
+		task.wait(0.1)
+	end
+
 	if not ok then
-		table.insert(loadingWarnings, result)
-		return nil
+		if optional then
+			table.insert(loadingWarnings, tostring(result))
+			return nil
+		end
+		failLoad(result)
 	end
 	return result
 end
 
 local function finishLoading()
-	setLoadingStatus('Finalizing...', 0.94)
+	setPhase('Finalizing', 0.97, 0.99)
 	vape.Init = nil
 	local loaded, loadError = xpcall(function()
 		vape:Load()
 	end, debug.traceback)
 	if not loaded then
-		closeLoadingScreen()
-		error(loadError)
+		failLoad(loadError)
 	end
 	task.spawn(function()
 		repeat
@@ -666,7 +891,7 @@ local function finishLoading()
 		end
 	end
 
-	setLoadingStatus('Finished Loading!', 1)
+	setLoadingStatus('Finished loading', 1)
 	task.delay(2, closeLoadingScreen)
 end
 
@@ -683,6 +908,13 @@ end
 if not isfolder('aetherv2/assets/'..gui) then
 	makefolder('aetherv2/assets/'..gui)
 end
+-- Songs live here for MP3Player. Created from main as well as init, so loading the script directly
+-- (without init) still leaves somewhere to put music.
+for _, folder in {'aetherv2/songs', 'aetherv2/songs/spotify'} do
+	if not isfolder(folder) then
+		makefolder(folder)
+	end
+end
 if not isfile('aetherv2/profiles/commit.txt') then
 	writefile('aetherv2/profiles/commit.txt', 'main')
 end
@@ -691,9 +923,9 @@ if not isfile('aetherv2/profiles/disableloading.txt') then
 end
 
 globalenv.used_init = true
-setLoadingStatus('Preparing loading artwork...', 0.82)
+setPhase('Preparing loading artwork', 0.82, 0.84)
 downloadOptionalFile('aetherv2/assets/new/loading.png')
-setLoadingStatus('Loading interface...', 0.84)
+setPhase('Loading interface', 0.84, 0.88)
 vape = runLoadingChunk(downloadFile('aetherv2/guis/'..gui..'.lua'), 'gui', license)
 _G.vape = vape
 shared.vape = vape
@@ -706,23 +938,34 @@ if shared.mainAether then
 end
 
 if not shared.VapeIndependent then
-	setLoadingStatus('Loading universal modules...', 0.88)
-	runLoadingChunk(downloadFile('aetherv2/games/universal.lua'), 'universal', license)
-	if isfile('aetherv2/games/'..game.PlaceId..'.lua') then
-		runOptionalLoadingChunk(readfile('aetherv2/games/'..game.PlaceId..'.lua'), tostring(game.PlaceId), license)
-	else
-		if not shared.VapeDeveloper then
-			local suc, res = pcall(function()
-				return game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..readfile('aetherv2/profiles/commit.txt')..'/games/'..game.PlaceId..'.lua', true)
-			end)
-			if suc and res ~= '404: Not Found' then
-				runOptionalLoadingChunk(downloadFile('aetherv2/games/'..game.PlaceId..'.lua'), tostring(game.PlaceId), license)
-			end
+	setPhase('Loading universal modules', 0.88, 0.93)
+	-- Watched rather than waited on, and generous: universal is where every game-independent module
+	-- is registered, so it is worth a long leash - but not an unlimited one.
+	runWatchedChunk(downloadFile('aetherv2/games/universal.lua'), 'universal', 'Loading universal modules', 30, false, license)
+
+	setPhase('Loading game modules', 0.93, 0.97)
+	local placePath = 'aetherv2/games/'..game.PlaceId..'.lua'
+	local placeSource
+	if isfile(placePath) then
+		placeSource = downloadFile(placePath)
+	elseif not shared.VapeDeveloper then
+		setPhaseProgress('Downloading module for this game', 0.1)
+		-- One attempt only: most games simply have no module, and a 404 is the expected answer.
+		-- Retrying it would add seconds and two pointless requests to every unsupported game.
+		local body = fetchFile(placePath, 1)
+		if body then
+			writefile(placePath, '--This watermark is used to delete the file if its cached, remove it to make the file persist after vape updates.\n'..body)
+			placeSource = readfile(placePath)
 		end
+	end
+	if placeSource then
+		-- Optional and watched: a game module that stalls (waiting on something the game has not
+		-- replicated yet) must never cost you the menu.
+		runWatchedChunk(placeSource, tostring(game.PlaceId), 'Loading module for this game', 15, true, license)
 	end
 	finishLoading()
 else
 	vape.Init = finishLoading
-	setLoadingStatus('Ready for independent initialization.', 1)
+	setLoadingStatus('Ready for independent initialization', 1)
 	return vape
 end

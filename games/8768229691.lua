@@ -1,5 +1,11 @@
+-- Each module registers through run(). A bare func() meant one bad module aborted the whole chunk
+-- part-way through; isolate them so a single failure only costs that module.
 local run = function(func)
-	func()
+	local success, result = xpcall(func, debug and debug.traceback or tostring)
+	if not success then
+		warn('[AetherV2] Skipped a module during startup: '..tostring(result))
+	end
+	return success
 end
 local cloneref = cloneref or function(obj)
 	return obj
@@ -277,8 +283,13 @@ run(function()
 	local Flamework = require(replicatedStorage['rbxts_include']['node_modules']['@flamework'].core.out).Flamework
 	local ControllerTable = {}
 
+	-- Bounded: this runs on the loader's thread, so a wait with no exit is a load that never ends.
 	if not debug.getupvalue(Flamework.ignite, 1) then
-		repeat task.wait() until debug.getupvalue(Flamework.ignite, 1)
+		local igniteDeadline = tick() + 30
+		repeat task.wait() until debug.getupvalue(Flamework.ignite, 1) or tick() > igniteDeadline
+		if not debug.getupvalue(Flamework.ignite, 1) then
+			error('Flamework never finished igniting - the game has not finished loading')
+		end
 	end
 
 	local function searchFunction(name, i2, v2)
@@ -514,7 +525,7 @@ run(function()
                 skywars.SprintingController:disableSprinting()
             end
         end,
-        Tooltip = 'Sets your sprinting to true.'
+        Tooltip = 'Sets your sprinting to true'
     })
 end)
 
@@ -640,7 +651,7 @@ run(function()
                 end
             end
         end,
-        Tooltip = 'Help\'s you with your Parkinson\'s\nPrevents you from falling into the void.'
+        Tooltip = 'Help\'s you with your Parkinson\'s\nPrevents you from falling into the void'
     })
     Mode = AntiFall:CreateDropdown({
         Name = 'Move Mode',
@@ -851,7 +862,7 @@ run(function()
                 end
             end
         end,
-        Tooltip = 'Attack players around you\nwithout aiming at them.'
+        Tooltip = 'Attack players around you\nwithout aiming at them'
     })
     Targets = Killaura:CreateTargets({Players = true})
     AttackRange = Killaura:CreateSlider({
@@ -1068,7 +1079,7 @@ run(function()
                 until not NoFall.Enabled
             end
         end,
-        Tooltip = 'Prevents taking fall damage.'
+        Tooltip = 'Prevents taking fall damage'
     })
 end)
 
@@ -1106,7 +1117,7 @@ run(function()
                 oldcheck = nil
             end
         end,
-        Tooltip = 'Prevents slowing down when using items.'
+        Tooltip = 'Prevents slowing down when using items'
     })
 end)
 
@@ -1381,7 +1392,7 @@ run(function()
                 until not Scaffold.Enabled
             end
         end,
-        Tooltip = 'Helps you make bridges/scaffold walk.'
+        Tooltip = 'Helps you make bridges/scaffold walk'
     })
     Expand = Scaffold:CreateSlider({
         Name = 'Expand',
@@ -1443,7 +1454,7 @@ run(function()
                 until not ChestSteal.Enabled
             end
         end,
-        Tooltip = 'Grabs items from near chests.'
+        Tooltip = 'Grabs items from near chests'
     })
     Range = ChestSteal:CreateSlider({
         Name = 'Range',
@@ -1589,7 +1600,7 @@ run(function()
                 consumeCheck()
             end
         end,
-        Tooltip = 'Automatically uses shield potions.'
+        Tooltip = 'Automatically uses shield potions'
     })
 end)
 

@@ -388,7 +388,7 @@ run(function()
     			restorefunction(jb.GunController.BulletEmitterOnLocalHitPlayer)
     		end
     	end,
-    	Tooltip = 'Modifies bullets to always do headshot damage.'
+    	Tooltip = 'Modifies bullets to always do headshot damage'
     })
 end)
 

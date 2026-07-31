@@ -7892,7 +7892,11 @@ function mainapi:Load(skipgui, profile)
 			restorePosition(object, v.Position)
 		end
 
-		for i, object in self.Modules do
+		-- Snapshot the table first: a game module can still be registering itself on another
+		-- thread while this runs (the loader stops waiting on one that stalls), and adding to
+		-- the table mid-iteration would throw here and abort the whole config load.
+		local modulesSnapshot = table.clone(self.Modules)
+		for i, object in modulesSnapshot do
 			local v = savedata.Modules[i]
 			if not v then
 				if object.Enabled then
@@ -7921,7 +7925,11 @@ function mainapi:Load(skipgui, profile)
 		if self.Favourites and savedata.FavouritesOrder then
 			self.Favourites:ApplyOrder(savedata.FavouritesOrder)
 		end
-		for i, object in self.Legit.Modules do
+		-- Snapshot the table first: a game module can still be registering itself on another
+		-- thread while this runs (the loader stops waiting on one that stalls), and adding to
+		-- the table mid-iteration would throw here and abort the whole config load.
+		local legitSnapshot = table.clone(self.Legit.Modules)
+		for i, object in legitSnapshot do
 			local v = savedata.Legit[i]
 			if not v then
 				if object.Enabled then
@@ -8649,12 +8657,12 @@ local importNameBox
 local importJsonBox = profiles:CreateTextBox({
 	Name = 'Import JSON',
 	Placeholder = 'Paste exported JSON here',
-	Tooltip = 'Paste a JSON export, then click Import JSON to create a new config.'
+	Tooltip = 'Paste a JSON export, then click Import JSON to create a new config'
 })
 importNameBox = profiles:CreateTextBox({
 	Name = 'Import Name',
 	Placeholder = 'Optional config name',
-	Tooltip = 'Optional name for the imported config. Invalid file characters are replaced automatically.'
+	Tooltip = 'Optional name for the imported config. Invalid file characters are replaced automatically'
 })
 profiles:CreateButton({
 	Name = 'Import JSON',
@@ -8674,7 +8682,7 @@ profiles:CreateButton({
 			mainapi:CreateNotification('AetherV2', result, 8, 'alert')
 		end
 	end,
-	Tooltip = 'Imports a JSON config from the text box, or from your clipboard if the text box is empty.'
+	Tooltip = 'Imports a JSON config from the text box, or from your clipboard if the text box is empty'
 })
 
 --[[
@@ -8731,7 +8739,7 @@ general:CreateToggle({
 		end
 	end,
 	Default = isfile('aetherv2/profiles/disableloading.txt') and readfile('aetherv2/profiles/disableloading.txt') == 'true',
-	Tooltip = 'Prevents AetherV2 from showing its startup loading screen.'
+	Tooltip = 'Prevents AetherV2 from showing its startup loading screen'
 })
 -- Reloads AetherV2 from scratch (shared by Reinject, Reset profile and the GUI
 -- type switcher). Deferred onto a fresh thread so the button/dropdown handler
@@ -8778,17 +8786,17 @@ local exportCredits = general:CreateTextBox({
 		end)
 		return suc and res or ''
 	end)(),
-	Tooltip = 'Who made this config. Added to the JSON export as "credits".'
+	Tooltip = 'Who made this config. Added to the JSON export as "credits"'
 })
 local exportTags = general:CreateTextBox({
 	Name = 'Export Tags',
 	Placeholder = 'pvp, rage, legit',
-	Tooltip = 'Comma-separated tags for the export. At least one is required.'
+	Tooltip = 'Comma-separated tags for the export. At least one is required'
 })
 local exportDescription = general:CreateTextBox({
 	Name = 'Export Description',
 	Placeholder = 'Short description',
-	Tooltip = 'A short description added to the JSON export as "description".'
+	Tooltip = 'A short description added to the JSON export as "description"'
 })
 local exportButton
 exportButton = general:CreateButton({
@@ -8836,7 +8844,7 @@ exportButton = general:CreateButton({
 			end)
 		end
 	end,
-	Tooltip = 'Copies your config to the clipboard as JSON, including credits, tags and a description.'
+	Tooltip = 'Copies your config to the clipboard as JSON, including credits, tags and a description'
 })
 general:CreateButton({
 	Name = 'Self destruct',
@@ -8899,7 +8907,7 @@ mainapi.Blur = guipane:CreateToggle({
 guipane:CreateToggle({
 	Name = 'GUI bind indicator',
 	Default = true,
-	Tooltip = "Displays a message indicating your GUI upon injecting.\nI.E. 'Press RSHIFT to open GUI'"
+	Tooltip = "Displays a message indicating your GUI upon injecting\nI.E. 'Press RSHIFT to open GUI'"
 })
 guipane:CreateToggle({
 	Name = 'No module spacing',
@@ -8985,7 +8993,7 @@ guipane:CreateDropdown({
 mainapi.ThemeModules = guipane:CreateToggle({
 	Name = 'Recolour modules with theme',
 	Default = true,
-	Tooltip = 'When on, changing the GUI Theme colour (or picking a theme preset) also recolours every module colour that supports it - Killaura target boxes, ESP, tracers, particles and so on. Turn off to give modules their own independent colours.',
+	Tooltip = 'Also recolour every module colour that supports it - target boxes, ESP, tracers, particles - when you change the GUI theme. Off gives modules their own colours',
 	Function = function(callback)
 		if callback and mainapi.ApplyThemeToModules then
 			mainapi:ApplyThemeToModules()
@@ -9085,7 +9093,7 @@ mainapi.Notifications = notifpane:CreateToggle({
 })
 mainapi.ToggleNotifications = notifpane:CreateToggle({
 	Name = 'Toggle alert',
-	Tooltip = 'Notifies you if a module is enabled/disabled.',
+	Tooltip = 'Notifies you if a module is enabled/disabled',
 	Default = true,
 	Darker = true
 })
@@ -9218,7 +9226,7 @@ local textguiscale = textgui:CreateSlider({
 })
 local textguishadow = textgui:CreateToggle({
 	Name = 'Shadow',
-	Tooltip = 'Renders shadowed text.',
+	Tooltip = 'Renders shadowed text',
 	Function = function()
 		mainapi:UpdateTextGUI()
 	end
@@ -9290,7 +9298,7 @@ textguibackgroundtint = textgui:CreateToggle({
 local textguimoduleslist
 local textguimodules = textgui:CreateToggle({
 	Name = 'Hide modules',
-	Tooltip = 'Allows you to blacklist certain modules from being shown.',
+	Tooltip = 'Allows you to blacklist certain modules from being shown',
 	Function = function(enabled)
 		textguimoduleslist.Object.Visible = enabled
 		mainapi:UpdateTextGUI()
@@ -9298,7 +9306,7 @@ local textguimodules = textgui:CreateToggle({
 })
 textguimoduleslist = textgui:CreateTextList({
 	Name = 'Blacklist',
-	Tooltip = 'Name of module to hide.',
+	Tooltip = 'Name of module to hide',
 	Icon = getcustomasset('aetherv2/assets/new/blockedicon.png'),
 	Tab = getcustomasset('aetherv2/assets/new/blockedtab.png'),
 	TabSize = UDim2.fromOffset(21, 16),

@@ -1660,7 +1660,7 @@ run(function()
 				bedwars.SprintController:stopSprinting()
 			end
 		end,
-		Tooltip = 'Sets your sprinting to true.'
+		Tooltip = 'Sets your sprinting to true'
 	})
 end)
 	
@@ -1875,7 +1875,7 @@ run(function()
 				AntiFallDirection = nil
 			end
 		end,
-		Tooltip = 'Help\'s you with your Parkinson\'s\nPrevents you from falling into the void.'
+		Tooltip = 'Help\'s you with your Parkinson\'s\nPrevents you from falling into the void'
 	})
 	Mode = AntiFall:CreateDropdown({
 		Name = 'Move Mode',
@@ -2034,7 +2034,7 @@ run(function()
 		ExtraText = function()
 			return 'Heatseeker'
 		end,
-		Tooltip = 'Makes you go zoom.'
+		Tooltip = 'Makes you go zoom'
 	})
 
 	Value = Fly:CreateSlider({
@@ -2163,7 +2163,7 @@ run(function()
 			debug.setconstant(bedwars.SprintController.startSprinting, 5, callback and 'blockSprinting' or 'blockSprint')
 			bedwars.SprintController:stopSprinting()
 		end,
-		Tooltip = 'Lets you sprint with a speed potion.'
+		Tooltip = 'Lets you sprint with a speed potion'
 	})
 end)
 
@@ -2237,7 +2237,7 @@ run(function()
 				old = nil
 			end
 		end,
-		Tooltip = 'Prevents slowing down when using items.'
+		Tooltip = 'Prevents slowing down when using items'
 	})
 end)
 	
@@ -2293,7 +2293,7 @@ run(function()
 		ExtraText = function()
 			return 'Heatseeker'
 		end,
-		Tooltip = 'Increases your movement with various methods.'
+		Tooltip = 'Increases your movement with various methods'
 	})
 	Value = Speed:CreateSlider({
 		Name = 'Speed',
@@ -2408,7 +2408,7 @@ run(function()
 				end))
 			end
 		end,
-		Tooltip = 'Displays your health in the center of your screen.'
+		Tooltip = 'Displays your health in the center of your screen'
 	})
 end)
 	
@@ -2980,7 +2980,7 @@ run(function()
 				end
 			end
 		end,
-		Tooltip = 'Renders nametags on entities through walls.'
+		Tooltip = 'Renders nametags on entities through walls'
 	})
 	Targets = NameTags:CreateTargets({
 		Players = true,
@@ -3465,7 +3465,7 @@ run(function()
 				end
 			end
 		end,
-		Tooltip = 'Automatically uses kit abilities.'
+		Tooltip = 'Automatically uses kit abilities'
 	})
 	Legit = AutoKit:CreateToggle({Name = 'Legit Range'})
 	local sortTable = {}
@@ -3519,7 +3519,7 @@ run(function()
 				AutoPlay:Clean(vapeEvents.MatchEndEvent.Event:Connect(joinQueue))
 			end
 		end,
-		Tooltip = 'Automatically queues after the match ends.'
+		Tooltip = 'Automatically queues after the match ends'
 	})
 	Random = AutoPlay:CreateToggle({
 		Name = 'Random',
@@ -3759,7 +3759,7 @@ run(function()
 				end
 			end
 		end,
-		Tooltip = 'Spawns and teleports a missile to a player\nnear your mouse.'
+		Tooltip = 'Spawns and teleports a missile to a player\nnear your mouse'
 	})
 end)
 
@@ -3864,7 +3864,7 @@ run(function()
 				end
 			end
 		end,
-		Tooltip = 'Spawns and teleports a raven to a player\nnear your mouse.'
+		Tooltip = 'Spawns and teleports a raven to a player\nnear your mouse'
 	})
 end)
 	
@@ -3896,7 +3896,7 @@ run(function()
 				table.clear(tiered)
 			end
 		end,
-		Tooltip = 'Lets you buy things like armor early.'
+		Tooltip = 'Lets you buy things like armor early'
 	})
 end)
 	
@@ -4289,7 +4289,7 @@ run(function()
 				end
 			end
 		end,
-		Tooltip = 'Automatically places strong blocks around the bed.'
+		Tooltip = 'Automatically places strong blocks around the bed'
 	})
 end)
 	
@@ -4348,7 +4348,7 @@ run(function()
 				end
 			end
 		end,
-		Tooltip = 'Grabs items from near chests.'
+		Tooltip = 'Grabs items from near chests'
 	})
 	Range = ChestSteal:CreateSlider({
 		Name = 'Range',
@@ -4643,7 +4643,7 @@ run(function()
 				end
 			end
 		end,
-		Tooltip = 'Puts on / takes off armor when toggled for baiting.'
+		Tooltip = 'Puts on / takes off armor when toggled for baiting'
 	})
 	Mode = ArmorSwitch:CreateDropdown({
 		Name = 'Mode',
@@ -5184,7 +5184,7 @@ run(function()
 				consumeCheck()
 			end
 		end,
-		Tooltip = 'Automatically heals for you when health or shield is under threshold.'
+		Tooltip = 'Automatically heals for you when health or shield is under threshold'
 	})
 	Health = AutoConsume:CreateSlider({
 		Name = 'Health Percent',
@@ -5772,7 +5772,7 @@ run(function()
 				AutoHotbar:Clean(vapeEvents.InventoryAmountChanged.Event:Connect(sortCallback))
 			end
 		end,
-		Tooltip = 'Automatically arranges hotbar to your liking.'
+		Tooltip = 'Automatically arranges hotbar to your liking'
 	})
 	Mode = AutoHotbar:CreateDropdown({
 		Name = 'Activation',
@@ -5851,7 +5851,7 @@ run(function()
 				oldshowprogress = nil
 			end
 		end,
-		Tooltip = 'Use/Consume items quicker.'
+		Tooltip = 'Use/Consume items quicker'
 	})
 	Value = FastConsume:CreateSlider({
 		Name = 'Multiplier',
@@ -6091,7 +6091,7 @@ run(function()
 				bedwars.ViewmodelController:showCrosshair()
 			end
 		end,
-		Tooltip = 'Custom first person crosshair depending on the image choosen.'
+		Tooltip = 'Custom first person crosshair depending on the image choosen'
 	})
 	Image = Crosshair:CreateTextBox({
 		Name = 'Image',
@@ -6901,7 +6901,7 @@ run(function()
 				end
 			end
 		end,
-		Tooltip = 'Change ingame sounds to custom ones and adjust their volume.'
+		Tooltip = 'Change ingame sounds to custom ones and adjust their volume'
 	})
 	
 	List = SoundChanger:CreateTextList({

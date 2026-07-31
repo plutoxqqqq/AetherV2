@@ -799,7 +799,7 @@ run(function()
                 end
             end
         end,
-        Tooltip = 'Allow you to shoot through riot shields.'
+        Tooltip = 'Allow you to shoot through riot shields'
     })
 end)
 
@@ -921,7 +921,7 @@ run(function()
     })
     HandCheck = AutoArrest:CreateToggle({
         Name = 'Hand Check',
-        Tooltip = 'Only arrest if you have handcuffs equipped.'
+        Tooltip = 'Only arrest if you have handcuffs equipped'
     })
     CooldownBar = AutoArrest:CreateToggle({
         Name = 'Cooldown Bar',
@@ -976,7 +976,7 @@ run(function()
                 end))
             end
         end,
-        Tooltip = 'Automatically reset after becoming a criminal.'
+        Tooltip = 'Automatically reset after becoming a criminal'
     })
 end)
 
@@ -1287,7 +1287,7 @@ run(function()
                 table.clear(modified)
             end
         end,
-        Tooltip = 'Allow you to shoot through vehicles.'
+        Tooltip = 'Allow you to shoot through vehicles'
     })
 end)
 
@@ -1405,7 +1405,7 @@ run(function()
                 end))
             end
         end,
-        Tooltip = 'Sends a notification of who killed you.'
+        Tooltip = 'Sends a notification of who killed you'
     })
 end)
 
@@ -1731,7 +1731,7 @@ run(function()
                 end
             end
         end,
-        Tooltip = 'Renders nametags on entities through walls.'
+        Tooltip = 'Renders nametags on entities through walls'
     })
     Targets = NameTags:CreateTargets({
         Players = true,
@@ -1928,7 +1928,7 @@ run(function()
                 until not AutoDetonate.Enabled
             end
         end,
-        Tooltip = 'Automatically detonate when enemies are nearby.'
+        Tooltip = 'Automatically detonate when enemies are nearby'
     })
 end)
 
@@ -1980,7 +1980,7 @@ run(function()
                 until not AutoHeal.Enabled
             end
         end,
-        Tooltip = 'Automatically heal damage with consumables.'
+        Tooltip = 'Automatically heal damage with consumables'
     })
 end)
 
@@ -2192,7 +2192,7 @@ run(function()
                 TracerHook:Remove('BulletTracers')
             end
         end,
-        Tooltip = 'Allow you to customize bullet tracers.'
+        Tooltip = 'Allow you to customize bullet tracers'
     })
     local materials = {'SmoothPlastic'}
     for _, v in Enum.Material:GetEnumItems() do
@@ -2315,7 +2315,7 @@ run(function()
                 TracerHook:Remove('DamageIndicator')
             end
         end,
-        Tooltip = 'Add custom damage indicators for gun damage.'
+        Tooltip = 'Add custom damage indicators for gun damage'
     })
     local fontitems = {'GothamBlack'}
     for _, v in Enum.Font:GetEnumItems() do

@@ -1,0 +1,38 @@
+name: Update manifest
+
+# The loader downloads only the files whose hash changed, which means manifest.json has to keep up
+# with the tree on every push. If it ever falls behind, the loader notices (the manifest it fetches
+# is identical to the one it already has) and falls back to re-downloading everything, so a missed
+# run costs speed, never correctness.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: manifest-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  manifest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Regenerate manifest.json
+        run: python3 tools/build-manifest.py
+
+      - name: Commit if it changed
+        run: |
+          if git diff --quiet -- manifest.json; then
+            echo "manifest.json unchanged"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add manifest.json
+          git commit -m "Update manifest.json [skip ci]"
+          git push

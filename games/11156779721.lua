@@ -287,7 +287,7 @@ run(function()
     			block(false)
     		end
     	end,
-    	Tooltip = 'Attack players around you\nwithout aiming at them.',
+    	Tooltip = 'Attack players around you\nwithout aiming at them',
     })
     Targets = Killaura:CreateTargets({
     	Players = true,
@@ -513,7 +513,7 @@ run(function()
     			table.clear(connections)
     		end
     	end,
-    	Tooltip = 'Prevents you from taking fall damage.',
+    	Tooltip = 'Prevents you from taking fall damage',
     })
 end)
 
@@ -562,7 +562,7 @@ run(function()
     	ExtraText = function()
     		return 'TSG'
     	end,
-    	Tooltip = 'Increases your movement with various methods.',
+    	Tooltip = 'Increases your movement with various methods',
     })
     WallCheck = Speed:CreateToggle({
     	Name = 'Wall Check',

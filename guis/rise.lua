@@ -1644,7 +1644,7 @@ addMaid(mainapi)
 function mainapi:CreateGUI()
 	return self.Categories.Minigames:CreateModule({
 		Name = 'Settings',
-		Tooltip = 'Miscellaneous options for the utility.'
+		Tooltip = 'Miscellaneous options for the utility'
 	})
 end
 
@@ -2819,7 +2819,7 @@ mainapi.Categories.Main:CreateToggle({
 mainapi.Categories.Main.Options['GUI bind indicator'] = mainapi.Categories.Main:CreateToggle({
 	Name = 'GUI bind indicator',
 	Default = true,
-	Tooltip = "Displays a message indicating your GUI upon injecting.\nI.E. 'Press RSHIFT to open GUI'"
+	Tooltip = "Displays a message indicating your GUI upon injecting\nI.E. 'Press RSHIFT to open GUI'"
 })
 mainapi.Notifications = mainapi.Categories.Main:CreateToggle({
 	Name = 'Notifications',
