@@ -8585,7 +8585,7 @@ run(function()
     local LimitItems
     local ChangeDir
     local LongJumpBypass
-    local BypassBoost
+    local BypassHeight, BypassBoost
     local start
     local JumpTick, JumpSpeed, Direction = tick(), 0
     local projectileRemote = {InvokeServer = function() end}
@@ -8853,9 +8853,10 @@ run(function()
     -- tool the way LongJump does - by switching LongJump on, so the launch, arc and speed are
     -- LongJump's own - and while that boost carries you it applies BoostAirJump's push (upward
     -- velocity to beat the jump-height check) for you automatically, lifting you up without a held
-    -- jump. When LongJump's boost is spent it hands control back: LongJump is put back how it found
-    -- it and the maneuver ends. Lives in the same block as LongJump so it can watch the shared boost
-    -- window (JumpTick) and reuse LongJumpMethods to check you actually have a compatible tool.
+    -- jump, but only up to Max height so it can never carry you high enough for the game to kill you.
+    -- When LongJump's boost is spent it hands control back: LongJump is put back how it found it and
+    -- the maneuver ends. Lives in the same block as LongJump so it can watch the shared boost window
+    -- (JumpTick) and reuse LongJumpMethods to check you actually have a compatible tool.
     local function findBypassTool()
         if store.hand and store.hand.tool and LongJumpMethods[store.hand.tool.Name] then
             return store.hand.tool.Name, getItem(store.hand.tool.Name)
@@ -8904,26 +8905,37 @@ run(function()
                 end
 
                 -- 2. While that boost carries you, lift yourself with BoostAirJump's behaviour - the
-                --    same upward-velocity push that beats the jump-height check - only applied for you
-                --    automatically instead of while you hold jump. JumpTick (shared with LongJump
-                --    above) is the boost window: it goes into the future when the tool fires and lapses
-                --    when the boost is spent. Left on past that LongJump pins your velocity in place,
-                --    so hand control back the moment it lapses.
+                --    same upward-velocity push that beats the jump-height check - applied for you
+                --    automatically instead of while you hold jump, and stopped at Max height so it
+                --    never carries you high enough for the game to kill you. JumpTick (shared with
+                --    LongJump above) is the boost window: it goes into the future when the tool fires
+                --    and lapses when the boost is spent. Left on past that LongJump pins your velocity
+                --    in place, so hand control back the moment it lapses.
                 local bypassStart = tick()
                 local launched = false
+                local launchY = nil
                 local nextLift = 0
                 repeat
                     task.wait()
                     local boosting = JumpTick > tick()
                     if boosting then launched = true end
-                    -- BoostAirJump adds its push about every 0.1s; match that so the climb rate holds
-                    -- steady whatever the frame rate, and only while LongJump is actually boosting us.
-                    if boosting and entitylib.isAlive and tick() >= nextLift then
-                        local root = entitylib.character.RootPart
-                        if root then
+                    local root = boosting and entitylib.isAlive and entitylib.character.RootPart or nil
+                    if root then
+                        launchY = launchY or root.Position.Y
+                        if root.Position.Y - launchY >= BypassHeight.Value then
+                            -- Reached the height cap: stop pushing and cancel any leftover upward
+                            -- speed (checked every frame, so overshoot is at most a frame's climb) so
+                            -- we level off here instead of sailing on up into the game's height kill.
+                            local vel = root.AssemblyLinearVelocity
+                            if vel.Y > 0 then
+                                root.AssemblyLinearVelocity = Vector3.new(vel.X, 0, vel.Z)
+                            end
+                        elseif tick() >= nextLift then
+                            -- Below the cap: BoostAirJump's push, on its ~0.1s cadence so the climb
+                            -- rate holds steady whatever the frame rate.
                             root.AssemblyLinearVelocity += Vector3.new(0, BypassBoost.Value, 0)
+                            nextLift = tick() + 0.1
                         end
-                        nextLift = tick() + 0.1
                     end
                 until not LongJumpBypass.Enabled or (launched and JumpTick <= tick()) or tick() - bypassStart > 8
 
@@ -8932,7 +8944,15 @@ run(function()
                 return task.spawn(function() if LongJumpBypass.Enabled then LongJumpBypass:Toggle() end end)
             end
         end,
-        Tooltip = 'On key: launches off a compatible tool with LongJump, then automatically lifts you up into the air (BoostAirJump boost) while the launch carries you. Ends when the boost is spent'
+        Tooltip = 'On key: launches off a compatible tool with LongJump, then automatically lifts you up into the air (BoostAirJump boost) while the launch carries you. Stops at Max height so it will not fly you high enough for the game to kill you. Ends when the boost is spent'
+    })
+    BypassHeight = LongJumpBypass:CreateSlider({
+        Name = 'Max height',
+        Min = 20,
+        Max = 300,
+        Default = 50,
+        Suffix = ' studs',
+        Tooltip = 'Stop climbing once this many studs above where the launch set off. Keep it below the height the game kills you at - lower is safer, higher risks the "too high" kill'
     })
     BypassBoost = LongJumpBypass:CreateSlider({
         Name = 'Boost',
@@ -8940,7 +8960,7 @@ run(function()
         Max = 60,
         Default = 35,
         Suffix = ' studs/s',
-        Tooltip = 'Upward velocity added for you each tick while LongJump boosts you, lifting you into the air'
+        Tooltip = 'Upward velocity added for you each tick while LongJump boosts you, lifting you toward Max height'
     })
 end)
 
