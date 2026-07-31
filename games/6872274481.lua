@@ -18417,9 +18417,32 @@ run(function()
     local function startDriving()
         AutoWin:Clean(runService.Stepped:Connect(function()
             if not driving then return end
+            -- Leave the hitbox alone if GodMode/AntiDeath has parked it - moving it then would
+            -- fight them and drag the real root around.
+            if store.rootpart then return end
             local root, char = myRoot()
             if not root or not char or not char.Humanoid then return end
+
+            -- Point the humanoid so it turns to face the way we are going and plays the walk.
             char.Humanoid:Move(moveDir, false)
+
+            -- ...but do not trust Humanoid:Move on its own. BedWars drives the character through its
+            -- own block-engine controller, which can leave a scripted Move doing nothing at all -
+            -- which is exactly why the walk never started. So we also assert the movement as
+            -- velocity: forward at the humanoid's own walk speed (well inside the server's speed
+            -- check, nothing to lag back), and a hard stop when we are meant to be still on an edge
+            -- or towering. Y is left to gravity and jumps.
+            if isnetworkowner(root) then
+                local vel = root.AssemblyLinearVelocity
+                if moveDir.Magnitude > 0 then
+                    local speed = char.Humanoid.WalkSpeed
+                    if speed <= 0 then speed = 16 end
+                    local horiz = moveDir.Unit * speed
+                    root.AssemblyLinearVelocity = Vector3.new(horiz.X, vel.Y, horiz.Z)
+                else
+                    root.AssemblyLinearVelocity = Vector3.new(0, vel.Y, 0)
+                end
+            end
         end))
         AutoWin:Clean(function()
             moveDir, driving = Vector3.zero, false
@@ -21041,9 +21064,14 @@ run(function()
     local AutoBank
     local UIToggle
     local Range
+    local SilentBank
     local UI
     local Chests
     local Items = {}
+    -- Hidden-hitbox bank state (Infinite range). We own the character's root only while a far bank
+    -- is in flight; bankRevert always puts it back, on success or on any error.
+    local bankBusy = false
+    local bankRoot, bankClone, bankHip, bankOwnsRoot = nil, nil, nil, false
     -- When the last deposit for a given tool went out. Nearby banking empties the inventory
     -- almost immediately so this never matters there, but Infinite range keeps asking from
     -- across the map, and without a cooldown a stack the server won't take would be re-sent
@@ -21094,23 +21122,129 @@ run(function()
         end
     end
 
+    local function bankTools(chest, tools)
+        for _, tool in tools do
+            task.spawn(function()
+                pcall(function()
+                    bedwars.Client:GetNamespace('Inventory'):Get('ChestGiveItem'):CallServer(chest, tool)
+                end)
+            end)
+        end
+    end
+
+    local function nearestChest()
+        if not entitylib.isAlive then return nil end
+        local pos = entitylib.character.RootPart.Position
+        local best, bestd = nil, math.huge
+        for _, c in Chests do
+            local d = (c.Position - pos).Magnitude
+            if d < bestd then best, bestd = c, d end
+        end
+        return best, bestd
+    end
+
+    -- Always puts the character back the way we found it, whatever happened during the bank, so a
+    -- failure mid-swap can never leave you stuck with a clone for a body.
+    local function bankRevert()
+        pcall(function()
+            if bankRoot and bankRoot.Parent and lplr.Character then
+                lplr.Character.Parent = replicatedStorage
+                bankRoot.Parent = lplr.Character
+                if bankClone then
+                    bankRoot.CFrame = bankClone.CFrame
+                    bankRoot.AssemblyLinearVelocity = bankClone.AssemblyLinearVelocity
+                end
+                lplr.Character.PrimaryPart = bankRoot
+                lplr.Character.Parent = workspace
+                bankRoot.CanCollide = true
+                bankRoot.Transparency = 1
+                if bankHip and entitylib.isAlive then
+                    entitylib.character.Humanoid.HipHeight = bankHip
+                end
+            end
+        end)
+        if bankClone then
+            pcall(function() bankClone:Destroy() end)
+            bankClone = nil
+        end
+        bankRoot, bankHip = nil, nil
+        if bankOwnsRoot then
+            store.rootpart = nil
+            bankOwnsRoot = false
+        end
+    end
+
+    -- Bank from across the map with nothing visibly moving: park the network-owned root on the
+    -- nearest personal chest for a fraction of a second (a local clone stays behind as your body) so
+    -- the server's own range check on ChestGiveItem passes, fire the deposits, then put the root
+    -- straight back. Same proven swap AntiDeath/GodMode use, guarded by store.rootpart so it never
+    -- fights them, and every path ends in bankRevert.
+    local function silentBank(chest, tools, target)
+        bankBusy = true
+        task.spawn(function()
+            local ok = pcall(function()
+                local character = lplr.Character
+                bankRoot = entitylib.character.HumanoidRootPart
+                bankHip = entitylib.character.Humanoid.HipHeight
+                if not character or not character.Parent or not bankRoot then error('no character') end
+
+                character.Parent = replicatedStorage
+                bankClone = bankRoot:Clone()
+                bankClone.Parent = character
+                bankRoot.Transparency = 1
+                bankRoot.Parent = workspace
+                store.rootpart = bankRoot
+                bankOwnsRoot = true
+                character.PrimaryPart = bankClone
+                character.Parent = workspace
+                pcall(function() bedwars.QueryUtil:setQueryIgnored(bankClone, true) end)
+                pcall(function() bedwars.QueryUtil:setQueryIgnored(bankRoot, true) end)
+
+                local aim = CFrame.new(target.Position + Vector3.new(0, 3, 0))
+                local hold = runService.Heartbeat:Connect(function()
+                    if bankRoot and bankRoot.Parent then
+                        bankRoot.CFrame = aim
+                        bankRoot.AssemblyLinearVelocity = Vector3.zero
+                    end
+                end)
+                bankTools(chest, tools)
+                task.wait(0.3)
+                hold:Disconnect()
+            end)
+            bankRevert()
+            bankBusy = false
+            if ok then
+                pcall(function() refreshBank(chest) end)
+            end
+        end)
+    end
+
     local function handleState()
         local chest = replicatedStorage.Inventories:FindFirstChild(lplr.Name..'_personal')
         if not chest then return end
 
-        -- Always DEPOSIT the configured resources into the personal chest while we are
-        -- near it. The old code gated depositing behind a "distance from spawn > 80"
-        -- check, but the personal chest sits AT spawn, so that branch never ran and it
-        -- silently withdrew instead of banking - which is why nothing ever got banked.
+        -- Always DEPOSIT the configured resources into the personal chest. The old code gated
+        -- depositing behind a "distance from spawn > 80" check, but the personal chest sits AT
+        -- spawn, so that branch never ran and it silently withdrew instead of banking.
+        local tools = {}
         for _, v in store.inventory.inventory.items do
             local item = Items[v.itemType]
             if item and v.tool and tick() - (sent[v.tool] or 0) >= 1.5 then
                 sent[v.tool] = tick()
-                task.spawn(function()
-                    bedwars.Client:GetNamespace('Inventory'):Get('ChestGiveItem'):CallServer(chest, v.tool)
-                    refreshBank(chest)
-                end)
+                table.insert(tools, v.tool)
             end
+        end
+        if #tools == 0 then return end
+
+        -- Infinite range from afar goes through the silent hitbox bank (unless you turn it off);
+        -- Nearby, or already standing on the chest, just fires the remote as before.
+        local target, dist = nearestChest()
+        if Range and Range.Value == 'Infinite' and SilentBank.Enabled
+            and target and dist and dist > 20 and not store.rootpart and not bankBusy then
+            silentBank(chest, tools, target)
+        else
+            bankTools(chest, tools)
+            task.spawn(function() refreshBank(chest) end)
         end
     end
 
@@ -21152,6 +21286,9 @@ run(function()
                     task.wait(0.1)
                 until (not AutoBank.Enabled)
             else
+                -- Put the hitbox back if a far bank was still in flight when we turned off.
+                bankRevert()
+                bankBusy = false
                 table.clear(Items)
                 table.clear(sent)
             end
@@ -21162,7 +21299,12 @@ run(function()
         Name = 'Range',
         List = {'Nearby', 'Infinite'},
         Default = 'Nearby',
-        Tooltip = 'Nearby banks within 20 studs of a personal chest. Infinite banks from anywhere, since the request names your inventory rather than a chest in the world'
+        Tooltip = 'Nearby banks within 20 studs of a personal chest.\nInfinite banks from anywhere: it briefly parks your hidden hitbox on the nearest chest so the server accepts the deposit, with nothing visibly moving'
+    })
+    SilentBank = AutoBank:CreateToggle({
+        Name = 'Silent bank',
+        Default = true,
+        Tooltip = 'Infinite range only. On: park the hidden hitbox on the chest for a split second so far deposits go through with nothing visibly moving. Off: just ask the server (which usually refuses from range), leaving your body where it is'
     })
     UIToggle = AutoBank:CreateToggle({
         Name = 'UI',
