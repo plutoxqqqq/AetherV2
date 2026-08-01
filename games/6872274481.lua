@@ -28026,7 +28026,7 @@ run(function()
 	
 	local Legit = getFunctionRange(bedwars.MinerController.setupMinerPrompts) or 0
 	
-	AutoMiner = vape.Categories.Utility:CreateModule({
+	AutoMiner = vape.Categories.Minigames:CreateModule({
 	    Name = 'AutoMiner',
 	    Function = function(callback)
 	        if callback then
@@ -28080,7 +28080,6 @@ run(function()
 	    Decimal = 10
 	})
 	Animation = AutoMiner:CreateToggle({Name = 'Animation', Default = true})
-	
 end)
 
 
