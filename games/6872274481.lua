@@ -5507,15 +5507,32 @@ run(function()
     })
 end)
 
--- Krystal (the GlacialSkater kit) can install local movement-correction listeners more than once
--- during a session. Suppress those listeners without changing the kit's momentum or sending any
--- momentum remotes; KrystalDisabler must not double as a speed module.
+-- Krystal Disabler (ported from the BedFight module). Krystal (the GlacialSkater kit) skates
+-- on momentum; the server periodically corrects the client, which reads as a lagback. We hook
+-- the controller's own updateMomentum so momentum is always reported maxed, and suppress the
+-- local CFrame/Velocity correction listeners so the skate never snaps back. Fails gracefully
+-- (notif + untoggle) if this game doesn't expose the Krystal controller.
 run(function()
     local KrystalDisabler
+    local oldUpdateMomentum
+    local momentumRemote
     local patchedSignals = setmetatable({}, {__mode = 'k'})
+    local targetMomentum = 9e9
 
     local function getController()
         return bedwars and bedwars.GlacialSkaterController
+    end
+
+    local function setKrystalMomentum(controller)
+        controller = controller or getController()
+        if not controller then return end
+        controller.momentum = targetMomentum
+        controller.lastMomentumReport = targetMomentum
+        if momentumRemote then
+            pcall(function()
+                momentumRemote:SendToServer({momentumValue = targetMomentum})
+            end)
+        end
     end
 
     local function patchMovementSignal(signal)
@@ -5556,29 +5573,43 @@ run(function()
         Function = function(callback)
             local controller = getController()
             if callback then
-                if not controller then
+                if not controller or type(controller.updateMomentum) ~= 'function' then
                     notif('KrystalDisabler', 'Krystal controller is unavailable.', 5, 'warning')
                     KrystalDisabler:Toggle()
                     return
                 end
 
-                -- A new round may attach fresh correction connections to the existing character,
-                -- so scan continuously rather than relying only on a respawn event.
-                KrystalDisabler:Clean(runService.PreSimulation:Connect(function()
-                    if entitylib.isAlive then
-                        patchCharacter(entitylib.character)
+                momentumRemote = bedwars.Client and bedwars.Client:Get('MomentumUpdate')
+                if not oldUpdateMomentum then
+                    oldUpdateMomentum = controller.updateMomentum
+                    controller.updateMomentum = function(self, ...)
+                        setKrystalMomentum(self)
+                        local result = oldUpdateMomentum(self, ...)
+                        setKrystalMomentum(self)
+                        return result
                     end
+                end
+
+                KrystalDisabler:Clean(runService.PreSimulation:Connect(function()
+                    setKrystalMomentum(getController())
                 end))
 
                 KrystalDisabler:Clean(entitylib.Events.LocalAdded:Connect(patchCharacter))
                 if entitylib.isAlive then
                     patchCharacter(entitylib.character)
                 end
+                setKrystalMomentum(controller)
+                pcall(controller.updateMomentum, controller)
             else
+                if controller and oldUpdateMomentum then
+                    controller.updateMomentum = oldUpdateMomentum
+                end
+                oldUpdateMomentum = nil
+                momentumRemote = nil
                 restoreSignals()
             end
         end,
-        Tooltip = 'Suppresses Krystal movement corrections without changing your speed or momentum'
+        Tooltip = 'Removes Krystal lagbacks: keeps momentum reported maxed and suppresses the local movement-correction listeners so the skate never snaps back'
     })
 end)
 
@@ -20816,10 +20847,7 @@ run(function()
                 bought = true
                 buyable = v
             end
-            -- With tier checking enabled, only the immediate successor is a legitimate purchase.
-            -- Do not skip an unaffordable iron tier just because a later diamond/emerald tier uses
-            -- a currency the player happens to have.
-            if TierCheck.Enabled then break end
+            if TierCheck.Enabled and v.nextTier then break end
         end
 
         if buyable then

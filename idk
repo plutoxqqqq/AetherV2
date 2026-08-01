@@ -8750,8 +8750,7 @@ run(function()
 				bought = true
 				buyable = v
 			end
-			-- Tier check means the next tier only; never skip an unaffordable prerequisite.
-			if TierCheck.Enabled then break end
+			if TierCheck.Enabled and v.nextTier then break end
 		end
 	
 		if buyable then
