@@ -11765,10 +11765,17 @@ end)
 
 run(function()
     local KrystalDisabler
+    local patchedControllers = setmetatable({}, { __mode = 'k' })
     local patchedSignals = setmetatable({}, { __mode = 'k' })
 
     local function getController()
         return bedwars and bedwars.GlacialSkaterController
+    end
+
+    local function patchController(controller)
+        if not controller or patchedControllers[controller] ~= nil then return end
+        patchedControllers[controller] = controller.momentumDrop
+        controller.momentumDrop = 0
     end
 
     local function patchMovementSignal(signal)
@@ -11791,6 +11798,13 @@ run(function()
         table.clear(patchedSignals)
     end
 
+    local function restoreControllers()
+        for controller, momentumDrop in pairs(patchedControllers) do
+            controller.momentumDrop = momentumDrop
+        end
+        table.clear(patchedControllers)
+    end
+
     local function patchCharacter(character)
         local root = character and character.RootPart
         if not root then return end
@@ -11810,8 +11824,14 @@ run(function()
                     return
                 end
 
-                -- Round restarts can add new correction listeners without replacing the character.
+                patchController(controller)
+                -- Round restarts can replace the controller or add new correction listeners.
                 KrystalDisabler:Clean(runService.PreSimulation:Connect(function()
+                    local currentController = getController()
+                    patchController(currentController)
+                    if currentController then
+                        currentController.momentumDrop = 0
+                    end
                     if entitylib.isAlive then
                         patchCharacter(entitylib.character)
                     end
@@ -11822,10 +11842,11 @@ run(function()
                     patchCharacter(entitylib.character)
                 end
             else
+                restoreControllers()
                 restoreSignals()
             end
         end,
-        Tooltip = 'Suppresses Krystal movement corrections without changing your speed or momentum'
+        Tooltip = 'Prevents Krystal momentum stamina from draining without granting momentum'
     })
 end)
 
