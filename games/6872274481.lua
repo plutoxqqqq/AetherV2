@@ -28019,77 +28019,68 @@ end)
 -- ===
 
 run(function()
-	local Step
-	local Blocks
-	local StepEnabled = false
-	local lastStepTime = 0
-
-	local function getStepHeight(startPos, maxBlocks)
-		maxBlocks = math.clamp(maxBlocks or 3, 1, 8)
-		local blockHeight = 3
-		local highestValidY = startPos.Y
-		
-		for i = 1, maxBlocks do
-			local checkPos = Vector3.new(math.floor(startPos.X / 3) * 3, startPos.Y + (i * blockHeight), math.floor(startPos.Z / 3) * 3)
-			local block = getPlacedBlock(checkPos)
-			if not block then
-				return highestValidY + 3.5
-			end
-			highestValidY = checkPos.Y + blockHeight
-		end
-		
-		local nextCheck = Vector3.new(math.floor(startPos.X / 3) * 3, startPos.Y + ((maxBlocks + 1) * blockHeight), math.floor(startPos.Z / 3) * 3)
-		if getPlacedBlock(nextCheck) then
-			return nil
-		end
-		
-		return highestValidY + 3.5
-	end
-
-	local function isHittingWall(rootPart)
-		if not rootPart then return false end
-		local moveDir = rootPart.Velocity * Vector3.new(1, 0, 1)
-		if moveDir.Magnitude < 2 then return false end
-		local rayDir = moveDir.Unit * 3.2
-		local rayParams = RaycastParams.new()
-		rayParams.FilterDescendantsInstances = {lplr.Character}
-		rayParams.FilterType = Enum.RaycastFilterType.Exclude
-		local result = workspace:Raycast(rootPart.Position + Vector3.new(0, 2, 0), rayDir, rayParams)
-		return result ~= nil
-	end
-
-	Step = vape.Categories.Movement:CreateModule({
-		Name = 'Step',
-		Tooltip = 'Steps up walls',
-		Function = function(callback)
-			StepEnabled = callback
-			lastStepTime = 0
-			if callback then
-				Step:Clean(runService.Heartbeat:Connect(function()
-					if not entitylib.isAlive or not StepEnabled then return end
-					if tick() - lastStepTime < 0.35 then return end
-					local rootPart = entitylib.character.RootPart
-					if not rootPart then return end
-					if isHittingWall(rootPart) then
-						local targetY = getStepHeight(rootPart.Position, Blocks.Value)
-						if targetY and targetY > rootPart.Position.Y + 3 then
-							lastStepTime = tick()
-							local newPos = Vector3.new(rootPart.Position.X, targetY, rootPart.Position.Z)
-							rootPart.CFrame = CFrame.new(newPos) * CFrame.Angles(0, rootPart.CFrame.Rotation.Y, 0)
-							rootPart.Velocity = Vector3.new(rootPart.Velocity.X * 0.3, 12, rootPart.Velocity.Z * 0.3)
-						end
-					end
-				end))
-			end
+	local AutoMiner
+	local Delay
+	local Animation
+	local Range
+	
+	local Legit = getFunctionRange(bedwars.MinerController.setupMinerPrompts) or 0
+	
+	AutoMiner = vape.Categories.Utility:CreateModule({
+	    Name = 'AutoMiner',
+	    Function = function(callback)
+	        if callback then
+	            local souls = collection('petrified-player', AutoMiner)
+	            local cooldown = 0
+	            repeat
+	                if entitylib.isAlive and (tick() - cooldown) >= Delay.Value then
+	                    local localPosition = entitylib.character.RootPart.Position
+	                    for _, v in souls do
+	                        if (localPosition - v.Position).Magnitude <= Range.Value then
+	                            bedwars.GameAnimationUtil:playAnimation(lplr.Character, bedwars.AnimationType.MINER_MINE_STONE)
+	                            task.delay(Delay.Value, function()
+	                                if AutoMiner.Enabled and v.Parent then
+	                                    bedwars.Handler:Get('DestroyPetrifiedPlayer'):Fire('SendToServer', {
+	                                        petrifyId = v:GetAttribute('Id')
+	                                    })
+	                                end
+	                            end)
+	                            cooldown = tick()
+	                            break
+	                        end
+	                    end
+	                end
+	                task.wait(0.1)
+	            until not AutoMiner.Enabled
+	        end
+	    end
+	})
+	
+	Range = AutoMiner:CreateSlider({
+	    Name = 'Range',
+	    Min = 1,
+	    Max = 30,
+	    Default = 12,
+	    Suffix = function(val)
+	        return val <= 1 and 'stud' or 'studs'
+	    end
+	})
+	AutoMiner:CreateButton({
+		Name = 'Sync to legit range',
+		Function = function()
+			Range:SetValue(Legit)
 		end
 	})
-
-	Blocks = Step:CreateSlider({
-		Name = 'Blocks',
-		Min = 1,
-		Max = 8,
-		Default = 3,
-		Suffix = ' blocks',
-		Tooltip = 'Maximum blocks high it will step'
+	Delay = AutoMiner:CreateSlider({
+	    Name = 'Delay',
+	    Min = 0,
+	    Max = 2,
+	    Default = 0.1,
+	    Suffix = 'seconds',
+	    Decimal = 10
 	})
+	Animation = AutoMiner:CreateToggle({Name = 'Animation', Default = true})
+	
 end)
+
+
