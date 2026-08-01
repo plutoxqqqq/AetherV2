@@ -11765,9 +11765,11 @@ end)
 
 run(function()
     local KrystalDisabler
-    local oldUpdateMomentum
-    local momentumRemote
     local patchedSignals = setmetatable({}, { __mode = 'k' })
+    local hookedController
+    local originalUpdate
+    local hookedUpdate
+    local momentumRemote
     local targetMomentum = 9e9
 
     local function getController()
@@ -11775,26 +11777,57 @@ run(function()
     end
 
     local function setKrystalMomentum(controller)
-        controller = controller or getController()
         if not controller then return end
         controller.momentum = targetMomentum
         controller.lastMomentumReport = targetMomentum
-        if momentumRemote then
-            pcall(function()
-                momentumRemote:SendToServer({ momentumValue = targetMomentum })
-            end)
+    end
+
+    local function restoreController()
+        if hookedController and hookedController.updateMomentum == hookedUpdate then
+            hookedController.updateMomentum = originalUpdate
         end
+        hookedController, originalUpdate, hookedUpdate = nil, nil, nil
+    end
+
+    local function patchController(controller)
+        if not controller or type(controller.updateMomentum) ~= 'function' then return false end
+        if controller ~= hookedController or controller.updateMomentum ~= hookedUpdate then
+            restoreController()
+            hookedController = controller
+            originalUpdate = controller.updateMomentum
+            hookedUpdate = function(self, ...)
+                setKrystalMomentum(self)
+                local result = originalUpdate(self, ...)
+                setKrystalMomentum(self)
+                if momentumRemote then
+                    pcall(momentumRemote.SendToServer, momentumRemote, { momentumValue = targetMomentum })
+                end
+                return result
+            end
+            controller.updateMomentum = hookedUpdate
+        end
+        setKrystalMomentum(controller)
+        return true
     end
 
     local function patchMovementSignal(signal)
         if not signal or not getconnections or not hookfunction then return end
         for _, connection in getconnections(signal) do
             local func = connection and connection.Function
-            if func and not patchedSignals[func] then
-                patchedSignals[func] = true
-                pcall(hookfunction, func, function() end)
+            if func and patchedSignals[func] == nil then
+                local ok, original = pcall(hookfunction, func, function() end)
+                patchedSignals[func] = (ok and original) or false
             end
         end
+    end
+
+    local function restoreSignals()
+        for func, original in pairs(patchedSignals) do
+            if type(original) == 'function' then
+                pcall(hookfunction, func, original)
+            end
+        end
+        table.clear(patchedSignals)
     end
 
     local function patchCharacter(character)
@@ -11810,37 +11843,32 @@ run(function()
         Function = function(callback)
             local controller = getController()
             if callback then
-                if not controller or type(controller.updateMomentum) ~= 'function' then
+                momentumRemote = bedwars.Client and bedwars.Client:Get('MomentumUpdate')
+                if not patchController(controller) then
                     notif('KrystalDisabler', 'Krystal controller is unavailable.', 5, 'warning')
                     KrystalDisabler:Toggle()
                     return
                 end
 
-                momentumRemote = bedwars.Client and bedwars.Client:Get('MomentumUpdate')
-                if not oldUpdateMomentum then
-                    oldUpdateMomentum = controller.updateMomentum
-                    controller.updateMomentum = function(self, ...)
-                        local result = oldUpdateMomentum(self, ...)
-                        setKrystalMomentum(self)
-                        return result
+                -- Round restarts can add new correction listeners without replacing the character.
+                KrystalDisabler:Clean(runService.PreSimulation:Connect(function()
+                    patchController(getController())
+                    if entitylib.isAlive then
+                        patchCharacter(entitylib.character)
                     end
-                end
+                end))
 
                 KrystalDisabler:Clean(entitylib.Events.LocalAdded:Connect(patchCharacter))
                 if entitylib.isAlive then
                     patchCharacter(entitylib.character)
                 end
-                setKrystalMomentum(controller)
-                pcall(controller.updateMomentum, controller)
             else
-                if controller and oldUpdateMomentum then
-                    controller.updateMomentum = oldUpdateMomentum
-                end
-                oldUpdateMomentum = nil
+                restoreController()
                 momentumRemote = nil
+                restoreSignals()
             end
         end,
-        Tooltip = 'Reduces Krystal lagbacks by keeping momentum reported and suppressing local movement correction listeners'
+        Tooltip = 'Keeps Krystal momentum active and suppresses movement corrections without adding external speed'
     })
 end)
 
@@ -13787,7 +13815,8 @@ run(function()
                 bought = true
                 buyable = v
             end
-            if TierCheck.Enabled and v.nextTier then break end
+            -- Tier check means the next tier only; never skip an unaffordable prerequisite.
+            if TierCheck.Enabled then break end
         end
     
         if buyable then
