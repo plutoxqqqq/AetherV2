@@ -7896,7 +7896,7 @@ function mainapi:Load(skipgui, profile)
 			if not object.AlwaysMinimized and v.Expanded ~= nil and v.Expanded ~= object.Expanded then
 				object:Expand()
 			end
-			if object.Button and (v.Enabled or false) ~= object.Button.Enabled then
+			if object.Button and object.Button.Toggle and (v.Enabled or false) ~= object.Button.Enabled then
 				object.Button:Toggle()
 			end
 			if v.List and (#object.List > 0 or #v.List > 0) then
