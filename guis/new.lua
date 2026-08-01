@@ -591,7 +591,6 @@ end
 	Names are matched loosely (case and separators ignored) so the file can say
 	'krystal disabler' for a module registered as 'KrystalDisabler'.
 ]]
-downloadFile('aetherv2/profiles/features.json')
 local featureLists = {
 	{Tag = 'new', Key = 'newModules'},
 	{Tag = 'updated', Key = 'updatedModules'},
@@ -604,7 +603,24 @@ local function moduleTagKey(name)
 end
 
 do
-	local data = loadJson('aetherv2/profiles/features.json') or {}
+	local path = 'aetherv2/profiles/features.json'
+	local data
+	-- features.json is repository metadata, not a user profile. Older clients
+	-- cached it forever because it lives under profiles/, so refresh it from the
+	-- selected commit before modules are created and fall back to disk offline.
+	pcall(function()
+		local commit = readfile('aetherv2/profiles/commit.txt')
+		local body = game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..commit..'/profiles/features.json', true)
+		local decoded = httpService:JSONDecode(body)
+		if type(decoded) == 'table' then
+			data = decoded
+			writefile(path, body)
+		end
+	end)
+	if not data then
+		pcall(downloadFile, path)
+		data = loadJson(path) or {}
+	end
 	if #data > 0 then
 		data = {newModules = data}
 	end
@@ -6548,8 +6564,12 @@ function mainapi:Load(skipgui, profile)
 				if object.Options and v.Options then
 					self:LoadOptions(object, v.Options)
 				end
-				if v.Enabled then
+				-- Some saved category entries are display-only containers and do not own a
+				-- toggle button. Restore their visibility without aborting the whole load.
+				if v.Enabled and object.Button and object.Button.Toggle then
 					object.Button:Toggle()
+				elseif v.Enabled and object.Object then
+					object.Object.Visible = true
 				end
 				if v.Pinned then
 					object:Pin()
@@ -6608,7 +6628,7 @@ function mainapi:Load(skipgui, profile)
 			if not object.AlwaysMinimized and v.Expanded ~= nil and v.Expanded ~= object.Expanded then
 				object:Expand()
 			end
-			if object.Button and (v.Enabled or false) ~= object.Button.Enabled then
+			if object.Button and object.Button.Toggle and (v.Enabled or false) ~= object.Button.Enabled then
 				object.Button:Toggle()
 			end
 			if v.List and (#object.List > 0 or #v.List > 0) then

@@ -3110,8 +3110,12 @@ function mainapi:Load(skipgui, profile)
 				if object.Options and v.Options then
 					self:LoadOptions(object, v.Options)
 				end
-				if v.Enabled then
+				-- Some saved category entries are display-only containers and do not own a
+				-- toggle button. Restore their visibility without aborting the whole load.
+				if v.Enabled and object.Button and object.Button.Toggle then
 					object.Button:Toggle()
+				elseif v.Enabled and object.Object then
+					object.Object.Visible = true
 				end
 				if v.Pinned then
 					object:Pin()
@@ -3165,7 +3169,7 @@ function mainapi:Load(skipgui, profile)
 			if not object.AlwaysMinimized and v.Expanded ~= nil and v.Expanded ~= object.Expanded then
 				object:Expand()
 			end
-			if object.Button and (v.Enabled or false) ~= object.Button.Enabled then
+			if object.Button and object.Button.Toggle and (v.Enabled or false) ~= object.Button.Enabled then
 				object.Button:Toggle()
 			end
 			if v.List and (#object.List > 0 or #v.List > 0) then
