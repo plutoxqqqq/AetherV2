@@ -4518,62 +4518,11 @@ run(function()
     local Projectiles
     local ProjectileStretch
     local Range
-    local Visualise
-    local VisualiseCamera
 
     local oldroot, clone, hip = nil, nil, 2.5
     local rayParams = RaycastParams.new()
     rayParams.FilterType = Enum.RaycastFilterType.Include
     rayParams.RespectCanCollide = true
-
-    -- Visualise teleporting.
-    --
-    -- Normally only the real RootPart teleports, and your visible body is the clone standing still,
-    -- so everyone else watches you flicker up and down while your own screen shows nothing. With
-    -- this on, the clone's HEIGHT is driven from the same teleport - so you see exactly what they
-    -- see - and horizontal control is untouched, because the teleport itself is only vertical.
-    -- Visualise camera then decides whether the camera rides along or stays put.
-    local visualY, visualising = nil, false
-    local camAnchor, camSubject = nil, nil
-
-    -- Park the camera on a fixed point so the body can teleport out from under it.
-    local function lockCamera(position)
-        if camAnchor then return end
-        camAnchor = Instance.new('Part')
-        camAnchor.Name = 'AntiDeathCameraAnchor'
-        camAnchor.Size = Vector3.one
-        camAnchor.Transparency = 1
-        camAnchor.Anchored = true
-        camAnchor.CanCollide = false
-        camAnchor.CanQuery = false
-        camAnchor.CanTouch = false
-        camAnchor.CFrame = CFrame.new(position)
-        camAnchor.Parent = gameCamera
-        camSubject = gameCamera.CameraSubject
-        gameCamera.CameraSubject = camAnchor
-    end
-
-    local function unlockCamera()
-        if camAnchor then
-            if gameCamera.CameraSubject == camAnchor then
-                gameCamera.CameraSubject = (camSubject and camSubject.Parent and camSubject)
-                    or (entitylib.isAlive and entitylib.character.Humanoid)
-                    or nil
-            end
-            camAnchor:Destroy()
-            camAnchor = nil
-        end
-        camSubject = nil
-    end
-
-    -- Put the body back where it was standing and hand the camera back. Safe to call at any time.
-    local function endVisualise()
-        if visualising and clone and clone.Parent and visualY then
-            clone.CFrame = CFrame.new(clone.Position.X, visualY, clone.Position.Z) * (clone.CFrame - clone.CFrame.Position)
-        end
-        visualising, visualY = false, nil
-        unlockCamera()
-    end
 
     local function doClone()
         if store.rootpart then return end
@@ -4745,7 +4694,6 @@ run(function()
 
     local function revertClone()
         if oldroot and oldroot.Parent and entitylib.isAlive then
-            endVisualise()
             lplr.Character.Parent = replicatedStorage
             oldroot.Parent = lplr.Character
             if clone then
@@ -4799,7 +4747,6 @@ run(function()
 				end
 			end
 
-                AntiDeath:Clean(endVisualise)
                 AntiDeath:Clean(runService.PostSimulation:Connect(function()
                     if oldroot and oldroot.Parent then
                         local newpoint, pos = lowestpoint, CFrame.new(clone.CFrame.X, lowestpoint - 6, clone.CFrame.Z)
@@ -4810,32 +4757,7 @@ run(function()
                             end
                         end
                         oldroot.Velocity = Vector3.zero
-                        local target = Dodge and (newpoint or pos) or (clone.CFrame + Vector3.new(0, 1, 0)) * CFrame.Angles(math.rad(90), 0, 0)
-                        oldroot.CFrame = target
-
-                        -- Everything above is untouched, so with Visualise teleporting off this
-                        -- module behaves exactly as it always has. Below is the only addition: show
-                        -- the same teleport on our own screen.
-                        if Visualise.Enabled and clone and clone.Parent then
-                            if Dodge then
-                                if not visualising then
-                                    visualising = true
-                                    visualY = clone.Position.Y
-                                    if not VisualiseCamera.Enabled then
-                                        -- Camera locked: leave it behind at head height while the
-                                        -- body teleports out from under it.
-                                        lockCamera(clone.Position)
-                                    end
-                                end
-                                -- Height only. The teleport is vertical, so mirroring just Y shows
-                                -- exactly what everyone else sees while leaving you free to move.
-                                clone.CFrame = CFrame.new(clone.Position.X, target.Position.Y, clone.Position.Z) * (clone.CFrame - clone.CFrame.Position)
-                            elseif visualising then
-                                endVisualise()
-                            end
-                        elseif visualising then
-                            endVisualise()
-                        end
+                        oldroot.CFrame = Dodge and (newpoint or pos) or (clone.CFrame + Vector3.new(0, 1, 0)) * CFrame.Angles(math.rad(90), 0, 0)
                     end
                 end))
 
@@ -4948,34 +4870,6 @@ run(function()
 	Default = 0.55,
 	Decimal = 2,
 	Darker = true,
-    })
-    Visualise = AntiDeath:CreateToggle({
-	Name = 'Visualise teleporting',
-	Tooltip = 'Off - only your hitbox teleports, so enemies see you flicker but your screen shows nothing\nOn - your body teleports on your screen too',
-	Function = function(call)
-		pcall(function()
-			VisualiseCamera.Object.Visible = call
-		end)
-		if not call then
-			endVisualise()
-		end
-	end,
-    })
-    VisualiseCamera = AntiDeath:CreateToggle({
-	Name = 'Visualise camera',
-	Default = true,
-	Darker = true,
-	Visible = false,
-	Tooltip = 'On: the camera rides along with the teleport\nOff: the camera stays where you were standing while your body teleports under it',
-	Function = function()
-		if not visualising then return end
-		-- Changed mid-dodge: settle the camera to match the new setting straight away.
-		if VisualiseCamera.Enabled then
-			unlockCamera()
-		elseif clone and clone.Parent and visualY then
-			lockCamera(Vector3.new(clone.Position.X, visualY, clone.Position.Z))
-		end
-	end,
     })
 end)
 
