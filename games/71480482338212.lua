@@ -11765,10 +11765,37 @@ end)
 
 run(function()
     local KrystalDisabler
+    local momentumRemote
+    local patchedControllers = setmetatable({}, { __mode = 'k' })
     local patchedSignals = setmetatable({}, { __mode = 'k' })
+    local targetMomentum = 9e9
 
     local function getController()
         return bedwars and bedwars.GlacialSkaterController
+    end
+
+    local function setKrystalMomentum(controller, report)
+        if not controller then return end
+        controller.momentum = targetMomentum
+        controller.lastMomentumReport = targetMomentum
+        if report and momentumRemote then
+            pcall(function()
+                momentumRemote:SendToServer({ momentumValue = targetMomentum })
+            end)
+        end
+    end
+
+    local function patchController(controller)
+        if not controller or patchedControllers[controller] ~= nil then return end
+        local original = controller.updateMomentum
+        if type(original) ~= 'function' then return end
+        patchedControllers[controller] = original
+        controller.updateMomentum = function(self, ...)
+            local result = original(self, ...)
+            setKrystalMomentum(self, true)
+            return result
+        end
+        setKrystalMomentum(controller, true)
     end
 
     local function patchMovementSignal(signal)
@@ -11791,6 +11818,15 @@ run(function()
         table.clear(patchedSignals)
     end
 
+    local function restoreControllers()
+        for controller, original in pairs(patchedControllers) do
+            if type(original) == 'function' and controller.updateMomentum ~= original then
+                controller.updateMomentum = original
+            end
+        end
+        table.clear(patchedControllers)
+    end
+
     local function patchCharacter(character)
         local root = character and character.RootPart
         if not root then return end
@@ -11810,8 +11846,17 @@ run(function()
                     return
                 end
 
-                -- Round restarts can add new correction listeners without replacing the character.
+                if bedwars.Client then
+                    pcall(function()
+                        momentumRemote = bedwars.Client:Get('MomentumUpdate')
+                    end)
+                end
+                patchController(controller)
+                -- Round restarts can replace the controller or add new correction listeners.
                 KrystalDisabler:Clean(runService.PreSimulation:Connect(function()
+                    local currentController = getController()
+                    patchController(currentController)
+                    setKrystalMomentum(currentController, false)
                     if entitylib.isAlive then
                         patchCharacter(entitylib.character)
                     end
@@ -11822,10 +11867,12 @@ run(function()
                     patchCharacter(entitylib.character)
                 end
             else
+                restoreControllers()
                 restoreSignals()
+                momentumRemote = nil
             end
         end,
-        Tooltip = 'Suppresses Krystal movement corrections without changing your speed or momentum'
+        Tooltip = 'Keeps Krystal momentum maxed and suppresses movement corrections'
     })
 end)
 
