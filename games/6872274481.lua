@@ -4319,49 +4319,60 @@ run(function()
         rakHook = nil
     end
 
-    local function setSettingsVisible()
-        local legit = Mode and Mode.Value == 'Legit'
-        -- Blatant holds the whole fall down rather than firing off attempts a few times a second,
-        -- so that slider stays hidden.
-        if AnchorAttempts and AnchorAttempts.Object then AnchorAttempts.Object.Visible = false end
-        for _, option in {BlockClutch, TelepearlClutch, DaoClutch, JadeHammerClutch, VoidAxeClutch, Zephyr} do
+	local function setSettingsVisible()
+		local legit = Mode and Mode.Value == 'Legit'
+		if AnchorAttempts and AnchorAttempts.Object then AnchorAttempts.Object.Visible = false end
+		for _, option in {BlockClutch, TelepearlClutch, DaoClutch, JadeHammerClutch, VoidAxeClutch, Zephyr} do
             if option and option.Object then
                 option.Object.Visible = legit
             end
         end
-        -- Only the modes which consult these values expose them. Blatant starts with any downward
-        -- movement and therefore has no threshold control.
-        local packetMode = Mode and Mode.Value == 'RakNet' or false
-        local velocityMode = Mode and (Mode.Value == 'Legit' or Mode.Value == 'TP') or false
-        if MinVelocity and MinVelocity.Object then
-            MinVelocity.Object.Visible = velocityMode
-        end
-        if FallThreshold and FallThreshold.Object then
-            FallThreshold.Object.Visible = packetMode
-        end
-        if SpoofState and SpoofState.Object then
-            SpoofState.Object.Visible = Mode and Mode.Value == 'RakNet' or false
-        end
-    end
+		if MinVelocity and MinVelocity.Object then
+			MinVelocity.Object.Visible = false
+		end
+		if FallThreshold and FallThreshold.Object then
+			FallThreshold.Object.Visible = false
+		end
+		if SpoofState and SpoofState.Object then
+			SpoofState.Object.Visible = false
+		end
+		if GroundDistance and GroundDistance.Object then
+			GroundDistance.Object.Visible = legit
+		end
+	end
 
-    NoFall = vape.Categories.Blatant:CreateModule({
-        Name = 'NoFallDamage',
-        Function = function(callback)
-            if callback then
-                if Mode.Value == 'Blatant' and not resolveGroundHit() then
-                    notif('NoFallDamage', 'Could not reach the ground-hit event - Blatant has nothing to send', 8, 'alert')
-                end
-                if Mode.Value == 'RakNet' then
-                    if not rakNetCheck('NoFallDamage') then
-                        NoFall:Toggle()
-                        return
-                    end
-                    addRakHook()
-                end
+	NoFall = vape.Categories.Blatant:CreateModule({
+		Name = 'NoFallDamage',
+		Function = function(callback)
+			if callback then
+				-- idk's NoFall implementation briefly reports a landed state once the
+				-- downward velocity becomes dangerous, then restores the real velocity on
+				-- the next render step. This replaces Aether's packet/remote-based modes.
+				NoFall:Clean(runService.PostSimulation:Connect(function(dt)
+					if Mode.Value == 'Blatant' and entitylib.isAlive and store.matchState == 1 then
+						local root = entitylib.character.RootPart
+						local velocity = root.Velocity
+						if velocity.Y < -30 then
+							root.Velocity = Vector3.new(0, 2.5 - dt, 0)
+							entitylib.character.Humanoid:ChangeState(Enum.HumanoidStateType.Landed)
+							runService.PreRender:Wait()
+							root.Velocity = velocity
+						end
+					end
+				end))
 
-                repeat
-                    local waitDelay = 0.04
-                    local character, root, humanoid = validCharacter()
+				NoFall:Clean(entitylib.Events.LocalAdded:Connect(function(ent)
+					local animator = ent.Humanoid:WaitForChild('Animator', 5)
+					if animator and NoFall.Enabled then
+						task.wait(0.5)
+						NoFall:Toggle()
+						NoFall:Toggle()
+					end
+				end))
+
+				repeat
+					local waitDelay = 0.1
+					local character, root, humanoid = validCharacter()
                     if not character then
                         -- No character to read: never leave the packet hook rewriting state for
                         -- a fall that is no longer happening.
@@ -4369,23 +4380,7 @@ run(function()
                     end
                     if character then
                         local fall = updateTrackedFall(root, humanoid)
-                        if Mode.Value == 'Blatant' then
-                            -- Replay GroundHit every pass for the complete airborne descent. Do
-                            -- not wait for a velocity threshold: even the early part of the fall
-                            -- must be cleared before the landing packet reaches the server.
-                            waitDelay = 0.03
-                            if humanoid.FloorMaterial == Enum.Material.Air and root.AssemblyLinearVelocity.Y < 0 then
-                                clearRegisteredFall()
-                            end
-                        elseif Mode.Value == 'RakNet' then
-                            -- The hook does the work; this only decides when it is armed, so the
-                            -- rewrite is confined to the part of the fall that would cost us.
-                            waitDelay = 0.03
-							-- Hold the packet state for the complete airborne descent. Arming
-							-- only after the threshold leaves the server with the first half of
-							-- the fall already recorded.
-							spoofFall = humanoid.FloorMaterial == Enum.Material.Air and fall < -3
-                        elseif humanoid.FloorMaterial ~= Enum.Material.Air then
+						if humanoid.FloorMaterial ~= Enum.Material.Air then
                             usedPearl = false
                         elseif Mode.Value == 'Legit' then
                             local ground = getGround(root, character, HealthCheck and HealthCheck.Enabled and 300 or (GroundDistance and GroundDistance.Value or 30))
@@ -4402,16 +4397,7 @@ run(function()
                             if not zephyred then
                                 legitClutch(root, humanoid, ground)
                             end
-                        elseif Mode.Value == 'TP' then
-                            -- Nothing is owed until the drop is worth something. Once it is, end
-                            -- the fall on the floor below us. Judged on the fall built up rather
-                            -- than this instant's reading, so a fast drop that momentarily reads
-                            -- slow - clipping a ledge, brushing a block - still counts.
-                            waitDelay = 0.03
-                            if fall <= -(MinVelocity and MinVelocity.Value or 60) then
-                                tpNoFall(root, character)
-                            end
-                        end
+						end
                     end
                     task.wait(waitDelay)
                 until not NoFall.Enabled
@@ -4428,11 +4414,11 @@ run(function()
                 removeRakHook()
             end
         end,
-        Tooltip = 'Prevents fall damage\nLegit clutches, TP drops you onto the floor below, Blatant clears the fall on the server as it builds, RakNet strips it from the outgoing physics packet\nNone of them change how you fall - no slowing, floating or teleporting'
-    })
-    Mode = NoFall:CreateDropdown({
-        Name = 'Mode',
-        List = {'Legit', 'Blatant', 'TP', 'RakNet'},
+		Tooltip = 'Prevents taking fall damage.\nBlatant uses idk\'s landed-state method; Legit keeps Aether\'s clutch logic'
+	})
+	Mode = NoFall:CreateDropdown({
+		Name = 'Mode',
+		List = {'Blatant', 'Legit'},
         Function = function()
             setSettingsVisible()
             if NoFall.Enabled then
@@ -4440,7 +4426,7 @@ run(function()
                 NoFall:Toggle()
             end
         end,
-        Tooltip = 'Legit clutches with blocks, telepearls then tools (Zephyr jump-cancels instead)\nBlatant keeps clearing the pending fall on the server all the way down, so you fall and land normally\nTP drops you onto the floor below the moment the fall turns dangerous'
+		Tooltip = 'Blatant - uses idk\'s landed-state method\nLegit - clutches with blocks, telepearls, or tools'
     })
     MinVelocity = NoFall:CreateSlider({
         Name = 'Minimum Velocity',
