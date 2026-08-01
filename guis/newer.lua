@@ -952,7 +952,6 @@ end
 	Names are matched loosely (case and separators ignored) so the file can say
 	'krystal disabler' for a module registered as 'KrystalDisabler'.
 ]]
-downloadFile('aetherv2/profiles/features.json')
 local featureLists = {
 	{Tag = 'new', Key = 'newModules'},
 	{Tag = 'updated', Key = 'updatedModules'},
@@ -965,7 +964,24 @@ local function moduleTagKey(name)
 end
 
 do
-	local data = loadJson('aetherv2/profiles/features.json') or {}
+	local path = 'aetherv2/profiles/features.json'
+	local data
+	-- features.json is repository metadata, not a user profile. Older clients
+	-- cached it forever because it lives under profiles/, so refresh it from the
+	-- selected commit before modules are created and fall back to disk offline.
+	pcall(function()
+		local commit = readfile('aetherv2/profiles/commit.txt')
+		local body = game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..commit..'/profiles/features.json', true)
+		local decoded = httpService:JSONDecode(body)
+		if type(decoded) == 'table' then
+			data = decoded
+			writefile(path, body)
+		end
+	end)
+	if not data then
+		pcall(downloadFile, path)
+		data = loadJson(path) or {}
+	end
 	if #data > 0 then
 		data = {newModules = data}
 	end
