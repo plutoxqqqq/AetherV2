@@ -8140,7 +8140,10 @@ function mainapi:Save(newprofile)
 
 	ensureDataFolders()
 	writefile('aetherv2/profiles/'..game.GameId..'.gui.txt', httpService:JSONEncode(guidata))
-	writefile(getConfigPath(newprofile or self.Profile), httpService:JSONEncode(savedata))
+	writefile(getConfigPath(self.Profile), httpService:JSONEncode(savedata))
+	-- Keep the legacy profile mirror current so changing GUI implementations cannot
+	-- resurrect an older, partially saved copy of this profile.
+	writefile(getLegacyProfilePath(self.Profile), httpService:JSONEncode(savedata))
 end
 
 function mainapi:SaveOptions(object, savedoptions)

@@ -4259,7 +4259,11 @@ run(function()
 			-- Never report the real lethal velocity: that asks the server to settle
 			-- the very damage we are trying to discard. A tiny grounded pulse rolls
 			-- the server-side fall accumulator forward without a damaging impact.
-			remote:FireServer(nil, Vector3.new(0, -1, 0), workspace:GetServerTimeNow())
+			if remote.FireServer then
+				remote:FireServer(nil, Vector3.new(0, -1, 0), workspace:GetServerTimeNow())
+			elseif remote.SendToServer then
+				remote:SendToServer(nil, Vector3.new(0, -1, 0), workspace:GetServerTimeNow())
+			end
         end)
         return true
     end
@@ -4288,8 +4292,12 @@ run(function()
         rakHook = function(packet)
             if not spoofFall then return end
             pcall(function()
-                if packet.AsArray and packet.AsArray[1] == 0x1b then
-                    local data = packet.AsBuffer
+                local data = packet.AsBuffer
+                local packetId = packet.AsArray and packet.AsArray[1]
+                if not packetId and data and buffer.len(data) > 0 then
+                    packetId = buffer.readu8(data, 0)
+                end
+                if packetId == 0x1b then
                     local state = SpoofState and Enum.HumanoidStateType[SpoofState.Value]
                     if data and state and buffer.len(data) >= 26 then
                         buffer.writeu8(data, 25, state.Value + 32)
@@ -5690,11 +5698,16 @@ run(function()
                 if not oldUpdateMomentum then
                     oldUpdateMomentum = controller.updateMomentum
                     controller.updateMomentum = function(self, ...)
+                        setKrystalMomentum(self)
                         local result = oldUpdateMomentum(self, ...)
                         setKrystalMomentum(self)
                         return result
                     end
                 end
+
+                KrystalDisabler:Clean(runService.PreSimulation:Connect(function()
+                    setKrystalMomentum(getController())
+                end))
 
                 KrystalDisabler:Clean(entitylib.Events.LocalAdded:Connect(patchCharacter))
                 if entitylib.isAlive then
@@ -5842,6 +5855,14 @@ run(function()
                 -- the position you already hold when the server has quietly nudged you off it.
                 local forcePos = nil
 
+                local function restorePosition(root, from, to)
+                    local delta = to - from
+                    -- Moving only HumanoidRootPart is overwritten by the assembly on the next
+                    -- simulation step. Pivot the character so the correction survives and is
+                    -- actually replicated.
+                    entitylib.character.Character:PivotTo(entitylib.character.Character:GetPivot() + delta)
+                end
+
                 local function reset()
                     table.clear(history)
                     lastPos, lastVel, lastMoveVel = nil, nil, nil
@@ -5957,7 +5978,7 @@ run(function()
                                 end
                             end
 
-                            root.CFrame += (restore - pos)
+                            restorePosition(root, pos, restore)
                             if Mode.Value == 'Restore' then
                                 -- The server usually kills your momentum as it yanks; hand it back
                                 -- so you keep moving instead of stopping dead.
@@ -5994,7 +6015,7 @@ run(function()
                             holdPos = Vector3.new(holdPos.X, pos.Y, holdPos.Z)
                         end
                         if (holdPos - pos).Magnitude > 1.5 then
-                            root.CFrame += (holdPos - pos)
+                            restorePosition(root, pos, holdPos)
                             pos = holdPos
                         else
                             holdPos = pos
@@ -6054,7 +6075,7 @@ run(function()
                             local off = deviation.Magnitude
                             if off > sens and off < maxCorrect then
                                 -- Server moved us off our own path: put us back exactly, no teleport.
-                                root.CFrame += (forcePos - pos)
+                                restorePosition(root, pos, forcePos)
                                 pos = forcePos
                                 if overVoid then
                                     root.AssemblyLinearVelocity = Vector3.new(vel.X, math.max(vel.Y, 0), vel.Z)
@@ -6156,7 +6177,7 @@ run(function()
     local SyncAir
     local Notify
 
-    local realroot, clone, hip = nil, nil, 2.5
+    local realroot, clone, hip, realCanCollide = nil, nil, 2.5, true
     local hiding, hideUntil, syncUntil, standDownUntil = false, 0, 0, 0
     local lastWarn = 0
     local lowestPoint = -9e9
@@ -6186,6 +6207,7 @@ run(function()
 
         hip = entitylib.character.Humanoid.HipHeight
         realroot = entitylib.character.HumanoidRootPart
+        realCanCollide = realroot.CanCollide
         lplr.Character.Parent = replicatedStorage
 		clone = realroot:Clone()
 		clone.Name = 'HumanoidRootPart'
@@ -6208,7 +6230,7 @@ run(function()
             realroot.Parent = lplr.Character
             if clone then
                 realroot.CFrame = clone.CFrame
-                realroot.Velocity = clone.Velocity
+                realroot.AssemblyLinearVelocity = clone.AssemblyLinearVelocity
                 clone:Destroy()
                 clone = nil
             end
@@ -6216,7 +6238,7 @@ run(function()
 			entitylib.character.RootPart = realroot
 			entitylib.character.HumanoidRootPart = realroot
             lplr.Character.Parent = workspace
-            realroot.CanCollide = true
+            realroot.CanCollide = realCanCollide
             entitylib.character.Humanoid.HipHeight = hip or 2.6
             realroot.Transparency = 1
         elseif realroot then
@@ -6349,15 +6371,15 @@ run(function()
                         -- Carry the hidden hitbox at your body's own velocity rather than freezing it
                         -- at zero: a part whose position shifts every frame while it claims to be
                         -- standing still is exactly the impossible motion the anticheat pulls you for.
-                        realroot.Velocity = clone.Velocity
+                        realroot.AssemblyLinearVelocity = clone.AssemblyLinearVelocity
                         -- Cannot be shoved into or crushed by geometry while it is off on its own.
                         realroot.CanCollide = false
                     else
                         -- Synced: sit exactly on the visible body so the server sees a perfectly
                         -- ordinary player who is standing where they look like they are standing.
                         realroot.CFrame = clone.CFrame
-                        realroot.Velocity = clone.Velocity
-                        realroot.CanCollide = true
+                        realroot.AssemblyLinearVelocity = clone.AssemblyLinearVelocity
+                        realroot.CanCollide = realCanCollide
                     end
                 end))
             else
@@ -8937,26 +8959,30 @@ run(function()
                 --    so hand control back the moment it lapses.
                 local bypassStart = tick()
                 local launched = false
-                local nextLift = 0
+                local direction
                 repeat
-                    task.wait()
+                    runService.PreSimulation:Wait()
                     local boosting = JumpTick > tick()
                     if boosting then launched = true end
-                    -- BoostAirJump adds its push about every 0.1s; match that so the climb rate holds
-                    -- steady whatever the frame rate, and only while LongJump is actually boosting us.
-                    if boosting and entitylib.isAlive and tick() >= nextLift then
+                    if entitylib.isAlive and (boosting or launched) then
                         local root = entitylib.character.RootPart
                         if root then
-							-- Boost is a fixed target vertical speed, not an amount repeatedly
-							-- accumulated (or merely a minimum). This also caps a tool's own
-							-- excessive launch. The old behaviour could add hundreds of studs/s and turn
-                            -- the eventual landing into lethal fall damage.
                             local velocity = root.AssemblyLinearVelocity
-							root.AssemblyLinearVelocity = Vector3.new(velocity.X, BypassBoost.Value, velocity.Z)
+                            local flat = Vector3.new(velocity.X, 0, velocity.Z)
+                            local look = Vector3.new(root.CFrame.LookVector.X, 0, root.CFrame.LookVector.Z)
+                            direction = direction or (flat.Magnitude > 1 and flat.Unit) or (look.Magnitude > 0 and look.Unit)
+                            local elapsed = tick() - bypassStart
+                            local lift = elapsed < 0.32 and BypassBoost.Value or math.min(velocity.Y, 8)
+                            root.AssemblyLinearVelocity = Vector3.new(direction.X * 37, lift, direction.Z * 37)
                         end
-                        nextLift = tick() + 0.1
                     end
-                until not LongJumpBypass.Enabled or (launched and JumpTick <= tick()) or tick() - bypassStart > 8
+                until not LongJumpBypass.Enabled or (launched and tick() - bypassStart >= 2) or tick() - bypassStart > 8
+
+                if launched and entitylib.isAlive then
+                    local root = entitylib.character.RootPart
+                    local velocity = root.AssemblyLinearVelocity
+                    root.AssemblyLinearVelocity = Vector3.new(0, math.min(velocity.Y, 0), 0)
+                end
 
                 -- Put LongJump back how we found it, then end the maneuver as asked.
                 if LongJump.Enabled and not longWasOn then LongJump:Toggle() end
@@ -8969,7 +8995,7 @@ run(function()
         Name = 'Boost',
         Min = 5,
         Max = 42,
-        Default = 24,
+        Default = 30,
         Suffix = ' studs/s',
         Tooltip = 'Maximum upward speed maintained while LongJump boosts you'
     })
@@ -9034,6 +9060,7 @@ run(function()
     local armConfirmed, armPos, armStamp = false, nil, 0
     local boostStart, boostUntil, peakSpeed, boostDir = 0, 0, 0, nil
     local lastDash, prevSpeed = 0, 0
+    local oldUseAbility
 
     local function heldName()
         local hand = store.hand
@@ -9137,6 +9164,28 @@ run(function()
                 reset()
                 lastDash = dashStamp()
                 lastHand = heldName()
+
+                -- Observe the cast itself rather than inferring every tool from cooldown state.
+                -- Current controllers do not consistently flip canUseAbility on the cast frame,
+                -- which was why manually using the same tool went undetected while LongJump's
+                -- slower activation path happened to work.
+                local controller = bedwars.AbilityController
+                if controller and type(controller.useAbility) == 'function' then
+                    oldUseAbility = controller.useAbility
+                    controller.useAbility = function(self, ability, ...)
+                        local result = oldUseAbility(self, ability, ...)
+                        if table.find(ABILITIES, ability) then
+                            arm(prevSpeed, true)
+                        end
+                        return result
+                    end
+                    Extender:Clean(function()
+                        if controller.useAbility ~= oldUseAbility then
+                            controller.useAbility = oldUseAbility
+                        end
+                        oldUseAbility = nil
+                    end)
+                end
 
                 Extender:Clean(runService.PreSimulation:Connect(function()
                     if not entitylib.isAlive then return end
