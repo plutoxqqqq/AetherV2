@@ -20847,7 +20847,10 @@ run(function()
                 bought = true
                 buyable = v
             end
-            if TierCheck.Enabled and v.nextTier then break end
+            -- Tier checking only permits the immediate successor. Otherwise having enough of a
+            -- later tier's currency can skip an unaffordable prerequisite (for example, buying
+            -- diamond armour while still wearing leather because iron armour costs iron).
+            if TierCheck.Enabled then break end
         end
 
         if buyable then
