@@ -5508,40 +5508,21 @@ run(function()
 end)
 
 -- Krystal (the GlacialSkater kit) can install local movement-correction listeners more than once
--- during a session. Keep its momentum maxed while suppressing those correction listeners.
+-- during a session. Stop momentum stamina from draining while suppressing those correction listeners;
+-- the module must not grant momentum or change the momentum the player has earned.
 run(function()
     local KrystalDisabler
-    local momentumRemote
     local patchedControllers = setmetatable({}, {__mode = 'k'})
     local patchedSignals = setmetatable({}, {__mode = 'k'})
-    local targetMomentum = 9e9
 
     local function getController()
         return bedwars and bedwars.GlacialSkaterController
     end
 
-    local function setKrystalMomentum(controller, report)
-        if not controller then return end
-        controller.momentum = targetMomentum
-        controller.lastMomentumReport = targetMomentum
-        if report and momentumRemote then
-            pcall(function()
-                momentumRemote:SendToServer({momentumValue = targetMomentum})
-            end)
-        end
-    end
-
     local function patchController(controller)
         if not controller or patchedControllers[controller] ~= nil then return end
-        local original = controller.updateMomentum
-        if type(original) ~= 'function' then return end
-        patchedControllers[controller] = original
-        controller.updateMomentum = function(self, ...)
-            local result = original(self, ...)
-            setKrystalMomentum(self, true)
-            return result
-        end
-        setKrystalMomentum(controller, true)
+        patchedControllers[controller] = controller.momentumDrop
+        controller.momentumDrop = 0
     end
 
     local function patchMovementSignal(signal)
@@ -5570,10 +5551,8 @@ run(function()
     end
 
     local function restoreControllers()
-        for controller, original in pairs(patchedControllers) do
-            if type(original) == 'function' and controller.updateMomentum ~= original then
-                controller.updateMomentum = original
-            end
+        for controller, momentumDrop in pairs(patchedControllers) do
+            controller.momentumDrop = momentumDrop
         end
         table.clear(patchedControllers)
     end
@@ -5597,18 +5576,15 @@ run(function()
                     return
                 end
 
-                if bedwars.Client then
-                    pcall(function()
-                        momentumRemote = bedwars.Client:Get('MomentumUpdate')
-                    end)
-                end
                 patchController(controller)
                 -- A new round may replace the controller or attach fresh correction connections,
                 -- so scan continuously rather than relying only on a respawn event.
                 KrystalDisabler:Clean(runService.PreSimulation:Connect(function()
                     local currentController = getController()
                     patchController(currentController)
-                    setKrystalMomentum(currentController, false)
+                    if currentController then
+                        currentController.momentumDrop = 0
+                    end
                     if entitylib.isAlive then
                         patchCharacter(entitylib.character)
                     end
@@ -5621,10 +5597,9 @@ run(function()
             else
                 restoreControllers()
                 restoreSignals()
-                momentumRemote = nil
             end
         end,
-        Tooltip = 'Keeps Krystal momentum maxed and suppresses movement corrections'
+        Tooltip = 'Prevents Krystal momentum stamina from draining without granting momentum'
     })
 end)
 
