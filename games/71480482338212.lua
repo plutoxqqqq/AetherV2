@@ -16880,7 +16880,7 @@ run(function()
         miner = function()
             kitCollection('petrified-player', function(v)
                 bedwars.Client:Get(remotes.MinerDig):SendToServer({
-                    petrifyId = v:GetAttribute('PetrifyId')
+                    petrifyId = v:GetAttribute('Id')
                 })
             end, 6, true)
         end,
