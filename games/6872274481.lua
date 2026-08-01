@@ -1752,6 +1752,10 @@ end
 local AntiFallDirection
 local Fly
 local LongJump
+-- LongJump is the authoritative compatible-tool detector. Consumers such as Extender listen for
+-- this edge instead of maintaining a second, inevitably stale list of tool activation rules.
+local longJumpActivation = Instance.new('BindableEvent')
+vape:Clean(longJumpActivation)
 local Attacking
 
 --[[
@@ -4223,10 +4227,9 @@ run(function()
     -- where and when it would have, and no velocity, position or humanoid state is ever touched.
     -- The only thing that changes is what the server has on its books for the fall.
     --
-    -- BedWars settles fall damage off the ground-hit event the client sends it. So while a
-    -- dangerous fall is in progress we send that event ourselves, over and over, with no block
-    -- attached to it: the fall the server is holding for us is continuously settled and cleared,
-    -- and the real landing arrives with nothing left on the books to charge for.
+    -- BedWars settles fall damage off the ground-hit event the client sends it. While descending,
+    -- replay the same GroundHit payload used by the game exploit so the fall is continuously
+    -- settled and cleared before the real landing arrives.
     --
     -- The cadence is the mechanism, not a detail. One packet and then silence leaves the fall
     -- free to build straight back up before touchdown, which is why this is deliberately NOT
@@ -4241,31 +4244,31 @@ run(function()
     -- lean on a field the game does not have. This one does not race anything - it is simply
     -- keeping the server's record of the fall empty the whole way down.
     local groundHit
+    local groundHitBlock
 
     local function resolveGroundHit()
-        if groundHit then return groundHit end
-        local success, remote = pcall(function()
-            return bedwars.Client:Get(remotes.GroundHit).instance
+        if groundHit and groundHitBlock then return groundHit end
+        local success, remote, block = pcall(function()
+            local managed = replicatedStorage.rbxts_include.node_modules['@rbxts'].net.out._NetManaged
+            return managed.GroundHit, workspace.Map.Worlds.tr_Range.Blocks:GetChildren()[222]
         end)
         groundHit = success and remote or nil
+        groundHitBlock = success and block or nil
         return groundHit
     end
     task.spawn(resolveGroundHit)
 
-	clearRegisteredFall = function(fall)
+	clearRegisteredFall = function()
         local remote = resolveGroundHit()
-        if not remote then return false end
-        pcall(function()
-			-- Never report the real lethal velocity: that asks the server to settle
-			-- the very damage we are trying to discard. A tiny grounded pulse rolls
-			-- the server-side fall accumulator forward without a damaging impact.
-			if remote.FireServer then
-				remote:FireServer(nil, Vector3.new(0, -1, 0), workspace:GetServerTimeNow())
-			elseif remote.SendToServer then
-				remote:SendToServer(nil, Vector3.new(0, -1, 0), workspace:GetServerTimeNow())
-			end
+        if not remote or not groundHitBlock then return false end
+		local success = pcall(function()
+			remote:FireServer(
+                groundHitBlock,
+                Vector3.new(-10.598394393921, -35.038021087646, -16.960966110229),
+                1785564031.154
+            )
         end)
-        return true
+        return success
     end
 
     -- RakNet mode. The only one that works underneath the game entirely: it edits the physics
@@ -4326,11 +4329,12 @@ run(function()
                 option.Object.Visible = legit
             end
         end
-        -- Legit and TP act off Minimum Velocity, Blatant off its own threshold, so the two swap
-        -- over with the mode rather than both sitting there doing nothing for two thirds of it.
-        local packetMode = Mode and (Mode.Value == 'Blatant' or Mode.Value == 'RakNet') or false
+        -- Only the modes which consult these values expose them. Blatant starts with any downward
+        -- movement and therefore has no threshold control.
+        local packetMode = Mode and Mode.Value == 'RakNet' or false
+        local velocityMode = Mode and (Mode.Value == 'Legit' or Mode.Value == 'TP') or false
         if MinVelocity and MinVelocity.Object then
-            MinVelocity.Object.Visible = not packetMode
+            MinVelocity.Object.Visible = velocityMode
         end
         if FallThreshold and FallThreshold.Object then
             FallThreshold.Object.Visible = packetMode
@@ -4366,11 +4370,12 @@ run(function()
                     if character then
                         local fall = updateTrackedFall(root, humanoid)
                         if Mode.Value == 'Blatant' then
-                            -- Settle the fall the server is holding, every single pass, for as
-                            -- long as the drop is worth charging for. Nothing physical here.
+                            -- Replay GroundHit every pass for the complete airborne descent. Do
+                            -- not wait for a velocity threshold: even the early part of the fall
+                            -- must be cleared before the landing packet reaches the server.
                             waitDelay = 0.03
-                            if fall < -(FallThreshold and FallThreshold.Value or 85) then
-                                clearRegisteredFall(fall)
+                            if humanoid.FloorMaterial == Enum.Material.Air and root.AssemblyLinearVelocity.Y < 0 then
+                                clearRegisteredFall()
                             end
                         elseif Mode.Value == 'RakNet' then
                             -- The hook does the work; this only decides when it is armed, so the
@@ -4451,7 +4456,7 @@ run(function()
         Default = 85,
         Suffix = ' studs/s',
         Visible = false,
-        Tooltip = 'Blatant and RakNet: how fast the fall has to get before they start work. BedWars starts charging at 85, so anything slower needs no help'
+        Tooltip = 'RakNet: how fast the fall has to get before packet spoofing starts. Blatant repeatedly sends GroundHit throughout every descent'
     })
     SpoofState = NoFall:CreateDropdown({
         Name = 'Reported state',
@@ -7130,6 +7135,61 @@ run(function()
     })
 end)
 
+-- Consumes the supplied Grim Reaper soul and applies a configurable horizontal speed only while
+-- the character is in the controller's soul-collecting channel. Leaving the form immediately
+-- hands velocity control back to the game.
+run(function()
+    local ReaperBypass
+    local ReaperSpeed
+
+    local function inSoulForm(character)
+        return character and character:GetAttribute('GrimReaperChannel') and true or false
+    end
+
+    ReaperBypass = vape.Categories.Exploits:CreateModule({
+        Name = 'ReaperBypass',
+        Function = function(callback)
+            if not callback then return end
+
+            local invoked = pcall(function()
+                local event = replicatedStorage.rbxts_include.node_modules['@rbxts'].net.out._NetManaged.ConsumeGrimReaperSoul
+                event:InvokeServer({
+                    secret = 'a058cfb5-a4c9-4cc6-84e5-863108f23a89'
+                })
+            end)
+            if not invoked then
+                notif('ReaperBypass', 'Could not invoke ConsumeGrimReaperSoul.', 5, 'warning')
+            end
+
+            ReaperBypass:Clean(runService.PreSimulation:Connect(function()
+                if not entitylib.isAlive or not inSoulForm(lplr.Character) then return end
+                local root = entitylib.character.RootPart
+                local humanoid = entitylib.character.Humanoid
+                if not root or not humanoid or not isnetworkowner(root) then return end
+
+                local direction = humanoid.MoveDirection
+                direction = Vector3.new(direction.X, 0, direction.Z)
+                if direction.Magnitude <= 0.05 then
+                    local velocity = root.AssemblyLinearVelocity
+                    direction = Vector3.new(velocity.X, 0, velocity.Z)
+                end
+                if direction.Magnitude > 0.05 then
+                    local applied = direction.Unit * ReaperSpeed.Value
+                    root.AssemblyLinearVelocity = Vector3.new(applied.X, root.AssemblyLinearVelocity.Y, applied.Z)
+                end
+            end))
+        end,
+        Tooltip = 'Consumes the configured Grim Reaper soul and applies custom speed only while you are in soul-collecting form'
+    })
+    ReaperSpeed = ReaperBypass:CreateSlider({
+        Name = 'Speed',
+        Min = 1,
+        Max = 80,
+        Default = 37,
+        Suffix = ' studs/s'
+    })
+end)
+
 run(function()
     local Value
     local VerticalValue
@@ -8636,6 +8696,7 @@ run(function()
     local BypassBoost
     local start
     local JumpTick, JumpSpeed, Direction = tick(), 0
+    local jumpWasActive = false
     local projectileRemote = {InvokeServer = function() end}
     task.spawn(function()
         projectileRemote = bedwars.Client:Get(remotes.FireProjectile).instance
@@ -8815,6 +8876,10 @@ run(function()
 
                     if root and isnetworkowner(root) then
                         if JumpTick > tick() then
+                            if not jumpWasActive then
+                                jumpWasActive = true
+                                longJumpActivation:Fire(root.AssemblyLinearVelocity)
+                            end
                             -- Change direction mid-air: while the boost is running, steer it with
                             -- your movement keys (or where the camera looks) instead of riding the
                             -- fixed line it launched on. MoveDirection is already camera-relative, so
@@ -8838,6 +8903,7 @@ run(function()
                             end
                             start = nil
                         else
+                            jumpWasActive = false
                             if start then
                                 root.CFrame = CFrame.lookAlong(start, root.CFrame.LookVector)
                             end
@@ -8867,6 +8933,7 @@ run(function()
                 end
             else
                 JumpTick = tick()
+                jumpWasActive = false
                 Direction = nil
                 JumpSpeed = 0
             end
@@ -8958,38 +9025,45 @@ run(function()
                 --    when the boost is spent. Left on past that LongJump pins your velocity in place,
                 --    so hand control back the moment it lapses.
                 local bypassStart = tick()
+                local boostStart
+                local launchY = entitylib.character.RootPart.Position.Y
                 local launched = false
                 local direction
                 repeat
                     runService.PreSimulation:Wait()
                     local boosting = JumpTick > tick()
-                    if boosting then launched = true end
+                    if boosting and not launched then
+                        launched = true
+                        boostStart = tick()
+                        launchY = entitylib.character.RootPart.Position.Y
+                    end
                     if entitylib.isAlive and (boosting or launched) then
                         local root = entitylib.character.RootPart
                         if root then
                             local velocity = root.AssemblyLinearVelocity
                             local flat = Vector3.new(velocity.X, 0, velocity.Z)
                             local look = Vector3.new(root.CFrame.LookVector.X, 0, root.CFrame.LookVector.Z)
-                            direction = direction or (flat.Magnitude > 1 and flat.Unit) or (look.Magnitude > 0 and look.Unit)
-                            local elapsed = tick() - bypassStart
-                            local lift = elapsed < 0.32 and BypassBoost.Value or math.min(velocity.Y, 8)
+                            direction = direction or (flat.Magnitude > 1 and flat.Unit) or (look.Magnitude > 0 and look.Unit) or Vector3.zAxis
+                            -- Keep the complete two-second flight moving forward at exactly 37.
+                            -- Stop climbing after 65 studs so a high Boost value cannot cross the
+                            -- game's vertical kill/check band, but continue the forward boost.
+                            local lift = root.Position.Y - launchY < 65 and BypassBoost.Value or 0
                             root.AssemblyLinearVelocity = Vector3.new(direction.X * 37, lift, direction.Z * 37)
                         end
                     end
-                until not LongJumpBypass.Enabled or (launched and tick() - bypassStart >= 2) or tick() - bypassStart > 8
-
-                if launched and entitylib.isAlive then
-                    local root = entitylib.character.RootPart
-                    local velocity = root.AssemblyLinearVelocity
-                    root.AssemblyLinearVelocity = Vector3.new(0, math.min(velocity.Y, 0), 0)
-                end
+                until not LongJumpBypass.Enabled or (launched and tick() - boostStart >= 2) or tick() - bypassStart > 8
 
                 -- Put LongJump back how we found it, then end the maneuver as asked.
                 if LongJump.Enabled and not longWasOn then LongJump:Toggle() end
+                -- Cancel every component only after LongJump's driver has been stopped. Gravity
+                -- owns the next simulation frame, producing a true unpowered free-fall.
+                if launched and entitylib.isAlive then
+                    entitylib.character.RootPart.AssemblyLinearVelocity = Vector3.zero
+                end
                 return task.spawn(function() if LongJumpBypass.Enabled then LongJumpBypass:Toggle() end end)
             end
         end,
-        Tooltip = 'On key: launches off a compatible tool with LongJump, then automatically lifts you up into the air (BoostAirJump boost) while the launch carries you. Ends when the boost is spent'
+        Tooltip = 'Activates a compatible tool, flies forward at 37 studs/s and climbs for two seconds (height-capped for safety), then cancels all velocity and free-falls'
     })
     BypassBoost = LongJumpBypass:CreateSlider({
         Name = 'Boost',
@@ -9164,6 +9238,15 @@ run(function()
                 reset()
                 lastDash = dashStamp()
                 lastHand = heldName()
+
+                -- LongJump already knows exactly when a supported tool (dao, hammer, axe,
+                -- cannon, TNT or hook) has genuinely entered its launch window. Reuse that edge
+                -- directly; duplicating its item/cooldown guesses was the reason Extender missed
+                -- casts whenever BedWars changed a controller detail.
+                Extender:Clean(longJumpActivation.Event:Connect(function(velocity)
+                    local baseline = velocity and Vector3.new(velocity.X, 0, velocity.Z).Magnitude or prevSpeed
+                    arm(baseline, true)
+                end))
 
                 -- Observe the cast itself rather than inferring every tool from cooldown state.
                 -- Current controllers do not consistently flip canUseAbility on the cast frame,
