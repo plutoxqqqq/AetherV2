@@ -311,7 +311,9 @@ local function buildNewLoadingScreen(screen)
 	scrim.Name = 'Scrim'
 	scrim.Size = UDim2.fromScale(1, 1)
 	scrim.BackgroundColor3 = Color3.fromRGB(5, 7, 11)
-	scrim.BackgroundTransparency = 1
+	-- Keep the map subdued enough that the logo/status remain readable.  The old
+	-- fully transparent scrim made the loading UI disappear on bright maps.
+	scrim.BackgroundTransparency = 0.18
 	scrim.BorderSizePixel = 0
 	scrim.Parent = screen
 	local vignette = Instance.new('UIGradient')
@@ -322,7 +324,7 @@ local function buildNewLoadingScreen(screen)
 		NumberSequenceKeypoint.new(1, 0.55)
 	})
 	vignette.Parent = scrim
-	tweenService:Create(scrim, TweenInfo.new(0.4), {BackgroundTransparency = 0}):Play()
+	tweenService:Create(scrim, TweenInfo.new(0.18), {BackgroundTransparency = 0.08}):Play()
 
 	-- Edge detail: a hairline along the top and bottom that fades out at both ends.
 	for _, edge in {{0, 0, 20}, {1, 1, -20}} do
@@ -409,7 +411,9 @@ local function buildNewLoadingScreen(screen)
 	})
 	shimmer.Offset = Vector2.new(-1, 0)
 	shimmer.Parent = fill
-	tweenService:Create(shimmer, TweenInfo.new(1.6, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, false, 0.3), {Offset = Vector2.new(1, 0)}):Play()
+	-- A finite pass is considerably cheaper than an infinite UI tween on low-end
+	-- executors, while progress updates themselves still show that loading is alive.
+	tweenService:Create(shimmer, TweenInfo.new(1.2, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {Offset = Vector2.new(1, 0)}):Play()
 
 	local caption = Instance.new('TextLabel')
 	caption.Name = 'Caption'
@@ -527,6 +531,9 @@ local function createLoadingScreen()
 end
 
 local loadingScreen = createLoadingScreen()
+-- Yield once so Roblox can render the screen before downloads/requires occupy
+-- the loader thread.  Without this, the first visible frame could be the fade-out.
+if loadingScreen then task.wait() end
 if not _G.AetherV2SetLoadingStatus then
 	_G.AetherV2SetLoadingStatus = function() end
 end

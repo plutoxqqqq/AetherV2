@@ -7468,6 +7468,19 @@ mainapi.Categories.Main:CreateSettingsDivider()
 ]]
 
 local general = mainapi.Categories.Main:CreateSettingsPane({Name = 'General'})
+local function reloadAether()
+	task.spawn(function()
+		shared.vapereload = true
+		local ok, err = pcall(function()
+			if shared.VapeDeveloper then
+				loadstring(readfile('aetherv2/main.lua'), 'main')(license)
+			else
+				loadstring(game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..readfile('aetherv2/profiles/commit.txt')..'/main.lua', true), 'main')(license)
+			end
+		end)
+		if not ok then warn('[AetherV2] reload failed:', err) end
+	end)
+end
 mainapi.MultiKeybind = general:CreateToggle({
 	Name = 'Enable Multi-Keybinding',
 	Tooltip = 'Allows multiple keys to be bound to a module (eg. G + H)'
@@ -7731,12 +7744,7 @@ guipane:CreateDropdown({
 				mainapi:Save(mainapi.Profile)
 			end)
 			writefile('aetherv2/profiles/gui.txt', val)
-			shared.vapereload = true
-			if shared.VapeDeveloper then
-				loadstring(readfile('aetherv2/main.lua'), 'main')(license)
-			else
-				loadstring(game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..readfile('aetherv2/profiles/commit.txt')..'/main.lua', true), 'main')(license)
-			end
+			reloadAether()
 		end
 	end,
 	Tooltip = 'new - The newest vape theme to since v4.05\nold - The vape theme pre v4.05\nrise - Rise 6.0'
@@ -8925,5 +8933,235 @@ mainapi:Clean(inputService.InputEnded:Connect(function(inputObj)
 		keybindEnd(inputObj)
 	end
 end))
+
+
+-- Spotlight Search: press ` from anywhere to find and toggle a module without
+-- opening or arranging category windows. This intentionally mirrors newer.lua.
+do
+	local function accent()
+		return Color3.fromHSV(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value)
+	end
+	local function raiseZ(root, z)
+		root.ZIndex = z
+		for _, descendant in root:GetDescendants() do
+			if descendant:IsA('GuiObject') then descendant.ZIndex = z end
+		end
+	end
+	local spotOpen = false
+	local spotRows, firstMatch = {}, nil
+
+	local spotBackdrop = Instance.new('TextButton')
+	spotBackdrop.Name = 'NexusSpotlight'
+	spotBackdrop.Size = UDim2.fromScale(1, 1)
+	spotBackdrop.BackgroundColor3 = Color3.new(0, 0, 0)
+	spotBackdrop.BackgroundTransparency = 1
+	spotBackdrop.AutoButtonColor = false
+	spotBackdrop.Text = ''
+	spotBackdrop.Visible = false
+	spotBackdrop.Parent = scaledgui
+
+	local spotCard = Instance.new('TextButton')
+	spotCard.Name = 'Card'
+	spotCard.Size = UDim2.fromOffset(400, 380)
+	spotCard.Position = UDim2.fromScale(0.5, 0.42)
+	spotCard.AnchorPoint = Vector2.new(0.5, 0.5)
+	spotCard.BackgroundColor3 = uipallet.Main
+	spotCard.BackgroundTransparency = 0.02
+	spotCard.AutoButtonColor = false
+	spotCard.Text = ''
+	spotCard.Parent = spotBackdrop
+	addCorner(spotCard, UDim.new(0, 12))
+	local spotStroke = Instance.new('UIStroke')
+	spotStroke.Color = accent()
+	spotStroke.Thickness = 1
+	spotStroke.Transparency = 0.4
+	spotStroke.Parent = spotCard
+	local spotScale = Instance.new('UIScale')
+	spotScale.Parent = spotCard
+
+	local spotIcon = Instance.new('ImageLabel')
+	spotIcon.Size = UDim2.fromOffset(16, 16)
+	spotIcon.Position = UDim2.fromOffset(16, 17)
+	spotIcon.BackgroundTransparency = 1
+	spotIcon.Image = getcustomasset('aetherv2/assets/new/search.png')
+	spotIcon.ImageColor3 = accent()
+	spotIcon.Parent = spotCard
+	local spotSearch = Instance.new('TextBox')
+	spotSearch.Size = UDim2.new(1, -50, 0, 50)
+	spotSearch.Position = UDim2.fromOffset(42, 0)
+	spotSearch.BackgroundTransparency = 1
+	spotSearch.Text = ''
+	spotSearch.PlaceholderText = 'Toggle a module...'
+	spotSearch.PlaceholderColor3 = color.Dark(uipallet.Text, 0.5)
+	spotSearch.TextXAlignment = Enum.TextXAlignment.Left
+	spotSearch.TextColor3 = uipallet.Text
+	spotSearch.TextSize = 16
+	spotSearch.FontFace = uipallet.FontSemiBold
+	spotSearch.ClearTextOnFocus = false
+	spotSearch.Parent = spotCard
+	local spotHint = Instance.new('TextLabel')
+	spotHint.Size = UDim2.fromOffset(120, 16)
+	spotHint.Position = UDim2.new(1, -128, 0, 17)
+	spotHint.BackgroundTransparency = 1
+	spotHint.Text = 'Enter toggles top'
+	spotHint.TextXAlignment = Enum.TextXAlignment.Right
+	spotHint.TextColor3 = color.Dark(uipallet.Text, 0.5)
+	spotHint.TextSize = 10
+	spotHint.FontFace = uipallet.Font
+	spotHint.Parent = spotCard
+	local spotDivider = Instance.new('Frame')
+	spotDivider.Size = UDim2.new(1, -24, 0, 1)
+	spotDivider.Position = UDim2.fromOffset(12, 50)
+	spotDivider.BackgroundColor3 = Color3.new(1, 1, 1)
+	spotDivider.BackgroundTransparency = 0.9
+	spotDivider.BorderSizePixel = 0
+	spotDivider.Parent = spotCard
+	local spotResults = Instance.new('ScrollingFrame')
+	spotResults.Name = 'Results'
+	spotResults.Size = UDim2.new(1, -8, 1, -60)
+	spotResults.Position = UDim2.fromOffset(4, 56)
+	spotResults.BackgroundTransparency = 1
+	spotResults.BorderSizePixel = 0
+	spotResults.ScrollBarThickness = 3
+	spotResults.ScrollBarImageColor3 = accent()
+	spotResults.ScrollBarImageTransparency = 0.5
+	spotResults.CanvasSize = UDim2.new()
+	spotResults.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	spotResults.Parent = spotCard
+	local spotList = Instance.new('UIListLayout')
+	spotList.SortOrder = Enum.SortOrder.LayoutOrder
+	spotList.Padding = UDim.new(0, 2)
+	spotList.Parent = spotResults
+
+	local function refreshSpot(query)
+		for _, r in spotRows do r:Destroy() end
+		table.clear(spotRows)
+		firstMatch = nil
+		query = (query or ''):lower()
+		local matches = {}
+		for name, m in mainapi.Modules do
+			if query == '' or name:lower():find(query, 1, true) then
+				table.insert(matches, m)
+			end
+		end
+		table.sort(matches, function(a, b) return a.Name < b.Name end)
+		firstMatch = matches[1]
+		for i, m in matches do
+			if i > 80 then break end
+			local row = Instance.new('TextButton')
+			row.Name = m.Name
+			row.Size = UDim2.new(1, 0, 0, 30)
+			row.BackgroundColor3 = Color3.new(1, 1, 1)
+			row.BackgroundTransparency = 1
+			row.AutoButtonColor = false
+			row.Text = ''
+			row.LayoutOrder = i
+			row.Parent = spotResults
+			addCorner(row, UDim.new(0, 6))
+			local dot = Instance.new('Frame')
+			dot.Name = 'Dot'
+			dot.Size = UDim2.fromOffset(7, 7)
+			dot.Position = UDim2.new(0, 14, 0.5, -3)
+			dot.BorderSizePixel = 0
+			dot.BackgroundColor3 = m.Enabled and accent() or color.Light(uipallet.Main, 0.22)
+			dot.Parent = row
+			addCorner(dot, UDim.new(1, 0))
+			local nm = Instance.new('TextLabel')
+			nm.Size = UDim2.new(1, -130, 1, 0)
+			nm.Position = UDim2.fromOffset(30, 0)
+			nm.BackgroundTransparency = 1
+			nm.Text = m.Name
+			nm.TextXAlignment = Enum.TextXAlignment.Left
+			nm.TextColor3 = color.Dark(uipallet.Text, 0.1)
+			nm.TextSize = 13
+			nm.FontFace = uipallet.Font
+			nm.Parent = row
+			local cat = Instance.new('TextLabel')
+			cat.Size = UDim2.new(0, 96, 1, 0)
+			cat.Position = UDim2.new(1, -104, 0, 0)
+			cat.BackgroundTransparency = 1
+			cat.Text = m.Category or ''
+			cat.TextXAlignment = Enum.TextXAlignment.Right
+			cat.TextColor3 = color.Dark(uipallet.Text, 0.5)
+			cat.TextSize = 11
+			cat.FontFace = uipallet.Font
+			cat.Parent = row
+			row.MouseEnter:Connect(function()
+				tween:Tween(row, uipallet.Tween, {BackgroundTransparency = 0.94})
+			end)
+			row.MouseLeave:Connect(function()
+				tween:Tween(row, uipallet.Tween, {BackgroundTransparency = 1})
+			end)
+			row.MouseButton1Click:Connect(function()
+				m:Toggle()
+				dot.BackgroundColor3 = m.Enabled and accent() or color.Light(uipallet.Main, 0.22)
+				task.defer(function()
+					if spotOpen then spotSearch:CaptureFocus() end
+				end)
+			end)
+			table.insert(spotRows, row)
+		end
+		spotHint.Visible = firstMatch ~= nil
+		-- Rows are built after the card was raised, so lift the fresh ones too
+		-- (ZIndexBehavior.Global means each needs its own high ZIndex).
+		if spotOpen then
+			raiseZ(spotResults, 41)
+		end
+	end
+
+	local function openSpot()
+		if spotOpen then return end
+		spotOpen = true
+		raiseZ(spotBackdrop, 40)
+		raiseZ(spotCard, 41)
+		spotStroke.Color = accent()
+		spotIcon.ImageColor3 = accent()
+		spotBackdrop.Visible = true
+		spotBackdrop.BackgroundTransparency = 1
+		tween:Tween(spotBackdrop, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {BackgroundTransparency = 0.45})
+		spotScale.Scale = 0.92
+		tweenService:Create(spotScale, TweenInfo.new(0.28, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Scale = 1}):Play()
+		spotSearch.Text = ''
+		refreshSpot('')
+		task.defer(function() spotSearch:CaptureFocus() end)
+	end
+	local function closeSpot()
+		if not spotOpen then return end
+		spotOpen = false
+		pcall(function() spotSearch:ReleaseFocus() end)
+		tween:Tween(spotBackdrop, TweenInfo.new(0.18, Enum.EasingStyle.Quad), {BackgroundTransparency = 1})
+		task.delay(0.2, function()
+			if not spotOpen then spotBackdrop.Visible = false end
+		end)
+	end
+	mainapi.OpenSpotlight = openSpot
+
+	spotBackdrop.MouseButton1Click:Connect(closeSpot)
+	spotSearch:GetPropertyChangedSignal('Text'):Connect(function()
+		refreshSpot(spotSearch.Text)
+	end)
+	spotSearch.FocusLost:Connect(function(enter)
+		if enter and firstMatch then
+			firstMatch:Toggle()
+			refreshSpot(spotSearch.Text)
+			task.defer(function()
+				if spotOpen then spotSearch:CaptureFocus() end
+			end)
+		end
+	end)
+	-- Backquote (`) toggles Spotlight from anywhere the GUI isn't capturing text.
+	mainapi:Clean(inputService.InputBegan:Connect(function(input, processed)
+		if processed then return end
+		if input.KeyCode == Enum.KeyCode.Backquote and not inputService:GetFocusedTextBox() then
+			if spotOpen then closeSpot() else openSpot() end
+		elseif input.KeyCode == Enum.KeyCode.Escape and spotOpen then
+			closeSpot()
+		end
+	end))
+
+	mainapi:Clean(clickgui:GetPropertyChangedSignal('Visible'):Connect(function()
+		if not clickgui.Visible and spotOpen then closeSpot() end
+	end))
+end
 
 return mainapi

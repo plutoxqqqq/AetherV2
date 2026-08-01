@@ -2948,7 +2948,7 @@ run(function()
     end
     
     AntiFall = vape.Categories.Blatant:CreateModule({
-        Name = 'AntiFall',
+        Name = 'AntiVoid',
         Function = function(callback)
             if callback then
                 repeat task.wait() until store.matchState ~= 0 or (not AntiFall.Enabled)

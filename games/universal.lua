@@ -1766,7 +1766,7 @@ run(function()
     local part
 
     AntiFall = vape.Categories.Blatant:CreateModule({
-	Name = 'AntiFall',
+	Name = 'AntiVoid',
 	Function = function(callback)
 		if callback then
 			if Method.Value == 'Part' then

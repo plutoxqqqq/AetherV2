@@ -3619,7 +3619,9 @@ function mainapi:CreateGUI()
 				button.BackgroundColor3 = uipallet.Main
 			end
 		end)
-		button.MouseButton1Click:Connect(function()
+		-- Activated covers mouse, touch and gamepad. MouseButton1Click is not
+		-- consistently emitted by executor-hosted ScreenGuis on mobile.
+		button.Activated:Connect(function()
 			optionapi:Toggle()
 		end)
 
@@ -4737,6 +4739,10 @@ function mainapi:CreateCategory(categorysettings)
 	children.Visible = false
 	children.ScrollBarThickness = 2
 	children.ScrollBarImageTransparency = 0.75
+	children.ScrollingDirection = Enum.ScrollingDirection.Y
+	children.Active = true
+	children.ClipsDescendants = true
+	children.ElasticBehavior = Enum.ElasticBehavior.WhenScrollable
 	children.CanvasSize = UDim2.new()
 	children.Parent = window
 	local divider = Instance.new('Frame')
@@ -7820,15 +7826,22 @@ function mainapi:Load(skipgui, profile)
 					self:LoadOptions(object, v.Options)
 				end
 				if v.Enabled then
-					object.Button:Toggle()
+					-- Not every persisted category is a window category.  Older themes
+					-- wrote utility/category-list entries here too; those objects have no
+					-- Button and used to abort the entire GUI load ("index nil Toggle").
+					if object.Button and object.Button.Toggle then
+						object.Button:Toggle()
+					elseif object.Object then
+						object.Object.Visible = true
+					end
 				end
-				if v.Pinned then
+				if v.Pinned and object.Pin then
 					object:Pin()
 				end
 				if v.Expanded and object.Expand then
 					object:Expand()
 				end
-				if v.List and (#object.List > 0 or #v.List > 0) then
+				if v.List and object.List and (#object.List > 0 or #v.List > 0) and object.ChangeValue then
 					object.List = v.List or {}
 					object.ListEnabled = v.ListEnabled or {}
 					object:ChangeValue()
@@ -8095,10 +8108,10 @@ function mainapi:Save(newprofile)
 
 	for i, v in self.Categories do
 		(v.Type ~= 'Category' and i ~= 'Main' and savedata or guidata).Categories[i] = {
-			Enabled = i ~= 'Main' and v.Button.Enabled or nil,
+			Enabled = i ~= 'Main' and v.Button and v.Button.Enabled or nil,
 			Expanded = v.Type ~= 'Overlay' and v.Expanded or nil,
 			Pinned = v.Pinned,
-			Position = {X = v.Object.Position.X.Offset, Y = v.Object.Position.Y.Offset},
+			Position = v.Object and {X = v.Object.Position.X.Offset, Y = v.Object.Position.Y.Offset} or nil,
 			Options = mainapi:SaveOptions(v, v.Options),
 			List = v.List,
 			ListEnabled = v.ListEnabled
