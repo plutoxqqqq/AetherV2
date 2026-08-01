@@ -11765,30 +11765,36 @@ end)
 
 run(function()
     local KrystalDisabler
+    local oldUpdateMomentum
+    local momentumRemote
     local patchedSignals = setmetatable({}, { __mode = 'k' })
+    local targetMomentum = 9e9
 
     local function getController()
         return bedwars and bedwars.GlacialSkaterController
+    end
+
+    local function setKrystalMomentum(controller)
+        controller = controller or getController()
+        if not controller then return end
+        controller.momentum = targetMomentum
+        controller.lastMomentumReport = targetMomentum
+        if momentumRemote then
+            pcall(function()
+                momentumRemote:SendToServer({ momentumValue = targetMomentum })
+            end)
+        end
     end
 
     local function patchMovementSignal(signal)
         if not signal or not getconnections or not hookfunction then return end
         for _, connection in getconnections(signal) do
             local func = connection and connection.Function
-            if func and patchedSignals[func] == nil then
-                local ok, original = pcall(hookfunction, func, function() end)
-                patchedSignals[func] = (ok and original) or false
+            if func and not patchedSignals[func] then
+                patchedSignals[func] = true
+                pcall(hookfunction, func, function() end)
             end
         end
-    end
-
-    local function restoreSignals()
-        for func, original in pairs(patchedSignals) do
-            if type(original) == 'function' then
-                pcall(hookfunction, func, original)
-            end
-        end
-        table.clear(patchedSignals)
     end
 
     local function patchCharacter(character)
@@ -11804,28 +11810,37 @@ run(function()
         Function = function(callback)
             local controller = getController()
             if callback then
-                if not controller then
+                if not controller or type(controller.updateMomentum) ~= 'function' then
                     notif('KrystalDisabler', 'Krystal controller is unavailable.', 5, 'warning')
                     KrystalDisabler:Toggle()
                     return
                 end
 
-                -- Round restarts can add new correction listeners without replacing the character.
-                KrystalDisabler:Clean(runService.PreSimulation:Connect(function()
-                    if entitylib.isAlive then
-                        patchCharacter(entitylib.character)
+                momentumRemote = bedwars.Client and bedwars.Client:Get('MomentumUpdate')
+                if not oldUpdateMomentum then
+                    oldUpdateMomentum = controller.updateMomentum
+                    controller.updateMomentum = function(self, ...)
+                        local result = oldUpdateMomentum(self, ...)
+                        setKrystalMomentum(self)
+                        return result
                     end
-                end))
+                end
 
                 KrystalDisabler:Clean(entitylib.Events.LocalAdded:Connect(patchCharacter))
                 if entitylib.isAlive then
                     patchCharacter(entitylib.character)
                 end
+                setKrystalMomentum(controller)
+                pcall(controller.updateMomentum, controller)
             else
-                restoreSignals()
+                if controller and oldUpdateMomentum then
+                    controller.updateMomentum = oldUpdateMomentum
+                end
+                oldUpdateMomentum = nil
+                momentumRemote = nil
             end
         end,
-        Tooltip = 'Suppresses Krystal movement corrections without changing your speed or momentum'
+        Tooltip = 'Reduces Krystal lagbacks by keeping momentum reported and suppressing local movement correction listeners'
     })
 end)
 
@@ -13772,8 +13787,7 @@ run(function()
                 bought = true
                 buyable = v
             end
-            -- Tier check means the next tier only; never skip an unaffordable prerequisite.
-            if TierCheck.Enabled then break end
+            if TierCheck.Enabled and v.nextTier then break end
         end
     
         if buyable then
