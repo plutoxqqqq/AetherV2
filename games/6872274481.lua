@@ -2,6 +2,13 @@ local license = ... or {}
 if type(license) ~= 'table' then license = {} end
 license.Closet = license.Closet == true
 
+-- Teleports into a match can execute the cached game script before Roblox has
+-- finished constructing ReplicatedStorage/LocalPlayer. Waiting for the engine's
+-- load barrier prevents the bootstrap from indexing a half-created BedWars tree.
+if not game:IsLoaded() then
+	game.Loaded:Wait()
+end
+
 local canDebug = not license.Closet
 local run = function(func, timeout)
 	local started = tick()
@@ -3604,7 +3611,7 @@ run(function()
     end
 
     AntiFall = vape.Categories.Blatant:CreateModule({
-        Name = 'AntiFall',
+        Name = 'AntiVoid',
         Function = function(callback)
             if callback then
                 repeat task.wait() until store.matchState ~= 0 or (not AntiFall.Enabled)
@@ -3917,7 +3924,8 @@ run(function()
     -- the server's movement check rejects, so every touch was rubber-banded straight back to
     -- where it started and the mode looked like it never teleported at all. A drop to the ground
     -- is a move the server is already expecting, so this one lands.
-    local function tpNoFall(root, character)
+	local clearRegisteredFall
+	local function tpNoFall(root, character)
         local groundY = groundBelow(root, character)
         if not groundY then return false end
 
@@ -3927,7 +3935,10 @@ run(function()
         if drop <= 1 then return false end
 
         local velocity = root.AssemblyLinearVelocity
-        root.CFrame -= Vector3.new(0, drop, 0)
+		local landed = root.CFrame - Vector3.new(0, drop, 0)
+		-- Pivot the complete character, not only its root. Moving a single part can
+		-- be overwritten by the humanoid assembly before replication sees it.
+		character:PivotTo(landed)
         -- Keep the horizontal travel so the landing spot is the one the fall was heading for,
         -- and arrive with nothing vertical left for the game to charge for. Dropping to the
         -- floor is a move the server is already expecting from someone who is falling, which is
@@ -3936,8 +3947,9 @@ run(function()
         -- The fall is over as far as we are concerned. Without this the next pass would still be
         -- holding the old speed and would fire again before the humanoid has registered the
         -- landing, which is what turns one teleport into a burst of them.
-        trackedFall = 0
-        return true
+		trackedFall = 0
+		clearRegisteredFall(-1)
+		return true
     end
 
     local function restoreTool(oldTool)
@@ -4240,11 +4252,14 @@ run(function()
     end
     task.spawn(resolveGroundHit)
 
-    local function clearRegisteredFall(fall)
+	clearRegisteredFall = function(fall)
         local remote = resolveGroundHit()
         if not remote then return false end
         pcall(function()
-            remote:FireServer(nil, Vector3.new(0, fall, 0), workspace:GetServerTimeNow())
+			-- Never report the real lethal velocity: that asks the server to settle
+			-- the very damage we are trying to discard. A tiny grounded pulse rolls
+			-- the server-side fall accumulator forward without a damaging impact.
+			remote:FireServer(nil, Vector3.new(0, -1, 0), workspace:GetServerTimeNow())
         end)
         return true
     end
@@ -4353,7 +4368,10 @@ run(function()
                             -- The hook does the work; this only decides when it is armed, so the
                             -- rewrite is confined to the part of the fall that would cost us.
                             waitDelay = 0.03
-                            spoofFall = fall < -(FallThreshold and FallThreshold.Value or 85)
+							-- Hold the packet state for the complete airborne descent. Arming
+							-- only after the threshold leaves the server with the first half of
+							-- the fall already recorded.
+							spoofFall = humanoid.FloorMaterial == Enum.Material.Air and fall < -3
                         elseif humanoid.FloorMaterial ~= Enum.Material.Air then
                             usedPearl = false
                         elseif Mode.Value == 'Legit' then
@@ -5110,9 +5128,9 @@ run(function()
         terrain.WaterColor = Color3.fromHSV(Color.Hue, Color.Sat, Color.Value)
         terrain.WaterTransparency = math.clamp(1 - Color.Opacity, 0, 1)
         -- Glassy: reflect the sky and world off the surface, with livelier waves than the flat look.
-        terrain.WaterReflectance = Waves.Enabled and 0.7 or 0.4
-        terrain.WaterWaveSize = Waves.Enabled and 0.3 or 0.05
-        terrain.WaterWaveSpeed = Waves.Enabled and 18 or 4
+		terrain.WaterReflectance = Waves.Enabled and 0.18 or 0.08
+		terrain.WaterWaveSize = Waves.Enabled and 0.09 or 0.025
+		terrain.WaterWaveSpeed = Waves.Enabled and 7 or 2
     end
 
     local function ensureFX()
@@ -5196,11 +5214,11 @@ run(function()
             fx.cc.Brightness = -0.04
             fx.cc.Contrast = 0.12
             fx.cc.Saturation = -0.08
-            fx.blur.Enabled = true
-            fx.blur.Size = 6 + sway * 3
-            fx.rays.Enabled = true
-            fx.rays.Intensity = 0.12
-            fx.rays.Spread = 0.9
+			-- Blur and animated sun rays made this mode both muddy-looking and one
+			-- of the most expensive visual modules. Colour/fog provide depth without
+			-- adding full-screen render passes.
+			fx.blur.Enabled = false
+			fx.rays.Enabled = false
         else
             surfaced()
         end
@@ -5284,11 +5302,14 @@ run(function()
                 -- Realistic mode's look and buoyancy have to react the instant you break the surface,
                 -- so they run every frame rather than on the half-second refresh. Idle for the other
                 -- modes, and it reverts itself the frame you surface or switch mode away.
-                Water:Clean(runService.RenderStepped:Connect(function()
-                    if not Water.Enabled or Mode.Value ~= 'Realistic' then
-                        surfaced()
-                        return
-                    end
+				local nextRealisticUpdate = 0
+				Water:Clean(runService.Heartbeat:Connect(function()
+					if not Water.Enabled or Mode.Value ~= 'Realistic' then
+						surfaced()
+						return
+					end
+					if tick() < nextRealisticUpdate then return end
+					nextRealisticUpdate = tick() + 0.1
                     local height = barrierHeight()
                     if not height then return end
                     updateRealistic(height + math.max(Depth.Value, 4) / 2)
@@ -6166,12 +6187,15 @@ run(function()
         hip = entitylib.character.Humanoid.HipHeight
         realroot = entitylib.character.HumanoidRootPart
         lplr.Character.Parent = replicatedStorage
-        clone = realroot:Clone()
-        clone.Parent = lplr.Character
+		clone = realroot:Clone()
+		clone.Name = 'HumanoidRootPart'
+		clone.Parent = lplr.Character
         realroot.Transparency = 1
         realroot.Parent = workspace
         store.rootpart = realroot
-        lplr.Character.PrimaryPart = clone
+		lplr.Character.PrimaryPart = clone
+		entitylib.character.RootPart = clone
+		entitylib.character.HumanoidRootPart = clone
         lplr.Character.Parent = workspace
         bedwars.QueryUtil:setQueryIgnored(clone, true)
         bedwars.QueryUtil:setQueryIgnored(realroot, true)
@@ -6188,7 +6212,9 @@ run(function()
                 clone:Destroy()
                 clone = nil
             end
-            lplr.Character.PrimaryPart = realroot
+			lplr.Character.PrimaryPart = realroot
+			entitylib.character.RootPart = realroot
+			entitylib.character.HumanoidRootPart = realroot
             lplr.Character.Parent = workspace
             realroot.CanCollide = true
             entitylib.character.Humanoid.HipHeight = hip or 2.6
@@ -6204,10 +6230,10 @@ run(function()
                 pcall(function() clone:Destroy() end)
             end
         end
-        realroot, clone = nil, nil
-        if store.rootpart then
-            store.rootpart = nil
-        end
+		if store.rootpart == realroot then
+			store.rootpart = nil
+		end
+		realroot, clone = nil, nil
         hiding, hideUntil, syncUntil = false, 0, 0
     end
 
@@ -8921,7 +8947,12 @@ run(function()
                     if boosting and entitylib.isAlive and tick() >= nextLift then
                         local root = entitylib.character.RootPart
                         if root then
-                            root.AssemblyLinearVelocity += Vector3.new(0, BypassBoost.Value, 0)
+							-- Boost is a fixed target vertical speed, not an amount repeatedly
+							-- accumulated (or merely a minimum). This also caps a tool's own
+							-- excessive launch. The old behaviour could add hundreds of studs/s and turn
+                            -- the eventual landing into lethal fall damage.
+                            local velocity = root.AssemblyLinearVelocity
+							root.AssemblyLinearVelocity = Vector3.new(velocity.X, BypassBoost.Value, velocity.Z)
                         end
                         nextLift = tick() + 0.1
                     end
@@ -8937,10 +8968,10 @@ run(function()
     BypassBoost = LongJumpBypass:CreateSlider({
         Name = 'Boost',
         Min = 5,
-        Max = 60,
-        Default = 35,
+        Max = 42,
+        Default = 24,
         Suffix = ' studs/s',
-        Tooltip = 'Upward velocity added for you each tick while LongJump boosts you, lifting you into the air'
+        Tooltip = 'Maximum upward speed maintained while LongJump boosts you'
     })
 end)
 
@@ -9222,7 +9253,11 @@ run(function()
                         envelope = rise * fall
                     end
 
-                    local target = (peakSpeed + Distance.Value) * envelope
+                    -- Distance is measured in studs. Convert it to the extra velocity
+                    -- required over the configured carry time instead of treating the
+                    -- distance value itself as studs/second.
+                    local extraSpeed = Distance.Value / math.max(Duration.Value, 0.1)
+                    local target = (peakSpeed + extraSpeed) * envelope
 
                     -- Only ever add to what the ability is already doing. Pinning the speed to a
                     -- fixed number the whole way through is the part that looked obviously
@@ -9739,13 +9774,21 @@ run(function()
 						end
 					end
 
-					local targetpos = getPosition(plr.Character) or plr[TargetPart.Value].Position
+					local targetPart = plr[TargetPart.Value] or plr.RootPart
+					local targetpos = getPosition(plr.Character) or (targetPart and targetPart.Position)
+					if not targetpos then return nextLaunch(...) end
 					local newlook = CFrame.new(offsetpos, targetpos) * CFrame.new(projmeta.projectile == 'owl_projectile' and Vector3.zero or Vector3.new(bedwars.BowConstantsTable.RelX, bedwars.BowConstantsTable.RelY, bedwars.BowConstantsTable.RelZ))
-					local calc = prediction.SolveTrajectory(newlook.p, projSpeed * Prediction.Value, gravity, targetpos, projmeta.projectile == 'telepearl' and Vector3.zero or plr.RootPart.Velocity, playerGravity, plr.HipHeight, plr.Jumping and 42.6 or nil, rayCheck)
+					-- Solve and launch at the same speed. Previously prediction used the
+					-- full metadata speed while a partially charged bow was launched at
+					-- velocityMultiplier speed, so the arc looked redirected but landed
+					-- short of the entity.
+					local charge = AutoCharge.Enabled and 1 or (projmeta.velocityMultiplier or 1)
+					local launchSpeed = projSpeed * charge
+					local calc = prediction.SolveTrajectory(newlook.p, launchSpeed * Prediction.Value, gravity, targetpos, projmeta.projectile == 'telepearl' and Vector3.zero or plr.RootPart.AssemblyLinearVelocity, playerGravity, plr.HipHeight, plr.Jumping and 42.6 or nil, rayCheck, nil, lplr:GetNetworkPing())
 					if calc then
 						targetinfo.Targets[plr] = tick() + 1
 						return {
-							initialVelocity = CFrame.new(newlook.Position, calc).LookVector * (projSpeed * (AutoCharge.Enabled and 1 or projmeta.velocityMultiplier)),
+						initialVelocity = CFrame.new(newlook.Position, calc).LookVector * launchSpeed,
 							positionFrom = offsetpos,
 							deltaT = lifetime,
 							gravitationalAcceleration = gravity,
@@ -9970,7 +10013,9 @@ run(function()
                     local plr = findTarget(pos)
                     if not plr then return nextLaunch(...) end
 
-                    local targetpos = getPosition(plr.Character) or plr[TargetPart.Value].Position
+					local targetPart = plr[TargetPart.Value] or plr.RootPart
+					local targetpos = getPosition(plr.Character) or (targetPart and targetPart.Position)
+					if not targetpos then return nextLaunch(...) end
                     if (targetpos - pos).Magnitude > Range.Value then return nextLaunch(...) end
 
                     -- Max angle: how far off your real aim the shot is allowed to be bent. 360 (the
@@ -10009,7 +10054,9 @@ run(function()
                     end
 
                     local newlook = CFrame.new(offsetpos, targetpos) * CFrame.new(projmeta.projectile == 'owl_projectile' and Vector3.zero or Vector3.new(bedwars.BowConstantsTable.RelX, bedwars.BowConstantsTable.RelY, bedwars.BowConstantsTable.RelZ))
-                    local calc = prediction.SolveTrajectory(newlook.p, projSpeed * Prediction.Value, gravity, targetpos, projmeta.projectile == 'telepearl' and Vector3.zero or plr.RootPart.Velocity, playerGravity, plr.HipHeight, plr.Jumping and 42.6 or nil, rayCheck)
+					local charge = AutoCharge.Enabled and 1 or (projmeta.velocityMultiplier or 1)
+					local launchSpeed = projSpeed * charge
+					local calc = prediction.SolveTrajectory(newlook.p, launchSpeed * Prediction.Value, gravity, targetpos, projmeta.projectile == 'telepearl' and Vector3.zero or plr.RootPart.AssemblyLinearVelocity, playerGravity, plr.HipHeight, plr.Jumping and 42.6 or nil, rayCheck, nil, lplr:GetNetworkPing())
                     if not calc then return nextLaunch(...) end
 
                     targetinfo.Targets[plr] = tick() + 1
@@ -10019,7 +10066,7 @@ run(function()
                     end
 
                     return {
-                        initialVelocity = CFrame.new(newlook.Position, calc).LookVector * (projSpeed * (AutoCharge.Enabled and 1 or projmeta.velocityMultiplier)),
+						initialVelocity = CFrame.new(newlook.Position, calc).LookVector * launchSpeed,
                         positionFrom = offsetpos,
                         deltaT = lifetime,
                         gravitationalAcceleration = gravity,
@@ -21154,7 +21201,9 @@ run(function()
                     bankRoot.CFrame = bankClone.CFrame
                     bankRoot.AssemblyLinearVelocity = bankClone.AssemblyLinearVelocity
                 end
-                lplr.Character.PrimaryPart = bankRoot
+				lplr.Character.PrimaryPart = bankRoot
+				entitylib.character.RootPart = bankRoot
+				entitylib.character.HumanoidRootPart = bankRoot
                 lplr.Character.Parent = workspace
                 bankRoot.CanCollide = true
                 bankRoot.Transparency = 1
@@ -21189,13 +21238,16 @@ run(function()
                 if not character or not character.Parent or not bankRoot then error('no character') end
 
                 character.Parent = replicatedStorage
-                bankClone = bankRoot:Clone()
+				bankClone = bankRoot:Clone()
+				bankClone.Name = 'HumanoidRootPart'
                 bankClone.Parent = character
                 bankRoot.Transparency = 1
                 bankRoot.Parent = workspace
                 store.rootpart = bankRoot
                 bankOwnsRoot = true
-                character.PrimaryPart = bankClone
+				character.PrimaryPart = bankClone
+				entitylib.character.RootPart = bankClone
+				entitylib.character.HumanoidRootPart = bankClone
                 character.Parent = workspace
                 pcall(function() bedwars.QueryUtil:setQueryIgnored(bankClone, true) end)
                 pcall(function() bedwars.QueryUtil:setQueryIgnored(bankRoot, true) end)
@@ -21207,7 +21259,7 @@ run(function()
                         bankRoot.AssemblyLinearVelocity = Vector3.zero
                     end
                 end)
-                bankTools(chest, tools)
+				bankTools(chest, tools)
                 task.wait(0.3)
                 hold:Disconnect()
             end)
@@ -21239,10 +21291,14 @@ run(function()
         -- Infinite range from afar goes through the silent hitbox bank (unless you turn it off);
         -- Nearby, or already standing on the chest, just fires the remote as before.
         local target, dist = nearestChest()
-        if Range and Range.Value == 'Infinite' and SilentBank.Enabled
-            and target and dist and dist > 20 and not store.rootpart and not bankBusy then
-            silentBank(chest, tools, target)
-        else
+		if Range and Range.Value == 'Infinite' and SilentBank.Enabled
+			and target and dist and dist > 20 and not store.rootpart and not bankBusy then
+			silentBank(chest, tools, target)
+		elseif Range and Range.Value == 'Infinite' and SilentBank.Enabled and not target then
+			-- Do not consume the cooldown on a request the server cannot validate;
+			-- collection signals will populate a chest and the next pass will retry.
+			for _, tool in tools do sent[tool] = nil end
+		else
             bankTools(chest, tools)
             task.spawn(function() refreshBank(chest) end)
         end

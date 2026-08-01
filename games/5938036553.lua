@@ -442,7 +442,7 @@ for i, v in
 		'Reach',
 		'Health',
 		'TriggerBot',
-		'AntiFall',
+		'AntiVoid',
 		'AntiRagdoll',
 		'Invisible',
 		'Disabler',

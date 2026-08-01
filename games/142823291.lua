@@ -83,7 +83,7 @@ run(function()
     playersService.PlayerAdded:Connect(Added)
 end)
 
-for _, v in {'Reach', 'TriggerBot', 'AntiFall', 'AntiRagdoll', 'Disabler'} do
+for _, v in {'Reach', 'TriggerBot', 'AntiVoid', 'AntiRagdoll', 'Disabler'} do
     vape:Remove(v)
 end
 

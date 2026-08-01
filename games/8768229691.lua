@@ -622,7 +622,7 @@ run(function()
     end
     
     AntiFall = vape.Categories.Blatant:CreateModule({
-        Name = 'AntiFall',
+        Name = 'AntiVoid',
         Function = function(callback)
             if callback then
                 local pos, debounce = getLowGround(), tick()
