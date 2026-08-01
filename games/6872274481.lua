@@ -28024,7 +28024,11 @@ run(function()
 	local Animation
 	local Range
 	
-	local Legit = getFunctionRange(bedwars.MinerController.setupMinerPrompts) or 0
+	-- The native Miner prompt only reaches six studs. This used to call
+	-- getFunctionRange(), but that helper does not exist in this game module, so
+	-- the registration callback errored before CreateModule could run and
+	-- AutoMiner never appeared in the menu.
+	local Legit = 6
 	
 	AutoMiner = vape.Categories.Minigames:CreateModule({
 	    Name = 'AutoMiner',
@@ -28081,5 +28085,4 @@ run(function()
 	})
 	Animation = AutoMiner:CreateToggle({Name = 'Animation', Default = true})
 end)
-
 
