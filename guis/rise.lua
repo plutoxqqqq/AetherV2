@@ -2350,8 +2350,11 @@ function mainapi:Load(skipgui, profile)
 	}}
 	--self.Categories.Profiles:ChangeValue()
 
-	if isfile('aetherv2/profiles/'..self.Profile..self.Place..'.txt') then
-		local savedata = loadJson('aetherv2/profiles/'..self.Profile..self.Place..'.txt')
+	local profilePath = 'aetherv2/configs/'..self.Profile..self.Place..'.json'
+	if not isfile(profilePath) then profilePath = 'aetherv2/profiles/'..self.Profile..self.Place..'.txt' end
+
+	if isfile(profilePath) then
+		local savedata = loadJson(profilePath)
 		if not savedata then
 			savedata = {
 				Categories = {},
@@ -2474,6 +2477,7 @@ function mainapi:Save(newprofile)
 
 	writefile('aetherv2/profiles/'..game.GameId..'.gui.txt', httpService:JSONEncode(guidata))
 	writefile('aetherv2/profiles/'..self.Profile..self.Place..'.txt', httpService:JSONEncode(savedata))
+	writefile('aetherv2/configs/'..self.Profile..self.Place..'.json', httpService:JSONEncode(savedata))
 end
 
 function mainapi:SaveOptions(object, savedoptions)
