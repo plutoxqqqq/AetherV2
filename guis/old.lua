@@ -1899,6 +1899,7 @@ function mainapi:CreateCategory(categorysettings)
 	local categoryapi = {
 		Type = 'Category',
 		Expanded = false,
+		AlwaysMinimized = categorysettings.AlwaysMinimized or false,
 		Options = {}
 	}
 
@@ -2189,6 +2190,9 @@ function mainapi:CreateCategory(categorysettings)
 	end
 
 	function categoryapi:Expand()
+		if not self.Expanded and categorysettings.ExpandWarning then
+			mainapi:CreateNotification(categorysettings.Name, categorysettings.ExpandWarning, 10, 'warning')
+		end
 		self.Expanded = not self.Expanded
 		children.Visible = self.Expanded
 		arrowbutton.Text = self.Expanded and '-' or '+'
@@ -3158,7 +3162,7 @@ function mainapi:Load(skipgui, profile)
 			if v.Pinned ~= object.Pinned then
 				object:Pin()
 			end
-			if v.Expanded ~= nil and v.Expanded ~= object.Expanded then
+			if not object.AlwaysMinimized and v.Expanded ~= nil and v.Expanded ~= object.Expanded then
 				object:Expand()
 			end
 			if object.Button and (v.Enabled or false) ~= object.Button.Enabled then
@@ -3292,7 +3296,7 @@ function mainapi:Save(newprofile)
 	for i, v in self.Categories do
 		(v.Type ~= 'Category' and i ~= 'GUI' and savedata or guidata).Categories[i] = {
 			Enabled = v.Button and v.Button.Enabled or nil,
-			Expanded = v.Type ~= 'Overlay' and v.Expanded or nil,
+			Expanded = v.Type ~= 'Overlay' and not v.AlwaysMinimized and v.Expanded or nil,
 			Pinned = v.Pinned,
 			Position = {X = v.Object.Position.X.Offset, Y = v.Object.Position.Y.Offset},
 			Options = mainapi:SaveOptions(v, v.Options),
@@ -3483,6 +3487,8 @@ mainapi:CreateCategory({
 -- icon for now until a dedicated asset is made.
 mainapi:CreateCategory({
 	Name = 'Exploits',
+	AlwaysMinimized = true,
+	ExpandWarning = 'Experimental modules may stop working or be patched quickly. Expect inconsistent results after game updates.',
 	Icon = getcustomasset('aetherv2/assets/old/blatanticon.png'),
 	WindowSize = 164
 })
