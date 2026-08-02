@@ -23,7 +23,9 @@ MANIFEST = ROOT / 'manifest.json'
 # Everything tracked in git is listed except the manifest itself (which would never settle) and
 # repository furniture the loader has no use for.
 EXCLUDE_EXACT = {'manifest.json'}
-EXCLUDE_PREFIX = ('.github/', 'tools/')
+# deobfuscated/ is reverse-engineering notes about third-party scripts - it is not client content,
+# so listing it would only make every install download it on update.
+EXCLUDE_PREFIX = ('.github/', 'tools/', 'deobfuscated/')
 
 
 def tracked_files():
