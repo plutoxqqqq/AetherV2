@@ -9497,8 +9497,10 @@ guipane:CreateToggle({
 		clickgui.Search.LegitDivider.Visible = enabled
 		clickgui.Search.Kits.Visible = enabled
 		clickgui.Search.KitsDivider.Visible = enabled
-		clickgui.Search.TextBox.Size = UDim2.new(1, enabled and -50 or -10, 0, 37)
-		clickgui.Search.TextBox.Position = UDim2.fromOffset(enabled and 50 or 10, 0)
+		-- Keep the search field to the right of both the Legit and Kits controls.
+		-- If it starts at x=50 it overlaps Kits (x=49..83) and consumes touch input.
+		clickgui.Search.TextBox.Size = UDim2.new(1, enabled and -113 or -10, 0, 37)
+		clickgui.Search.TextBox.Position = UDim2.fromOffset(enabled and 95 or 10, 0)
 	end,
 	Default = true,
 	Tooltip = 'Shows the button to change to Legit Mode'
