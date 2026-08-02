@@ -11767,21 +11767,42 @@ run(function()
     local KrystalDisabler
     local oldUpdateMomentum
     local momentumRemote
+    local patchedSignals = setmetatable({}, { __mode = 'k' })
+    local targetMomentum = 9e9
 
     local function getController()
         return bedwars and bedwars.GlacialSkaterController
     end
 
-    local function preserveMomentum(controller, momentum)
-        if type(momentum) ~= 'number' then return end
-        if type(controller.momentum) == 'number' and controller.momentum >= momentum then return end
-        controller.momentum = momentum
-        controller.lastMomentumReport = momentum
+    local function setKrystalMomentum(controller)
+        controller = controller or getController()
+        if not controller then return end
+        controller.momentum = targetMomentum
+        controller.lastMomentumReport = targetMomentum
         if momentumRemote then
             pcall(function()
-                momentumRemote:SendToServer({ momentumValue = momentum })
+                momentumRemote:SendToServer({ momentumValue = targetMomentum })
             end)
         end
+    end
+
+    local function patchMovementSignal(signal)
+        if not signal or not getconnections or not hookfunction then return end
+        for _, connection in getconnections(signal) do
+            local func = connection and connection.Function
+            if func and not patchedSignals[func] then
+                patchedSignals[func] = true
+                pcall(hookfunction, func, function() end)
+            end
+        end
+    end
+
+    local function patchCharacter(character)
+        local root = character and character.RootPart
+        if not root then return end
+        patchMovementSignal(root:GetPropertyChangedSignal('CFrame'))
+        patchMovementSignal(root:GetPropertyChangedSignal('Velocity'))
+        patchMovementSignal(root:GetPropertyChangedSignal('AssemblyLinearVelocity'))
     end
 
     KrystalDisabler = vape.Categories.Kits:CreateModule({
@@ -11799,12 +11820,18 @@ run(function()
                 if not oldUpdateMomentum then
                     oldUpdateMomentum = controller.updateMomentum
                     controller.updateMomentum = function(self, ...)
-                        local momentum = self.momentum
                         local result = oldUpdateMomentum(self, ...)
-                        preserveMomentum(self, momentum)
+                        setKrystalMomentum(self)
                         return result
                     end
                 end
+
+                KrystalDisabler:Clean(entitylib.Events.LocalAdded:Connect(patchCharacter))
+                if entitylib.isAlive then
+                    patchCharacter(entitylib.character)
+                end
+                setKrystalMomentum(controller)
+                pcall(controller.updateMomentum, controller)
             else
                 if controller and oldUpdateMomentum then
                     controller.updateMomentum = oldUpdateMomentum
@@ -11813,7 +11840,7 @@ run(function()
                 momentumRemote = nil
             end
         end,
-        Tooltip = 'Prevents your Krystal momentum bar from decreasing'
+        Tooltip = 'Reduces Krystal lagbacks by keeping momentum reported and suppressing local movement correction listeners'
     })
 end)
 
