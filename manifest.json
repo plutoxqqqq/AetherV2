@@ -2,7 +2,6 @@
  "files": {
   "LICENSE": "5416093e02cac941",
   "README.md": "206ddc82df758b64",
-  "V3 Ideas.md": "cbe239610d5f3097",
   "assets/new/add.png": "c27c704d230d506f",
   "assets/new/alert.png": "6e2771b285140189",
   "assets/new/allowedicon.png": "090bebafebb2b457",
@@ -125,6 +124,7 @@
   "guis/old.lua": "60f2d5e046206767",
   "guis/rise.lua": "58ba294bf117bb12",
   "idk": "91918a7ff7ca7177",
+  "idk2": "cd9f1c32e8d6ac6f",
   "init.lua": "f52d742045d61fe1",
   "libraries/base64.lua": "771404c81a204701",
   "libraries/cheatenginelib.lua": "93f9055809c3044c",
