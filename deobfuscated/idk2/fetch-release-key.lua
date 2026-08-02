@@ -19,6 +19,20 @@ local RELEASE_ID = '4264b175447dc2361b9419bb51c47181'
 
 local httpService = game:GetService('HttpService')
 
+-- Preflight. A generic AUTH_FAILED from the server tells you nothing about which
+-- half of the request it disliked, so check the client half here first.
+LICENCE_KEY = tostring(LICENCE_KEY):match('^%s*(.-)%s*$')
+if LICENCE_KEY == 'PUT-YOUR-KEY-HERE' or LICENCE_KEY == '' then
+	error('[-] LICENCE_KEY is still the placeholder -- edit it before running.', 0)
+end
+if #LICENCE_KEY < 1 or #LICENCE_KEY > 128 then
+	error('[-] LICENCE_KEY length ' .. #LICENCE_KEY .. ' is outside the 1..128 the loader accepts.', 0)
+end
+if not LICENCE_KEY:match('^BV%-%u%-%w+$') then
+	warn('[!] Key does not look like BV-<letter>-<alphanumerics>. Check for a stray')
+	warn('[!] space, a smart dash, or a truncated copy/paste.')
+end
+
 local requestFunction = request
 	or http_request
 	or (syn and syn.request)
@@ -52,6 +66,14 @@ if executorOk and type(executor) == 'string' then headers['X-Executor'] = execut
 
 local nonce = httpService:GenerateGUID(false)
 
+-- Echo the request context, with the key masked, so a denial can be attributed.
+print('[i] placeId    = ' .. placeId)
+print('[i] releaseId  = ' .. RELEASE_ID)
+print('[i] key        = ' .. LICENCE_KEY:sub(1, 5) .. string.rep('*', math.max(0, #LICENCE_KEY - 5))
+	.. '  (' .. #LICENCE_KEY .. ' chars)')
+print('[i] X-HWID     = ' .. (headers['X-HWID'] and 'present (' .. #headers['X-HWID'] .. ' chars)' or 'ABSENT'))
+print('[i] X-Executor = ' .. (headers['X-Executor'] or 'ABSENT'))
+
 local response = requestFunction({
 	Url = 'https://luvit.cc/badvape-api/v1/auth/verify',
 	Method = 'POST',
@@ -79,6 +101,23 @@ if decoded.ok ~= true or type(decoded.releaseKey) ~= 'string' then
 	warn('[-] Auth denied. code=' .. tostring(decoded.code)
 		.. ' reason=' .. tostring(decoded.reason)
 		.. ' correlationId=' .. tostring(decoded.correlationId))
+
+	-- The reason field narrows this down; the loader only ever honours these.
+	local reason = decoded.reason
+	if reason == 'hwid_mismatch' or reason == 'uid_requires_bound_device' then
+		warn('[-] The key is bound to a different device. Reset the binding with the vendor.')
+	elseif reason == 'hwid_required' or reason == 'ambiguous_hwid' then
+		warn('[-] The executor did not expose a usable HWID. Try a different executor.')
+	elseif reason == 'rate_limited' then
+		warn('[-] Too many attempts. Wait before retrying.')
+	elseif reason == 'script_outdated' then
+		warn('[-] releaseId ' .. RELEASE_ID .. ' is stale. Re-read it from a current idk2.')
+	else
+		warn('[-] Generic denial: the server did not accept this key for this place.')
+		warn('[-] That means the key is invalid, expired, revoked, or not entitled to')
+		warn('[-] this release -- not a bug in this script. Quote the correlationId')
+		warn('[-] above to the vendor if the key is yours and you believe it is valid.')
+	end
 	return
 end
 
