@@ -6061,11 +6061,14 @@ run(function()
     local AttackSync
     local SyncAir
     local Notify
+    local HealthThreshold
+    local TeleportHeight
 
     local realroot, clone, hip, realCanCollide = nil, nil, 2.5, true
     local hiding, hideUntil, syncUntil, standDownUntil = false, 0, 0, 0
     local lastWarn = 0
     local lowestPoint = -9e9
+    local teleportCycling = false
     local groundRay = RaycastParams.new()
     groundRay.RespectCanCollide = true
     groundRay.FilterType = Enum.RaycastFilterType.Exclude
@@ -6205,6 +6208,28 @@ run(function()
                         if realroot then giveBack() end
                         return
                     end
+                    -- Teleport mode is an emergency fall loop rather than a hitbox desync. Keep
+                    -- launching while health is critical; landing between launches gives health
+                    -- regeneration a chance to end the cycle naturally.
+                    if Mode.Value == 'Teleport' then
+                        if realroot then giveBack() end
+                        local humanoid, root = entitylib.character.Humanoid, entitylib.character.RootPart
+                        if humanoid.Health >= HealthThreshold.Value then
+                            teleportCycling = false
+                            return
+                        end
+                        if not isnetworkowner(root) then return end
+                        local landed = humanoid.FloorMaterial ~= Enum.Material.Air
+                        if not teleportCycling or landed then
+                            teleportCycling = true
+                            root.CFrame = CFrame.new(root.Position.X, TeleportHeight.Value, root.Position.Z) * root.CFrame.Rotation
+                            root.AssemblyLinearVelocity = Vector3.zero
+                            humanoid:ChangeState(Enum.HumanoidStateType.Freefall)
+                        end
+                        return
+                    end
+                    teleportCycling = false
+
                     -- Somebody else (AntiDeath) owns the hitbox: keep out of its way entirely.
                     if store.rootpart and realroot == nil then return end
 
@@ -6278,14 +6303,36 @@ run(function()
     })
     Mode = GodMode:CreateDropdown({
         Name = 'Mode',
-        List = {'Offset', 'Under map'},
+        List = {'Offset', 'Under map', 'Teleport'},
         Default = 'Offset',
         Tooltip = 'Offset - hitbox a few studs off your body, small enough to pass for jitter so it can be held longer\nUnder map - parked below the world, unreachable but a big lie, so keep hide time short',
         Function = function(val)
             pcall(function()
                 Offset.Object.Visible = val == 'Offset'
+                HealthThreshold.Object.Visible = val == 'Teleport'
+                TeleportHeight.Object.Visible = val == 'Teleport'
             end)
         end
+    })
+    HealthThreshold = GodMode:CreateSlider({
+        Name = 'Health threshold',
+        Min = 1,
+        Max = 99,
+        Default = 35,
+        Suffix = ' HP',
+        Darker = true,
+        Visible = false,
+        Tooltip = 'Teleport mode starts its fall cycle below this health and stops as soon as health recovers to it'
+    })
+    TeleportHeight = GodMode:CreateSlider({
+        Name = 'Safe height',
+        Min = 80,
+        Max = 300,
+        Default = 180,
+        Suffix = ' studs',
+        Darker = true,
+        Visible = false,
+        Tooltip = 'Absolute Y level used for each launch; kept below the usual excessive-height damage zone'
     })
     Offset = GodMode:CreateSlider({
         Name = 'Offset',
@@ -7264,6 +7311,144 @@ run(function()
     })
 end)
 
+-- InfiniteFly keeps a server-owned body alive over the void. Camera Cycle separates the camera
+-- body from the falling hitbox; the other modes provide lower-impact alternatives for servers
+-- which reject large vertical cycles.
+run(function()
+    local Mode
+    local Height
+    local ResetY
+    local Speed
+    local cycleRoot, cameraRoot, savedCameraSubject
+    local transparencies = {}
+    local pulseAt, pulseReturn = 0, nil
+
+    local function visible(value)
+        if not lplr.Character then return end
+        for _, part in lplr.Character:GetDescendants() do
+            if part:IsA('BasePart') or part:IsA('Decal') then
+                if value == false and transparencies[part] == nil then
+                    transparencies[part] = part.Transparency
+                end
+                part.Transparency = value and (transparencies[part] or 0) or 1
+            end
+        end
+        if value then table.clear(transparencies) end
+    end
+
+    local function releaseCycle()
+        pcall(function()
+            if cycleRoot and cycleRoot.Parent and lplr.Character then
+                lplr.Character.Parent = replicatedStorage
+                cycleRoot.Parent = lplr.Character
+                if cameraRoot then
+                    cycleRoot.CFrame = cameraRoot.CFrame
+                    cycleRoot.AssemblyLinearVelocity = cameraRoot.AssemblyLinearVelocity
+                    cameraRoot:Destroy()
+                end
+                lplr.Character.PrimaryPart = cycleRoot
+                entitylib.character.RootPart = cycleRoot
+                entitylib.character.HumanoidRootPart = cycleRoot
+                lplr.Character.Parent = workspace
+            end
+        end)
+        if store.rootpart == cycleRoot then store.rootpart = nil end
+        cycleRoot, cameraRoot = nil, nil
+        visible(true)
+        if gameCamera and savedCameraSubject then gameCamera.CameraSubject = savedCameraSubject end
+        savedCameraSubject = nil
+    end
+
+    local function takeCycle()
+        if store.rootpart or not entitylib.isAlive or not lplr.Character then return false end
+        cycleRoot = entitylib.character.HumanoidRootPart
+        transparencies[cycleRoot] = cycleRoot.Transparency
+        lplr.Character.Parent = replicatedStorage
+        cameraRoot = cycleRoot:Clone()
+        cameraRoot.Name = 'HumanoidRootPart'
+        cameraRoot.Anchored = true
+        cameraRoot.Parent = lplr.Character
+        cycleRoot.Parent = workspace
+        cycleRoot.Transparency = 1
+        store.rootpart = cycleRoot
+        lplr.Character.PrimaryPart = cameraRoot
+        entitylib.character.RootPart = cameraRoot
+        entitylib.character.HumanoidRootPart = cameraRoot
+        lplr.Character.Parent = workspace
+        savedCameraSubject = gameCamera.CameraSubject
+        gameCamera.CameraSubject = entitylib.character.Humanoid
+        visible(false)
+        return true
+    end
+
+    InfiniteFly = vape.Categories.Blatant:CreateModule({
+        Name = 'InfiniteFly',
+        Function = function(callback)
+            frictionTable.InfiniteFly = callback or nil
+            updateVelocity()
+            if callback then
+                pulseAt, pulseReturn = 0, nil
+                InfiniteFly:Clean(function() releaseCycle() end)
+                InfiniteFly:Clean(runService.PreSimulation:Connect(function(dt)
+                    if not entitylib.isAlive then
+                        if cycleRoot then releaseCycle() end
+                        return
+                    end
+                    local mode = Mode.Value
+                    if mode ~= 'Camera Cycle' and cycleRoot then releaseCycle() end
+                    if mode == 'Camera Cycle' then
+                        if not cycleRoot and not takeCycle() then return end
+                        if not (cycleRoot and cycleRoot.Parent and isnetworkowner(cycleRoot)) then return end
+                        local move = entitylib.character.Humanoid.MoveDirection
+                        local velocity = move * Speed.Value
+                        cameraRoot.CFrame += Vector3.new(velocity.X * dt, 0, velocity.Z * dt)
+                        cycleRoot.AssemblyLinearVelocity = Vector3.new(velocity.X, cycleRoot.AssemblyLinearVelocity.Y, velocity.Z)
+                        if cycleRoot.Position.Y <= ResetY.Value then
+                            cycleRoot.CFrame = CFrame.new(cameraRoot.Position.X, Height.Value, cameraRoot.Position.Z) * cycleRoot.CFrame.Rotation
+                            cycleRoot.AssemblyLinearVelocity = Vector3.new(velocity.X, 0, velocity.Z)
+                        end
+                    else
+                        local root = entitylib.character.RootPart
+                        if not isnetworkowner(root) then return end
+                        local move = entitylib.character.Humanoid.MoveDirection * Speed.Value
+                        if mode == 'Velocity' then
+                            -- A small alternating vertical velocity avoids a sustained flight signature.
+                            local y = tick() % 0.8 < 0.4 and 2.1 or -2.1
+                            root.AssemblyLinearVelocity = Vector3.new(move.X, y, move.Z)
+                        else
+                            -- Briefly touch the last ground plane, then return. The long interval keeps
+                            -- horizontal travel smooth while periodically refreshing grounded state.
+                            if pulseReturn then
+                                root.CFrame = pulseReturn
+                                pulseReturn = nil
+                                pulseAt = tick() + 1.25
+                            elseif tick() >= pulseAt then
+                                pulseReturn = root.CFrame
+                                root.CFrame = CFrame.new(root.Position.X, ResetY.Value, root.Position.Z) * root.CFrame.Rotation
+                            end
+                            root.AssemblyLinearVelocity = Vector3.new(move.X, 0, move.Z)
+                        end
+                    end
+                end))
+            else
+                releaseCycle()
+                pulseReturn = nil
+            end
+        end,
+        ExtraText = function() return Mode.Value end,
+        Tooltip = 'Crosses the void indefinitely using a repeating fall cycle or one of two low-impact movement methods'
+    })
+    Mode = InfiniteFly:CreateDropdown({
+        Name = 'Mode',
+        List = {'Camera Cycle', 'Ground Pulse', 'Velocity'},
+        Default = 'Camera Cycle',
+        Tooltip = 'Camera Cycle - hides the character while its hitbox repeatedly falls\nGround Pulse - periodically refreshes grounded state\nVelocity - alternates a small vertical velocity'
+    })
+    Height = InfiniteFly:CreateSlider({Name = 'Cycle height', Min = 80, Max = 300, Default = 180, Suffix = ' studs'})
+    ResetY = InfiniteFly:CreateSlider({Name = 'Reset Y', Min = -300, Max = 50, Default = -80, Suffix = ' studs'})
+    Speed = InfiniteFly:CreateSlider({Name = 'Speed', Min = 1, Max = 23, Default = 20, Suffix = ' studs/s'})
+end)
+
 run(function()
     local Mode
     local Expand
@@ -7492,6 +7677,102 @@ run(function()
         end,
         Tooltip = 'Lets you sprint with a speed potion'
     })
+end)
+
+-- InfiniteAura extends the normal aura by moving a network-owned root into ordinary sword range
+-- for one server sample. Pull mode is available for NPCs/players whose root ownership is delegated
+-- to this client; Roblox does not allow a client to force ownership of arbitrary remote players.
+run(function()
+    local InfiniteAura
+    local Mode
+    local Range
+    local Delay
+    local MaxTargets
+    local Targets
+    local AttackRemote = {FireServer = function() end}
+    task.spawn(function()
+        AttackRemote = bedwars.Client:Get(remotes.AttackEntity).instance
+    end)
+
+    local function strike(ent, sword, selfPosition)
+        local targetRoot = ent.Character and ent.Character.PrimaryPart or ent.RootPart
+        if not targetRoot then return end
+        local direction = CFrame.lookAt(selfPosition, targetRoot.Position).LookVector
+        bedwars.SwordController.lastAttack = workspace:GetServerTimeNow()
+        bedwars.SwordController:playSwordEffect(bedwars.ItemMeta[sword.tool.Name], false)
+        AttackRemote:FireServer({
+            weapon = sword.tool,
+            chargedAttack = {chargeRatio = 0},
+            entityInstance = ent.Character,
+            validate = {
+                raycast = {
+                    cameraPosition = {value = selfPosition},
+                    cursorDirection = {value = direction}
+                },
+                targetPosition = {value = targetRoot.Position},
+                selfPosition = {value = selfPosition}
+            }
+        })
+    end
+
+    InfiniteAura = vape.Categories.Blatant:CreateModule({
+        Name = 'InfiniteAura',
+        Function = function(callback)
+            if callback then
+                repeat
+                    if entitylib.isAlive and not store.rootpart then
+                        local sword = store.tools.sword
+                        local root = entitylib.character.RootPart
+                        if sword and sword.tool and isnetworkowner(root) then
+                            local targets = entitylib.AllPosition({
+                                Range = Range.Value,
+                                Part = 'RootPart',
+                                Players = Targets.Players.Enabled,
+                                NPCs = Targets.NPCs.Enabled,
+                                Wallcheck = Targets.Walls.Enabled or nil,
+                                Limit = MaxTargets.Value,
+                                Sort = sortmethods.Distance
+                            })
+                            for _, ent in targets do
+                                if not InfiniteAura.Enabled or not ent.RootPart then break end
+                                targetinfo.Targets[ent] = tick() + 1
+                                local old = root.CFrame
+                                if Mode.Value == 'Teleport to target' then
+                                    local offset = ent.RootPart.CFrame.LookVector * -3
+                                    root.CFrame = CFrame.lookAt(ent.RootPart.Position + offset, ent.RootPart.Position)
+                                    root.AssemblyLinearVelocity = Vector3.zero
+                                    runService.Heartbeat:Wait()
+                                    strike(ent, sword, root.Position)
+                                    runService.Heartbeat:Wait()
+                                    if root and root.Parent then root.CFrame = old end
+                                elseif isnetworkowner(ent.RootPart) then
+                                    local targetOld = ent.RootPart.CFrame
+                                    ent.RootPart.CFrame = root.CFrame + root.CFrame.LookVector * 3
+                                    runService.Heartbeat:Wait()
+                                    strike(ent, sword, root.Position)
+                                    ent.RootPart.CFrame = targetOld
+                                end
+                                task.wait(Delay.Value)
+                            end
+                        end
+                    end
+                    task.wait()
+                until not InfiniteAura.Enabled
+            end
+        end,
+        ExtraText = function() return Mode.Value end,
+        Tooltip = 'Continuously teleports into sword range of distant targets, or pulls targets you network-own to you'
+    })
+    Targets = InfiniteAura:CreateTargets({Players = true, NPCs = true})
+    Mode = InfiniteAura:CreateDropdown({
+        Name = 'Teleport mode',
+        List = {'Teleport to target', 'Pull target'},
+        Default = 'Teleport to target',
+        Tooltip = 'Pull target only works when Roblox has given your client network ownership of that target'
+    })
+    Range = InfiniteAura:CreateSlider({Name = 'Range', Min = 15, Max = 500, Default = 150, Suffix = ' studs'})
+    Delay = InfiniteAura:CreateSlider({Name = 'Target delay', Min = 0.05, Max = 1, Default = 0.15, Decimal = 100, Suffix = ' seconds'})
+    MaxTargets = InfiniteAura:CreateSlider({Name = 'Max targets', Min = 1, Max = 10, Default = 3})
 end)
 
 run(function()
