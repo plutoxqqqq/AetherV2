@@ -77,6 +77,9 @@ end
 -- have a real Visuals tab, but `old` and `rise` don't - so alias Visuals -> Render there, which
 -- every theme has. Without this, moving a module to Visuals (e.g. ChillLighting) would make it,
 -- and the other Visuals modules, silently disappear on those themes.
+if vape.Categories and not vape.Categories.Kits then
+    vape.Categories.Kits = vape.Categories.Utility
+end
 if vape.Categories and not vape.Categories.Visuals then
 	vape.Categories.Visuals = vape.Categories.Render
 end
@@ -2515,10 +2518,10 @@ run(function()
     local ShopQuickBuy
     local HoldDelay
     local CPS
-    
+
     local holding = false
     local clickThread
-    
+
     local function getShopId()
         if not entitylib.isAlive then return nil end
         local localPosition = entitylib.character.RootPart.Position
@@ -2530,7 +2533,7 @@ run(function()
         end
         return id
     end
-    
+
     local function getHoveredItem()
         local mousepos = (inputService:GetMouseLocation() - guiService:GetGuiInset())
         for _, v in lplr.PlayerGui:GetGuiObjectsAtPosition(mousepos.X, mousepos.Y) do
@@ -2544,7 +2547,7 @@ run(function()
             end
         end
     end
-    
+
     local function canBuy(item)
         if item.ignoredByKit and table.find(item.ignoredByKit, store.equippedKit or '') then return false end
         if item.lockedByForge or item.disabled then return false end
@@ -2556,13 +2559,13 @@ run(function()
         local currency = getItem(item.currency)
         return (currency and currency.amount or 0) >= item.price
     end
-    
+
     local function purchase(itemType, shopId)
         if bedwars.BedwarsShopController.alreadyPurchasedMap[itemType] ~= nil then return end
-    
+
         local item = bedwars.Shop.getShopItem(itemType, lplr, {shopId = shopId})
         if not item or not canBuy(item) then return end
-    
+
         bedwars.Client:Get('BedwarsPurchaseItem'):CallServerAsync({
             shopItem = item,
             shopId = shopId
@@ -2578,7 +2581,7 @@ run(function()
             end
         end)
     end
-    
+
     local function startClicking(itemType)
         if clickThread then
             task.cancel(clickThread)
@@ -2594,7 +2597,7 @@ run(function()
             clickThread = nil
         end)
     end
-    
+
     ShopQuickBuy = vape.Categories.Combat:CreateModule({
         Name = 'ShopClicker',
         Function = function(callback)
@@ -2602,10 +2605,10 @@ run(function()
                 ShopQuickBuy:Clean(inputService.InputBegan:Connect(function(input)
                     if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
                     if not bedwars.AppController:isAppOpen('BedwarsItemShopApp') then return end
-    
+
                     local itemType = getHoveredItem()
                     if not itemType then return end
-    
+
                     holding = true
                     task.delay(HoldDelay.Value, function()
                         if holding and getHoveredItem() == itemType then
@@ -2613,7 +2616,7 @@ run(function()
                         end
                     end)
                 end))
-    
+
                 ShopQuickBuy:Clean(inputService.InputEnded:Connect(function(input)
                     if input.UserInputType == Enum.UserInputType.MouseButton1 then
                         holding = false
@@ -2645,7 +2648,7 @@ run(function()
         Darker = true
     })
 end)
-													
+
 run(function()
     local SilentAura
     local Targets
@@ -6781,7 +6784,7 @@ run(function()
         return false
     end
 
-    AutoKaida = vape.Categories.Blatant:CreateModule({
+    AutoKaida = vape.Categories.Kits:CreateModule({
         Name = 'AutoKaida',
         Function = function(callback)
             if callback then
@@ -7042,7 +7045,7 @@ run(function()
         return character:GetAttribute("GrimReaperChannel") == true
     end
 
-    ReaperFix = vape.Categories.Exploits:CreateModule({
+    ReaperFix = vape.Categories.Kits:CreateModule({
         Name = "ReaperBypass",
         Function = function(callback)
             if not callback then
@@ -7355,7 +7358,7 @@ end)
 run(function()
     local InfiniteShield
 
-    InfiniteShield = vape.Categories.Blatant:CreateModule({
+    InfiniteShield = vape.Categories.Kits:CreateModule({
         Name = 'InfiniteShield',
         Patched = 'Patched by server-side shield validation.',
         Function = function(callback)
@@ -7522,12 +7525,45 @@ run(function()
     local AnimationTween
     local Limit
     local LegitAura
+    local FastHits
+    local Whitelist
+    local Legit
+    local FireRate
 	local Particles, Boxes = {}, {}
     local anims, AnimDelay, AnimTween, armC0 = vape.Libraries.auraanims, tick()
 	local AttackRemote = {FireServer = function() end}
     task.spawn(function()
 		AttackRemote = bedwars.Client:Get(remotes.AttackEntity).instance
                 end)
+	local projectileRemote = bedwars.Handler:Get('ProjectileFire')
+	local fastHitPending, lastShot, projectileIndex = nil, 0, 0
+    local FireRates = {}
+    local function getAmmo(check)
+        for _, item in store.inventory.inventory.items do
+            if check.ammoItemTypes and table.find(check.ammoItemTypes, item.itemType) then
+                return item.itemType
+            end
+        end
+        return nil
+    end
+    local function getProjectiles()
+        local items = {}
+        for _, item in store.inventory.inventory.items do
+            local data = bedwars.ItemMeta[item.itemType]
+            local proj = data and data.projectileSource
+            local ammo = proj and getAmmo(proj)
+            if ammo and (table.find(Whitelist.ListEnabled, ammo) or table.find(Whitelist.ListEnabled, item.itemType)) then
+                table.insert(items, {
+                    item,
+                    ammo,
+                    proj.projectileType(ammo),
+                    proj
+                })
+            end
+        end
+        return items
+    end
+
 
     local function getAttackData()
         if Mouse.Enabled then
@@ -7722,6 +7758,76 @@ run(function()
 											selfPosition = {value = pos}
 										}
 									})
+                                    if FastHits.Enabled and not fastHitPending and tick() > lastShot and not entitylib.Wallcheck(entitylib.character.RootPart.Position, actualRoot.Position, {gameCamera, lplr.Character, v.Character}) then
+                                        local projectiles = getProjectiles()
+                                        if #projectiles > 0 then
+                                            projectileIndex += 1
+                                            if not projectiles[projectileIndex] then
+                                                projectileIndex = 1
+                                            end
+
+                                            local item, ammo, projectile, itemMeta = unpack(projectiles[projectileIndex])
+                                            if (tick() - store.total.ping) > (FireRates[item.itemType] or 0) then
+                                            local projmeta = bedwars.ProjectileMeta[projectile]
+                                            if not projmeta or type(projmeta.launchVelocity) ~= 'number' then continue end
+                                                local projSpeed, gravity = projmeta.launchVelocity, projmeta.gravitationalAcceleration or 196.2
+                                                local oldhotbar, oldtool = store.inventory.hotbarSlot, store.hand.tool
+                                                local hotbar = getHotbar(item.tool)
+                                                if hotbar then
+                                                    switchItem(item.tool)
+                                                    if Legit.Enabled then
+                                                        hotbarSwitch(hotbar)
+                                                    end
+                                                end
+
+                                                local targetPosition = v.RootPart.Position
+                                                local shootPosition = (CFrame.new(selfpos, targetPosition) * CFrame.new(Vector3.new(-bedwars.BowConstantsTable.RelX, -bedwars.BowConstantsTable.RelY, -bedwars.BowConstantsTable.RelZ))).Position
+                                                local calc = prediction.SolveTrajectory(shootPosition, projSpeed, gravity, targetPosition, v.RootPart.AssemblyLinearVelocity, workspace.Gravity, v.HipHeight, v.Jumping and 42.6 or nil, nil, v.Humanoid.FloorMaterial == Enum.Material.Air or math.abs(v.RootPart.AssemblyLinearVelocity.Y) > 0.01, v.RootPart.Position, v.RootPart, nil, true)
+                                                if calc then
+                                                    local sdir, id = CFrame.lookAt(shootPosition, calc).LookVector, httpService:GenerateGUID(true)
+
+                                                    bedwars.ProjectileController:createLocalProjectile(itemMeta, ammo, projectile, shootPosition, id, sdir * projSpeed, {drawDurationSeconds = 1})
+                                                    fastHitPending = true
+                                                    FireRates[item.itemType] = tick() + (itemMeta.fireDelaySec or 0.1)
+                                                    lastShot = tick() + FireRate.Value
+                                                    task.spawn(function()
+                                                        local res = projectileRemote:Fire('CallServer',
+                                                            item.tool,
+                                                            ammo,
+                                                            projectile,
+                                                            shootPosition,
+                                                            pos,
+                                                            sdir * projSpeed,
+                                                            id,
+                                                            {
+                                                                drawDurationSeconds = 1,
+                                                                shotId = httpService:GenerateGUID(false)
+                                                            },
+                                                            workspace:GetServerTimeNow() - (store.ping.total / 10)
+                                                        )
+                                                        fastHitPending = false
+                                                        if res and typeof(res) == 'Instance' and res.Parent then
+                                                            res.Parent = replicatedStorage
+                                                            local shoot = itemMeta.launchSound
+                                                            shoot = shoot and shoot[math.random(1, #shoot)] or nil
+                                                            if shoot then
+                                                                bedwars.SoundManager:playSound(shoot)
+                                                            end
+                                                        end
+                                                    end)
+                                                end
+                                                if oldtool then
+                                                    switchItem(oldtool)
+                                                end
+                                                task.spawn(function()
+                                                    if Legit.Enabled then
+                                                        hotbarSwitch(oldhotbar)
+                                                    end
+                                                end)
+                                            end
+                                        end
+                                    end
+                                end
                                     end
                             end
                         end
@@ -7831,6 +7937,40 @@ run(function()
     Sort = Killaura:CreateDropdown({
         Name = 'Target Mode',
         List = methods
+    })
+    FastHits = Killaura:CreateToggle({
+        Name = 'Fast Hits',
+        Default = false,
+        Function = function(callback)
+            pcall(function()
+                Legit.Object.Visible = callback
+                FireRate.Object.Visible = callback
+                Whitelist.Object.Visible = callback
+            end)
+        end,
+        Tooltip = 'Deals more damage quicker using projectiles'
+    })
+    Whitelist = Killaura:CreateTextList({
+        Name = 'Projectiles',
+        Default = {'arrow', 'snowball'},
+        Darker = true,
+        Visible = false,
+        Tooltip = 'Projectiles to use for fasthits'
+    })
+    Legit = Killaura:CreateToggle({
+        Name = 'Legit Switch',
+        Darker = true,
+        Visible = false
+    })
+    FireRate = Killaura:CreateSlider({
+        Name = 'Fire rate',
+        Suffix = 'seconds',
+        Min = 0,
+        Max = 2,
+        Decimal = 100,
+        Darker = true,
+        Visible = false,
+        Default = 0.05
     })
     Mouse = Killaura:CreateToggle({Name = 'Require mouse down'})
 	Attackable = Killaura:CreateToggle({Name = 'Attackable check'})
@@ -9000,7 +9140,7 @@ run(function()
         return meta
     end
 
-    OwlAura = vape.Categories.Blatant:CreateModule({
+    OwlAura = vape.Categories.Kits:CreateModule({
         Name = 'OwlAura',
         Function = function(callback)
             if callback then
@@ -10067,7 +10207,7 @@ run(function()
 
     local old
 
-    TerraAimbot = vape.Categories.Blatant:CreateModule({
+    TerraAimbot = vape.Categories.Kits:CreateModule({
         Name = 'TerraAimbot',
         Function = function(callback)
             if callback then
@@ -10123,7 +10263,7 @@ run(function()
     local Range
     local Sort
 
-    VulcanAimbot = vape.Categories.Blatant:CreateModule({
+    VulcanAimbot = vape.Categories.Kits:CreateModule({
         Name = 'VulcanAimbot',
         Function = function(callback)
             if callback then
@@ -14797,7 +14937,7 @@ run(function()
 
     local rayCheck = RaycastParams.new()
 
-    AutoLasso = vape.Categories.Utility:CreateModule({
+    AutoLasso = vape.Categories.Kits:CreateModule({
         Name = 'AutoLasso',
         Function = function(callback)
             if callback then
@@ -15348,7 +15488,7 @@ run(function()
     end
 
 
-    TritonClutch = vape.Categories.Utility:CreateModule({
+    TritonClutch = vape.Categories.Kits:CreateModule({
 	Name = 'TritonClutch',
 	Function = function(callback)
 		if callback then
@@ -15995,6 +16135,35 @@ run(function()
     overlap.FilterType = Enum.RaycastFilterType.Include
 
     local Checks = {
+        Speed = function()
+            local histories = {}
+            repeat
+                if store.ping.incoming > 0.5 then
+                    task.wait(0.2)
+                    table.clear(histories)
+                    continue
+                end
+                for _, entity in entitylib.List do
+                    if entity.Player and entity.Player ~= lplr then
+                        local history = histories[entity.Player]
+                        if not history or tick() > history.Time then
+                            local position = entity.RootPart.Position * Vector3.new(1, 0, 1)
+                            if history and history.Delta and (workspace:GetServerTimeNow() - (entity.Player:GetAttribute('LastTeleported') or 0)) > 0.4 then
+                                if ((position - history.Position) / history.Delta).Magnitude > 23 then
+                                    Added(entity.Player, 'Speed')
+                                end
+                            end
+                            histories[entity.Player] = {Time = tick() + 0.2, Position = position}
+                            task.spawn(function()
+                                local current = histories[entity.Player]
+                                if current then current.Delta = task.wait(0.2) end
+                            end)
+                        end
+                    end
+                end
+                task.wait()
+            until not CheatDetector.Enabled
+        end,
         Killaura = function()
             local AttackData = {}
             local Strikes = {}
@@ -16258,7 +16427,7 @@ run(function()
 	local AutoKit
 	local Legit
 	local Toggles = {}
-	
+
 	local function kitCollection(id, func, range, specific)
 		local objs = type(id) == 'table' and id or collection(id, AutoKit)
 		repeat
@@ -16275,8 +16444,23 @@ run(function()
 			task.wait(0.1)
 		until not AutoKit.Enabled
 	end
-	
+
 	local AutoKitFunctions = {
+		jack = function()
+			local controller = bedwars.JackController or bedwars.OilBlobController
+			repeat
+				if controller then
+					-- Jack stores the client-side oil throw gate as timestamps/cooldowns.
+					-- Clearing both known variants keeps the ability ready without
+					-- mutating unrelated kit controllers.
+					controller.lastThrow = 0
+					controller.lastOilThrow = 0
+					controller.cooldown = 0
+				end
+				task.wait()
+			until not AutoKit.Enabled or store.equippedKit ~= 'jack'
+		end,
+
 		battery = function()
 			repeat
 				if entitylib.isAlive then
@@ -16316,10 +16500,10 @@ run(function()
 					Players = true,
 					Wallcheck = true
 				})
-	
+
 				if plr then
 					local calc = prediction.SolveTrajectory(origin, 100, 20, plr.RootPart.Position, plr.RootPart.Velocity, workspace.Gravity, plr.HipHeight, plr.Jumping and 42.6 or nil)
-	
+
 					if calc then
 						for i, v in debug.getstack(2) do
 							if v == dir then
@@ -16328,10 +16512,10 @@ run(function()
 						end
 					end
 				end
-	
+
 				return old(...)
 			end
-	
+
 			AutoKit:Clean(function()
 				bedwars.BlockKickerKitController.getKickBlockProjectileOriginPosition = old
 			end)
@@ -16342,7 +16526,7 @@ run(function()
 				vapeEvents.CatPounce:Fire()
 				return old(...)
 			end
-	
+
 			AutoKit:Clean(function()
 				bedwars.CatController.leap = old
 			end)
@@ -16352,14 +16536,14 @@ run(function()
 			bedwars.CannonHandController.launchSelf = function(...)
 				local res = {old(...)}
 				local self, block = ...
-	
+
 				if block:GetAttribute('PlacedByUserId') == lplr.UserId and (block.Position - entitylib.character.RootPart.Position).Magnitude < 30 then
 					task.spawn(bedwars.breakBlock, block, false, nil, true)
 				end
-	
+
 				return unpack(res)
 			end
-	
+
 			AutoKit:Clean(function()
 				bedwars.CannonHandController.launchSelf = old
 			end)
@@ -16386,7 +16570,7 @@ run(function()
 			bedwars.FishingMinigameController.startMinigame = function(_, _, result)
 				result({win = true})
 			end
-	
+
 			AutoKit:Clean(function()
 				bedwars.FishingMinigameController.startMinigame = old
 			end)
@@ -16396,16 +16580,16 @@ run(function()
 			bedwars.LaunchPadController.attemptLaunch = function(...)
 				local res = {old(...)}
 				local self, block = ...
-	
+
 				if (workspace:GetServerTimeNow() - self.lastLaunch) < 0.4 then
 					if block:GetAttribute('PlacedByUserId') == lplr.UserId and (block.Position - entitylib.character.RootPart.Position).Magnitude < 30 then
 						task.spawn(bedwars.breakBlock, block, false, nil, true)
 					end
 				end
-	
+
 				return unpack(res)
 			end
-	
+
 			AutoKit:Clean(function()
 				bedwars.LaunchPadController.attemptLaunch = old
 			end)
@@ -16416,7 +16600,7 @@ run(function()
 					user = lplr,
 					victimEntity = v
 				}) and v:FindFirstChild('Hannah Execution Icon')
-	
+
 				if billboard then
 					billboard:Destroy()
 				end
@@ -16450,13 +16634,13 @@ run(function()
 						end
 					end
 				end
-	
+
 				if ent and getItem('guitar') then
 					bedwars.Handler:Get('GuitarHeal'):Fire('SendToServer', {
 						healTarget = ent.Character
 					})
 				end
-	
+
 				task.wait(0.1)
 			until not AutoKit.Enabled
 		end,
@@ -16499,26 +16683,26 @@ run(function()
 					Players = true,
 					Sort = sortmethods.Health
 				})
-	
+
 				if plr and (not Legit.Enabled or (lplr.Character:GetAttribute('Health') or 0) > 0) then
 					local localPosition = entitylib.character.RootPart.Position
 					local shootDir = CFrame.lookAt(localPosition, plr.RootPart.Position).LookVector
 					localPosition += shootDir * math.max((localPosition - plr.RootPart.Position).Magnitude - 16, 0)
-	
+
 					bedwars.Handler:Get('SummonerClawAttackRequest'):Fire('SendToServer', {
 						position = localPosition,
 						direction = shootDir,
 						clientTime = workspace:GetServerTimeNow()
 					})
 				end
-	
+
 				task.wait(0.1)
 			until not AutoKit.Enabled
 		end,
 		void_dragon = function()
 			local oldflap = bedwars.VoidDragonController.flapWings
 			local flapped
-	
+
 			bedwars.VoidDragonController.flapWings = function(self)
 				if not flapped and bedwars.Handler:Get('DragonFlap'):Fire('CallServer') then
 					local modifier = bedwars.SprintController:getMovementStatusModifier():addModifier({
@@ -16532,11 +16716,11 @@ run(function()
 					flapped = true
 				end
 			end
-	
+
 			AutoKit:Clean(function()
 				bedwars.VoidDragonController.flapWings = oldflap
 			end)
-	
+
 			repeat
 				if bedwars.VoidDragonController.inDragonForm then
 					local plr = entitylib.EntityPosition({
@@ -16544,7 +16728,7 @@ run(function()
 						Part = 'RootPart',
 						Players = true
 					})
-	
+
 					if plr then
 						bedwars.Handler:Get('DragonBreath'):Fire('SendToServer', {
 							player = lplr,
@@ -16565,7 +16749,7 @@ run(function()
 						Players = true,
 						NPCs = true
 					})
-	
+
 					if plr and plr.Character ~= lastTarget then
 						if not bedwars.Handler:Get('WarlockLinkTarget'):Fire('CallServer', {
 							target = plr.Character
@@ -16573,12 +16757,12 @@ run(function()
 							plr = nil
 						end
 					end
-	
+
 					lastTarget = plr and plr.Character
 				else
 					lastTarget = nil
 				end
-	
+
 				task.wait(0.1)
 			until not AutoKit.Enabled
 		end,
@@ -16592,18 +16776,18 @@ run(function()
 						Players = true,
 						Sort = sortmethods.Health
 					})
-	
+
 					if plr then
 						bedwars.AbilityController:useAbility(ability, newproxy(true), {target = plr.RootPart.Position})
 					end
 				end
-	
+
 				task.wait(0.1)
 			until not AutoKit.Enabled
 		end
 	}
-	
-	AutoKit = vape.Categories.Utility:CreateModule({
+
+	AutoKit = vape.Categories.Kits:CreateModule({
 		Name = 'AutoKit',
 		Function = function(callback)
 			if callback then
@@ -16625,7 +16809,7 @@ run(function()
 	end)
 	for _, v in sortTable do
 		Toggles[v] = AutoKit:CreateToggle({
-			Name = bedwars.BedwarsKitMeta[v].name,
+			Name = v == 'jack' and 'Infinite Jack' or bedwars.BedwarsKitMeta[v].name,
 			Default = true
 		})
 	end
@@ -20603,421 +20787,338 @@ run(function()
 end)
 
 run(function()
-    local AutoBuy
-    local Sword
-    local Armor
-    local Upgrades
-    local TierCheck
-    local BedwarsCheck
-    local GUI
-    local SmartCheck
-    local Custom = {}
-    local CustomPost = {}
-    local UpgradeToggles = {}
-    local Functions, id = {}
-    local Callbacks = {Custom, Functions, CustomPost}
-    local npctick = tick()
+	local AutoBuy
+	local Sword
+	local Armor
+	local Upgrades
+	local TierCheck
+	local BedwarsCheck
+	local GUI
+	local SmartCheck
+	local Custom = {}
+	local CustomPost = {}
+	local UpgradeToggles = {}
+	local Functions, id = {}
+	local Callbacks = {Custom, Functions, CustomPost}
+	local npctick = tick()
 
-    local swords = {
-        'wood_sword',
-        'stone_sword',
-        'iron_sword',
-        'diamond_sword',
-        'emerald_sword'
-    }
+	local swords = {
+		'wood_sword',
+		'stone_sword',
+		'iron_sword',
+		'diamond_sword',
+		'emerald_sword'
+	}
 
-    local armors = {
-        'none',
-        'leather_chestplate',
-        'iron_chestplate',
-        'diamond_chestplate',
-        'emerald_chestplate'
-    }
+	local armors = {
+		'none',
+		'leather_chestplate',
+		'iron_chestplate',
+		'diamond_chestplate',
+		'emerald_chestplate'
+	}
 
-    local axes = {
-        'none',
-        'wood_axe',
-        'stone_axe',
-        'iron_axe',
-        'diamond_axe'
-    }
+	local axes = {
+		'none',
+		'wood_axe',
+		'stone_axe',
+		'iron_axe',
+		'diamond_axe'
+	}
 
-    local pickaxes = {
-        'none',
-        'wood_pickaxe',
-        'stone_pickaxe',
-        'iron_pickaxe',
-        'diamond_pickaxe'
-    }
+	local pickaxes = {
+		'none',
+		'wood_pickaxe',
+		'stone_pickaxe',
+		'iron_pickaxe',
+		'diamond_pickaxe'
+	}
 
-    -- Bows and crossbows are not a tier ladder like swords or armour, and their item ids differ
-    -- between BedWars builds/queues, so they are resolved by name first and then by asking the
-    -- shop's own item list what it actually sells.
-    local bows = {'wood_bow', 'bow'}
-    local crossbows = {'crossbow', 'wood_crossbow', 'ice_crossbow'}
+	local function getShopNPC()
+		local shop, items, upgrades, newid = nil, false, false, nil
+		if entitylib.isAlive then
+			local localPosition = entitylib.character.RootPart.Position
+			for _, v in store.shop do
+				if (v.RootPart.Position - localPosition).Magnitude <= 20 then
+					shop = v.Upgrades or v.Shop or nil
+					upgrades = upgrades or v.Upgrades
+					items = items or v.Shop
+					newid = v.Shop and v.Id or newid
+				end
+			end
+		end
+		return shop, items, upgrades, newid
+	end
 
-    local function resolveShopItem(candidates, pattern, exclude)
-        for _, name in candidates do
-            local ok, item = pcall(bedwars.Shop.getShopItem, name, lplr)
-            if ok and item then return item, name end
-        end
-        if not pattern then return nil end
-        local found, foundType
-        pcall(function()
-            for _, entry in bedwars.Shop.ShopItems do
-                local itemType = type(entry) == 'table' and entry.itemType or nil
-                if itemType and itemType:find(pattern) and not (exclude and itemType:find(exclude)) then
-                    if not found or (entry.price or math.huge) < (found.price or math.huge) then
-                        found, foundType = entry, itemType
-                    end
-                end
-            end
-        end)
-        return found, foundType
-    end
+	local function canBuy(item, currencytable, amount)
+		amount = amount or 1
+		if not currencytable[item.currency] then
+			local currency = getItem(item.currency)
+			currencytable[item.currency] = currency and currency.amount or 0
+		end
+		if item.ignoredByKit and table.find(item.ignoredByKit, store.equippedKit or '') then return false end
+		if item.lockedByForge or item.disabled then return false end
+		if item.require and item.require.teamUpgrade then
+			if (bedwars.Store:getState().Bedwars.teamUpgrades[item.require.teamUpgrade.upgradeId] or -1) < item.require.teamUpgrade.lowestTierIndex then
+				return false
+			end
+		end
+		return currencytable[item.currency] >= (item.price * amount)
+	end
 
-    local function getShopNPC()
-        local shop, items, upgrades, newid = nil, false, false, nil
-        if entitylib.isAlive then
-            local localPosition = entitylib.character.RootPart.Position
-            for _, v in store.shop do
-                if (v.RootPart.Position - localPosition).Magnitude <= 20 then
-                    shop = v.Upgrades or v.Shop or nil
-                    upgrades = upgrades or v.Upgrades
-                    items = items or v.Shop
-                    newid = v.Shop and v.Id or newid
-                end
-            end
-        end
-        return shop, items, upgrades, newid
-    end
+	local function buyItem(item, currencytable)
+		if not id then return end
+		notif('AutoBuy', 'Bought '..bedwars.ItemMeta[item.itemType].displayName, 3)
+		bedwars.Handler:Get('BedwarsPurchaseItem'):Fire('CallServerAsync', {
+			shopItem = item,
+			shopId = id
+		}):andThen(function(suc)
+			if suc then
+				bedwars.SoundManager:playSound(bedwars.SoundList.BEDWARS_PURCHASE_ITEM)
+				bedwars.Store:dispatch({
+					type = 'BedwarsAddItemPurchased',
+					itemType = item.itemType
+				})
+				bedwars.BedwarsShopController.alreadyPurchasedMap[item.itemType] = true
+			end
+		end)
+		currencytable[item.currency] -= item.price
+	end
 
-    local function canBuy(item, currencytable, amount)
-        amount = amount or 1
-        if not currencytable[item.currency] then
-            local currency = getItem(item.currency)
-            currencytable[item.currency] = currency and currency.amount or 0
-        end
-        if item.ignoredByKit and table.find(item.ignoredByKit, store.equippedKit or '') then return false end
-        if item.lockedByForge or item.disabled then return false end
-        if item.require and item.require.teamUpgrade then
-            if (bedwars.Store:getState().Bedwars.teamUpgrades[item.require.teamUpgrade.upgradeId] or -1) < item.require.teamUpgrade.lowestTierIndex then
-                return false
-            end
-        end
-        return currencytable[item.currency] >= (item.price * amount)
-    end
+	local function buyUpgrade(upgradeType, currencytable)
+		if not Upgrades.Enabled then return end
+		local upgrade = bedwars.TeamUpgradeMeta[upgradeType]
+		local currentUpgrades = bedwars.Store:getState().Bedwars.teamUpgrades[lplr:GetAttribute('Team')] or {}
+		local currentTier = (currentUpgrades[upgradeType] or 0) + 1
+		local bought = false
 
-    local function buyItem(item, currencytable)
-        if not id then return end
-        notif('AutoBuy', 'Bought '..bedwars.ItemMeta[item.itemType].displayName, 3)
-        bedwars.Client:Get('BedwarsPurchaseItem'):CallServerAsync({
-            shopItem = item,
-            shopId = id
-        }):andThen(function(suc)
-            if suc then
-                bedwars.SoundManager:playSound(bedwars.SoundList.BEDWARS_PURCHASE_ITEM)
-                bedwars.Store:dispatch({
-                    type = 'BedwarsAddItemPurchased',
-                    itemType = item.itemType
-                })
-                bedwars.BedwarsShopController.alreadyPurchasedMap[item.itemType] = true
-            end
-        end)
-        currencytable[item.currency] -= item.price
-    end
+		for i = currentTier, #upgrade.tiers do
+			local tier = upgrade.tiers[i]
+			if tier.availableOnlyInQueue and not table.find(tier.availableOnlyInQueue, store.queueType) then continue end
 
-    local function buyUpgrade(upgradeType, currencytable)
-        if not Upgrades.Enabled then return end
-        local upgrade = bedwars.TeamUpgradeMeta[upgradeType]
-        local currentUpgrades = bedwars.Store:getState().Bedwars.teamUpgrades[lplr:GetAttribute('Team')] or {}
-        local currentTier = (currentUpgrades[upgradeType] or 0) + 1
-        local bought = false
+			if canBuy({currency = 'diamond', price = tier.cost}, currencytable) then
+				notif('AutoBuy', 'Bought '..(upgrade.name == 'Armor' and 'Protection' or upgrade.name)..' '..i, 3)
+				bedwars.Handler:Get('RequestPurchaseTeamUpgrade'):Fire('CallServerAsync', upgradeType)
+				currencytable.diamond -= tier.cost
+				bought = true
+			else
+				break
+			end
+		end
 
-        for i = currentTier, #upgrade.tiers do
-            local tier = upgrade.tiers[i]
-            if tier.availableOnlyInQueue and not table.find(tier.availableOnlyInQueue, store.queueType) then continue end
+		return bought
+	end
 
-            if canBuy({currency = 'diamond', price = tier.cost}, currencytable) then
-                notif('AutoBuy', 'Bought '..(upgrade.name == 'Armor' and 'Protection' or upgrade.name)..' '..i, 3)
-                bedwars.Client:Get('RequestPurchaseTeamUpgrade'):CallServerAsync(upgradeType)
-                currencytable.diamond -= tier.cost
-                bought = true
-            else
-                break
-            end
-        end
+	local function buyTool(tool, tools, currencytable)
+		local bought, buyable = false
+		tool = tool and table.find(tools, tool.itemType) and table.find(tools, tool.itemType) + 1 or math.huge
 
-        return bought
-    end
+		for i = tool, #tools do
+			local v = bedwars.Shop.getShopItem(tools[i], lplr)
+			if canBuy(v, currencytable) then
+				if SmartCheck.Enabled and bedwars.ItemMeta[tools[i]].breakBlock and i > 2 then
+					if Armor.Enabled then
+						local currentarmor = store.inventory.inventory.armor[2]
+						currentarmor = currentarmor and currentarmor ~= 'empty' and currentarmor.itemType or 'none'
+						if (table.find(armors, currentarmor) or 3) < 3 then break end
+					end
+					if Sword.Enabled then
+						if store.tools.sword and (table.find(swords, store.tools.sword.itemType) or 2) < 2 then break end
+					end
+				end
+				bought = true
+				buyable = v
+			end
+			if TierCheck.Enabled and v.nextTier then break end
+		end
 
-    local function buyTool(tool, tools, currencytable)
-        local bought, buyable = false
-        tool = tool and table.find(tools, tool.itemType) and table.find(tools, tool.itemType) + 1 or math.huge
+		if buyable then
+			buyItem(buyable, currencytable)
+		end
 
-        for i = tool, #tools do
-            local v = bedwars.Shop.getShopItem(tools[i], lplr)
-            if canBuy(v, currencytable) then
-                if SmartCheck.Enabled and bedwars.ItemMeta[tools[i]].breakBlock and i > 2 then
-                    if Armor.Enabled then
-                        local currentarmor = store.inventory.inventory.armor[2]
-                        currentarmor = currentarmor and currentarmor ~= 'empty' and currentarmor.itemType or 'none'
-                        if (table.find(armors, currentarmor) or 3) < 3 then break end
-                    end
-                    if Sword.Enabled then
-                        if store.tools.sword and (table.find(swords, store.tools.sword.itemType) or 2) < 2 then break end
-                    end
-                end
-                bought = true
-                buyable = v
-            end
-            -- Tier checking only permits the immediate successor. Otherwise having enough of a
-            -- later tier's currency can skip an unaffordable prerequisite (for example, buying
-            -- diamond armour while still wearing leather because iron armour costs iron).
-            if TierCheck.Enabled then break end
-        end
+		return bought
+	end
 
-        if buyable then
-            buyItem(buyable, currencytable)
-        end
+	AutoBuy = vape.Categories.Inventory:CreateModule({
+		Name = 'AutoBuy',
+		Function = function(callback)
+			if callback then
+				repeat task.wait() until store.queueType ~= 'bedwars_test'
+				if BedwarsCheck.Enabled and not store.queueType:find('bedwars') then return end
 
-        return bought
-    end
+				local lastupgrades
+				AutoBuy:Clean(vapeEvents.InventoryAmountChanged.Event:Connect(function()
+					if (npctick - tick()) > 1 then npctick = tick() end
+				end))
 
-    -- Buy the first of `candidates` this shop sells, unless we already hold it. `repeatable` is for
-    -- consumables (arrows), which are topped up even though one is already in the inventory.
-    local function buyWeapon(candidates, currencytable, repeatable)
-        local pattern, exclude
-        if candidates == bows then
-            pattern, exclude = 'bow', 'crossbow'
-        elseif candidates == crossbows then
-            pattern = 'crossbow'
-        end
-        local item, itemType = resolveShopItem(candidates, pattern, exclude)
-        if not item then return false end
-        if not repeatable and itemType and getItem(itemType) then return false end
-        if not canBuy(item, currencytable) then return false end
-        buyItem(item, currencytable)
-        return true
-    end
+				repeat
+					local npc, shop, upgrades, newid = getShopNPC()
+					id = newid
+					if GUI.Enabled then
+						if not (bedwars.AppController:isAppOpen('BedwarsItemShopApp') or bedwars.AppController:isAppOpen('TeamUpgradeApp')) then
+							npc = nil
+						end
+					end
 
-    AutoBuy = vape.Categories.Inventory:CreateModule({
-        Name = 'AutoBuy',
-        Function = function(callback)
-            if callback then
-                repeat task.wait() until store.queueType ~= 'bedwars_test'
-                if BedwarsCheck.Enabled and not store.queueType:find('bedwars') then return end
+					if npc and lastupgrades ~= upgrades then
+						if (npctick - tick()) > 1 then npctick = tick() end
+						lastupgrades = upgrades
+					end
 
-                local lastupgrades
-                AutoBuy:Clean(vapeEvents.InventoryAmountChanged.Event:Connect(function()
-                    if (npctick - tick()) > 1 then npctick = tick() end
-                end))
+					if npc and npctick <= tick() and store.matchState ~= 2 and store.shopLoaded then
+						local currencytable = {}
+						local waitcheck
+						for _, tab in Callbacks do
+							for _, callback in tab do
+								if callback(currencytable, shop, upgrades) then
+									waitcheck = true
+								end
+							end
+						end
+						npctick = tick() + (waitcheck and 0.4 or math.huge)
+					end
 
-                repeat
-                    local npc, shop, upgrades, newid = getShopNPC()
-                    id = newid
-                    if GUI.Enabled then
-                        if not (bedwars.AppController:isAppOpen('BedwarsItemShopApp') or bedwars.AppController:isAppOpen('TeamUpgradeApp')) then
-                            npc = nil
-                        end
-                    end
+					task.wait(0.1)
+				until not AutoBuy.Enabled
+			else
+				npctick = tick()
+			end
+		end,
+		Tooltip = 'Automatically buys items when you go near the shop'
+	})
+	Sword = AutoBuy:CreateToggle({
+		Name = 'Buy Sword',
+		Function = function(callback)
+			npctick = tick()
+			Functions[2] = callback and function(currencytable, shop)
+				if not shop then return end
 
-                    if npc and lastupgrades ~= upgrades then
-                        if (npctick - tick()) > 1 then npctick = tick() end
-                        lastupgrades = upgrades
-                    end
+				if store.equippedKit == 'dasher' then
+					swords = {
+						[1] = 'wood_dao',
+						[2] = 'stone_dao',
+						[3] = 'iron_dao',
+						[4] = 'diamond_dao',
+						[5] = 'emerald_dao'
+					}
+				elseif store.equippedKit == 'ice_queen' then
+					swords[5] = 'ice_sword'
+				elseif store.equippedKit == 'ember' then
+					swords[5] = 'infernal_saber'
+				elseif store.equippedKit == 'lumen' then
+					swords[5] = 'light_sword'
+				end
 
-                    if npc and npctick <= tick() and store.matchState ~= 2 and store.shopLoaded then
-                        local currencytable = {}
-                        local waitcheck
-                        for _, tab in Callbacks do
-                            for _, callback in tab do
-                                if callback(currencytable, shop, upgrades) then
-                                    waitcheck = true
-                                end
-                            end
-                        end
-                        npctick = tick() + (waitcheck and 0.4 or math.huge)
-                    end
+				return buyTool(store.tools.sword, swords, currencytable)
+			end or nil
+		end
+	})
+	Armor = AutoBuy:CreateToggle({
+		Name = 'Buy Armor',
+		Function = function(callback)
+			npctick = tick()
+			Functions[1] = callback and function(currencytable, shop)
+				if not shop then return end
+				local currentarmor = store.inventory.inventory.armor[2] ~= 'empty' and store.inventory.inventory.armor[2] or getBestArmor(1)
+				currentarmor = currentarmor and currentarmor.itemType or 'none'
+				return buyTool({itemType = currentarmor}, armors, currencytable)
+			end or nil
+		end,
+		Default = true
+	})
+	AutoBuy:CreateToggle({
+		Name = 'Buy Axe',
+		Function = function(callback)
+			npctick = tick()
+			Functions[3] = callback and function(currencytable, shop)
+				if not shop then return end
+				return buyTool(store.tools.wood or {itemType = 'none'}, axes, currencytable)
+			end or nil
+		end
+	})
+	AutoBuy:CreateToggle({
+		Name = 'Buy Pickaxe',
+		Function = function(callback)
+			npctick = tick()
+			Functions[4] = callback and function(currencytable, shop)
+				if not shop then return end
+				return buyTool(store.tools.stone, pickaxes, currencytable)
+			end or nil
+		end
+	})
+	Upgrades = AutoBuy:CreateToggle({
+		Name = 'Buy Upgrades',
+		Function = function(callback)
+			for _, v in UpgradeToggles do
+				v.Object.Visible = callback
+			end
+		end,
+		Default = true
+	})
+	local count = 0
+	for i, v in bedwars.TeamUpgradeMeta do
+		local toggleCount = count
+		table.insert(UpgradeToggles, AutoBuy:CreateToggle({
+			Name = 'Buy '..(v.name == 'Armor' and 'Protection' or v.name),
+			Function = function(callback)
+				npctick = tick()
+				Functions[5 + toggleCount + (v.name == 'Armor' and 20 or 0)] = callback and function(currencytable, shop, upgrades)
+					if not upgrades then return end
+					if v.disabledInQueue and table.find(v.disabledInQueue, store.queueType) then return end
+					return buyUpgrade(i, currencytable)
+				end or nil
+			end,
+			Darker = true,
+			Default = (i == 'ARMOR' or i == 'DAMAGE')
+		}))
+		count += 1
+	end
+	TierCheck = AutoBuy:CreateToggle({Name = 'Tier Check'})
+	BedwarsCheck = AutoBuy:CreateToggle({
+		Name = 'Only Bedwars',
+		Function = function()
+			if AutoBuy.Enabled then
+				AutoBuy:Toggle()
+				AutoBuy:Toggle()
+			end
+		end,
+		Default = true
+	})
+	GUI = AutoBuy:CreateToggle({Name = 'GUI check'})
+	SmartCheck = AutoBuy:CreateToggle({
+		Name = 'Smart check',
+		Default = true,
+		Tooltip = 'Buys iron armor before iron axe'
+	})
+	AutoBuy:CreateTextList({
+		Name = 'Item',
+		Placeholder = 'priority/item/amount/after',
+		Function = function(list)
+			table.clear(Custom)
+			table.clear(CustomPost)
+			for _, entry in list do
+				local tab = entry:split('/')
+				local ind = tonumber(tab[1])
+				if ind then
+					(tab[4] and CustomPost or Custom)[ind] = function(currencytable, shop)
+						if not shop then return end
 
-                    task.wait(0.1)
-                until not AutoBuy.Enabled
-            else
-                npctick = tick()
-            end
-        end,
-        Tooltip = 'Automatically buys items when you go near the shop'
-    })
-    Sword = AutoBuy:CreateToggle({
-        Name = 'Buy Sword',
-        Function = function(callback)
-            npctick = tick()
-            Functions[2] = callback and function(currencytable, shop)
-                if not shop then return end
-
-                if store.equippedKit == 'dasher' then
-                    swords = {
-                        [1] = 'wood_dao',
-                        [2] = 'stone_dao',
-                        [3] = 'iron_dao',
-                        [4] = 'diamond_dao',
-                        [5] = 'emerald_dao'
-                    }
-                elseif store.equippedKit == 'ice_queen' then
-                    swords[5] = 'ice_sword'
-                elseif store.equippedKit == 'ember' then
-                    swords[5] = 'infernal_saber'
-                elseif store.equippedKit == 'lumen' then
-                    swords[5] = 'light_sword'
-                end
-
-                return buyTool(store.tools.sword, swords, currencytable)
-            end or nil
-        end
-    })
-    Armor = AutoBuy:CreateToggle({
-        Name = 'Buy Armor',
-        Function = function(callback)
-            npctick = tick()
-            Functions[1] = callback and function(currencytable, shop)
-                if not shop then return end
-                local currentarmor = store.inventory.inventory.armor[2] ~= 'empty' and store.inventory.inventory.armor[2] or getBestArmor(1)
-                currentarmor = currentarmor and currentarmor.itemType or 'none'
-                return buyTool({itemType = currentarmor}, armors, currencytable)
-            end or nil
-        end,
-        Default = true
-    })
-    AutoBuy:CreateToggle({
-        Name = 'Buy Axe',
-        Function = function(callback)
-            npctick = tick()
-            Functions[3] = callback and function(currencytable, shop)
-                if not shop then return end
-                return buyTool(store.tools.wood or {itemType = 'none'}, axes, currencytable)
-            end or nil
-        end
-    })
-    AutoBuy:CreateToggle({
-        Name = 'Buy Pickaxe',
-        Function = function(callback)
-            npctick = tick()
-            Functions[4] = callback and function(currencytable, shop)
-                if not shop then return end
-                return buyTool(store.tools.stone, pickaxes, currencytable)
-            end or nil
-        end
-    })
-    AutoBuy:CreateToggle({
-        Name = 'Buy Bow',
-        Function = function(callback)
-            npctick = tick()
-            Functions[40] = callback and function(currencytable, shop)
-                if not shop then return end
-                return buyWeapon(bows, currencytable)
-            end or nil
-        end
-    })
-    AutoBuy:CreateToggle({
-        Name = 'Buy Crossbow',
-        Function = function(callback)
-            npctick = tick()
-            Functions[41] = callback and function(currencytable, shop)
-                if not shop then return end
-                return buyWeapon(crossbows, currencytable)
-            end or nil
-        end
-    })
-    AutoBuy:CreateToggle({
-        Name = 'Buy Arrows',
-        Default = true,
-        Darker = true,
-        Tooltip = 'Also keep a stack of arrows in for whichever of the two you bought',
-        Function = function(callback)
-            npctick = tick()
-            Functions[42] = callback and function(currencytable, shop)
-                if not shop then return end
-                -- Only worth arrows once something that fires them is actually in the inventory.
-                if not getBow() then return end
-                local arrows = getItem('arrow')
-                if arrows and (arrows.amount or 0) >= 8 then return end
-                return buyWeapon({'arrow'}, currencytable, true)
-            end or nil
-        end
-    })
-    Upgrades = AutoBuy:CreateToggle({
-        Name = 'Buy Upgrades',
-        Function = function(callback)
-            for _, v in UpgradeToggles do
-                v.Object.Visible = callback
-            end
-        end,
-        Default = true
-    })
-    local count = 0
-    for i, v in bedwars.TeamUpgradeMeta do
-        local toggleCount = count
-        table.insert(UpgradeToggles, AutoBuy:CreateToggle({
-            Name = 'Buy '..(v.name == 'Armor' and 'Protection' or v.name),
-            Function = function(callback)
-                npctick = tick()
-                Functions[5 + toggleCount + (v.name == 'Armor' and 20 or 0)] = callback and function(currencytable, shop, upgrades)
-                    if not upgrades then return end
-                    if v.disabledInQueue and table.find(v.disabledInQueue, store.queueType) then return end
-                    return buyUpgrade(i, currencytable)
-                end or nil
-            end,
-            Darker = true,
-            Default = (i == 'ARMOR' or i == 'DAMAGE')
-        }))
-        count += 1
-    end
-    TierCheck = AutoBuy:CreateToggle({Name = 'Tier Check'})
-    BedwarsCheck = AutoBuy:CreateToggle({
-        Name = 'Only Bedwars',
-        Function = function()
-            if AutoBuy.Enabled then
-                AutoBuy:Toggle()
-                AutoBuy:Toggle()
-            end
-        end,
-        Default = true
-    })
-    GUI = AutoBuy:CreateToggle({Name = 'GUI check'})
-    SmartCheck = AutoBuy:CreateToggle({
-        Name = 'Smart check',
-        Default = true,
-        Tooltip = 'Buys iron armor before iron axe'
-    })
-    AutoBuy:CreateTextList({
-        Name = 'Item',
-        Placeholder = 'priority/item/amount/after',
-        Function = function(list)
-            table.clear(Custom)
-            table.clear(CustomPost)
-            for _, entry in list do
-                local tab = entry:split('/')
-                local ind = tonumber(tab[1])
-                if ind then
-                    (tab[4] and CustomPost or Custom)[ind] = function(currencytable, shop)
-                        if not shop then return end
-
-                        local v = bedwars.Shop.getShopItem(tab[2], lplr)
-                        if v then
-                            local item = getItem(tab[2] == 'wool_white' and bedwars.Shop.getTeamWool(lplr:GetAttribute('Team')) or tab[2])
-                            item = (item and tonumber(tab[3]) - item.amount or tonumber(tab[3])) // v.amount
-                            if item > 0 and canBuy(v, currencytable, item) then
-                                for _ = 1, item do
-                                    buyItem(v, currencytable)
-                                end
-                                return true
-                            end
-                        end
-                    end
-                end
-            end
-        end
-    })
+						local v = bedwars.Shop.getShopItem(tab[2], lplr)
+						if v then
+							local item = getItem(tab[2] == 'wool_white' and bedwars.Shop.getTeamWool(lplr:GetAttribute('Team')) or tab[2])
+							item = (item and tonumber(tab[3]) - item.amount or tonumber(tab[3])) // v.amount
+							if item > 0 and canBuy(v, currencytable, item) then
+								for _ = 1, item do
+									buyItem(v, currencytable)
+								end
+								return true
+							end
+						end
+					end
+				end
+			end
+		end
+	})
 end)
 
 run(function()
@@ -25874,7 +25975,7 @@ end)
 
 run(function()
 	local GrimReaperFix
-	GrimReaperFix = vape.Categories.Utility:CreateModule({
+	GrimReaperFix = vape.Categories.Kits:CreateModule({
 		Name = 'GrimReaperFix',
 		Function = function(callback)
 			if callback then
@@ -28023,13 +28124,13 @@ run(function()
 	local Delay
 	local Animation
 	local Range
-	
+
 	-- The native Miner prompt only reaches six studs. This used to call
 	-- getFunctionRange(), but that helper does not exist in this game module, so
 	-- the registration callback errored before CreateModule could run and
 	-- AutoMiner never appeared in the menu.
 	local Legit = 6
-	
+
 	AutoMiner = vape.Categories.Minigames:CreateModule({
 	    Name = 'AutoMiner',
 	    Function = function(callback)
@@ -28059,7 +28160,7 @@ run(function()
 	        end
 	    end
 	})
-	
+
 	Range = AutoMiner:CreateSlider({
 	    Name = 'Range',
 	    Min = 1,
