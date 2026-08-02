@@ -49,9 +49,6 @@ local lplr = playersService.LocalPlayer
 local assetfunction = getcustomasset
 
 local vape = shared.vape
-if vape.Categories and not vape.Categories.Kits then
-    vape.Categories.Kits = vape.Categories.Utility
-end
 local entitylib = vape.Libraries.entity
 local targetinfo = vape.Libraries.targetinfo
 local sessioninfo = vape.Libraries.sessioninfo
@@ -17016,7 +17013,7 @@ run(function()
         end
     }
     
-    AutoKit = vape.Categories.Kits:CreateModule({
+    AutoKit = vape.Categories.Utility:CreateModule({
         Name = 'AutoKit',
         Function = function(callback)
             if callback then
