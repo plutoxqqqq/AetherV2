@@ -5507,65 +5507,37 @@ run(function()
     })
 end)
 
--- Krystal Disabler (ported from the BedFight module). Krystal (the GlacialSkater kit) skates
--- on momentum; the server periodically corrects the client, which reads as a lagback. We hook
--- the controller's own updateMomentum so momentum is always reported maxed, and suppress the
--- local CFrame/Velocity correction listeners so the skate never snaps back. Fails gracefully
--- (notif + untoggle) if this game doesn't expose the Krystal controller.
+-- Preserve momentum the player has actually earned. Momentum determines Krystal's speed, so
+-- assigning an arbitrary "maximum" here also creates an unintended speed boost.
 run(function()
     local KrystalDisabler
     local oldUpdateMomentum
     local momentumRemote
-    local patchedSignals = setmetatable({}, {__mode = 'k'})
-    local targetMomentum = 9e9
+    local preservedMomentum
 
     local function getController()
         return bedwars and bedwars.GlacialSkaterController
     end
 
-    local function setKrystalMomentum(controller)
+    local function preserveKrystalMomentum(controller)
         controller = controller or getController()
         if not controller then return end
-        controller.momentum = targetMomentum
-        controller.lastMomentumReport = targetMomentum
-        if momentumRemote then
+
+        local currentMomentum = controller.momentum
+        if type(currentMomentum) ~= 'number' then return end
+        if preservedMomentum == nil or currentMomentum > preservedMomentum then
+            preservedMomentum = currentMomentum
+            return
+        end
+        if currentMomentum < preservedMomentum then
+            controller.momentum = preservedMomentum
+            controller.lastMomentumReport = preservedMomentum
+        end
+        if currentMomentum < preservedMomentum and momentumRemote then
             pcall(function()
-                momentumRemote:SendToServer({momentumValue = targetMomentum})
+                momentumRemote:SendToServer({momentumValue = preservedMomentum})
             end)
         end
-    end
-
-    local function patchMovementSignal(signal)
-        if not signal or not getconnections or not hookfunction then return end
-        for _, connection in getconnections(signal) do
-            local func = connection and connection.Function
-            if func and patchedSignals[func] == nil then
-                -- Keep the original hookfunction returns so we can restore it on toggle-off.
-                -- Store `false` if the hook itself failed, so cleanup never tries to restore
-                -- something we never actually replaced.
-                local ok, original = pcall(hookfunction, func, function() end)
-                patchedSignals[func] = (ok and original) or false
-            end
-        end
-    end
-
-    -- Undo every movement-signal hook we installed, handing each listener its original
-    -- function back so the client's correction listeners work normally again after disable.
-    local function restoreSignals()
-        for func, original in pairs(patchedSignals) do
-            if type(original) == 'function' then
-                pcall(hookfunction, func, original)
-            end
-        end
-        table.clear(patchedSignals)
-    end
-
-    local function patchCharacter(character)
-        local root = character and character.RootPart
-        if not root then return end
-        patchMovementSignal(root:GetPropertyChangedSignal('CFrame'))
-        patchMovementSignal(root:GetPropertyChangedSignal('Velocity'))
-        patchMovementSignal(root:GetPropertyChangedSignal('AssemblyLinearVelocity'))
     end
 
     KrystalDisabler = vape.Categories.Exploits:CreateModule({
@@ -5580,36 +5552,29 @@ run(function()
                 end
 
                 momentumRemote = bedwars.Client and bedwars.Client:Get('MomentumUpdate')
+                preservedMomentum = type(controller.momentum) == 'number' and controller.momentum or nil
                 if not oldUpdateMomentum then
                     oldUpdateMomentum = controller.updateMomentum
                     controller.updateMomentum = function(self, ...)
-                        setKrystalMomentum(self)
                         local result = oldUpdateMomentum(self, ...)
-                        setKrystalMomentum(self)
+                        preserveKrystalMomentum(self)
                         return result
                     end
                 end
 
                 KrystalDisabler:Clean(runService.PreSimulation:Connect(function()
-                    setKrystalMomentum(getController())
+                    preserveKrystalMomentum(getController())
                 end))
-
-                KrystalDisabler:Clean(entitylib.Events.LocalAdded:Connect(patchCharacter))
-                if entitylib.isAlive then
-                    patchCharacter(entitylib.character)
-                end
-                setKrystalMomentum(controller)
-                pcall(controller.updateMomentum, controller)
             else
                 if controller and oldUpdateMomentum then
                     controller.updateMomentum = oldUpdateMomentum
                 end
                 oldUpdateMomentum = nil
                 momentumRemote = nil
-                restoreSignals()
+                preservedMomentum = nil
             end
         end,
-        Tooltip = 'Removes Krystal lagbacks: keeps momentum reported maxed and suppresses the local movement-correction listeners so the skate never snaps back'
+        Tooltip = 'Prevents your earned Krystal momentum from decreasing without increasing your speed'
     })
 end)
 
