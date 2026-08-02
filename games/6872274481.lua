@@ -7525,11 +7525,17 @@ run(function()
 	local AnimationTween
 	local Limit
 	local LegitAura
+	local FastHits
+	local Whitelist
+	local Legit
+	local FireRate
 	local Particles, Boxes = {}, {}
 	local anims, AnimDelay, AnimTween, armC0 = vape.Libraries.auraanims, tick()
-	local AttackRemote = {FireServer = function() end}
+	-- Keep harmless stand-ins until Flamework has finished resolving the remotes. Killaura can
+	-- be enabled during injection, before the spawned resolver below gets a chance to run.
+	local AttackRemote = {Fire = function() end}
 	local projectileRemote = bedwars.Handler:Get('ProjectileFire')
-	local fastHitPending, lastShot = nil, 0
+	local fastHitPending, lastShot, projectileIndex = nil, 0, 0
 	task.spawn(function()
 		AttackRemote = bedwars.Handler:Get('SwordHit')
 	end)
@@ -7554,6 +7560,7 @@ run(function()
 		if not sword or not sword.tool then return false end
 
 		local meta = bedwars.ItemMeta[sword.tool.Name]
+		if not meta then return false end
 		if Limit.Enabled then
 			if store.hand.toolType ~= 'sword' or bedwars.DaoController.chargingMaid then return false end
 		end
@@ -7580,7 +7587,7 @@ run(function()
 			local data = bedwars.ItemMeta[item.itemType]
 			local proj = data and data.projectileSource
 			local ammo = proj and getAmmo(proj)
-			if ammo and (table.find(Whitelist.ListEnabled, ammo) or table.find(Whitelist.ListEnabled, item.itemType) or table.find(Projectiles.ListEnabled, data.displayName)) then
+			if ammo and (table.find(Whitelist.ListEnabled, ammo) or table.find(Whitelist.ListEnabled, item.itemType)) then
 				table.insert(items, {
 					item,
 					ammo,
@@ -7603,20 +7610,21 @@ run(function()
 			table.remove(lastvelos[ent], 1)
 		end
 
+		local history = lastvelos[ent]
 		local newvelo, velo = root.AssemblyLinearVelocity, Vector3.zero
-		for _, v in lastvelos[ent] do
+		for _, v in history do
 			velo += v
 		end
-		local delta = #lastvelos * (1/60)
-		table.insert(lastvelos[ent], newvelo)
-		if delta <= 0 then
-			return velo
+		local samples = #history
+		table.insert(history, newvelo)
+		if samples == 0 then
+			return Vector3.zero
 		end
-		return (newvelo - (velo / (#lastvelos - 1)))
+		return newvelo - (velo / samples)
 	end
 	local function getPosition(ent, root)
 		local multi, pos = getMultiplier(ent, root), root.Position + (root.AssemblyLinearVelocity * (store.ping.total))
-		if #lastvelos > 1 then
+		if #lastvelos[ent] > 1 then
 			pos = pos + (0.5 * multi * (store.ping.total * store.ping.total))
 		end
 		return pos
@@ -7706,8 +7714,10 @@ run(function()
 
 							for _, v in plrs do
 								local delta = (v.RootPart.Position - selfpos)
-								local angle = math.acos(localfacing:Dot((delta * Vector3.new(1, 0, 1)).Unit))
+								local horizontal = delta * Vector3.new(1, 0, 1)
+								local angle = horizontal.Magnitude > 0 and math.acos(math.clamp(localfacing:Dot(horizontal.Unit), -1, 1)) or 0
 								if angle > (math.rad(AngleSlider.Value) / 2) then continue end
+								if v.Humanoid.FloorMaterial == Enum.Material.Air and math.random(1, 100) > ChanceSlider.Value then continue end
 
 								table.insert(attacked, {
 									Entity = v,
@@ -7768,7 +7778,7 @@ run(function()
 											end
 
 											local item, ammo, projectile, itemMeta = unpack(projectiles[projectileIndex])
-											if (tick() - store.total.ping) > (FireRates[item.itemType] or 0) then
+											if tick() > (FireRates[item.itemType] or 0) then
 											local projmeta = bedwars.ProjectileMeta[projectile]
 											if not projmeta or type(projmeta.launchVelocity) ~= 'number' then continue end
 												local projSpeed, gravity = projmeta.launchVelocity, projmeta.gravitationalAcceleration or 196.2
@@ -7792,7 +7802,7 @@ run(function()
 													FireRates[item.itemType] = tick() + (itemMeta.fireDelaySec or 0.1)
 													lastShot = tick() + FireRate.Value
 													task.spawn(function()
-														local res = projectileRemote:Fire('CallServer',
+														local ok, res = pcall(projectileRemote.Fire, projectileRemote, 'CallServer',
 															item.tool,
 															ammo,
 															projectile,
@@ -7807,7 +7817,7 @@ run(function()
 															workspace:GetServerTimeNow() - (store.ping.total / 10)
 														)
 														fastHitPending = false
-														if res and typeof(res) == 'Instance' and res.Parent then
+														if ok and res and typeof(res) == 'Instance' and res.Parent then
 															res.Parent = replicatedStorage
 															local shoot = itemMeta.launchSound
 															shoot = shoot and shoot[math.random(1, #shoot)] or nil
