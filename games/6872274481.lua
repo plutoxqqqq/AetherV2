@@ -2727,10 +2727,44 @@ run(function()
     local SwingTime
     local Perfect
     local FaceTarget
+    local Dynamic
 
     local Show
     local Targetcolor
     local Attackcolor
+
+    --[[
+        Hit pacing, taken from idk's SilentAura - the one place its implementation was clearly
+        ahead of this one. Aether's aura had no attack gate at all: it fired the hit remote on
+        every frame the target was in range, which the server throws away and which reads as
+        obviously machine-driven. Every hit now waits for the sword's own swing cooldown.
+
+        Dynamic hits replaces that with a delay scaled by how close the target is - a hit sent
+        early from far away is the one the server is most likely to reject, so at range the
+        delay stretches out and up close it tightens.
+    ]]
+    local lastHit = 0
+
+    local function dynamicHitDelay(ent, meta)
+        local delay = ((meta.displayName and meta.displayName:find(' Chainsaw')) and 0.11 or 0.29) + 0.03
+        local distance = math.min(14.4, (entitylib.character.RootPart.Position - ent.RootPart.Position).Magnitude)
+        return delay * distance / 14.4
+    end
+
+    local function readyToHit(ent, sword, meta)
+        if Dynamic.Enabled then
+            return (tick() - lastHit) >= dynamicHitDelay(ent, meta)
+        end
+        local ok, remaining = pcall(function()
+            return bedwars.SwordController:getRemainingSwingCooldown(sword.tool.Name)
+        end)
+        if ok and type(remaining) == 'number' then
+            return remaining <= 0
+        end
+        -- The controller does not expose the cooldown in this build. Fall back to the swing
+        -- time the module is already configured with rather than to no gate at all.
+        return (tick() - lastHit) >= (Perfect.Enabled and ((meta.sword and meta.sword.attackSpeed) or 0.11) or math.max(SwingTime.Value, 0.11))
+    end
 
     local function getAttackData()
         if not entitylib.isAlive then
@@ -2895,6 +2929,11 @@ run(function()
                             end
                             lastattacked = tick()
 
+                            if not readyToHit(ent, sword, meta) then
+                                continue
+                            end
+                            lastHit = tick()
+
                             local dir = CFrame.lookAt(localPosition, ent.RootPart.Position).LookVector
                             local pos = localPosition + dir * math.max(delta.Magnitude - 14.4, 0)
                             bedwars.SwordController.lastAttack = workspace:GetServerTimeNow()
@@ -2908,7 +2947,10 @@ run(function()
                                         cursorDirection = {value = dir},
                                     },
                                     targetPosition = {
-                                        value = ent.RootPart.Position,
+                                        -- The character's pivot rather than the root part's
+                                        -- position: it is what the server resolves the hit
+                                        -- against, so it is what should be reported.
+                                        value = ent.Character:GetPivot().Position,
                                     },
                                     selfPosition = {value = pos},
                                 },
@@ -2999,6 +3041,10 @@ run(function()
         Default = true,
     })
     Mouse = SilentAura:CreateToggle({Name = 'Require mouse down'})
+    Dynamic = SilentAura:CreateToggle({
+        Name = 'Dynamic hits',
+        Tooltip = 'Times each hit off how far away the target is instead of the sword\'s swing cooldown. Close range hits sooner, long range waits longer so the server is less likely to throw the hit away'
+    })
     LegitAura = SilentAura:CreateToggle({Name = 'Swing only'})
     SilentAim = SilentAura:CreateToggle({
         Name = 'Silent Aim',
@@ -16376,6 +16422,11 @@ run(function()
     -- Switching targets needs a mouse movement. Landing on a different player inside this is the
     -- one killaura signature that cannot be produced by clicking quickly.
     local SWITCH_WINDOW = 0.25
+    -- Sustained-rate signal from idk's detector. One hit this fast proves nothing - people do
+    -- click at this pace - so it only counts as a run: BURST_HITS of them inside BURST_MEMORY.
+    local BURST_INTERVAL = 0.28
+    local BURST_HITS = 3
+    local BURST_MEMORY = 60
     -- Reach has to be over by this much before it counts. Under it we are arguing with our own
     -- interpolation, not with the player.
     local REACH_SLACK = 1.5
@@ -16401,23 +16452,25 @@ run(function()
         return count
     end
 
-    local function Added(player, reason)
+    local function Added(player, reason, detail)
         if not CheatersFlagged[player] then
             CheatersFlagged[player] = true
             whitelist.customtags[player.Name] = {{text = 'CHEATER', color = Color3.new(1, 0, 0)}}
-            notif('CheatDetector', `{player.Name} flagged for {reason:lower()}`, 10, 'alert')
+            -- Say what was actually measured, not just which check fired. A flag you cannot
+            -- sanity-check yourself is a flag you have to take on trust.
+            notif('CheatDetector', `{player.Name} flagged for {reason:lower()}{detail and ' ('..detail..')' or ''}`, 10, 'alert')
         end
     end
 
     -- One strike is an oddity, several is a pattern. Nothing reaches Added until the pattern is
     -- there, and the threshold is the one thing the user gets to tune.
-    local function strike(plr, reason, label)
+    local function strike(plr, reason, label, detail)
         if not plr or plr == lplr or CheatersFlagged[plr] then return end
         strikes[plr] = strikes[plr] or {}
         strikes[plr][reason] = strikes[plr][reason] or {}
         table.insert(strikes[plr][reason], tick())
         if strikeCount(plr, reason) >= MinStrikes.Value then
-            Added(plr, label or reason)
+            Added(plr, label or reason, detail)
         end
     end
 
@@ -16501,8 +16554,9 @@ run(function()
                                 and math.abs(root.AssemblyLinearVelocity.Y) < 12
                                 and (now - (lastHurt[plr] or 0)) > 1.5
 
-                            if usable and (distance / delta) > SPEED_CEILING then
-                                strike(plr, 'Speed', 'speeding')
+                            local speed = distance / delta
+                            if usable and speed > SPEED_CEILING then
+                                strike(plr, 'Speed', 'speeding', `{math.floor(speed)} studs/s, ceiling {SPEED_CEILING}`)
                             end
                         end
                     end
@@ -16517,6 +16571,24 @@ run(function()
     ------------------------------------------------------------------------
     Checks.Killaura = function()
         local last = {}
+        -- Sustained-rate signal, taken from idk's detector. A single hit at aura pace is a fast
+        -- mouse; a stream of them is a machine holding a rate no hand keeps up. Timestamps of
+        -- each fast hit per player, aged out after BURST_MEMORY.
+        local bursts = {}
+
+        local function burstCount(plr)
+            local list = bursts[plr]
+            if not list then return 0 end
+            local now, count = os.clock(), 0
+            for i = #list, 1, -1 do
+                if now - list[i] > BURST_MEMORY then
+                    table.remove(list, i)
+                else
+                    count += 1
+                end
+            end
+            return count
+        end
 
         CheatDetector:Clean(vapeEvents.EntityDamageEvent.Event:Connect(function(damageTable)
             if damageTable.damageType ~= 0 or not damageTable.fromEntity then return end
@@ -16538,12 +16610,22 @@ run(function()
             if interval <= 0.008 then return end
 
             if interval < MIN_HUMAN_INTERVAL then
-                strike(from, 'Killaura', 'using killaura')
+                strike(from, 'Killaura', 'using killaura', `hits {math.floor(interval * 1000)}ms apart`)
             elseif victim and previous.Victim and victim ~= previous.Victim and interval < SWITCH_WINDOW then
                 -- Landing on a different player a fifth of a second apart means the aim moved
                 -- between them instantly. This is the signature worth having; hitting one person
                 -- quickly is just a fast mouse.
-                strike(from, 'Killaura', 'using killaura')
+                strike(from, 'Killaura', 'using killaura', 'switched target instantly')
+            elseif interval < BURST_INTERVAL then
+                -- Not fast enough to mean anything on its own, so this only ever contributes a
+                -- strike once a run of them has built up - and the strike still has to clear the
+                -- Minimum strikes threshold like every other reading.
+                bursts[from] = bursts[from] or {}
+                table.insert(bursts[from], now)
+                if burstCount(from) >= BURST_HITS then
+                    table.clear(bursts[from])
+                    strike(from, 'Killaura', 'using killaura', `{BURST_HITS} hits in a row under {math.floor(BURST_INTERVAL * 1000)}ms`)
+                end
             end
         end))
     end
@@ -16573,8 +16655,9 @@ run(function()
             -- have been and anyone hitting a target running away from them read as reach.
             local allowance = math.clamp(ping() * 60, 0, 12)
 
-            if distance > (weaponReach(attacker) + allowance + REACH_SLACK) then
-                strike(attacker, 'Reach', 'using reach')
+            local limit = weaponReach(attacker) + allowance + REACH_SLACK
+            if distance > limit then
+                strike(attacker, 'Reach', 'using reach', `{math.floor(distance * 10) / 10} studs, limit {math.floor(limit * 10) / 10}`)
             end
         end))
     end
