@@ -23649,6 +23649,8 @@ run(function()
     local Mode
     local Smart
     local Switch
+    local WoolOnly
+    local LimitItem
 
     local function getBedNear()
         local localPosition = entitylib.isAlive and entitylib.character.RootPart.Position or Vector3.zero
@@ -23719,13 +23721,104 @@ run(function()
         by exactly 1 block per layer.
     ]]
 
+    --[[
+        Bed patcher (replaced with the reference build's routine)
+
+        The onion algorithm above builds a shell. Patching is a different job: the shell is
+        already there and has holes in it, and running the builder to fill them re-walks the
+        whole structure from the bed outwards every pass.
+
+        Instead, walk the defence the way it was built - one horizontal ring per level, out
+        from the bed - and place into any cell of that ring that is empty. Rings are generated
+        in the bed's own orientation so the patch lines up with a defence that is not axis
+        aligned, and a level whose centre column is missing is skipped entirely: there is no
+        ring at a height the defence never reached.
+    ]]
+    local PATCH_LEVELS = 6
+
+    -- A diamond ring of grid offsets at `radius` cells out and `radius - i` cells up. Taken
+    -- from the reference build unchanged, because the order it yields cells in is what makes
+    -- the patch fill inwards-out rather than jumping about.
+    local function ringOffsets(radius, spacing)
+        local offsets = {}
+        for i = radius, 0, -1 do
+            for j = i, 0, -1 do
+                table.insert(offsets, Vector3.new(j, radius - i, i + 1 - j) * spacing)
+                table.insert(offsets, Vector3.new(-j, radius - i, i + 1 - j) * spacing)
+                table.insert(offsets, Vector3.new(j, radius - i, -(i - j)) * spacing)
+                table.insert(offsets, Vector3.new(-j, radius - i, -(i - j)) * spacing)
+            end
+        end
+        return offsets
+    end
+
+    -- The single block to patch with: the toughest one that passes the options. 'Limit to
+    -- item' means exactly what is in your hand, and nothing at all if that is not a block.
+    local function getPatchBlock()
+        if LimitItem.Enabled then
+            local hand = store.hand
+            if not hand or hand.toolType ~= 'block' or not hand.tool then return nil end
+            local itemType = hand.tool.Name
+            if WoolOnly.Enabled and not itemType:find('wool') then return nil end
+            if table.find(Blacklist.ListEnabled, itemType:find('wool') and 'wool' or itemType) then return nil end
+            return {itemType, 0, hand.tool}
+        end
+
+        local best
+        for _, item in store.inventory.inventory.items do
+            local meta = bedwars.ItemMeta[item.itemType]
+            local block = meta and meta.block
+            if not block then continue end
+            if WoolOnly.Enabled and not item.itemType:find('wool') then continue end
+            if table.find(Blacklist.ListEnabled, item.itemType:find('wool') and 'wool' or item.itemType) then continue end
+            if not best or (block.health or 0) > best[2] then
+                best = {item.itemType, block.health or 0, item.tool}
+            end
+        end
+        return best
+    end
+
+    local function patchBed(bed)
+        local bedCFrame = bed:IsA('BasePart') and bed.CFrame or bed:GetPivot()
+        -- The two cells the bed itself sits in. A ring can pass over them, and asking the
+        -- server to build into your own bed is never going to succeed.
+        local cellA, cellB = bedCells(bed)
+        for level = 0, PATCH_LEVELS do
+            if not BedProtector.Enabled then return end
+            -- Nothing above this height, so there is no ring here to have a hole in.
+            if not getPlacedBlock(bed.Position + Vector3.yAxis * (3 * level)) then continue end
+
+            for _, offset in ringOffsets(level, 3) do
+                if not BedProtector.Enabled then return end
+                local block = getPatchBlock()
+                if not block then return end
+
+                local position = (bedCFrame * CFrame.new(offset)).Position
+                local cell = roundPos(position)
+                if cell == cellA or cell == cellB then continue end
+                if getPlacedBlock(position) then continue end
+                if not entitylib.isAlive then return end
+                if (entitylib.character.RootPart.Position - position).Magnitude > PlaceRange.Value then continue end
+
+                if Switch.Enabled then
+                    local slot = getHotbar(block[3])
+                    if slot and hotbarSwitch(slot) then task.wait() end
+                end
+                task.spawn(bedwars.placeBlock, position, block[1], false)
+                task.wait(0.1)
+            end
+        end
+    end
+
     BedProtector = vape.Categories.World:CreateModule({
         Name = 'BedProtector',
         Function = function(callback)
             if callback then
                 repeat
                     local bed = getBedNear()
-                    if bed then
+                    if bed and Mode.Value == 'Bed patcher' then
+                        patchBed(bed)
+                    elseif bed then
                         -- Seed the protected set with BOTH grid cells the bed occupies so
                         -- the shell wraps the whole two-block bed instead of half of it.
                         local cellA, cellB = bedCells(bed)
@@ -23789,11 +23882,9 @@ run(function()
                                     task.wait(0.05)
                                 end
 
-                                -- If we didn't place anything this layer, stop early (bed might be unreachable).
-                                -- Bed patcher never stops early: an inner layer being intact does not
-                                -- mean the outer layers have no holes, so we keep scanning every layer
-                                -- and only the missing blocks (holes) get filled.
-                                if not placedAny and Mode.Value ~= 'Bed patcher' then break end
+                                -- Nothing placed this layer means the bed is out of reach, so
+                                -- there is no point walking the outer ones.
+                                if not placedAny then break end
                                 if not BedProtector.Enabled then break end
                             end
 
@@ -23817,14 +23908,25 @@ run(function()
         Tooltip = 'Automatically places strong blocks around the bed'
     })
 
-    -- Options (unchanged from original)
+    -- Options. Smart belongs to the shell builder and Wool only / Limit to item belong to the
+    -- patcher, so each set follows the Mode dropdown.
+    local function syncModeOptions()
+        -- The dropdown fires its callback while it is still being created, before Mode itself
+        -- has been assigned.
+        if not Mode then return end
+        if Smart and Smart.Object then Smart.Object.Visible = Mode.Value == 'Toggle' end
+        local patching = Mode.Value == 'Bed patcher'
+        if WoolOnly and WoolOnly.Object then WoolOnly.Object.Visible = patching end
+        if LimitItem and LimitItem.Object then LimitItem.Object.Visible = patching end
+    end
+
     Mode = BedProtector:CreateDropdown({
         Name = 'Mode',
         List = {'Toggle', 'On Key', 'Bed patcher'},
         Default = 'Toggle',
-        Tooltip = 'Toggle builds and maintains the shell. On Key builds once. Bed patcher only repairs holes in your existing defence',
-        Function = function(val)
-            if Smart then Smart.Object.Visible = (val == 'Toggle') end
+        Tooltip = 'Toggle builds and maintains the shell. On Key builds once. Bed patcher walks your existing defence ring by ring and fills in whatever is missing',
+        Function = function()
+            syncModeOptions()
         end,
     })
     Blacklist = BedProtector:CreateTextList({
@@ -23842,6 +23944,17 @@ run(function()
     })
     Switch = BedProtector:CreateToggle({Name = 'Auto Switch'})
     Smart = BedProtector:CreateToggle({Name = 'Smart', Default = true})
+    WoolOnly = BedProtector:CreateToggle({
+        Name = 'Wool only',
+        Tooltip = 'Bed patcher only. Patches holes with wool instead of the toughest block you have'
+    })
+    LimitItem = BedProtector:CreateToggle({
+        Name = 'Limit to item',
+        Tooltip = 'Bed patcher only. Patches with the block in your hand and nothing else'
+    })
+    -- Mode's own callback runs while these two are still nil (it fires as the dropdown is
+    -- created), so the first sync happens here instead.
+    syncModeOptions()
 end)
 run(function()
     local BlockIn
