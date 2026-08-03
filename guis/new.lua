@@ -5924,6 +5924,9 @@ function mainapi:CreateSearch()
 		search.Size = UDim2.new(1, -offset, 0, 37)
 	end
 	self.UpdateSearchLayout = updateSearchLayout
+	-- Position everything from the layout function rather than from the literals above, so
+	-- there is only one place the spacing is decided.
+	updateSearchLayout()
 
 	kitsicon.MouseButton1Click:Connect(function()
 		clickgui.Visible = false
@@ -6013,7 +6016,7 @@ end
 ]]
 local function createPanel(config)
 	local self = mainapi
-	local legitapi = {Modules = {}, Categories = {}, Panel = config.Field}
+	local legitapi = {Modules = {}, Categories = {}}
 
 	local window = Instance.new('Frame')
 	window.Name = config.Window
@@ -6876,10 +6879,13 @@ function mainapi:Load(skipgui, profile)
 		-- Snapshot the table first: a game module can still be registering itself on another
 		-- thread while this runs (the loader stops waiting on one that stalls), and adding to
 		-- the table mid-iteration would throw here and abort the whole config load.
-		for _, panel in {{Api = self.Legit, Data = savedata.Legit}, {Api = self.Kits, Data = savedata.Kits}} do
+		for _, panel in {{Api = self.Legit, Data = savedata.Legit}, {Api = self.Kits, Data = savedata.Kits, Migrate = true}} do
 			local snapshot = table.clone(panel.Api.Modules)
 			for i, object in snapshot do
-				local v = panel.Data[i]
+				-- Kit modules used to live in the category tabs, so a config written before
+				-- they moved has their settings under Modules. Read that once; the next save
+				-- writes them to the panel's own section and the old entry drops out.
+				local v = panel.Data[i] or (panel.Migrate and savedata.Modules[i]) or nil
 				if not v then
 					if object.Enabled then
 						object:Toggle()

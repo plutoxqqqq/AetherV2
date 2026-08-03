@@ -7847,13 +7847,16 @@ run(function()
                 -- out from under it, the same signal ProjectileAura publishes.
                 store.lastProjectileFire = workspace:GetServerTimeNow()
                 -- Legit switch goes through the hotbar the way a player would; without it the
-                -- item is swapped straight into the hand.
+                -- item is swapped straight into the hand. Either way the switch is given a
+                -- moment to land - firing before the server has seen the equip is how a shot
+                -- gets thrown away.
                 if FastLegitSwitch.Enabled then
                     local slot = getHotbar(item.tool)
                     if slot then hotbarSwitch(slot) end
                 else
-                    switchItem(item.tool, 0)
+                    switchItem(item.tool)
                 end
+                if not Killaura.Enabled or not FastHits.Enabled then return end
 
                 local id = httpService:GenerateGUID(true)
                 local direction = CFrame.lookAt(origin, aim).LookVector
@@ -8077,7 +8080,11 @@ run(function()
                         })
 
                         if #plrs > 0 then
-                            switchItem(sword.tool, 0)
+                            -- Fast Hits owns the hand while a shot is going out; switching back
+                            -- here would undo the equip before the server has seen it.
+                            if not fastHitBusy then
+                                switchItem(sword.tool, 0)
+                            end
                             local selfpos = entitylib.character.RootPart.Position
                             local localfacing = entitylib.character.RootPart.CFrame.LookVector * Vector3.new(1, 0, 1)
 
@@ -23863,33 +23870,49 @@ run(function()
 
     local function patchBed(bed)
         local bedCFrame = bed:IsA('BasePart') and bed.CFrame or bed:GetPivot()
-        -- The two cells the bed itself sits in. A ring can pass over them, and asking the
-        -- server to build into your own bed is never going to succeed.
+        -- The two cells the bed itself sits in. A ring passes over them, and asking the server
+        -- to build into your own bed is never going to succeed.
         local cellA, cellB = bedCells(bed)
-        for level = 0, PATCH_LEVELS do
-            if not BedProtector.Enabled then return end
-            -- Nothing above this height, so there is no ring here to have a hole in.
-            if not getPlacedBlock(bed.Position + Vector3.yAxis * (3 * level)) then continue end
 
+        -- Ring 1 is the shell touching the bed, which is part of any defence, so it is always
+        -- worth scanning. Past that, a ring is only walked when the one inside it exists -
+        -- otherwise the patcher would march outwards building a defence you never had, which
+        -- is the shell builder's job, not this one's.
+        --
+        -- The reference build gated each ring on there being a block in the column directly
+        -- above the bed. That is the first block an opponent breaks, so the moment somebody
+        -- actually broke into the defence the patcher stopped repairing it.
+        local previousFilled = true
+        for level = 1, PATCH_LEVELS do
+            if not BedProtector.Enabled or not previousFilled then return end
+
+            local filled = false
             for _, offset in ringOffsets(level, 3) do
                 if not BedProtector.Enabled then return end
-                local block = getPatchBlock()
-                if not block then return end
 
                 local position = (bedCFrame * CFrame.new(offset)).Position
                 local cell = roundPos(position)
                 if cell == cellA or cell == cellB then continue end
-                if getPlacedBlock(position) then continue end
+                if getPlacedBlock(position) then
+                    filled = true
+                    continue
+                end
+
                 if not entitylib.isAlive then return end
                 if (entitylib.character.RootPart.Position - position).Magnitude > PlaceRange.Value then continue end
+
+                local block = getPatchBlock()
+                if not block then return end
 
                 if Switch.Enabled then
                     local slot = getHotbar(block[3])
                     if slot and hotbarSwitch(slot) then task.wait() end
                 end
                 task.spawn(bedwars.placeBlock, position, block[1], false)
+                filled = true
                 task.wait(0.1)
             end
+            previousFilled = filled
         end
     end
 
@@ -32903,6 +32926,9 @@ run(function()
 		Default = 12,
 		Decimal = 5,
 		Darker = true,
+		-- Auto Shockwave is off by default, and a toggle only runs its callback on creation
+		-- when it defaults to on, so this has to start hidden itself.
+		Visible = false,
 		Suffix = function(val)
 			return val <= 1 and 'stud' or 'studs'
 		end
