@@ -1803,8 +1803,10 @@ end
 local AntiFallDirection
 local Fly
 local LongJump
--- LongJump is the authoritative compatible-tool detector. Consumers such as Extender listen for
--- this edge instead of maintaining a second, inevitably stale list of tool activation rules.
+-- LongJump is the authoritative compatible-tool detector. Anything that needs to know a
+-- long-jump tool has genuinely entered its launch window listens for this edge instead of
+-- maintaining a second, inevitably stale list of tool activation rules. (Extender used to be
+-- its main consumer; it now hooks the four kit controllers directly.)
 local longJumpActivation = Instance.new('BindableEvent')
 vape:Clean(longJumpActivation)
 local Attacking
@@ -7705,12 +7707,112 @@ run(function()
     local Limit
     local LegitAura
     local TargetSkilled
+    local FastHits
+    local FastProjectiles
+    local FastLegitSwitch
+    local FastFireRate
 	local Particles, Boxes = {}, {}
     local anims, AnimDelay, AnimTween, armC0 = vape.Libraries.auraanims, tick()
 	local AttackRemote = {FireServer = function() end}
+    local projectileRemote = {InvokeServer = function() end}
     task.spawn(function()
 		AttackRemote = bedwars.Client:Get(remotes.AttackEntity).instance
                 end)
+    task.spawn(function()
+        projectileRemote = bedwars.Client:Get(remotes.FireProjectile).instance
+    end)
+
+    ----------------------------------------------------------------------------
+    -- Fast Hits.
+    ----------------------------------------------------------------------------
+    -- A sword alone is capped by its own swing cooldown. Fast Hits throws whatever you have
+    -- listed - arrows, snowballs - at the same target in between swings, so the target takes
+    -- the sword's damage and the projectile's. Only one shot is ever in flight at a time and
+    -- the sword goes straight back into your hand, so the aura itself is unaffected.
+    local fastHitCooldown = 0
+    local fastHitBusy = false
+
+    -- Ground search for the Fast Hits trajectory solve. Exclude rather than include-the-map,
+    -- for the same reason ProjectileAura does it: targets stand on placed blocks.
+    local fastRayCheck = RaycastParams.new()
+    fastRayCheck.FilterType = Enum.RaycastFilterType.Exclude
+    fastRayCheck.RespectCanCollide = true
+
+    local function fastAmmoFor(projectileSource)
+        for _, item in store.inventory.inventory.items do
+            if projectileSource.ammoItemTypes and table.find(projectileSource.ammoItemTypes, item.itemType) then
+                return item.itemType
+            end
+        end
+        return nil
+    end
+
+    -- Everything in the inventory that can launch something on the Projectiles list. The list
+    -- is matched against the ammo, the launcher and the launcher's display name, so 'arrow'
+    -- and 'Bow' both select a bow.
+    local function fastLaunchers()
+        local launchers = {}
+        for _, item in store.inventory.inventory.items do
+            local meta = bedwars.ItemMeta[item.itemType]
+            local source = meta and meta.projectileSource
+            local ammo = source and fastAmmoFor(source)
+            if ammo then
+                local enabled = FastProjectiles.ListEnabled
+                if table.find(enabled, ammo) or table.find(enabled, item.itemType) or table.find(enabled, meta.displayName) then
+                    table.insert(launchers, {item, ammo, source.projectileType(ammo), source})
+                end
+            end
+        end
+        return launchers
+    end
+
+    local function fireFastHit(ent, sword)
+        if fastHitBusy or tick() < fastHitCooldown then return end
+        local launchers = fastLaunchers()
+        if #launchers == 0 then return end
+
+        fastHitBusy = true
+        task.spawn(function()
+            pcall(function()
+                local origin = entitylib.character.RootPart.Position
+                local item, ammo, projectile = unpack(launchers[1])
+                local meta = bedwars.ProjectileMeta[projectile]
+                if not meta then return end
+
+                local speed = meta.launchVelocity
+                local gravity = meta.gravitationalAcceleration or 196.2
+                fastRayCheck.FilterDescendantsInstances = {lplr.Character, gameCamera}
+                local aim = prediction.SolveTrajectory(origin, speed, gravity, ent.RootPart.Position, ent.RootPart.Velocity, workspace.Gravity, ent.HipHeight, ent.Jumping and 42.6 or nil, fastRayCheck, nil, lplr:GetNetworkPing())
+                if not aim then return end
+
+                -- Tell the rest of the file a shot is in flight so nothing swaps the launcher
+                -- out from under it, the same signal ProjectileAura publishes.
+                store.lastProjectileFire = workspace:GetServerTimeNow()
+                -- Legit switch goes through the hotbar the way a player would; without it the
+                -- item is swapped straight into the hand.
+                if FastLegitSwitch.Enabled then
+                    local slot = getHotbar(item.tool)
+                    if slot then hotbarSwitch(slot) end
+                else
+                    switchItem(item.tool, 0)
+                end
+
+                local id = httpService:GenerateGUID(true)
+                local direction = CFrame.lookAt(origin, aim).LookVector
+                local shootPosition = (CFrame.new(origin, aim) * CFrame.new(Vector3.new(-bedwars.BowConstantsTable.RelX, -bedwars.BowConstantsTable.RelY, -bedwars.BowConstantsTable.RelZ))).Position
+                bedwars.ProjectileController:createLocalProjectile(meta, ammo, projectile, shootPosition, id, direction * speed, {drawDurationSeconds = 1})
+                projectileRemote:InvokeServer(item.tool, ammo, projectile, shootPosition, origin, direction * speed, id, {drawDurationSeconds = 1, shotId = httpService:GenerateGUID(false)}, workspace:GetServerTimeNow() - 0.045)
+
+                -- Straight back to the sword, or the next pass of the aura loop has nothing to
+                -- swing with.
+                if sword and sword.tool then
+                    switchItem(sword.tool, 0)
+                end
+            end)
+            fastHitCooldown = tick() + FastFireRate.Value
+            fastHitBusy = false
+        end)
+    end
 
     ----------------------------------------------------------------------------
     -- Skill-first targeting.
@@ -7995,6 +8097,13 @@ run(function()
                         entitylib.character.RootPart.CFrame = CFrame.lookAt(entitylib.character.RootPart.Position, Vector3.new(vec.X, entitylib.character.RootPart.Position.Y + 0.001, vec.Z))
                     end
 
+                    -- Extra damage between swings. Only ever aimed at the target the aura is
+                    -- already committed to, and only while there actually is a sword to go back
+                    -- to afterwards.
+                    if FastHits.Enabled and sword and attacked[1] then
+                        fireFastHit(attacked[1].Entity, sword)
+                    end
+
                     task.wait()
                 until not Killaura.Enabled
             else
@@ -8081,6 +8190,40 @@ run(function()
     Sort = Killaura:CreateDropdown({
         Name = 'Target Mode',
         List = methods
+    })
+    FastHits = Killaura:CreateToggle({
+        Name = 'Fast Hits',
+        Function = function(callback)
+            pcall(function()
+                FastProjectiles.Object.Visible = callback
+                FastLegitSwitch.Object.Visible = callback
+                FastFireRate.Object.Visible = callback
+            end)
+        end,
+        Tooltip = 'Deals extra damage between swings by throwing listed projectiles at the same target'
+    })
+    FastProjectiles = Killaura:CreateTextList({
+        Name = 'Projectiles',
+        Default = {'arrow', 'snowball'},
+        Darker = true,
+        Visible = false,
+        Tooltip = 'Which projectiles Fast Hits is allowed to use'
+    })
+    FastLegitSwitch = Killaura:CreateToggle({
+        Name = 'Legit Switch',
+        Darker = true,
+        Visible = false,
+        Tooltip = 'Switch to the projectile through the hotbar instead of straight into the hand'
+    })
+    FastFireRate = Killaura:CreateSlider({
+        Name = 'Fire rate',
+        Min = 0,
+        Max = 2,
+        Decimal = 100,
+        Default = 0.05,
+        Darker = true,
+        Visible = false,
+        Suffix = 'seconds'
     })
     TargetSkilled = Killaura:CreateToggle({
         Name = 'Target skilled',
@@ -8674,160 +8817,155 @@ run(function()
     })
 end)
 
+--[[
+    Extender
+
+    One module covering all four kit mobility abilities that used to have an extender each
+    (JadeExtender, VoidRegentExtender, CatExtender and YuziExtender). Each of those hooked the
+    controller method that performs the move and pushed the character on with an impulse the
+    moment it fired; this does the same, through the same four hooks, behind one set of
+    settings:
+
+      * Range      - how much further the ability should carry you, in studs.
+      * Kits       - which of the four abilities to extend, one toggle each.
+
+    Hooking the controller (rather than watching velocity or ability cooldowns, as the old
+    Aether module did) is what makes this exact: the impulse is applied on the frame the game
+    itself performs the move, so it can never fire on knockback, an explosion or a hotbar
+    change, and an ability the server refuses never produces one either.
+
+    A controller may not exist yet when the module is switched on - kit controllers are built
+    when the match starts - so each hook waits for its controller and installs late if needed.
+]]
 run(function()
-    -- Extender: one module for every kit mobility ability. It watches for a dash / jump /
-    -- teleport actually being cast, then carries the move further by holding your speed up
-    -- while it plays out. No kit gate - it acts on the ability being used, so it can never
-    -- be blocked by a mismatched kit id.
-    --
-    -- Detection used to be "canUseAbility went true -> false". That call answers "can I use
-    -- this RIGHT NOW", and the answer is no whenever the item granting the ability is not in
-    -- your hand - so changing hotbar slots produced exactly the same edge as casting, and the
-    -- module fired on it. Three things stop that now:
-    --   * an ability is only watched while the item that grants it is actually held, and the
-    --     watch is re-seeded (not edged) on any frame your hand changed,
-    --   * a dash is confirmed against the character's own CanDashNext cooldown stamp, which
-    --     only ever moves when a dash was really spent,
-    --   * nothing boosts on the edge alone. The edge only arms; the boost waits until the
-    --     character has genuinely been launched, so an ability the server refused - or a slot
-    --     change that slipped through - never moves you.
     local Extender
-    local Distance
-    local Duration
-    local Smooth
-    local Fallback
+    local Range
+    local KitToggles = {}
 
-    -- Ability -> the items that grant it. Anything not listed here is a kit ability, which no
-    -- held item gates, so those are watched the whole time.
-    local ABILITY_ITEMS = {
-        jade_hammer_jump = {jade_hammer = true},
-        void_axe_jump = {void_axe = true},
-        dash = {wood_dao = true, stone_dao = true, iron_dao = true, diamond_dao = true, emerald_dao = true}
+    -- name -> everything needed to hook it. `Impulse` receives the root part and the direction
+    -- the move went in, and returns the impulse to apply; the multiplier is derived from Range
+    -- so one slider drives all four.
+    --
+    -- The reference build expressed each of these as a "multiplier" of the ability's own push.
+    -- The numbers below are those pushes at multiplier 1, so Range studs of extra travel comes
+    -- out the same regardless of which ability produced it.
+    local ABILITIES = {
+        {
+            Name = 'Jade Hammer',
+            Kit = 'jade',
+            Controller = 'JadeHammerController',
+            Method = 'useJadeHammer',
+            Ability = 'jade_hammer_jump',
+            -- The hammer throws you upwards, so its extension goes up too.
+            Impulse = function(root)
+                return Vector3.new(0, root.AssemblyMass * Range.Value * 1.025, 0)
+            end
+        },
+        {
+            Name = 'Void Regent',
+            Kit = 'regent',
+            Controller = 'VoidAxeController',
+            Method = 'useVoidAxe',
+            Ability = 'void_axe_jump',
+            Impulse = function(root)
+                local direction = root.CFrame.LookVector * Vector3.new(1, 0, 1)
+                if direction.Magnitude <= 0 then return nil end
+                return direction.Unit * root.AssemblyMass * Range.Value * 3.5
+            end
+        },
+        {
+            Name = 'Cat Pounce',
+            Kit = 'cat',
+            Controller = 'CatController',
+            Method = 'leap',
+            -- leap(self, character, direction): the direction is the second argument.
+            Argument = 3,
+            Impulse = function(root, direction)
+                local flat = direction * Vector3.new(1, 0, 1)
+                if flat.Magnitude <= 0 then return nil end
+                return flat.Unit * root.AssemblyMass * Range.Value * 3.5
+            end
+        },
+        {
+            Name = 'Yuzi Dash',
+            Kit = 'dasher',
+            Controller = 'DaoController',
+            Method = 'dashForward',
+            -- dashForward(self, direction): the direction is the first argument.
+            Argument = 2,
+            Impulse = function(root, direction)
+                local flat = direction * Vector3.new(1, 0, 1)
+                if flat.Magnitude <= 0 then return nil end
+                return flat.Unit * root.AssemblyMass * Range.Value * 3.5
+            end
+        }
     }
-    local KIT_ABILITIES = {'elektra_tp', 'ELEKTRA_TP', 'CAT_POUNCE', 'cat_pounce'}
 
-    local ABILITIES = {}
-    for ability in ABILITY_ITEMS do
-        table.insert(ABILITIES, ability)
-    end
-    for _, ability in KIT_ABILITIES do
-        table.insert(ABILITIES, ability)
-    end
+    -- Installed hooks, so toggling off puts every controller back exactly as it was and a
+    -- controller somebody else has since re-hooked is left alone.
+    local installed = {}
 
-    -- How long a cast has to actually throw us before we forget about it, and what counts as
-    -- being thrown. Sprinting tops out well under this, so ordinary running never qualifies.
-    local ARM_WINDOW = 0.3
-    local LAUNCH_SPEED = 46
-    local LAUNCH_GAIN = 16
-    -- Jump abilities throw you upwards rather than forwards, so a horizontal-only check would
-    -- never confirm the jade hammer or void axe jump. Nothing reaches this without an ability
-    -- edge having armed it first, so it cannot be tripped by an ordinary jump.
-    local LAUNCH_LIFT = 45
-    -- The dash velocity lands a frame or two after the cooldown edge, so give the ability a
-    -- moment to reach its own peak before measuring what to hold it at - otherwise the boost
-    -- ends up feeding back into its own baseline.
-    local SAMPLE = 0.05
-
-    local prevReady, lastHand = {}, nil
-    local armedUntil, armSpeed = 0, 0
-    local armConfirmed, armPos, armStamp = false, nil, 0
-    local boostStart, boostUntil, peakSpeed, boostDir = 0, 0, 0, nil
-    local lastDash, prevSpeed = 0, 0
-    local oldUseAbility
-
-    local function heldName()
-        local hand = store.hand
-        return hand and hand.tool and hand.tool.Name or nil
-    end
-
-    local function grants(ability, held)
-        local items = ABILITY_ITEMS[ability]
-        if not items then return true end
-        return held ~= nil and items[held] == true
-    end
-
-    -- True when what you are holding grants one of the item abilities above, in which case the
-    -- cooldown watch already covers you and the velocity fallback has no business firing.
-    local function heldGrantsAbility(held)
-        if not held then return false end
-        for _, items in ABILITY_ITEMS do
-            if items[held] then return true end
+    local function unhook()
+        for _, entry in installed do
+            if entry.Controller[entry.Method] == entry.Hook then
+                entry.Controller[entry.Method] = entry.Original
+            end
         end
-        return false
+        table.clear(installed)
     end
 
-    local function flatVelocity(root)
-        local vel = root.AssemblyLinearVelocity
-        return Vector3.new(vel.X, 0, vel.Z)
-    end
-
-    local function dashStamp()
-        local character = lplr.Character
-        return character and character:GetAttribute('CanDashNext') or 0
-    end
-
-    -- A cast was seen. Remember how fast we were BEFORE it so the launch check has something to
-    -- compare against - the ability's velocity often lands on the very frame the cooldown edges,
-    -- and measuring after that would leave nothing to detect. `confirmed` marks the casts we are
-    -- sure of - a spent dash cooldown, or an ability that genuinely went ready->used while its item
-    -- was held - as opposed to the velocity fallback's guess. Also stash where we were, so a
-    -- teleport (which adds no speed at all) can still be recognised as the ability having moved us.
-    -- Nothing touches the character yet.
-    local function arm(baseline, confirmed)
-        armedUntil = tick() + ARM_WINDOW
-        armStamp = tick()
-        armSpeed = baseline
-        armConfirmed = confirmed or false
-        armPos = (entitylib.isAlive and entitylib.character.RootPart and entitylib.character.RootPart.Position) or nil
-    end
-
-    -- Did the ability actually throw us? Strict version, for the velocity fallback where we are only
-    -- guessing a cast happened, so it demands a real speed spike to avoid firing on knockback.
-    local function launched(root, speed, baseline)
-        if speed >= LAUNCH_SPEED and speed >= baseline + LAUNCH_GAIN then return true end
-        return root.AssemblyLinearVelocity.Y >= LAUNCH_LIFT
-    end
-
-    -- For a cast we already confirmed, the boost only has to prove the ability moved us at all -
-    -- not that it hit some big number. A dash adds speed, a jump throws us up, a teleport jumps our
-    -- position; any of the three is the move doing its job. This is what makes Extender carry the
-    -- jade hammer jump, the void axe jump and the Elektra / cat teleports too, instead of only the
-    -- dao dash that happened to clear the old speed gate. An ability the server refused produces
-    -- none of these, so a refused cast still never boosts.
-    local function launchedConfirmed(root, speed, baseline)
-        if speed >= baseline + 6 then return true end
-        if root.AssemblyLinearVelocity.Y >= 18 then return true end
-        if armPos and (root.Position - armPos).Magnitude >= 8 then return true end
-        return false
-    end
-
-    -- The ability really did throw us: start carrying it.
-    local function launch(root)
-        armedUntil = 0
-        boostStart = tick()
-        boostUntil = boostStart + (Duration and Duration.Value or 0.45)
-
-        local horiz = flatVelocity(root)
-        peakSpeed = horiz.Magnitude
-
-        if horiz.Magnitude > 4 then
-            boostDir = horiz.Unit
-        else
-            -- A teleport leaves you with almost no horizontal speed, so aim the carry where
-            -- you are looking instead.
-            local look = (gameCamera and gameCamera.CFrame.LookVector) or root.CFrame.LookVector
-            look = Vector3.new(look.X, 0, look.Z)
-            boostDir = look.Magnitude > 0 and look.Unit or nil
+    local function install(ability)
+        -- Kit controllers are created with the match, so wait rather than give up. The loop
+        -- also exits the moment the module is switched off again.
+        local controller = bedwars[ability.Controller]
+        while not controller and Extender.Enabled do
+            task.wait(0.5)
+            controller = bedwars[ability.Controller]
         end
-    end
+        if not Extender.Enabled or not controller then return end
 
-    local function reset()
-        table.clear(prevReady)
-        lastHand = nil
-        armedUntil, armSpeed = 0, 0
-        armConfirmed, armPos, armStamp = false, nil, 0
-        boostStart, boostUntil, peakSpeed, boostDir = 0, 0, 0, nil
-        lastDash, prevSpeed = 0, 0
+        local original = controller[ability.Method]
+        if typeof(original) ~= 'function' then return end
+        -- Already hooked (a second install racing the first, e.g. a fast off/on).
+        for _, entry in installed do
+            if entry.Controller == controller and entry.Method == ability.Method then return end
+        end
+
+        local entry = {Controller = controller, Method = ability.Method, Original = original}
+        entry.Hook = function(...)
+            -- Whether the ability was actually available has to be read BEFORE the original
+            -- runs, because running it is what spends the cooldown.
+            local available = true
+            if ability.Ability then
+                local ok, ready = pcall(function()
+                    return bedwars.AbilityController:canUseAbility(ability.Ability)
+                end)
+                available = ok and ready and true or false
+            end
+
+            -- Read out of the varargs here: the guarded block below is a closure, which
+            -- cannot see `...` of the function it sits in.
+            local direction = ability.Argument and select(ability.Argument, ...) or nil
+            local results = {original(...)}
+
+            local toggle = KitToggles[ability.Name]
+            if Extender.Enabled and available and toggle and toggle.Enabled
+                and entitylib.isAlive and store.equippedKit == ability.Kit
+                and (not ability.Argument or typeof(direction) == 'Vector3') then
+                pcall(function()
+                    local root = entitylib.character.RootPart
+                    local impulse = ability.Impulse(root, direction)
+                    if impulse then
+                        root:ApplyImpulse(impulse)
+                    end
+                end)
+            end
+
+            return unpack(results)
+        end
+
+        controller[ability.Method] = entry.Hook
+        table.insert(installed, entry)
     end
 
     Extender = kits:CreateModule({
@@ -8835,202 +8973,31 @@ run(function()
         Category = 'Ability',
         Function = function(callback)
             if callback then
-                reset()
-                lastDash = dashStamp()
-                lastHand = heldName()
-
-                -- LongJump already knows exactly when a supported tool (dao, hammer, axe,
-                -- cannon, TNT or hook) has genuinely entered its launch window. Reuse that edge
-                -- directly; duplicating its item/cooldown guesses was the reason Extender missed
-                -- casts whenever BedWars changed a controller detail.
-                Extender:Clean(longJumpActivation.Event:Connect(function(velocity)
-                    local baseline = velocity and Vector3.new(velocity.X, 0, velocity.Z).Magnitude or prevSpeed
-                    arm(baseline, true)
-                end))
-
-                -- Observe the cast itself rather than inferring every tool from cooldown state.
-                -- Current controllers do not consistently flip canUseAbility on the cast frame,
-                -- which was why manually using the same tool went undetected while LongJump's
-                -- slower activation path happened to work.
-                local controller = bedwars.AbilityController
-                if controller and type(controller.useAbility) == 'function' then
-                    oldUseAbility = controller.useAbility
-                    controller.useAbility = function(self, ability, ...)
-                        local result = oldUseAbility(self, ability, ...)
-                        if table.find(ABILITIES, ability) then
-                            arm(prevSpeed, true)
-                        end
-                        return result
-                    end
-                    Extender:Clean(function()
-                        if controller.useAbility ~= oldUseAbility then
-                            controller.useAbility = oldUseAbility
-                        end
-                        oldUseAbility = nil
-                    end)
+                for _, ability in ABILITIES do
+                    task.spawn(install, ability)
                 end
-
-                Extender:Clean(runService.PreSimulation:Connect(function()
-                    if not entitylib.isAlive then return end
-                    local root = entitylib.character.RootPart
-                    if not root or not isnetworkowner(root) then return end
-
-                    local now = tick()
-                    local held = heldName()
-                    local handChanged = held ~= lastHand
-                    lastHand = held
-
-                    local horiz = flatVelocity(root)
-                    local speed = horiz.Magnitude
-                    -- The slower of this frame and the last one, so an ability whose velocity
-                    -- lands on the same frame as its cooldown edge is still measurable.
-                    local baseline = math.min(prevSpeed, speed)
-
-                    -- CanDashNext is stamped forward every time a dash is actually spent, and
-                    -- unlike canUseAbility it does not care what you are holding, so a slot
-                    -- change cannot move it.
-                    local stamp = dashStamp()
-                    if stamp > lastDash + 0.01 then
-                        arm(baseline, true)
-                    end
-                    if stamp ~= lastDash then
-                        lastDash = stamp
-                    end
-
-                    for _, ability in ABILITIES do
-                        if not grants(ability, held) then
-                            -- Not in hand: the ability does not exist for us right now, so
-                            -- there is no ready state worth remembering.
-                            prevReady[ability] = nil
-                        else
-                            local ok, ready = pcall(function()
-                                return bedwars.AbilityController:canUseAbility(ability)
-                            end)
-                            ready = (ok and ready) and true or false
-
-                            if handChanged or prevReady[ability] == nil then
-                                -- Just picked the item up. This flip is the item arriving, not
-                                -- a cast, so seed the state rather than treating it as an edge.
-                                prevReady[ability] = ready
-                            else
-                                if prevReady[ability] and not ready then
-                                    arm(baseline, true)
-                                end
-                                prevReady[ability] = ready
-                            end
-                        end
-                    end
-
-                    prevSpeed = speed
-
-                    if boostUntil <= now then
-                        if armedUntil > now then
-                            local confirm
-                            if armConfirmed then
-                                -- Give a confirmed cast the SAMPLE window to reach its peak, then
-                                -- carry it on the loose movement test so jumps and teleports count.
-                                confirm = (now - armStamp >= SAMPLE) and launchedConfirmed(root, speed, armSpeed)
-                            else
-                                confirm = launched(root, speed, armSpeed)
-                            end
-                            if confirm then
-                                launch(root)
-                            end
-                        else
-                            armedUntil = 0
-
-                            -- Opt-in safety net for kits whose ability never edges the cooldown
-                            -- API. Off by default because a bare velocity spike is also what
-                            -- knockback and explosions look like, which is what made the old
-                            -- build fire at things that were not abilities at all.
-                            if Fallback and Fallback.Enabled and not heldGrantsAbility(held)
-                                and speed >= LAUNCH_SPEED + 14 and speed >= baseline + LAUNCH_GAIN * 2 then
-                                launch(root)
-                            end
-                        end
-                        return
-                    end
-
-                    if not boostDir then return end
-
-                    local direction = speed > 4 and horiz.Unit or boostDir
-
-                    -- Knocked off the line we launched on: something hit us, so let the ability
-                    -- go rather than dragging the character through the knockback.
-                    if direction:Dot(boostDir) < 0.2 then
-                        boostUntil = 0
-                        boostDir = nil
-                        return
-                    end
-
-                    -- Follow where we are actually going so the move stays steerable instead of
-                    -- running on a rail.
-                    boostDir = direction
-
-                    if now - boostStart < SAMPLE then
-                        peakSpeed = math.max(peakSpeed, speed)
-                        return
-                    end
-
-                    local total = math.max(boostUntil - boostStart, 0.001)
-                    local progress = math.clamp((now - boostStart) / total, 0, 1)
-                    local envelope = 1
-
-                    if Smooth and Smooth.Enabled then
-                        -- Ease in, then fall away on a cosine tail, so the speed curve reads as
-                        -- a dash decaying rather than a rectangular block of velocity that snaps
-                        -- back to walking pace the instant the timer runs out.
-                        local rise = math.clamp(progress / 0.15, 0, 1)
-                        local fall = math.cos(math.clamp((progress - 0.15) / 0.85, 0, 1) * (math.pi / 2))
-                        envelope = rise * fall
-                    end
-
-                    -- Distance is measured in studs. Convert it to the extra velocity
-                    -- required over the configured carry time instead of treating the
-                    -- distance value itself as studs/second.
-                    local extraSpeed = Distance.Value / math.max(Duration.Value, 0.1)
-                    local target = (peakSpeed + extraSpeed) * envelope
-
-                    -- Only ever add to what the ability is already doing. Pinning the speed to a
-                    -- fixed number the whole way through is the part that looked obviously
-                    -- driven, and it also fought the game whenever the move was faster than us.
-                    if target > speed then
-                        local applied = direction * target
-                        root.AssemblyLinearVelocity = Vector3.new(applied.X, root.AssemblyLinearVelocity.Y, applied.Z)
-                    end
-                end))
             else
-                reset()
+                unhook()
             end
         end,
-        Tooltip = 'Carries your kit\'s mobility ability further. Detects the jade hammer jump, void axe jump, Yuzi dash or Elektra teleport being cast and holds your speed up'
+        Tooltip = 'Carries your kit\'s mobility ability further. Extends the jade hammer jump, void regent axe dash, cat pounce and Yuzi dash by pushing you on at the moment the game performs the move'
     })
-    Distance = Extender:CreateSlider({
-        Name = 'Extra Distance',
+
+    Range = Extender:CreateSlider({
+        Name = 'Extension range',
         Min = 1,
         Max = 80,
         Default = 20,
         Suffix = ' studs',
-        Tooltip = 'How much extra forward speed to carry during the ability so it takes you further'
+        Tooltip = 'How much further the ability takes you'
     })
-    Duration = Extender:CreateSlider({
-        Name = 'Duration',
-        Min = 0.1,
-        Max = 1.5,
-        Decimal = 100,
-        Default = 0.45,
-        Suffix = 'seconds',
-        Tooltip = 'How long the ability is carried for. Shorter reads as a slightly longer dash; longer turns it into an obvious glide'
-    })
-    Smooth = Extender:CreateToggle({
-        Name = 'Smooth',
-        Default = true,
-        Tooltip = 'Eases the extra speed in and lets it decay away instead of holding a flat speed for the whole duration and dropping it all at once'
-    })
-    Fallback = Extender:CreateToggle({
-        Name = 'Velocity fallback',
-        Tooltip = 'Also fire on a big speed spike with no dash or jump item held, for kits whose ability never reaches the cooldown API. Off by default - knockback looks the same from velocity alone'
-    })
+    for _, ability in ABILITIES do
+        KitToggles[ability.Name] = Extender:CreateToggle({
+            Name = ability.Name,
+            Default = true,
+            Tooltip = 'Extend the '..ability.Name..' ability'
+        })
+    end
 end)
 
 run(function()
