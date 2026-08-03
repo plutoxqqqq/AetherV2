@@ -1706,7 +1706,9 @@ components = {
 		window.AutoButtonColor = false
 		window.Visible = false
 		window.Text = ''
-		window.Parent = clickgui
+		-- Panel modules (Legit, Kits) live in their own window and hide the click GUI while
+		-- they are open, so their popups have to hang off that window instead.
+		window.Parent = api.Panel or clickgui
 		optionapi.Window = window
 		addBlur(window)
 		addCorner(window)
@@ -1864,10 +1866,11 @@ components = {
 			if mainapi.ThreadFix then
 				setthreadidentity(8)
 			end
-			local actualPosition = (textlist.AbsolutePosition + Vector2.new(0, 60)) / scale.Scale
+			local origin = api.Panel and api.Panel.AbsolutePosition or Vector2.zero
+			local actualPosition = ((textlist.AbsolutePosition - origin) + Vector2.new(0, 60)) / scale.Scale
 			window.Position = UDim2.fromOffset(actualPosition.X + 220, actualPosition.Y)
 		end)
-		
+
 		optionapi.Object = textlist
 		api.Options.Targets = optionapi
 		
