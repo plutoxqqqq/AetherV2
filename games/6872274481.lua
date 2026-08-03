@@ -4551,7 +4551,12 @@ run(function()
     local ProjectileStretch
     local Range
 
-    local oldroot, clone, hip = nil, nil, 2.5
+    -- oldchar is the character the parked root was taken OUT of. Reverting is only ever valid back
+    -- into that same character: respawn while the root is parked and lplr.Character is a brand new
+    -- model, and grafting the old root into it leaves the body being driven by a part nothing is
+    -- welded to - which renders locally as a character frozen on the spot while you carry on moving
+    -- normally everywhere else. See revertClone.
+    local oldroot, oldchar, clone, hip = nil, nil, nil, 2.5
     local rayParams = RaycastParams.new()
     rayParams.FilterType = Enum.RaycastFilterType.Include
     rayParams.RespectCanCollide = true
@@ -4566,6 +4571,7 @@ run(function()
             hip = entitylib.character.Humanoid.HipHeight
             oldroot = entitylib.character.HumanoidRootPart
             if not lplr.Character.Parent then return false end
+            oldchar = lplr.Character
             lplr.Character.Parent = replicatedStorage
             clone = oldroot:Clone()
             clone.Parent = lplr.Character
@@ -4579,6 +4585,21 @@ run(function()
             return true
         end
         return false
+    end
+
+    -- Nothing to give the root back to (died or respawned while it was parked). Bin the parts
+    -- rather than leaving a stray root in workspace or a clone inside a dead character.
+    local function dropClone()
+        if oldroot then
+            pcall(function() if oldroot.Parent == workspace then oldroot:Destroy() end end)
+        end
+        if clone then
+            pcall(function() clone:Destroy() end)
+        end
+        if store.rootpart == oldroot then
+            store.rootpart = nil
+        end
+        oldroot, oldchar, clone = nil, nil, nil
     end
 
     local projectileCache, projectileHistory = {}, {}
@@ -4725,25 +4746,31 @@ run(function()
     end
 
     local function revertClone()
-        if oldroot and oldroot.Parent and entitylib.isAlive then
-            lplr.Character.Parent = replicatedStorage
-            oldroot.Parent = lplr.Character
-            if clone then
-                oldroot.CFrame = clone.CFrame
-                oldroot.Velocity = clone.Velocity
-                clone:Destroy()
-                clone = nil
-            end
-            lplr.Character.PrimaryPart = oldroot
-            lplr.Character.Parent = workspace
-            oldroot.CanCollide = true
-            entitylib.character.Humanoid.HipHeight = hip or 2.6
-            oldroot.Transparency = 1
-            oldroot = nil
-            store.rootpart = nil
-            return true
+        if not oldroot then return false end
+        -- Only ever back into the character it came out of. A respawn during the dodge replaces
+        -- lplr.Character wholesale; putting a stale root into the new one - and making it the
+        -- PrimaryPart - is what leaves your body rendered frozen in place client-side while you
+        -- keep moving around normally.
+        if oldchar ~= lplr.Character or not oldchar or not oldchar.Parent or not oldroot.Parent or not entitylib.isAlive then
+            dropClone()
+            return false
         end
-        return false
+        lplr.Character.Parent = replicatedStorage
+        oldroot.Parent = lplr.Character
+        if clone then
+            oldroot.CFrame = clone.CFrame
+            oldroot.Velocity = clone.Velocity
+            clone:Destroy()
+            clone = nil
+        end
+        lplr.Character.PrimaryPart = oldroot
+        lplr.Character.Parent = workspace
+        oldroot.CanCollide = true
+        entitylib.character.Humanoid.HipHeight = hip or 2.6
+        oldroot.Transparency = 1
+        oldroot, oldchar = nil, nil
+        store.rootpart = nil
+        return true
     end
 
     AntiDeath = vape.Categories.Blatant:CreateModule({
@@ -4853,6 +4880,11 @@ run(function()
                             Dodge = false
                             revertClone()
                         end
+                    elseif oldroot then
+                        -- Died with the hitbox parked. Nothing to hand it back to, so bin it here
+                        -- rather than leaving it to be inherited by the character we respawn into.
+                        Dodge = false
+                        dropClone()
                     end
                     task.wait()
                 until not AntiDeath.Enabled
@@ -6110,7 +6142,12 @@ run(function()
     local HealthThreshold
     local TeleportHeight
 
-    local realroot, clone, hip, realCanCollide = nil, nil, 2.5, true
+    -- realchar is the character the parked hitbox was taken OUT of, and giveBack refuses to hand it
+    -- to any other one. Respawn while it is parked and lplr.Character is a different model; putting
+    -- the old root in there and making it the PrimaryPart leaves the visible body welded to a part
+    -- nothing drives, which renders as a character frozen on the spot for you alone while you keep
+    -- moving around perfectly normally everywhere else.
+    local realroot, realchar, clone, hip, realCanCollide = nil, nil, nil, 2.5, true
     local hiding, hideUntil, syncUntil, standDownUntil = false, 0, 0, 0
     local lastWarn = 0
     local lowestPoint = -9e9
@@ -6141,6 +6178,7 @@ run(function()
 
         hip = entitylib.character.Humanoid.HipHeight
         realroot = entitylib.character.HumanoidRootPart
+        realchar = lplr.Character
         realCanCollide = realroot.CanCollide
         lplr.Character.Parent = replicatedStorage
 		clone = realroot:Clone()
@@ -6159,7 +6197,9 @@ run(function()
     end
 
     local function giveBack()
-        if realroot and realroot.Parent and entitylib.isAlive and lplr.Character then
+        -- Same character or nothing. realchar ~= lplr.Character means we respawned while the hitbox
+        -- was parked, and the model this root belongs to no longer exists.
+        if realroot and realroot.Parent and entitylib.isAlive and lplr.Character and realchar == lplr.Character and lplr.Character.Parent then
             lplr.Character.Parent = replicatedStorage
             realroot.Parent = lplr.Character
             if clone then
@@ -6176,20 +6216,20 @@ run(function()
             entitylib.character.Humanoid.HipHeight = hip or 2.6
             realroot.Transparency = 1
         elseif realroot then
-            -- Died (or the character went away) while the hitbox was parked: there is nothing to
-            -- give it back to, so destroy it rather than leaving a stray part in workspace for
-            -- every death.
-            if realroot.Parent == workspace then
+            -- Died, respawned, or the character went away while the hitbox was parked: there is
+            -- nothing of ours left to give it back to, so destroy both parts rather than leaving a
+            -- stray root in workspace or grafting it into somebody else's body.
+            if realroot.Parent == workspace or realroot.Parent ~= realchar then
                 pcall(function() realroot:Destroy() end)
             end
-            if clone and clone.Parent == nil then
+            if clone then
                 pcall(function() clone:Destroy() end)
             end
         end
 		if store.rootpart == realroot then
 			store.rootpart = nil
 		end
-		realroot, clone = nil, nil
+		realroot, realchar, clone = nil, nil, nil
         hiding, hideUntil, syncUntil = false, 0, 0
     end
 
@@ -18266,6 +18306,9 @@ run(function()
     local STAND = 1.5
     local WOOL_ITEM, WOOL_PER_BUY, WOOL_PRICE = 'wool_white', 16, 8
     local DAO_TIERS = {'wood_dao', 'stone_dao', 'iron_dao', 'diamond_dao', 'emerald_dao'}
+    -- The same ladder AutoBuy walks. Slot 2 of the inventory's armor table is the chestplate, which
+    -- is what the ladder is priced on and what the run judges "are we dressed for this" by.
+    local ARMOUR_TIERS = {'leather_chestplate', 'iron_chestplate', 'diamond_chestplate', 'emerald_chestplate'}
     -- Yuzi has shipped under both ids; treat either as the dash kit rather than betting on one.
     local YUZI_KITS = {yuzi = true, dasher = true}
     local BANKABLE = {iron = true, gold = true, diamond = true, emerald = true, void_crystal = true}
@@ -18276,6 +18319,11 @@ run(function()
     -- something that walking could not, and the ceiling is what Aggression actually sets.
     local TIER_CEILING = {Safe = 1, Balanced = 2, Blatant = 3}
 
+    -- The launch the dash driver asserts when the game's own handler did not move us, and how long
+    -- it holds it for. Held for a short window rather than LongJump's two and a half seconds, so a
+    -- dash covers about a dash's worth of ground instead of half the map.
+    local DASH_SPEED, DASH_CARRY = 75, 0.55
+
     -- Bumped on every enable/disable. Every loop below carries the generation it started with and
     -- exits the moment it stops matching, so a toggle can never leave a thread from the previous
     -- run still driving the character.
@@ -18285,6 +18333,13 @@ run(function()
     -- but the escalation rungs are defined further down (they need the module driver, which needs
     -- the option handles). Without this the call inside travel would compile as a global read.
     local applyTier
+
+    -- Same reason. The dash driver lives with the walker's driver (they are both velocity writers
+    -- and both have to be registered on the module's maid in one place), but everything that sets
+    -- these up is in the Yuzi section further down. Declared here so the driver closes over the
+    -- real upvalues rather than reading globals that are forever nil.
+    local dashUntil, dashDir = 0, nil
+    local endDashCarry
 
     ----------------------------------------------------------------------------------------------
     -- Isolation helpers. Every single call into BedWars goes through one of these, so a field that
@@ -18318,6 +18373,10 @@ run(function()
         lastProgress = 0,
         queued = false,
         equipped = false,
+        deaths = 0,
+        lastGear = 0,
+        selfResetAt = 0,
+        lostBed = false,
     }
 
     local function resetRun()
@@ -18329,6 +18388,13 @@ run(function()
         run_.queued = false
         run_.equipped = false
         run_.lastEquipTry = 0
+        -- Deaths since the last trip to the shop, and when that trip was. Together they are what
+        -- turns "I keep dying on the way out" into "go and buy something" instead of into another
+        -- identical attempt.
+        run_.deaths = 0
+        run_.lastGear = 0
+        run_.selfResetAt = 0
+        run_.lostBed = false
     end
 
     local function running(gen)
@@ -18536,10 +18602,15 @@ run(function()
         return entitylib.isAlive and not store.rootpart and myRoot() ~= nil
     end
 
+    -- Distance from the root's centre down to the soles. entitylib already folds the root's half
+    -- height (and R6's leg length) into character.HipHeight, so adding root.Size.Y * 0.5 on top of
+    -- it - as this used to - double counted it by a stud and left footCell only half a stud of
+    -- margin before it started reporting the cell below the one we are standing on.
     local function hipOf(char, root)
-        local hip = char and char.HipHeight or 3
+        if char and char.HipHeight then return char.HipHeight end
+        local humanoid = char and char.Humanoid
         local half = root and root.Size and (root.Size.Y * 0.5) or 1
-        return hip + half
+        return (humanoid and humanoid.HipHeight or 2) + half
     end
 
     ----------------------------------------------------------------------------------------------
@@ -18599,6 +18670,39 @@ run(function()
             end
         end
         return false
+    end
+
+    -- Our bed is gone, so the next death ends the match for us rather than costing a few seconds.
+    -- Latched, because a bed never comes back and myTeam() is briefly nil around a spawn - without
+    -- the latch the run would flap in and out of playing carefully at exactly the wrong moment.
+    local function lastLife()
+        if run_.lostBed then return true end
+        if myTeam() == nil then return false end
+        if not ownBedAlive() then
+            run_.lostBed = true
+            return true
+        end
+        return false
+    end
+
+    local function healthFraction()
+        local char = entitylib.character
+        if not char or not char.MaxHealth or char.MaxHealth <= 0 then return 1 end
+        return math.clamp((char.Health or 0) / char.MaxHealth, 0, 1)
+    end
+
+    -- How far up the armour ladder we are, 0 for nothing. Worn armour first, then the best piece in
+    -- the bag - AutoKit and the game itself both equip out of the inventory, so owning it counts.
+    local function armourTier()
+        local worn = ask(function()
+            local armour = store.inventory.inventory.armor
+            local entry = armour and armour[2]
+            if entry and entry ~= 'empty' and entry.itemType then return entry.itemType end
+            local best = getBestArmor(1)
+            return best and best.itemType or nil
+        end)
+        if not worn then return 0 end
+        return table.find(ARMOUR_TIERS, worn) or 0
     end
 
     local function bedName(bed)
@@ -18930,8 +19034,68 @@ run(function()
     ----------------------------------------------------------------------------------------------
     local moveDir, driving, holdStill = Vector3.zero, false, false
 
+    -- Jumping.
+    --
+    -- `Humanoid.Jump = true` on its own is not a jump in BedWars. The game drives the character
+    -- through its own controller, and the flag is routinely consumed or overwritten before the
+    -- humanoid's state machine ever acts on it - which is why the run used to grind into every kerb
+    -- and every step-up instead of hopping over it. What actually works, and is what the rest of
+    -- this script uses (the Zephyr fall clutch, Speed's AutoJump), is asking for the state change
+    -- directly. The velocity assert underneath it is the backstop: if a frame later we are still
+    -- not going up, we put the lift in ourselves.
+    --
+    -- The fallback is deliberately a one-shot impulse rather than a velocity the driver holds for
+    -- the length of the window: held, it would not be a jump at all, it would be six blocks of lift
+    -- and a speed check failed in front of everybody. The driver reads and rewrites Y unchanged, so
+    -- one impulse is all a jump needs from us.
+    local JUMP_POWER = 50
+    local jumpUntil, jumpFloor = 0, 0
+
     local function stopMoving()
         moveDir, driving, holdStill = Vector3.zero, false, false
+        jumpUntil, jumpFloor = 0, 0
+    end
+
+    -- Ask for a jump and mean it.
+    local function requestJump(char, root)
+        if not char or not root or not char.Humanoid then return false end
+        local humanoid = char.Humanoid
+        -- Only ever a jump from the floor. Asked for in mid-air the humanoid rightly refuses, and
+        -- the backstop below would then read "we are not going up" and put in an impulse of its
+        -- own - a double jump nobody asked for and everybody can see.
+        local grounded = ask(function() return humanoid.FloorMaterial ~= Enum.Material.Air end)
+        if grounded ~= true then return false end
+
+        safe(function()
+            humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+            humanoid.Jump = true
+        end)
+        -- The humanoid latches Jump, so clear it shortly after or it queues a second unwanted jump
+        -- on the frame we land. Same shape as the Zephyr clutch.
+        task.delay(0.2, function()
+            safe(function()
+                if humanoid.Parent then humanoid.Jump = false end
+            end)
+        end)
+        local power = ask(function() return humanoid.JumpPower end)
+        if type(power) ~= 'number' or power <= 0 then power = JUMP_POWER end
+        jumpFloor = power
+        jumpUntil = tick() + 0.35
+        -- The backstop, and the reason this works where `Humanoid.Jump = true` did not: give the
+        -- humanoid a couple of frames to do it, and put the lift in ourselves only if it plainly
+        -- has not. Asserting on the same frame would stack with the humanoid's own impulse and
+        -- launch us a block too high, which reads to the server as a speed hack.
+        task.delay(0.06, function()
+            if tick() > jumpUntil then return end
+            if movementModuleActive() then return end
+            local now = myRoot()
+            if not now or not isnetworkowner(now) then return end
+            local velocity = now.AssemblyLinearVelocity
+            if velocity.Y < jumpFloor * 0.45 then
+                now.AssemblyLinearVelocity = Vector3.new(velocity.X, jumpFloor, velocity.Z)
+            end
+        end)
+        return true
     end
 
     local function startDriver(gen)
@@ -18952,6 +19116,8 @@ run(function()
             -- how a character ends up vibrating instead of travelling.
             if movementModuleActive() then return end
             if not isnetworkowner(root) then return end
+            -- Y is read and written back untouched, in every branch: the horizontal is ours to
+            -- drive, the vertical belongs to the jump and to gravity.
             local velocity = root.AssemblyLinearVelocity
             if moveDir.Magnitude > 0 and not holdStill then
                 local speed = char.Humanoid.WalkSpeed
@@ -18962,6 +19128,41 @@ run(function()
                 root.AssemblyLinearVelocity = Vector3.new(0, velocity.Y, 0)
             end
         end))
+
+        -- The dash driver. Separate from the walker above because a dash happens with the walker
+        -- deliberately switched off (dashToward calls stopMoving first), and because it has to run
+        -- on PreSimulation - the same step LongJump and Speed write on - to survive the frame.
+        AutoWin:Clean(runService.PreSimulation:Connect(function(dt)
+            if not dashDir or tick() >= dashUntil then return end
+            if not running(gen) or store.rootpart then
+                endDashCarry()
+                return
+            end
+            local root, char = myRoot()
+            if not root or not char or not char.Humanoid then
+                endDashCarry()
+                return
+            end
+            if not isnetworkowner(root) then return end
+
+            local velocity = root.AssemblyLinearVelocity
+            local flat = Vector3.new(velocity.X, 0, velocity.Z).Magnitude
+            -- Where the game's own handler ran, it is already carrying us faster than this, and the
+            -- right thing to do is nothing at all. Taking the max instead would read back our own
+            -- write every frame and pin the launch at its peak for the whole window - a dash that
+            -- never decays and goes half again as far as a real one.
+            if flat < DASH_SPEED then
+                root.AssemblyLinearVelocity = Vector3.new(dashDir.X * DASH_SPEED, velocity.Y, dashDir.Z * DASH_SPEED)
+            end
+
+            -- A dash travels flat. Left to gravity, a launch fired across a gap arrives below the
+            -- far edge and the run ends in the void, so most of the fall is cancelled for the few
+            -- frames the launch lasts - exactly what the game's own dash does.
+            if char.Humanoid.FloorMaterial == Enum.Material.Air and velocity.Y < 0 then
+                root.AssemblyLinearVelocity += Vector3.new(0, dt * workspace.Gravity * 0.85, 0)
+            end
+        end))
+        AutoWin:Clean(endDashCarry)
         AutoWin:Clean(stopMoving)
     end
 
@@ -18975,18 +19176,21 @@ run(function()
         holdStill = true
         moveDir = Vector3.zero
         local startY = root.Position.Y
-        safe(function() char.Humanoid.Jump = true end)
+        requestJump(char, root)
         local deadline = tick() + 0.8
+        local placed = false
         while running(gen) and tick() < deadline do
             task.wait()
             local current = myRoot()
             if not current then break end
             if current.Position.Y - startY >= CELL + 0.2 then
                 placeAt(cell + Vector3.new(0, 1, 0))
+                placed = true
                 break
             end
         end
         holdStill = false
+        return placed
     end
 
     ----------------------------------------------------------------------------------------------
@@ -19005,6 +19209,11 @@ run(function()
         local route, routeIndex, plannedGoal = nil, 1, nil
         local best, stallSince = math.huge, tick()
         local lastJump, lastPlan = 0, 0
+        -- Ground truth for "am I actually moving". Distance-to-goal cannot answer that: strafing
+        -- along a wall closes no distance while moving perfectly well, and grinding into a kerb
+        -- closes no distance while moving not at all. Comparing where we WERE separates the two,
+        -- and pressed-into-something is the case a jump fixes.
+        local lastPos, lastPosAt = nil, tick()
         driving = true
 
         while running(gen) and tick() < deadline do
@@ -19136,13 +19345,34 @@ run(function()
                         local delta = (aim - root.Position) * Vector3.new(1, 0, 1)
                         moveDir = delta.Magnitude > 0.05 and delta.Unit or Vector3.zero
 
-                        if next_.Y > here.Y and tick() - lastJump > 0.35 then
+                        local canJump = tick() - lastJump > 0.35
+                        if next_.Y > here.Y and canJump then
                             lastJump = tick()
-                            if delta.Magnitude <= CELL * 0.5 then
+                            -- Straight up (the cell directly overhead) is a tower and needs a block
+                            -- under our feet on the way. A step UP AND ALONG is just a jump - it
+                            -- used to be sent to towerUp too as soon as we got within half a cell,
+                            -- which stood still, jumped, and dropped a block on our own head
+                            -- instead of stepping onto the ledge in front of us.
+                            local sameColumn = next_.X == here.X and next_.Z == here.Z
+                            if sameColumn and delta.Magnitude <= CELL * 0.5 then
                                 towerUp(here, gen)
                             else
-                                safe(function() char.Humanoid.Jump = true end)
+                                requestJump(char, root)
                             end
+                        elseif canJump and lastPos and moveDir.Magnitude > 0 and not holdStill then
+                            -- Pressed into something the route thinks is walkable: a kerb, a block
+                            -- an enemy dropped in front of us, the lip of our own bridge. Nothing
+                            -- above ever asked for a jump here, so the run just leaned on it until
+                            -- the stall timer escalated. Hop it.
+                            local moved = (root.Position - lastPos).Magnitude
+                            if moved < 0.35 and tick() - lastPosAt > 0.3 and char.Humanoid.FloorMaterial ~= Enum.Material.Air then
+                                lastJump = tick()
+                                requestJump(char, root)
+                            end
+                        end
+
+                        if not lastPos or (root.Position - lastPos).Magnitude > 0.35 then
+                            lastPos, lastPosAt = root.Position, tick()
                         end
                         task.wait()
                     end
@@ -19162,10 +19392,19 @@ run(function()
     ----------------------------------------------------------------------------------------------
     -- Yuzi.
     --
-    -- The dash is fired directly rather than by switching LongJump on, because LongJump pins your
+    -- The dash is cast directly rather than by switching LongJump on, because LongJump pins your
     -- velocity the moment its own boost window closes - left on, that holds the run frozen in place,
-    -- and it is why crossings used to end standing still in mid-map. What is used here is exactly
-    -- the request LongJump sends, nothing more: dao in hand, face the target, fire the ability.
+    -- and it is why crossings used to end standing still in mid-map.
+    --
+    -- FIRING THE REMOTE IS NOT A DASH. This is the part that made the run "use its ability and stay
+    -- exactly where it was": the raw useAbility FireServer is taken by the server - it stamps the
+    -- cooldown, plays the effect, and CanDashNext moves forward, so from the outside the dash was
+    -- genuinely spent - but the MOVEMENT is applied on the client, by the game's own ability
+    -- handler, which a bare FireServer never runs. LongJump gets away with the same remote only
+    -- because it then drives the velocity itself for the next two seconds. So the cast goes through
+    -- the AbilityController (the real dash, handler and all), the remote is kept as the fallback
+    -- for builds where that signature has moved, and either way the launch is carried by the dash
+    -- driver below - which is what makes the crossing land whether the handler ran or not.
     --
     -- Every launch is checked first. A dash is a flat line fired blind, so anything solid in the way
     -- was a wall taken at full speed and a launch that came up short of the far island was a fall
@@ -19238,17 +19477,56 @@ run(function()
         return workspace:Raycast(landing + Vector3.new(0, 8, 0), Vector3.new(0, -60, 0), dashRay) ~= nil
     end
 
+    -- Hand the launch to the driver in startDriver. Friction is dropped for its length the same way
+    -- every other movement module in this script does it, or the character's own drag bleeds most
+    -- of the launch off before it has covered anything.
+    local function beginDashCarry(direction)
+        local flat = Vector3.new(direction.X, 0, direction.Z)
+        if flat.Magnitude < 0.1 then return end
+        dashDir = flat.Unit
+        dashUntil = tick() + DASH_CARRY
+        frictionTable.AutoWin = true
+        updateVelocity()
+    end
+
+    function endDashCarry()
+        dashUntil, dashDir = 0, nil
+        if frictionTable.AutoWin then
+            frictionTable.AutoWin = nil
+            updateVelocity()
+        end
+    end
+
     local function fireDash(direction, origin, item)
-        return ask(function()
-            bedwars.SwordController.lastAttack = workspace:GetServerTimeNow()
-            local events = replicatedStorage['events-@easy-games/game-core:shared/game-core-networking@getEvents.Events']
-            events.useAbility:FireServer('dash', {
-                direction = direction,
-                origin = origin,
-                weapon = item.itemType
-            })
-            return true
-        end) == true
+        local data = {
+            direction = direction,
+            origin = origin,
+            weapon = item.itemType
+        }
+        safe(function() bedwars.SwordController.lastAttack = workspace:GetServerTimeNow() end)
+
+        -- The controller first: this is the call that runs the client-side dash handler, and so the
+        -- only one of the three that moves you on its own. Both signatures are tried because the
+        -- middle argument has come and gone across BedWars builds - same ladder useToolAbility uses.
+        local cast = ask(function()
+            return bedwars.AbilityController:useAbility('dash', newproxy(true), data)
+        end)
+        if cast == nil or cast == false then
+            cast = ask(function()
+                return bedwars.AbilityController:useAbility('dash', data)
+            end)
+        end
+        if cast == nil or cast == false then
+            cast = ask(function()
+                local events = replicatedStorage['events-@easy-games/game-core:shared/game-core-networking@getEvents.Events']
+                events.useAbility:FireServer('dash', data)
+                return true
+            end)
+        end
+        if cast == nil or cast == false then return false end
+
+        beginDashCarry(direction)
+        return true
     end
 
     -- Dash at a (possibly moving) target until we are in range. Returning false simply means the
@@ -19302,6 +19580,7 @@ run(function()
             root.CFrame = CFrame.lookAt(root.Position, root.Position + direction)
             status('Yuzi', label or 'Dashing', string.format('%d studs', math.floor(left)))
 
+            local launchFrom = root.Position
             if not fireDash(direction, root.Position, dao) then break end
 
             -- Let the launch play out and settle before measuring, or the next pass reads
@@ -19311,6 +19590,20 @@ run(function()
                 local now, moving = myRoot(), getGoal()
                 if now and moving and flatDistance(now.Position, moving) <= stopRange then break end
                 task.wait(0.05)
+            end
+            endDashCarry()
+
+            -- A dash that spent the cooldown and moved us nowhere is the one failure that used to
+            -- go completely unnoticed: the ability was accepted, so nothing here read as an error,
+            -- and the run stood in place burning dashes at a bed it was never going to reach. Two
+            -- of those and the bridge takes over.
+            local after = myRoot()
+            if after and (after.Position - launchFrom).Magnitude < 6 then
+                stalled = stalled + 1
+                if stalled >= 2 then
+                    status('Yuzi', 'The dash is not moving us - bridging instead', '')
+                    break
+                end
             end
 
             -- Learn how far a dash really carries here, so the landing check above is answering
@@ -19516,6 +19809,9 @@ run(function()
     -- Reset to base. Only ever called with our own bed intact, so it is a respawn and not an
     -- elimination.
     local function selfRespawn(gen)
+        -- Mark it, so the death this is about to cause is not counted against us as "died on the
+        -- way to the bed" and does not send the run shopping for armour it already has.
+        run_.selfResetAt = tick()
         local before = lplr.Character
         local sent = ask(function()
             bedwars.Client:Get(remotes.ResetCharacter):SendToServer()
@@ -19536,6 +19832,30 @@ run(function()
             task.wait(0.2)
         end
         task.wait(0.4)
+    end
+
+    -- The only place the run is allowed to reset itself, so the two things that make a reset wrong
+    -- are checked once rather than at every call site.
+    --
+    --   * With our bed gone the respawn IS the elimination. That check existed, but as a bare
+    --     ownBedAlive() at each site, and one missed site throws the match.
+    --   * A reset while a hitbox swap is in flight is what leaves your body frozen in place.
+    --     AutoBank's silent bank parks your real root on the chest for a fraction of a second, and
+    --     the run banks IMMEDIATELY before resetting - so respawning into the middle of that swap
+    --     was routine, not rare. Wait for the swap to finish (store.rootpart is the whole script's
+    --     flag for "somebody owns the hitbox") and skip the reset entirely if it will not clear.
+    -- `force` is for the watchdog, whose reset is the last thing standing between a wedged run and
+    -- an hour of nothing. It skips the Respawn after bed preference - not the two safety checks.
+    local function resetToBase(gen, force)
+        if not force and not RespawnAfterBed.Enabled then return false end
+        if lastLife() or not ownBedAlive() then return false end
+        local deadline = tick() + 2
+        while running(gen) and store.rootpart and tick() < deadline do
+            task.wait(0.05)
+        end
+        if not running(gen) or store.rootpart then return false end
+        selfRespawn(gen)
+        return true
     end
 
     ----------------------------------------------------------------------------------------------
@@ -19572,6 +19892,112 @@ run(function()
         return ironCount() >= target
     end
 
+    -- AutoBuy, with the toggles the run depends on actually asked for.
+    --
+    -- Buy Armor ships on and Buy Sword ships off, and neither was being requested - so whether a
+    -- run bought armour came down to how the user last left AutoBuy, and one switched off there
+    -- meant standing at the counter with the iron for a chestplate and buying nothing at all. Take
+    -- over records and restores every option it changes, so asking for them is not a change to
+    -- anybody's config. Still gated on the Take over toggle, because buyArmour and buyDao below
+    -- cover the same ground when it is off.
+    local function driveAutoBuy()
+        return takeOver('AutoBuy', {
+            ['GUI check'] = false,
+            ['Only Bedwars'] = false,
+            ['Buy Armor'] = true,
+            ['Buy Sword'] = true
+        })
+    end
+
+    -- Walk the armour ladder ourselves. With Take over on, driveAutoBuy above already covers this
+    -- and these calls simply find nothing left to buy; without it nothing else would, and a run in
+    -- its underwear is the thing this exists to stop. Same shape as buyDao.
+    local function buyArmour(shopId)
+        local owned = armourTier()
+        for index = owned + 1, #ARMOUR_TIERS do
+            local item = ask(function()
+                return bedwars.Shop.getShopItem(ARMOUR_TIERS[index], lplr, shopId and {shopId = shopId} or nil)
+            end)
+            if item then
+                local currency = ask(getItem, item.currency)
+                if (currency and currency.amount or 0) >= (item.price or math.huge) then
+                    safe(function()
+                        bedwars.Client:Get('BedwarsPurchaseItem'):CallServerAsync({shopItem = item, shopId = shopId})
+                    end)
+                    task.wait(0.25)
+                end
+            end
+        end
+    end
+
+    -- Time to go shopping for armour?
+    --
+    -- The second trigger is the one that matters. The first is just "we have none" - crossing the
+    -- map unarmoured is a bad trade at any point in a match. The second is dying: a run that keeps
+    -- dying before it reaches the bed is a run whose gear is not up to the crossing, and setting
+    -- off again on exactly the same gear is the loop being reported. Each death buys one trip to
+    -- the shop; gearUp clears the count, so this can never turn into shuttling back and forth.
+    local function needsGear()
+        if tick() - (run_.lastGear or 0) < 20 then return false end
+        local tier = armourTier()
+        if tier <= 0 then return true end
+        if (run_.deaths or 0) > 0 and tier < #ARMOUR_TIERS then return true end
+        -- Last life: our bed is gone, so this is the crossing that decides the match.
+        if lastLife() and tier < 2 then return true end
+        return false
+    end
+
+    -- Go to a shop and come back dressed.
+    --
+    -- AutoBuy is what buys armour, and AutoBuy only buys while you are stood beside a shop NPC.
+    -- Nothing in the old run ever took us there for that reason - the one shop trip was the wool
+    -- trip inside stockUp, so a run that already had wool, or was dashing (which skipped stockUp
+    -- entirely), never visited a shop at all and fought the whole match in what it spawned in.
+    local function gearUp(gen, label)
+        label = label or 'Going for armour'
+        -- Every give-up path stamps the clock too. Without that, a map with no shop we can find
+        -- would answer "yes, go shopping" on every single tick and re-ask the question forever.
+        if not shopIdNear(18) then
+            local pos = nearestShop()
+            if not pos then
+                run_.lastGear = tick()
+                return false
+            end
+            status('Resources', label, '')
+            travel(gen, function() return pos end, 8, false, label, 45)
+            if not running(gen) or not alive() then return false end
+        end
+        local shopId = shopIdNear(22)
+        if not shopId then
+            run_.lastGear = tick()
+            return false
+        end
+
+        local waitShop = tick() + 6
+        while running(gen) and not store.shopLoaded and tick() < waitShop do task.wait(0.1) end
+
+        status('Resources', label, armourTier() .. '/' .. #ARMOUR_TIERS .. ' armour')
+        driveAutoBuy()
+        buyArmour(shopId)
+        buyDao(shopId)
+
+        -- AutoBuy spends on its own loop, so give it a beat at the counter rather than walking off
+        -- the moment we arrive. Stops early as soon as something lands.
+        local before = armourTier()
+        local deadline = tick() + 3
+        while running(gen) and alive() and tick() < deadline do
+            if armourTier() > before then break end
+            task.wait(0.2)
+        end
+
+        -- One trip per death, whether or not we could afford anything. Without this a run that has
+        -- run out of iron would walk back to the shop after every single death for the rest of the
+        -- match and never get anything else done.
+        run_.lastGear = tick()
+        run_.deaths = 0
+        return armourTier() > 0
+    end
+
     local function goShopping(gen, wantBlocks)
         if not shopIdNear(18) then
             local pos = nearestShop()
@@ -19586,10 +20012,11 @@ run(function()
         while running(gen) and not store.shopLoaded and tick() < waitShop do task.wait(0.1) end
 
         -- Armour, a sword and tools are AutoBuy's job and it is already standing here with us; all
-        -- this has to do is the two things AutoBuy will not - the dao ladder and enough wool for
-        -- the crossing we measured.
-        takeOver('AutoBuy', {['GUI check'] = false, ['Only Bedwars'] = false})
+        -- this has to do is the things AutoBuy will not - the dao ladder, the armour ladder when
+        -- AutoBuy is not available to walk it, and enough wool for the crossing we measured.
+        driveAutoBuy()
         buyDao(shopId)
+        buyArmour(shopId)
 
         for _ = 1, 40 do
             if not running(gen) or not alive() then break end
@@ -19609,32 +20036,92 @@ run(function()
         return blockCount() > 0
     end
 
-    -- Measure the crossing, gather exactly the iron it needs, and buy it. Never asks for less than
-    -- the Wool amount slider.
-    local function stockUp(gen, goalPos)
-        local root, char = myRoot()
-        if not root then return false end
-        local need = 0
-        if goalPos then
-            -- A cell-by-cell count of what is missing along the straight line. It is an estimate,
-            -- not the route, but it is the right order of magnitude and it is cheap.
-            local from = footCell(root, char)
-            local to = cellOf(Vector3.new(goalPos.X, goalPos.Y - STAND, goalPos.Z))
-            local steps = math.min(math.abs(to.X - from.X) + math.abs(to.Z - from.Z), 300)
-            local cursor = from
-            for _ = 1, steps do
-                local dx, dz = to.X - cursor.X, to.Z - cursor.Z
-                if dx == 0 and dz == 0 then break end
-                if math.abs(dx) >= math.abs(dz) then
-                    cursor = cursor + Vector3.new(dx > 0 and 1 or -1, 0, 0)
-                else
-                    cursor = cursor + Vector3.new(0, 0, dz > 0 and 1 or -1)
+    -- Level first, then the steps down a bridge takes, then one step up. Down before up so a wall
+    -- beside the route is never mistaken for the floor of it.
+    local PROBE = {0, -1, -2, -3, 1}
+
+    -- Follow the ground along a straight X/Z line and count the columns with nothing under them.
+    -- The height is carried from column to column instead of being pinned to the one we set off at,
+    -- because a bridge climbs, dips and is often built a level off ours - measured at a single fixed
+    -- height, an existing bridge reads as open air for its whole length.
+    local function straightLineCost(from, to)
+        local steps = math.min(math.abs(to.X - from.X) + math.abs(to.Z - from.Z), 300)
+        local cursor, need = from, 0
+        for _ = 1, steps do
+            local dx, dz = to.X - cursor.X, to.Z - cursor.Z
+            if dx == 0 and dz == 0 then break end
+            if math.abs(dx) >= math.abs(dz) then
+                cursor = cursor + Vector3.new(dx > 0 and 1 or -1, 0, 0)
+            else
+                cursor = cursor + Vector3.new(0, 0, dz > 0 and 1 or -1)
+            end
+            local found = nil
+            for _, dy in ipairs(PROBE) do
+                local probe = cursor + Vector3.new(0, dy, 0)
+                if solidAt(probe) then
+                    found = probe
+                    break
                 end
-                if not solidAt(cursor) then need = need + 1 end
+            end
+            if found then
+                cursor = found
+            else
+                need = need + 1
             end
         end
+        return need
+    end
 
-        local want = math.max(WoolAmount.Value, need + 10)
+    -- What this crossing actually costs us in blocks.
+    --
+    -- This used to be the straight line above and nothing else, measured at one fixed height, and
+    -- it is why the run bought wool with a finished bridge in front of it: a bridge is almost never
+    -- at exactly the height you set off at - it climbs, it dips, it was built from the far side,
+    -- you are standing on its lip a level up - so a perfectly walkable crossing priced as if
+    -- nothing was there at all, and the run went off for iron and a stack of wool it did not need.
+    --
+    -- Ask the router instead. It is the same search travel is about to run, so what it says the
+    -- route costs is what the crossing will really cost, existing bridge included. The straight
+    -- line stays as the fallback for when the search comes back empty.
+    local function blocksNeeded(gen, goalPos)
+        local root, char = myRoot()
+        if not root or not goalPos then return 0 end
+        local from = footCell(root, char)
+        local to = cellOf(Vector3.new(goalPos.X, goalPos.Y - STAND, goalPos.Z))
+
+        -- Same arguments the crossing itself will use, or the estimate prices a different route to
+        -- the one we are about to walk.
+        local route = planRoute(from, to, true, true, gen)
+        if not running(gen) then return 0 end
+        if route and #route > 0 then
+            local need = 0
+            for _, cell in ipairs(route) do
+                if not solidAt(cell) then need = need + 1 end
+            end
+            -- A route that ran out of search budget only priced the part of the crossing it could
+            -- see. Price the rest the cheap way rather than setting off underweight.
+            local last = route[#route]
+            if (last - to).Magnitude > 2 then
+                need = need + straightLineCost(last, to)
+            end
+            return need
+        end
+        return straightLineCost(from, to)
+    end
+
+    -- Measure the crossing, gather exactly the iron it needs, and buy it.
+    local function stockUp(gen, goalPos)
+        local root = myRoot()
+        if not root then return false end
+        local need = blocksNeeded(gen, goalPos)
+        if not running(gen) then return false end
+
+        -- The Block amount slider is the floor for a crossing that has to be BUILT. When the route
+        -- is already walkable the whole way - a teammate's bridge, our own from the last cycle, a
+        -- map that simply connects - there is nothing to build and a full stack is a shopping trip
+        -- for nothing. Carry a small reserve for patching a hole and go.
+        local reserve = math.min(WoolAmount.Value, 8)
+        local want = need > 0 and math.max(WoolAmount.Value, need + 10) or reserve
         if blockCount() >= want then return true end
         local buys = math.ceil(math.max(want - blockCount(), 0) / WOOL_PER_BUY)
         gatherIron(gen, math.max(IronAmount.Value, buys * WOOL_PRICE))
@@ -19723,6 +20210,46 @@ run(function()
         end)
     end
 
+    -- Break off and heal.
+    --
+    -- Walking away from a fight was not something the run could do at all. With our own bed still
+    -- up that hardly matters - a bad trade costs a respawn - but once it is gone the same bad trade
+    -- ends the match, and "swing until one of us drops" is how a won game gets handed to whoever
+    -- happened to be standing next to the last bed. So on the last life the run puts distance
+    -- between itself and whoever is on it, and lets AutoConsume do its job.
+    local function disengage(gen)
+        local root = myRoot()
+        if not root then return false end
+        local ent = pickEnemy()
+        if not ent or not ent.RootPart or not ent.RootPart.Parent then return false end
+
+        local delta = (root.Position - ent.RootPart.Position) * Vector3.new(1, 0, 1)
+        -- Nothing close enough to be worth running from; whatever hurt us is not here any more.
+        if delta.Magnitude > 60 then return false end
+        local away = delta.Magnitude > 1 and delta.Unit or root.CFrame.LookVector * Vector3.new(1, 0, 1)
+        if away.Magnitude < 0.1 then return false end
+
+        takeOver('AutoConsume', {})
+        local goal = root.Position + away.Unit * 45
+        status('Combat', 'Backing off to heal', string.format('%d%% hp', math.floor(healthFraction() * 100)))
+        travel(gen, function() return goal end, 6, true, 'Backing off to heal', 10)
+
+        -- Then hold off until the heal lands or they lose interest, rather than turning straight
+        -- round into the same fight on the same health.
+        local deadline = tick() + 8
+        while running(gen) and alive() and tick() < deadline do
+            if healthFraction() >= 0.8 then break end
+            local near, now = pickEnemy(), myRoot()
+            if not now then break end
+            if not near or not near.RootPart or not near.RootPart.Parent then break end
+            if (near.RootPart.Position - now.Position).Magnitude > 55 then break end
+            status('Combat', 'Backing off to heal', string.format('%d%% hp', math.floor(healthFraction() * 100)))
+            task.wait(0.3)
+        end
+        run_.lastProgress = tick()
+        return true
+    end
+
     local function fight(gen, ent)
         local auraDriven = takeOver('Killaura', {
             ['Require mouse down'] = false,
@@ -19734,6 +20261,12 @@ run(function()
             if ent.Health and ent.Health <= 0 then return true end
             local root = myRoot()
             if not root then break end
+            -- Last life: a trade we are losing is a trade that ends the match. Hand back to the
+            -- brain, which with our bed gone will back off and heal rather than finish the swing.
+            if lastLife() and healthFraction() < 0.4 then
+                status('Combat', 'Breaking off - too low to trade', '')
+                return false
+            end
             local dist = (ent.RootPart.Position - root.Position).Magnitude
             if dist > PlayerReach.Value + 10 then return false end
             root.CFrame = CFrame.lookAt(root.Position, Vector3.new(ent.RootPart.Position.X, root.Position.Y, ent.RootPart.Position.Z))
@@ -19917,6 +20450,16 @@ run(function()
             return
         end
 
+        -- Last life. Our bed is gone, so the next death is not a respawn, it is the match - and
+        -- this is where a won game gets thrown away: the run charges the final bed on a sliver of
+        -- health with whatever it happened to be carrying, and hands the win to whoever is standing
+        -- next to it. Nothing else about the plan changes; it just stops taking the trades that end
+        -- it. Healing is AutoConsume's job and it is better at it than anything that belongs here.
+        if lastLife() then
+            takeOver('AutoConsume', {})
+            if healthFraction() < 0.45 and disengage(gen) then return end
+        end
+
         -- Phase one: beds. A bed left standing is a team that keeps coming back, so nothing else
         -- matters until they are all gone.
         local beds = enemyBeds()
@@ -19943,27 +20486,65 @@ run(function()
                 return live and live.Position or nil
             end
 
-            -- With a dao on us the whole crossing is a dash, so there is nothing to build and
-            -- nothing to build it with. That gathering was most of the cycle's time and none of it
-            -- was spent on anything the dash needs. Gated on the dao rather than the kit id,
-            -- because the dao IS the dash - owning one is what makes the ability available.
-            local dashing = YuziDash.Enabled and getDao() ~= nil
-            if dashing then
-                status('Yuzi', 'Dashing to ' .. bedName(bed), 'skipping the block run')
-                dashToward(gen, getBedPos, BedReach.Value, 'Dashing to ' .. bedName(bed))
-            else
-                status('Resources', 'Preparing for ' .. bedName(bed), '')
-                stockUp(gen, part.Position)
+            -- Dressed before we set off. This is where dying repeatedly on the way out gets
+            -- answered: the shop is on the way, and turning up to the same crossing in the same
+            -- gear that just got us killed is the loop rather than a plan.
+            if needsGear() then
+                gearUp(gen, 'Gearing up for ' .. bedName(bed))
+                if not running(gen) or not alive() then return end
+                root = myRoot()
+                if not root then return end
             end
-            if not running(gen) then return end
 
-            if blockCount() <= 0 and not dashing then
-                -- Neither able to build nor to dash: reset to base and start the cycle over rather
-                -- than standing on a half-finished bridge with nothing to finish it.
+            -- The dash goes first, because when it lands us at the bed the block run was never
+            -- needed and that was most of the cycle's time.
+            --
+            -- What it must NOT do any more is replace the block run. It used to: a dao in the bag
+            -- meant stockUp was skipped entirely, so the run set off with zero blocks. The dash has
+            -- a cooldown, it refuses to launch over open air or into a wall, and it stops short of
+            -- a raised bed - so the moment it could not finish the crossing, travel came straight
+            -- back with 'noblocks', that counted as a failed bed, and the run banked, reset to base
+            -- and did the whole thing again. That is the walking-around-and-respawning cycle: not a
+            -- broken dash, a run that had thrown away its ability to bridge before it started.
+            -- Now the dash covers what it can and whatever is left is bridged like anything else.
+            if YuziDash.Enabled and getDao() ~= nil then
+                status('Yuzi', 'Dashing to ' .. bedName(bed), '')
+                dashToward(gen, getBedPos, BedReach.Value, 'Dashing to ' .. bedName(bed))
+                if not running(gen) or not alive() then return end
+                root = myRoot()
+                if not root then return end
+            end
+
+            -- Whatever the dash did not cover gets bridged, so stock for what is actually left -
+            -- measured from where the dash put us down, not from where we set off.
+            local function shortOfBed()
+                local now, live = myRoot(), getBedPos()
+                if not now or not live then return nil end
+                return flatDistance(now.Position, live) > BedReach.Value, live
+            end
+
+            local short, live = shortOfBed()
+            -- The bed went while we were crossing (a teammate got there first). Nothing to do here;
+            -- the next tick re-picks from the beds actually left.
+            if short == nil then return end
+            if short then
+                status('Resources', 'Preparing for ' .. bedName(bed), '')
+                stockUp(gen, live)
+                if not running(gen) then return end
+                short = shortOfBed()
+                if short == nil then return end
+            end
+
+            if short and blockCount() <= 0 then
+                -- Nothing to build with and still short of the bed. A reset is the clean way out of
+                -- that - it puts us back at the generator and the shop with a route to everything -
+                -- and it is not counted against the bed, because it is our supply that failed and
+                -- not the route. When there is no reset to take (our own bed is gone) we go anyway
+                -- rather than standing here re-deciding the same thing every tick: the crossing
+                -- either partly exists or the bed's own failure count moves us on to another one.
                 status('Resources', 'Out of blocks - resetting', '')
                 bankLoot()
-                if RespawnAfterBed.Enabled and ownBedAlive() then selfRespawn(gen) end
-                return
+                if resetToBase(gen) then return end
             end
 
             status('Bridging', 'Heading for ' .. bedName(bed), '')
@@ -19973,7 +20554,7 @@ run(function()
                 run_.bedFails[bed] = (run_.bedFails[bed] or 0) + 1
                 status('Bridging', 'Could not reach ' .. bedName(bed), result)
                 bankLoot()
-                if RespawnAfterBed.Enabled and ownBedAlive() then selfRespawn(gen) end
+                resetToBase(gen)
                 return
             end
 
@@ -19985,9 +20566,9 @@ run(function()
                 run_.bedFails[bed] = (run_.bedFails[bed] or 0) + 1
             end
             bankLoot()
-            if RespawnAfterBed.Enabled and ownBedAlive() then
+            if RespawnAfterBed.Enabled and not lastLife() and ownBedAlive() then
                 status('Respawning', 'Back to base', '')
-                selfRespawn(gen)
+                resetToBase(gen)
             end
             return
         end
@@ -20012,6 +20593,13 @@ run(function()
         local getEnemyPos = function()
             if ent.RootPart and ent.RootPart.Parent then return ent.RootPart.Position end
             return nil
+        end
+
+        -- Same rule as the bed phase: walk into the last fight of the match dressed. With every bed
+        -- down this IS the match, and it is the fight the run used to arrive at in whatever it had.
+        if needsGear() then
+            gearUp(gen, 'Gearing up before ' .. name)
+            if not running(gen) or not alive() then return end
         end
 
         if blockCount() < 12 then
@@ -20062,6 +20650,10 @@ run(function()
         takeOver('NoFallDamage', {})
         takeOver('AntiVoid', {})
         if KeepAwake.Enabled then takeOver('Anti-AFK', {}) end
+        -- AutoBuy for the whole run rather than only during the wool trip. It only spends while you
+        -- are stood at a shop, so leaving it on costs nothing and means every pass through spawn -
+        -- every reset, every respawn - tops the armour up without a special trip for it.
+        driveAutoBuy()
 
         local failures = 0
         while running(gen) do
@@ -20099,10 +20691,10 @@ run(function()
                     run_.tier = 0
                     applyTier()
                     -- A reset to base is the one move that reliably un-wedges a run: it puts us
-                    -- back at the generator and the shop with a clean route to everything.
-                    if ownBedAlive() then
-                        safe(selfRespawn, gen)
-                    end
+                    -- back at the generator and the shop with a clean route to everything. Through
+                    -- resetToBase like every other reset, so the watchdog cannot be the one path
+                    -- that respawns us onto an elimination or into the middle of a hitbox swap.
+                    safe(resetToBase, gen, true)
                 end
             end
             refreshHUD()
@@ -20111,6 +20703,7 @@ run(function()
 
     local function shutdown()
         stopMoving()
+        endDashCarry()
         releaseAll()
         run_.phase, run_.action, run_.detail, run_.tier = 'Idle', 'Waiting', '', 0
         refreshHUD()
@@ -20158,6 +20751,13 @@ run(function()
                     if not running(gen) then return end
                     if deathTable.entityInstance ~= lplr.Character then return end
                     stopMoving()
+                    endDashCarry()
+                    -- Count it, unless it was our own reset - the run resets to base after every
+                    -- bed, and counting those as deaths would send it shopping for armour it is
+                    -- already wearing after every single cycle.
+                    if tick() - (run_.selfResetAt or 0) > 5 then
+                        run_.deaths = (run_.deaths or 0) + 1
+                    end
                     if deathTable.finalKill then
                         -- Eliminated with nobody left in the party: this match is over for us, so
                         -- line the next one up instead of waiting out the end screen.
@@ -20313,7 +20913,7 @@ run(function()
         Max = 128,
         Default = 32,
         Suffix = ' blocks',
-        Tooltip = 'The least to set off with. Longer crossings buy more than this - the route is measured first'
+        Tooltip = 'The least to set off with when the crossing has to be BUILT. The route is measured first, so a longer gap buys more than this - and a route that is already walkable (a bridge is up, the map connects) buys nothing beyond a small reserve for patching holes'
     })
     BedReach = AutoWin:CreateSlider({
         Name = 'Bed reach',
@@ -23947,7 +24547,9 @@ run(function()
     -- Hidden-hitbox bank state (Infinite range). We own the character's root only while a far bank
     -- is in flight; bankRevert always puts it back, on success or on any error.
     local bankBusy = false
-    local bankRoot, bankClone, bankHip, bankOwnsRoot = nil, nil, nil, false
+    -- bankChar is the character the parked root came OUT of. See bankRevert: handing it back to any
+    -- other character is what leaves the body rendered frozen in place client-side.
+    local bankRoot, bankChar, bankClone, bankHip, bankOwnsRoot = nil, nil, nil, nil, false
     -- When the last deposit for a given tool went out. Nearby banking empties the inventory
     -- almost immediately so this never matters there, but Infinite range keeps asking from
     -- across the map, and without a cooldown a stack the server won't take would be re-sent
@@ -24022,30 +24624,44 @@ run(function()
     -- Always puts the character back the way we found it, whatever happened during the bank, so a
     -- failure mid-swap can never leave you stuck with a clone for a body.
     local function bankRevert()
-        pcall(function()
-            if bankRoot and bankRoot.Parent and lplr.Character then
-                lplr.Character.Parent = replicatedStorage
-                bankRoot.Parent = lplr.Character
+        -- The swap only unwinds back into the character it was taken from. A bank is a fraction of
+        -- a second, but AutoWin banks immediately before resetting to base, so "respawned while the
+        -- root was parked" is a routine race rather than a rare one - and handing the old root to
+        -- the new character (as its PrimaryPart, no less) leaves the visible body welded to a part
+        -- nothing drives. That renders as a character frozen on the spot that only you can see,
+        -- while your real character carries on moving normally.
+        local reverted = false
+        if bankRoot and bankRoot.Parent and bankChar and bankChar == lplr.Character and bankChar.Parent then
+            reverted = pcall(function()
+                bankChar.Parent = replicatedStorage
+                bankRoot.Parent = bankChar
                 if bankClone then
                     bankRoot.CFrame = bankClone.CFrame
                     bankRoot.AssemblyLinearVelocity = bankClone.AssemblyLinearVelocity
                 end
-				lplr.Character.PrimaryPart = bankRoot
+				bankChar.PrimaryPart = bankRoot
 				entitylib.character.RootPart = bankRoot
 				entitylib.character.HumanoidRootPart = bankRoot
-                lplr.Character.Parent = workspace
+                bankChar.Parent = workspace
                 bankRoot.CanCollide = true
                 bankRoot.Transparency = 1
                 if bankHip and entitylib.isAlive then
                     entitylib.character.Humanoid.HipHeight = bankHip
                 end
-            end
-        end)
+            end)
+        end
+        if not reverted and bankRoot then
+            -- Nothing of ours left to give it back to. Bin the parked root rather than leaving it
+            -- loose in workspace for every bank that raced a respawn.
+            pcall(function()
+                if bankRoot.Parent ~= bankChar then bankRoot:Destroy() end
+            end)
+        end
         if bankClone then
             pcall(function() bankClone:Destroy() end)
             bankClone = nil
         end
-        bankRoot, bankHip = nil, nil
+        bankRoot, bankChar, bankHip = nil, nil, nil
         if bankOwnsRoot then
             store.rootpart = nil
             bankOwnsRoot = false
@@ -24063,6 +24679,7 @@ run(function()
             local ok = pcall(function()
                 local character = lplr.Character
                 bankRoot = entitylib.character.HumanoidRootPart
+                bankChar = character
                 bankHip = entitylib.character.Humanoid.HipHeight
                 if not character or not character.Parent or not bankRoot then error('no character') end
 
@@ -24089,7 +24706,13 @@ run(function()
                     end
                 end)
 				bankTools(chest, tools)
-                task.wait(0.3)
+                -- Cut the swap short the moment we stop being the character it was taken from
+                -- (died or respawned mid-bank), so the parked root is binned promptly instead of
+                -- being held on the chest until the timer runs out.
+                local deadline = tick() + 0.3
+                repeat
+                    task.wait()
+                until tick() >= deadline or lplr.Character ~= character or not character.Parent
                 hold:Disconnect()
             end)
             bankRevert()
