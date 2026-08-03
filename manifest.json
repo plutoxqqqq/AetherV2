@@ -135,7 +135,6 @@
   "libraries/vm.lua": "de48dbb81cd15a3a",
   "loadstring": "ef3d04908d84d2bd",
   "main.lua": "f6420c765d2ed8b3",
-  "piston": "05cdfad8f4843028",
   "profiles/features.json": "e83e5ae4f4ba1f99",
   "profiles/packages.json": "f2d33ef4f4998ebb",
   "reinstall.luau": "1eaf918d2d35d41b",
