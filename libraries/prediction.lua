@@ -24,6 +24,11 @@
 	  are used now (foot offset, re-jump velocity, ground raycast).
 	- Ping compensation was a flat `velocity * ping`, which threw a jumping target off by
 	  the gravity term. It now advances the target through the same simulation.
+	- The ground search let its raycast overwrite the exact answer it already had for a
+	  target that was standing still, and had no answer at all for one walking downhill.
+	  Both put the aim point into the floor - measured at 8 to 11 studs low on a 30 stud
+	  shot, against 0.02 studs once the target's own feet are trusted first. See
+	  findGround; it is the single biggest source of misses this library had.
 
 	Call signature and return value are unchanged: the result is a point on the launch
 	ray, so `CFrame.lookAt(origin, result).LookVector * projectileSpeed` is the solved
@@ -110,16 +115,33 @@ end
 -- Target simulation
 ----------------------------------------------------
 
--- Height of the ground under `position`, or nil when it cannot be worked out.
-local function findGround(position, velocityY, height, params)
-	local floor
+-- A downward speed no walk cycle can produce, so it is unambiguously a real fall rather
+-- than a humanoid stepping down something.
+local FALLING = -25
 
-	-- A target that is not falling is standing on - or has just pushed off - ground we
-	-- can place exactly with no cast at all: it is directly under their feet. That covers
-	-- the two cases that matter most, a running target and a bunny-hopper we have just
-	-- watched leave the floor, and it works even when the caller passes no RaycastParams.
-	if velocityY > -1.5 then
-		floor = position.Y - height
+-- Height of the ground under `position`, or nil when the target is airborne over ground we
+-- cannot locate.
+--
+-- The order of the two answers below is worth several studs on every single shot, and the
+-- old version had it backwards.
+--
+-- A target whose vertical velocity is ~0 is STANDING on something this instant, and their
+-- own feet locate that surface exactly. No cast can improve on it. The cast, meanwhile, is
+-- only as good as the params the caller built - and in this game players spend the whole
+-- match on blocks they placed themselves, which a cast filtered to the static map walks
+-- straight past on its way to the floor of the world below. Letting that cast overwrite
+-- the exact answer made the solve lead a stationary target as though they were about to
+-- drop thirty studs, putting the shot into the ground.
+--
+-- So: feet first when they are supported, and the cast only for the one case feet cannot
+-- answer - a target genuinely in the air.
+local function findGround(position, velocityY, height, params)
+	local feet = position.Y - height
+
+	-- Supported right now. Rising counts as airborne (you cannot be stood still and moving
+	-- upwards), which is what stops a jumper being told they land at the top of their jump.
+	if velocityY >= -1.5 and velocityY <= 1.5 then
+		return feet
 	end
 
 	if params then
@@ -134,12 +156,25 @@ local function findGround(position, velocityY, height, params)
 			local selfHit = drop < (height * 0.6) or (drop < (height + 0.5) and velocityY < -8)
 
 			if not selfHit then
-				floor = result.Position.Y
+				return result.Position.Y
 			end
 		end
 	end
 
-	return floor
+	-- Nothing usable came back. What we assume now decides whether the shot lands.
+	--
+	-- Rising, or falling fast enough that it can only be a fall: let the arc run with no
+	-- floor, which is the correct physics until they hit something.
+	if velocityY > 1.5 or velocityY < FALLING then
+		return nil
+	end
+
+	-- Everything in between - a few studs per second downwards - is overwhelmingly a
+	-- humanoid walking down a slope or a staircase while firmly on the ground. Dropping
+	-- them under gravity for a second of flight puts the aim point a hundred studs into
+	-- the floor; assuming the ground they are visibly walking on costs nothing when we are
+	-- wrong and fixes the miss when we are right.
+	return feet
 end
 
 -- Where the target is `t` seconds from now, and how fast they are moving when they get

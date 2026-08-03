@@ -1,5 +1,28 @@
 {
-	"newModules": ["EntityAnalyser", "KrystalDisabler", "ProjectileDodger", "AutoBuildUp", "AutoQueue"],
-	"patchedModules": ["Invisible", "InfiniteShield", "ProjectileExploit"],
-	"updatedModules": ["AntiLagback", "AutoBank", "AutoWin", "AutoKit", "AutoShoot", "AutoToxic", "Killaura", "Extender", "NoFallDamage", "ProjectileAimbot", "ProjectileAura", "SilentAim"]
+	"newModules": [
+		"EntityAnalyser",
+		"KrystalDisabler",
+		"ProjectileDodger",
+		"AutoBuildUp",
+		"AutoQueue"
+	],
+	"patchedModules": [
+		"Invisible",
+		"InfiniteShield",
+		"ProjectileExploit"
+	],
+	"updatedModules": [
+		"AntiLagback",
+		"AutoBank",
+		"AutoWin",
+		"AutoKit",
+		"AutoShoot",
+		"AutoToxic",
+		"Killaura",
+		"Extender",
+		"NoFallDamage",
+		"ProjectileAimbot",
+		"ProjectileAura",
+		"SilentAim"
+	]
 }

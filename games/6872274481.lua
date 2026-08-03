@@ -9463,9 +9463,16 @@ run(function()
     local Sort
     local OtherProjectiles
     local Blacklist
+    -- Ground search params for the trajectory solve, and nothing else. Exclude rather than
+    -- Include-the-map: in this game a target is almost always standing on a block somebody
+    -- placed, which is not part of the static map, so an Include list of the map alone casts
+    -- straight past whatever they are stood on and reports the floor of the world far below -
+    -- and the solve then leads them as though they were about to fall into it. Worse, the list
+    -- was built at load time, so on any join where the map had not streamed in yet it held a
+    -- single nil, and an EMPTY Include list makes every cast return nothing at all.
     local rayCheck = RaycastParams.new()
-    rayCheck.FilterType = Enum.RaycastFilterType.Include
-    rayCheck.FilterDescendantsInstances = {workspace:FindFirstChild('Map')}
+    rayCheck.FilterType = Enum.RaycastFilterType.Exclude
+    rayCheck.RespectCanCollide = true
     local launchHook
 
     local function getMousePosition()
@@ -9570,6 +9577,7 @@ run(function()
 					-- short of the entity.
 					local charge = AutoCharge.Enabled and 1 or (projmeta.velocityMultiplier or 1)
 					local launchSpeed = projSpeed * charge
+					rayCheck.FilterDescendantsInstances = {lplr.Character, gameCamera}
 					local calc = prediction.SolveTrajectory(newlook.p, launchSpeed * Prediction.Value, gravity, targetpos, projmeta.projectile == 'telepearl' and Vector3.zero or plr.RootPart.AssemblyLinearVelocity, playerGravity, plr.HipHeight, plr.Jumping and 42.6 or nil, rayCheck, nil, lplr:GetNetworkPing())
 					if calc then
 						targetinfo.Targets[plr] = tick() + 1
@@ -9679,9 +9687,16 @@ run(function()
     local Blacklist
     local Notify
     local namecall
+    -- Ground search params for the trajectory solve, and nothing else. Exclude rather than
+    -- Include-the-map: in this game a target is almost always standing on a block somebody
+    -- placed, which is not part of the static map, so an Include list of the map alone casts
+    -- straight past whatever they are stood on and reports the floor of the world far below -
+    -- and the solve then leads them as though they were about to fall into it. Worse, the list
+    -- was built at load time, so on any join where the map had not streamed in yet it held a
+    -- single nil, and an EMPTY Include list makes every cast return nothing at all.
     local rayCheck = RaycastParams.new()
-    rayCheck.FilterType = Enum.RaycastFilterType.Include
-    rayCheck.FilterDescendantsInstances = {workspace:FindFirstChild('Map')}
+    rayCheck.FilterType = Enum.RaycastFilterType.Exclude
+    rayCheck.RespectCanCollide = true
 
     local function getMousePosition()
         return inputService.TouchEnabled and gameCamera.ViewportSize / 2 or inputService:GetMouseLocation()
@@ -9784,7 +9799,7 @@ run(function()
         -- Include against a list holding a single nil is an EMPTY include list, which makes every
         -- raycast in the solve return nothing, so on any join where workspace.Map had not streamed
         -- in yet the ground search was blind for the rest of the session.
-        rayCheck.FilterDescendantsInstances = {workspace:FindFirstChild('Map')}
+        rayCheck.FilterDescendantsInstances = {lplr.Character, gameCamera}
 
         -- SolveTrajectory takes (origin, speed, projectileGravity, targetPosition, targetVelocity,
         -- playerGravity, playerHeight, playerJump, params, iterations, ping) and returns exactly
@@ -9967,8 +9982,16 @@ run(function()
     local TargetMode
     local Range
     local List
+    -- Ground search params for the trajectory solve, and nothing else. Exclude rather than
+    -- Include-the-map: in this game a target is almost always standing on a block somebody
+    -- placed, which is not part of the static map, so an Include list of the map alone casts
+    -- straight past whatever they are stood on and reports the floor of the world far below -
+    -- and the solve then leads them as though they were about to fall into it. Worse, the list
+    -- was built at load time, so on any join where the map had not streamed in yet it held a
+    -- single nil, and an EMPTY Include list makes every cast return nothing at all.
     local rayCheck = RaycastParams.new()
-    rayCheck.FilterType = Enum.RaycastFilterType.Include
+    rayCheck.FilterType = Enum.RaycastFilterType.Exclude
+    rayCheck.RespectCanCollide = true
     local projectileRemote = {InvokeServer = function() end}
     local FireDelays = {}
     task.spawn(function()
@@ -10024,7 +10047,7 @@ run(function()
                             for _, data in getProjectiles() do
                                 local item, ammo, projectile, itemMeta = unpack(data)
                                 if (FireDelays[item.itemType] or 0) < tick() then
-                                    rayCheck.FilterDescendantsInstances = {workspace.Map}
+                                    rayCheck.FilterDescendantsInstances = {lplr.Character, gameCamera}
                                     local meta = bedwars.ProjectileMeta[projectile]
                                     local projSpeed, gravity = meta.launchVelocity, meta.gravitationalAcceleration or 196.2
                                     local calc = prediction.SolveTrajectory(pos, projSpeed, gravity, ent.RootPart.Position, ent.RootPart.Velocity, workspace.Gravity, ent.HipHeight, ent.Jumping and 42.6 or nil, rayCheck, nil, lplr:GetNetworkPing())
@@ -10111,8 +10134,16 @@ run(function()
     local Targets
     local Range
     local List
+    -- Ground search params for the trajectory solve, and nothing else. Exclude rather than
+    -- Include-the-map: in this game a target is almost always standing on a block somebody
+    -- placed, which is not part of the static map, so an Include list of the map alone casts
+    -- straight past whatever they are stood on and reports the floor of the world far below -
+    -- and the solve then leads them as though they were about to fall into it. Worse, the list
+    -- was built at load time, so on any join where the map had not streamed in yet it held a
+    -- single nil, and an EMPTY Include list makes every cast return nothing at all.
     local rayCheck = RaycastParams.new()
-    rayCheck.FilterType = Enum.RaycastFilterType.Include
+    rayCheck.FilterType = Enum.RaycastFilterType.Exclude
+    rayCheck.RespectCanCollide = true
     local projectileRemote = {InvokeServer = function(self, ...) end}
     local FireDelays = {}
     task.spawn(function()
@@ -10166,7 +10197,7 @@ run(function()
 						for _, data in getProjectiles() do
 							local item, ammo, projectile, itemMeta = unpack(data)
 							if (FireDelays[item.itemType] or 0) < tick() then
-								rayCheck.FilterDescendantsInstances = {workspace.Map}
+								rayCheck.FilterDescendantsInstances = {lplr.Character, gameCamera}
 								if #CustomProjectiles.ListEnabled > 0 then
 									projectile = CustomProjectiles.ListEnabled[math.random(1, #CustomProjectiles.ListEnabled)]
 								end
@@ -15939,12 +15970,20 @@ run(function()
     local AutoShoot
     local Targets
     local Check
+    local Range
     local Projectiles
 	local FireRate
 	local SwitchDelay
+	-- Ground search params for the trajectory solve, and nothing else. Exclude rather than
+	-- Include-the-map: in this game a target is almost always standing on a block somebody
+	-- placed, which is not part of the static map, so an Include list of the map alone casts
+	-- straight past whatever they are stood on and reports the floor of the world far below -
+	-- and the solve then leads them as though they were about to fall into it. Worse, the list
+	-- was built at load time, so on any join where the map had not streamed in yet it held a
+	-- single nil, and an EMPTY Include list makes every cast return nothing at all.
 	local rayCheck = RaycastParams.new()
-	rayCheck.FilterType = Enum.RaycastFilterType.Include
-	rayCheck.FilterDescendantsInstances = {workspace:FindFirstChild('Map')}
+	rayCheck.FilterType = Enum.RaycastFilterType.Exclude
+	rayCheck.RespectCanCollide = true
 
 	local FireDelays = {}
     local function getAmmo(check)
@@ -15959,8 +15998,12 @@ run(function()
     local function getProjectiles()
 	local items = {}
 	for _, item in store.inventory.inventory.items do
+			-- ItemMeta has no entry for an item this build has not seen, and indexing
+			-- projectileSource on nil throws right here - inside the module's own loop
+			-- thread, which kills it for good. One unknown item in the inventory must not
+			-- be able to do that.
 			local meta = bedwars.ItemMeta[item.itemType]
-			local proj = meta.projectileSource
+			local proj = meta and meta.projectileSource
 		local ammo = proj and getAmmo(proj)
 			if ammo and (table.find(Projectiles.ListEnabled, ammo) or table.find(Projectiles.ListEnabled, item.itemType) or table.find(Projectiles.ListEnabled, meta.displayName)) then
 			table.insert(items, {
@@ -15975,11 +16018,12 @@ run(function()
     end
 
 	local function getEntity()
+	if not entitylib.isAlive then return nil end
 	local selfpos = entitylib.character.RootPart.Position
 		local plrs = entitylib.AllPosition({
 			Origin = selfpos,
 		Part = 'RootPart',
-			Range = 22,
+			Range = Range.Value,
 		Players = Targets.Players.Enabled,
 		NPCs = Targets.NPCs.Enabled,
 			Wallcheck = Targets.Walls.Enabled,
@@ -16001,7 +16045,11 @@ run(function()
 	Name = 'AutoShoot',
 		Function = function(callback)
 			if callback then
-			repeat
+			-- Each pass is isolated. This loop IS the module: if anything inside it throws,
+			-- the thread dies and AutoShoot sits there lit in the menu and inert until it is
+			-- toggled off and on, with nothing said about why. A bad pass now costs one shot.
+			local reported = false
+			local function pass()
 					if entitylib.isAlive and store.hand.toolType == 'sword' and (tick() - bedwars.SwordController.lastSwing) < 0.2 then
 						local hotbar = store.hand.tool and getHotbar(store.hand.tool) or nil
 							for _, data in getProjectiles() do
@@ -16012,7 +16060,30 @@ run(function()
 									bedwars.Client:Get('TridentUnanchor'):SendToServer()
 									local meta = bedwars.ProjectileMeta[projectile]
 									local projSpeed, gravity = meta.launchVelocity, meta.gravitationalAcceleration or 196.2
-									local calc = ent and prediction.SolveTrajectory(entitylib.character.RootPart.Position, projSpeed, gravity, ent.RootPart.Position, ent.RootPart.Velocity, workspace.Gravity, ent.HipHeight, ent.Jumping and 42.6 or nil, rayCheck, ent.Humanoid.FloorMaterial == Enum.Material.Air or math.abs(ent.RootPart.Velocity.Y) > 0.01, ent.RootPart.Position, ent.RootPart, nil, true) or nil
+									-- SolveTrajectory takes (origin, speed, projectileGravity,
+									-- targetPosition, targetVelocity, playerGravity, playerHeight,
+									-- playerJump, params, iterations, ping). This used to pass
+									-- fourteen arguments: a boolean landed in `iterations` and a
+									-- Vector3 in `ping`, and both go through math.clamp, so it
+									-- threw on every single shot. Nothing catches that here, so
+									-- the error killed the module's own loop thread - AutoShoot
+									-- stayed lit in the menu and never fired again until it was
+									-- toggled off and on, which is exactly what "AutoShoot doesn't
+									-- work" was.
+									rayCheck.FilterDescendantsInstances = {lplr.Character, gameCamera}
+									local calc = ent and prediction.SolveTrajectory(
+										entitylib.character.RootPart.Position,
+										projSpeed,
+										gravity,
+										ent.RootPart.Position,
+										ent.RootPart.AssemblyLinearVelocity,
+										workspace.Gravity,
+										ent.HipHeight,
+										ent.Jumping and 42.6 or nil,
+										rayCheck,
+										nil,
+										lplr:GetNetworkPing()
+									) or nil
 									if calc then
 										local shootPosition = (CFrame.new(entitylib.character.RootPart.Position, calc) * CFrame.new(Vector3.new(-bedwars.BowConstantsTable.RelX, -bedwars.BowConstantsTable.RelY, -bedwars.BowConstantsTable.RelZ))).Position
 										local dir, id = CFrame.lookAt(shootPosition, calc).LookVector, httpService:GenerateGUID(true)
@@ -16043,6 +16114,13 @@ run(function()
 					end
 						hotbarSwitch(hotbar)
 				end
+			end
+			repeat
+				local ok, err = pcall(pass)
+				if not ok and not reported then
+					reported = true
+					warn('[AetherV2] AutoShoot: '..tostring(err))
+				end
 				task.wait(0.1)
 			until not AutoShoot.Enabled
 			end
@@ -16051,6 +16129,14 @@ run(function()
     })
 
 	Targets = AutoShoot:CreateTargets({Players = true})
+	Range = AutoShoot:CreateSlider({
+		Name = 'Range',
+		Min = 5,
+		Max = 60,
+		Default = 22,
+		Suffix = ' studs',
+		Tooltip = 'How far a target can be and still count for Target check. Was fixed at 22 studs'
+	})
     Check = AutoShoot:CreateToggle({
 		Name = 'Target check',
 	Default = true,
