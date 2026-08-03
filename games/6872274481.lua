@@ -466,6 +466,18 @@ local function removeTags(str)
 	return (str:gsub('<[^<>]->', ''))
 end
 
+-- Thousands separators for the resource counters. Written out rather than pulled from a
+-- library because nothing else in this file needed one.
+local function formatNumber(value)
+	local text = tostring(math.floor(tonumber(value) or 0))
+	local sign = ''
+	if text:sub(1, 1) == '-' then
+		sign, text = '-', text:sub(2)
+	end
+	local out = text:reverse():gsub('(%d%d%d)', '%1,'):reverse()
+	return sign..(out:gsub('^,', ''))
+end
+
 local function roundPos(vec)
 	return Vector3.new(math.round(vec.X / 3) * 3, math.round(vec.Y / 3) * 3, math.round(vec.Z / 3) * 3)
 end
@@ -13574,209 +13586,144 @@ run(function()
     Settings.GeneratorGlow = IRLReplica:CreateToggle({Name = 'Generator Glow', Default = true, Function = function(v) setEnabled(Settings.GeneratorGlow, v); RealLifeBedWars.ApplyParticles() end})
 end)
 
+--[[
+    SkinChanger
+
+    Replaced with the reference build's approach. Rather than cloning skin models onto your
+    hand and welding them, it sets the itemSkin field the game already carries on every
+    inventory entry and re-renders the viewmodel, so the item shows up with that skin (and its
+    sounds) through the game's own path. One dropdown per item kind - pick the skin family and
+    every matching item you hold uses it.
+
+    Client-side only: nobody else sees the change.
+]]
 run(function()
     local SkinChanger
-    local Skin, SkinType
+    local Dropdowns = {}
 
-    local ModelOffsets = setmetatable({
-        bow_default = CFrame.Angles(0, math.rad(90), math.rad(-90)) * CFrame.new(-0.4, 0, 0),
-        bow_max = CFrame.Angles(math.rad(-38), math.rad(90), math.rad(-45)) * CFrame.new(1.5, 0, 0),
-        bow_headhunter = CFrame.Angles(math.rad(-90), math.rad(-90), 0) * CFrame.new(-2, 1, 0),
-        sword = CFrame.Angles(math.rad(-95), math.rad(-90), 0) * CFrame.new(0, 2, 0),
-        hammer = CFrame.Angles(math.rad(-90), math.rad(90), 0),
-    }, {
-        __index = function()
-            return CFrame.Angles(math.rad(-90), 0, 0)
-        end,
-    })
+    local ITEM_KINDS = {
+        {Name = 'Pickaxe', Match = 'pickaxe$'},
+        {Name = 'Axe', Match = 'axe$'},
+        {Name = 'Crossbow', Match = 'crossbow$'},
+        {Name = 'Bow', Match = 'bow$'},
+        {Name = 'Headhunter', Match = 'headhunter$'},
+        {Name = 'Sword', Match = 'sword$'},
+        {Name = 'Dao', Match = 'dao$'},
+        {Name = 'Harpoon', Match = 'harpoon$'},
+        {Name = 'Lasso', Match = 'lasso$'},
+        {Name = 'Staff', Match = 'staff'}
+    }
 
-    local Names, Saved = {}, {}
+    -- kind -> skin tag -> itemType -> skin id, and kind -> pretty name -> skin tag.
+    local skinsByKind = {}
+    local tagsByDisplayName = {}
 
-    local function Added(Item, Parent)
-        if not Skin.Value or not Item then
-            return
-        end
-        local Meta = bedwars.ItemMeta[Item.Name]
-        if Meta then
-            local Type = 'none'
-            if Meta.block then
-                Type = 'block'
-            elseif Meta.projectileSource then
-                if Item.Name:find('bow') then
-                    Type = `bow_{Item.Name:find('cross') and 'max' or 'default'}`
-                elseif Item.Name:find('headhunter') then
-                    if Type:find('victorious') then
-                        Type = 'bow_headhunter'
-                    else
-                        Type = 'bow_max'
-                    end
-                end
-            elseif Meta.sword then
-                Type = 'sword'
-            else
-                Type = Item.Name
-            end
-
-            for _, skin in Names[Skin.Value] do
-                if not skin:find(Item.Name) then
-                    continue
-                end
-                if SkinType.Value ~= 'All' and not skin:find(SkinType.Value:lower()) then
-                    continue
-                end
-                local ItemSkin = replicatedStorage.Items:FindFirstChild(skin)
-
-                if ItemSkin then
-                    local Model = Instance.new('Model', Item)
-                    ItemSkin = ItemSkin.Handle:Clone()
-                    ItemSkin.Parent = Model
-                    table.insert(Saved, Model)
-                    SkinChanger:Clean(Model)
-                    for _, v in Model:GetDescendants() do
-                        pcall(function()
-                            v.Anchored = false
-                        end)
-                        pcall(function()
-                            v.CanCollide = false
-                        end)
-                    end
-                    Model:PivotTo(Parent.RightHand.CFrame * ModelOffsets[Type])
-
-                    local Weld = Instance.new('WeldConstraint', Model)
-                    Weld.Part0 = Parent.RightHand
-                    Weld.Part1 = Model.Handle
-                    if Item:FindFirstChild('Handle') then
-                        Item.Handle:Destroy()
-                    end
-
-                    Item:SetAttribute('ItemSkin', skin)
-                    break
-                end
-            end
-        end
+    local function prettify(text)
+        return (text:gsub('_', ' '):gsub('%a+', function(word)
+            return word:sub(1, 1):upper()..word:sub(2)
+        end))
     end
+
+    local function kindOf(itemType)
+        for _, kind in ITEM_KINDS do
+            if itemType:find(kind.Match) then
+                return kind.Name
+            end
+        end
+        return nil
+    end
+
+    local function selectedSkin(itemType)
+        if not SkinChanger.Enabled then return nil end
+        local kind = kindOf(itemType)
+        if not kind or not Dropdowns[kind] then return nil end
+        local tag = tagsByDisplayName[kind] and tagsByDisplayName[kind][Dropdowns[kind].Value]
+        if not tag then return nil end
+        return skinsByKind[kind][tag][itemType]
+    end
+
+    -- Applied to the whole inventory (and the held item, which the store tracks separately)
+    -- because a skin the game has not been told about is simply not drawn.
+    local function applySkins()
+        pcall(function()
+            local inventory = store.inventory.inventory
+            for _, item in inventory.items do
+                item.itemSkin = selectedSkin(item.itemType)
+            end
+            if inventory.hand then
+                inventory.hand.itemSkin = selectedSkin(inventory.hand.itemType)
+            end
+            bedwars.InventoryViewmodelController:handleStore(bedwars.Store:getState())
+        end)
+    end
+
+    -- A skin id is the item it reskins with the skin's own name on the end
+    -- ('wood_bow_victorious_diamond' = 'wood_bow' + 'victorious_diamond'), and only the base
+    -- item exists in ItemMeta. Walking the id back a segment at a time until ItemMeta
+    -- recognises it splits the two apart without needing a table of suffixes to keep current.
+    local function splitSkinId(skinId)
+        -- cut is the index of the underscore currently being treated as the split point.
+        local cut = #skinId + 1
+        while cut do
+            local base = skinId:sub(1, cut - 1)
+            if bedwars.ItemMeta[base] then
+                return base, skinId:sub(cut + 1)
+            end
+            cut = base:match('^.*()_')
+        end
+        return nil
+    end
+
+    -- Built once from the game's own kit-skin metadata. Guarded: a build that has renamed or
+    -- removed the skin tables leaves the module registered with no dropdowns rather than
+    -- taking the whole chunk out.
+    pcall(function()
+        for _, kitSkin in bedwars.BedwarsKitSkin do
+            for _, skinId in (kitSkin.itemSkins or {}) do
+                local itemType, tag = splitSkinId(skinId)
+                local kind = itemType and kindOf(itemType)
+                if kind and tag and tag ~= '' then
+                    skinsByKind[kind] = skinsByKind[kind] or {}
+                    skinsByKind[kind][tag] = skinsByKind[kind][tag] or {}
+                    skinsByKind[kind][tag][itemType] = skinId
+                    tagsByDisplayName[kind] = tagsByDisplayName[kind] or {}
+                    tagsByDisplayName[kind][prettify(tag)] = tag
+                end
+            end
+        end
+    end)
 
     SkinChanger = vape.Categories.Render:CreateModule({
         Name = 'SkinChanger',
-        Tooltip = 'Changes your item skins with others',
-        Disabled = not getgenv().canDebug,
         Function = function(callback)
             if callback then
-                repeat
-                    task.wait()
-                until store.map or not SkinChanger.Enabled
-                if not SkinChanger.Enabled then return end
-
-                SkinChanger:Clean(vapeEvents.InventoryHeldChanged.Event:Connect(function(Tool)
-                    for _, v in Saved do
-                        pcall(function()
-                            v:Destroy()
-                        end)
-                    end
-                    if Tool then
-                        for _, parent in {lplr.Character, gameCamera.Viewmodel} do
-                            local Model = parent:WaitForChild(Tool.Name, 5)
-                            if Model then
-                                task.delay(0, Added, Model, parent)
-                            end
-                        end
-                    end
-                end))
-                SkinChanger:Clean(store.map.Blocks.ChildAdded:Connect(function(v)
-                    task.defer(function()
-                        local Meta = bedwars.ItemMeta[v.Name]
-                        if Meta then
-                            for _, SkinName in Names[Skin.Value] do
-                                if not SkinName:find(v.Name) then
-                                    continue
-                                end
-                                if SkinType.Value ~= 'All' and not SkinName:find(SkinType.Value:lower()) then
-                                    continue
-                                end
-                                local ItemSkin = replicatedStorage.Assets.Blocks:FindFirstChild(SkinName)
-                                if ItemSkin then
-                                    ItemSkin = ItemSkin:Clone()
-                                    ItemSkin.Parent = workspace
-                                    local OldTransparencies = {}
-                                    for _, v2 in v:QueryDescendants('BasePart') do
-                                        OldTransparencies[v2] = v2.Transparency
-                                        v2.Transparency = 1
-                                    end
-                                    task.spawn(pcall, function()
-                                        v:WaitForChild('TeamLight', 5):Destroy()
-                                    end)
-
-                                    for _, v2 in ItemSkin:GetDescendants() do
-                                        pcall(function()
-                                            v2.CanCollide = false
-                                            v2.CanQuery = false
-                                            v2.CanTouch = false
-                                        end)
-                                    end
-
-                                    v:SetAttribute('ItemSkin', SkinName)
-
-                                    local Base = v:FindFirstChild('Barrel') or v:FindFirstChild('Bottom') or v
-
-                                    local Connection = runService.PreRender:Connect(function()
-                                        if not Base or not Base.Parent then
-                                            return
-                                        end
-                                        ItemSkin:PivotTo(Base.CFrame)
-                                    end)
-
-                                    local callback = function()
-                                        if v and v.Parent then
-                                            for i, v in OldTransparencies do
-                                                i.Transparency = v
-                                            end
-                                        end
-                                    end
-                                    SkinChanger:Clean(ItemSkin)
-                                    SkinChanger:Clean(Connection)
-                                    SkinChanger:Clean(callback)
-                                    v.Destroying:Once(function()
-                                        if Connection then
-                                            Connection:Disconnect()
-                                        end
-                                        if ItemSkin and ItemSkin.Parent then
-                                            ItemSkin:Destroy()
-                                        end
-                                    end)
-                                end
-                            end
-                        end
-                    end)
-                end))
+                SkinChanger:Clean(vapeEvents.InventoryChanged.Event:Connect(applySkins))
             end
+            applySkins()
         end,
+        Tooltip = 'Reskins the items you hold, along with their sounds. Only you can see it'
     })
 
-    local list = {}
-    for _, v in bedwars.BedwarsKitSkin do
-        if v.itemSkins then
-            if Names[v.name] then
-                for _, v2 in v.itemSkins do
-                    table.insert(Names[v.name], v2)
-                end
-            else
-                table.insert(list, v.name)
-                Names[v.name] = v.itemSkins
+    for _, kind in ITEM_KINDS do
+        if tagsByDisplayName[kind.Name] then
+            local names = {}
+            for displayName in tagsByDisplayName[kind.Name] do
+                table.insert(names, displayName)
             end
+            table.sort(names)
+            table.insert(names, 1, 'None')
+            Dropdowns[kind.Name] = SkinChanger:CreateDropdown({
+                Name = kind.Name..' Skin',
+                List = names,
+                Default = 'None',
+                Function = function()
+                    if SkinChanger.Enabled then
+                        applySkins()
+                    end
+                end
+            })
         end
     end
-    table.sort(list, function(a, b)
-        return a < b
-    end)
-    Skin = SkinChanger:CreateDropdown({
-        Name = 'Item Skin',
-        List = list,
-    })
-    SkinType = SkinChanger:CreateDropdown({
-        Name = 'Skin Type',
-        List = { 'All', 'Gold', 'Platinum', 'Diamond', 'Emerald', 'Nightmare', 'Void' },
-        Default = 'All',
-    })
 end)
 
 run(function()
@@ -19692,7 +19639,7 @@ run(function()
     -- which costs nothing.
     local function bankLoot()
         if not BankLoot or not BankLoot.Enabled then return end
-        if takeOver('AutoBank', {['Range'] = 'Infinite', ['Silent bank'] = true}) then return end
+        if takeOver('AutoBank', {}) then return end
         local chest = replicatedStorage:FindFirstChild('Inventories')
         chest = chest and chest:FindFirstChild(lplr.Name .. '_personal')
         if not chest then return end
@@ -19747,10 +19694,9 @@ run(function()
     --   * With our bed gone the respawn IS the elimination. That check existed, but as a bare
     --     ownBedAlive() at each site, and one missed site throws the match.
     --   * A reset while a hitbox swap is in flight is what leaves your body frozen in place.
-    --     AutoBank's silent bank parks your real root on the chest for a fraction of a second, and
-    --     the run banks IMMEDIATELY before resetting - so respawning into the middle of that swap
-    --     was routine, not rare. Wait for the swap to finish (store.rootpart is the whole script's
-    --     flag for "somebody owns the hitbox") and skip the reset entirely if it will not clear.
+    --     Anything that parks your real root elsewhere for a moment (GodMode, AntiDeath) sets
+    --     store.rootpart, which is the whole script's flag for "somebody owns the hitbox". Wait
+    --     for the swap to finish, and skip the reset entirely if it will not clear.
     -- `force` is for the watchdog, whose reset is the last thing standing between a wedged run and
     -- an hour of nothing. It skips the Respawn after bed preference - not the two safety checks.
     local function resetToBase(gen, force)
@@ -24443,292 +24389,221 @@ run(function()
     })
 end)
 
+--[[
+    AutoBank
+
+    Replaced wholesale with the reference build's design, which does not use the personal
+    chest at all. Whitelisted resources are DROPPED, and every drop we made is then held far
+    out of the world where nobody can reach it - the item entity is ours to move, so parking it
+    at the top of the skybox is a safe deposit box that no server-side range check applies to.
+    Walk up to a shop (or die) and the whole stash is pulled back to your head and picked up.
+
+    A count of everything currently banked can be shown above the hotbar.
+]]
 run(function()
     local AutoBank
-    local UIToggle
-    local Range
-    local SilentBank
+    local Whitelist
+    local DisplayResources
     local UI
-    local Chests
-    local Items = {}
-    -- Hidden-hitbox bank state (Infinite range). We own the character's root only while a far bank
-    -- is in flight; bankRevert always puts it back, on success or on any error.
-    local bankBusy = false
-    -- bankChar is the character the parked root came OUT of. See bankRevert: handing it back to any
-    -- other character is what leaves the body rendered frozen in place client-side.
-    local bankRoot, bankChar, bankClone, bankHip, bankOwnsRoot = nil, nil, nil, nil, false
-    -- When the last deposit for a given tool went out. Nearby banking empties the inventory
-    -- almost immediately so this never matters there, but Infinite range keeps asking from
-    -- across the map, and without a cooldown a stack the server won't take would be re-sent
-    -- ten times a second for the rest of the match.
-    local sent = {}
 
-    local function addItem(itemType, shop)
-        local item = Instance.new('ImageLabel')
-        item.Image = bedwars.getIcon({itemType = itemType}, true)
-        item.Size = UDim2.fromOffset(32, 32)
-        item.Name = itemType
-        item.BackgroundTransparency = 1
-        item.LayoutOrder = #UI:GetChildren()
-        item.Parent = UI
-        local itemtext = Instance.new('TextLabel')
-        itemtext.Name = 'Amount'
-        itemtext.Size = UDim2.fromScale(1, 1)
-        itemtext.BackgroundTransparency = 1
-        itemtext.Text = ''
-        itemtext.TextColor3 = Color3.new(1, 1, 1)
-        itemtext.TextSize = 16
-        itemtext.TextStrokeTransparency = 0.3
-        itemtext.Font = Enum.Font.Arial
-        itemtext.Parent = item
-        Items[itemType] = {Object = itemtext, Type = shop}
-    end
+    -- Drops we made and are currently holding out of the world.
+    local droppedItems = {}
+    -- itemType -> when we may next try to drop it. A stack the server refuses would otherwise
+    -- be re-dropped ten times a second for the rest of the match.
+    local dropCooldowns = {}
+    local displayEntries = {}
 
-    local function refreshBank(echest)
-        for i, v in Items do
-            local item = echest:FindFirstChild(i)
-            v.Object.Text = item and item:GetAttribute('Amount') or ''
+    -- Somewhere nothing else occupies, with the stash laid out on a grid so two drops never
+    -- share a position and shove each other around.
+    local BANK_ORIGIN = CFrame.new(1000, 100000, 1000)
+    local BANK_SPACING = 1200
+    local BANK_COLUMNS = 32
+
+    local function untrackDrop(drop)
+        local index = table.find(droppedItems, drop)
+        if index then
+            table.remove(droppedItems, index)
         end
     end
 
-    local function nearChest()
-        if not entitylib.isAlive then return end
-        -- Infinite range: the deposit is addressed to your personal inventory in
-        -- ReplicatedStorage rather than to a chest in the world, so there is no position in the
-        -- request to be near anything. Dropping the proximity check is all the client can do -
-        -- if the server checks the distance itself, banking from across the map is simply
-        -- refused and nothing is lost by asking.
-        if Range and Range.Value == 'Infinite' then return true end
-        local pos = entitylib.character.RootPart.Position
-        for _, chest in Chests do
-            if (chest.Position - pos).Magnitude < 20 then
-                return true
-            end
-        end
-    end
-
-    local function bankTools(chest, tools)
-        for _, tool in tools do
-            task.spawn(function()
-                pcall(function()
-                    bedwars.Client:GetNamespace('Inventory'):Get('ChestGiveItem'):CallServer(chest, tool)
-                end)
-            end)
-        end
-    end
-
-    local function nearestChest()
-        if not entitylib.isAlive then return nil end
-        local pos = entitylib.character.RootPart.Position
-        local best, bestd = nil, math.huge
-        for _, c in Chests do
-            local d = (c.Position - pos).Magnitude
-            if d < bestd then best, bestd = c, d end
-        end
-        return best, bestd
-    end
-
-    -- Always puts the character back the way we found it, whatever happened during the bank, so a
-    -- failure mid-swap can never leave you stuck with a clone for a body.
-    local function bankRevert()
-        -- The swap only unwinds back into the character it was taken from. A bank is a fraction of
-        -- a second, but AutoWin banks immediately before resetting to base, so "respawned while the
-        -- root was parked" is a routine race rather than a rare one - and handing the old root to
-        -- the new character (as its PrimaryPart, no less) leaves the visible body welded to a part
-        -- nothing drives. That renders as a character frozen on the spot that only you can see,
-        -- while your real character carries on moving normally.
-        local reverted = false
-        if bankRoot and bankRoot.Parent and bankChar and bankChar == lplr.Character and bankChar.Parent then
-            reverted = pcall(function()
-                bankChar.Parent = replicatedStorage
-                bankRoot.Parent = bankChar
-                if bankClone then
-                    bankRoot.CFrame = bankClone.CFrame
-                    bankRoot.AssemblyLinearVelocity = bankClone.AssemblyLinearVelocity
-                end
-				bankChar.PrimaryPart = bankRoot
-				entitylib.character.RootPart = bankRoot
-				entitylib.character.HumanoidRootPart = bankRoot
-                bankChar.Parent = workspace
-                bankRoot.CanCollide = true
-                bankRoot.Transparency = 1
-                if bankHip and entitylib.isAlive then
-                    entitylib.character.Humanoid.HipHeight = bankHip
-                end
-            end)
-        end
-        if not reverted and bankRoot then
-            -- Nothing of ours left to give it back to. Bin the parked root rather than leaving it
-            -- loose in workspace for every bank that raced a respawn.
-            pcall(function()
-                if bankRoot.Parent ~= bankChar then bankRoot:Destroy() end
-            end)
-        end
-        if bankClone then
-            pcall(function() bankClone:Destroy() end)
-            bankClone = nil
-        end
-        bankRoot, bankChar, bankHip = nil, nil, nil
-        if bankOwnsRoot then
-            store.rootpart = nil
-            bankOwnsRoot = false
-        end
-    end
-
-    -- Bank from across the map with nothing visibly moving: park the network-owned root on the
-    -- nearest personal chest for a fraction of a second (a local clone stays behind as your body) so
-    -- the server's own range check on ChestGiveItem passes, fire the deposits, then put the root
-    -- straight back. Same proven swap AntiDeath/GodMode use, guarded by store.rootpart so it never
-    -- fights them, and every path ends in bankRevert.
-    local function silentBank(chest, tools, target)
-        bankBusy = true
+    -- Bring one drop back to the head and ask for it. The request is asynchronous, so the drop
+    -- is only untracked once the server has actually handed it over.
+    local function reclaim(drop)
+        if not drop or not drop.Parent or not entitylib.isAlive then return end
+        drop.Velocity = Vector3.zero
+        drop.CFrame = entitylib.character.Head.CFrame
         task.spawn(function()
-            local ok = pcall(function()
-                local character = lplr.Character
-                bankRoot = entitylib.character.HumanoidRootPart
-                bankChar = character
-                bankHip = entitylib.character.Humanoid.HipHeight
-                if not character or not character.Parent or not bankRoot then error('no character') end
-
-                character.Parent = replicatedStorage
-				bankClone = bankRoot:Clone()
-				bankClone.Name = 'HumanoidRootPart'
-                bankClone.Parent = character
-                bankRoot.Transparency = 1
-                bankRoot.Parent = workspace
-                store.rootpart = bankRoot
-                bankOwnsRoot = true
-				character.PrimaryPart = bankClone
-				entitylib.character.RootPart = bankClone
-				entitylib.character.HumanoidRootPart = bankClone
-                character.Parent = workspace
-                pcall(function() bedwars.QueryUtil:setQueryIgnored(bankClone, true) end)
-                pcall(function() bedwars.QueryUtil:setQueryIgnored(bankRoot, true) end)
-
-                local aim = CFrame.new(target.Position + Vector3.new(0, 3, 0))
-                local hold = runService.Heartbeat:Connect(function()
-                    if bankRoot and bankRoot.Parent then
-                        bankRoot.CFrame = aim
-                        bankRoot.AssemblyLinearVelocity = Vector3.zero
+            pcall(function()
+                bedwars.Client:Get(remotes.PickupItem):CallServerAsync({itemDrop = drop}):andThen(function(success)
+                    if success then
+                        untrackDrop(drop)
                     end
                 end)
-				bankTools(chest, tools)
-                -- Cut the swap short the moment we stop being the character it was taken from
-                -- (died or respawned mid-bank), so the parked root is binned promptly instead of
-                -- being held on the chest until the timer runs out.
-                local deadline = tick() + 0.3
-                repeat
-                    task.wait()
-                until tick() >= deadline or lplr.Character ~= character or not character.Parent
-                hold:Disconnect()
             end)
-            bankRevert()
-            bankBusy = false
-            if ok then
-                pcall(function() refreshBank(chest) end)
-            end
         end)
     end
 
-    local function handleState()
-        local chest = replicatedStorage.Inventories:FindFirstChild(lplr.Name..'_personal')
-        if not chest then return end
-
-        -- Always DEPOSIT the configured resources into the personal chest. The old code gated
-        -- depositing behind a "distance from spawn > 80" check, but the personal chest sits AT
-        -- spawn, so that branch never ran and it silently withdrew instead of banking.
-        local tools = {}
-        for _, v in store.inventory.inventory.items do
-            local item = Items[v.itemType]
-            if item and v.tool and tick() - (sent[v.tool] or 0) >= 1.5 then
-                sent[v.tool] = tick()
-                table.insert(tools, v.tool)
+    -- True while standing at a shop NPC, which is the cue to hand the stash back.
+    local function atShop()
+        if not entitylib.isAlive then return false end
+        local position = entitylib.character.RootPart.Position
+        for _, npc in store.shop do
+            local root = npc.RootPart
+            if root and root.Parent and (root.Position - position).Magnitude <= 30 then
+                return true
             end
         end
-        if #tools == 0 then return end
+        return false
+    end
 
-        -- Infinite range from afar goes through the silent hitbox bank (unless you turn it off);
-        -- Nearby, or already standing on the chest, just fires the remote as before.
-        local target, dist = nearestChest()
-		if Range and Range.Value == 'Infinite' and SilentBank.Enabled
-			and target and dist and dist > 20 and not store.rootpart and not bankBusy then
-			silentBank(chest, tools, target)
-		elseif Range and Range.Value == 'Infinite' and SilentBank.Enabled and not target then
-			-- Do not consume the cooldown on a request the server cannot validate;
-			-- collection signals will populate a chest and the next pass will retry.
-			for _, tool in tools do sent[tool] = nil end
-		else
-            bankTools(chest, tools)
-            task.spawn(function() refreshBank(chest) end)
-        end
+    local function addDisplayEntry(itemType)
+        local icon = Instance.new('ImageLabel')
+        icon.Name = itemType
+        icon.Image = bedwars.getIcon({itemType = itemType}, true)
+        icon.Size = UDim2.fromOffset(32, 32)
+        icon.BackgroundTransparency = 1
+        icon.LayoutOrder = #UI:GetChildren()
+        icon.Parent = UI
+        local amount = Instance.new('TextLabel')
+        amount.Name = 'Amount'
+        amount.Size = UDim2.fromScale(1, 1)
+        amount.BackgroundTransparency = 1
+        amount.Text = ''
+        amount.TextColor3 = Color3.new(1, 1, 1)
+        amount.TextSize = 16
+        amount.TextStrokeTransparency = 0.3
+        amount.Font = Enum.Font.Arial
+        amount.Parent = icon
+        displayEntries[itemType] = amount
     end
 
     AutoBank = vape.Categories.Inventory:CreateModule({
         Name = 'AutoBank',
         Function = function(callback)
-            if callback then
-                Chests = collection('personal-chest', AutoBank)
-                UI = Instance.new('Frame')
-                UI.Size = UDim2.new(1, 0, 0, 32)
-                UI.Position = UDim2.fromOffset(0, -240)
-                UI.BackgroundTransparency = 1
-                UI.Visible = UIToggle.Enabled
-                UI.Parent = vape.gui
-                AutoBank:Clean(UI)
-                local Sort = Instance.new('UIListLayout')
-                Sort.FillDirection = Enum.FillDirection.Horizontal
-                Sort.HorizontalAlignment = Enum.HorizontalAlignment.Center
-                Sort.SortOrder = Enum.SortOrder.LayoutOrder
-                Sort.Parent = UI
-                addItem('iron', true)
-                addItem('gold', true)
-                addItem('diamond', false)
-                addItem('emerald', true)
-                addItem('void_crystal', true)
-
-                repeat
-                    local hotbar = lplr.PlayerGui:FindFirstChild('hotbar')
-                    hotbar = hotbar and hotbar['1']:FindFirstChild('HotbarHealthbarContainer')
-                    if hotbar then
-                        UI.Position = UDim2.fromOffset(0, (hotbar.AbsolutePosition.Y + guiService:GetGuiInset().Y) - 40)
+            if not callback then
+                -- Give everything back rather than leaving it stranded in the sky. Bounded:
+                -- drain what we can and stop, instead of spinning until the module is switched
+                -- back on (which is what the reference build did, and never returned).
+                local deadline = tick() + 3
+                while #droppedItems > 0 and tick() < deadline and entitylib.isAlive do
+                    for _, drop in table.clone(droppedItems) do
+                        reclaim(drop)
                     end
-
-                    local newState = nearChest()
-                    if newState then
-                        handleState()
-                    end
-
                     task.wait(0.1)
-                until (not AutoBank.Enabled)
-            else
-                -- Put the hitbox back if a far bank was still in flight when we turned off.
-                bankRevert()
-                bankBusy = false
-                table.clear(Items)
-                table.clear(sent)
+                end
+                table.clear(droppedItems)
+                table.clear(dropCooldowns)
+                table.clear(displayEntries)
+                return
             end
+
+            UI = Instance.new('Frame')
+            UI.Size = UDim2.new(1, 0, 0, 32)
+            UI.Position = UDim2.fromOffset(0, -240)
+            UI.BackgroundTransparency = 1
+            UI.Visible = DisplayResources.Enabled
+            UI.Parent = vape.gui
+            AutoBank:Clean(UI)
+            local layout = Instance.new('UIListLayout')
+            layout.FillDirection = Enum.FillDirection.Horizontal
+            layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+            layout.SortOrder = Enum.SortOrder.LayoutOrder
+            layout.Parent = UI
+
+            table.clear(displayEntries)
+            for _, itemType in Whitelist.ListEnabled do
+                addDisplayEntry(itemType)
+            end
+
+            -- The stash has to be re-asserted every frame: the server keeps trying to drop the
+            -- items back down, so a slower loop lets them fall into the world.
+            AutoBank:Clean(runService.PreRender:Connect(function()
+                local totals = {}
+                for index, drop in droppedItems do
+                    if not drop or not drop.Parent or drop.Parent ~= workspace.ItemDrops then
+                        untrackDrop(drop)
+                    else
+                        totals[drop.Name] = (totals[drop.Name] or 0) + (drop:GetAttribute('Amount') or 0)
+                        drop.Velocity = Vector3.zero
+                        drop.CFrame = BANK_ORIGIN + Vector3.new(
+                            (index % BANK_COLUMNS) * BANK_SPACING,
+                            0,
+                            math.floor(index / BANK_COLUMNS) * BANK_SPACING
+                        )
+                    end
+                end
+                for itemType, label in displayEntries do
+                    label.Text = formatNumber(totals[itemType] or 0)
+                end
+            end))
+
+            repeat
+                local hotbar = lplr.PlayerGui:FindFirstChild('hotbar')
+                hotbar = hotbar and hotbar['1']:FindFirstChild('HotbarHealthbarContainer')
+                if hotbar then
+                    UI.Position = UDim2.fromOffset(0, (hotbar.AbsolutePosition.Y + guiService:GetGuiInset().Y) - 60)
+                end
+
+                if not entitylib.isAlive or atShop() then
+                    -- Dead, or at a shop and about to spend it: hand the stash back.
+                    for _, drop in table.clone(droppedItems) do
+                        reclaim(drop)
+                    end
+                else
+                    for _, item in store.inventory.inventory.items do
+                        local name = item.tool and item.tool.Name
+                        if name and table.find(Whitelist.ListEnabled, name) and (dropCooldowns[name] or 0) < os.clock() then
+                            task.spawn(function()
+                                local drop
+                                pcall(function()
+                                    drop = bedwars.Client:Get(remotes.DropItem):CallServer({
+                                        item = item.tool,
+                                        amount = item.amount
+                                    })
+                                end)
+                                if not AutoBank.Enabled then return end
+                                if not drop or not drop.Parent or table.find(droppedItems, drop) then
+                                    -- Refused, or handed us something we already hold. Back off
+                                    -- rather than hammering the same stack.
+                                    dropCooldowns[name] = os.clock() + 5
+                                    return
+                                end
+                                table.insert(droppedItems, drop)
+                                -- The pickup prompt and its billboard come with the drop; stripped
+                                -- so nobody can walk into the stash and take it if it is ever seen.
+                                drop:ClearAllChildren()
+                                drop.AncestryChanged:Once(function()
+                                    untrackDrop(drop)
+                                end)
+                            end)
+                        end
+                    end
+                end
+
+                task.wait(0.1)
+            until not AutoBank.Enabled
         end,
-        Tooltip = 'Automatically puts resources in your personal chest'
+        Tooltip = 'Stores resources somewhere safe. Drops them and holds the drops out of the world, then hands the lot back when you reach a shop'
     })
-    Range = AutoBank:CreateDropdown({
-        Name = 'Range',
-        List = {'Nearby', 'Infinite'},
-        Default = 'Nearby',
-        Tooltip = 'Nearby banks within 20 studs of a personal chest.\nInfinite banks from anywhere: it briefly parks your hidden hitbox on the nearest chest so the server accepts the deposit, with nothing visibly moving'
-    })
-    SilentBank = AutoBank:CreateToggle({
-        Name = 'Silent bank',
-        Default = true,
-        Tooltip = 'Infinite range only. On: park the hidden hitbox on the chest for a split second so far deposits go through with nothing visibly moving. Off: just ask the server (which usually refuses from range), leaving your body where it is'
-    })
-    UIToggle = AutoBank:CreateToggle({
-        Name = 'UI',
-        Function = function(callback)
+
+    Whitelist = AutoBank:CreateTextList({
+        Name = 'Whitelist',
+        Default = {'emerald', 'diamond', 'iron'},
+        Function = function()
             if AutoBank.Enabled then
+                AutoBank:Toggle()
+                AutoBank:Toggle()
+            end
+        end
+    })
+    DisplayResources = AutoBank:CreateToggle({
+        Name = 'Display resources',
+        Default = true,
+        Function = function(callback)
+            if AutoBank.Enabled and UI then
                 UI.Visible = callback
             end
-        end,
-        Default = true
+        end
     })
 end)
 
@@ -27425,21 +27300,50 @@ run(function()
     })
 end)
 
+-- DeviceSpoofer, replaced with the reference build's version. Aether's only ever wrote a
+-- local attribute back onto the player, which the server never reads. This hooks the input
+-- controller the game asks for the device type and tells the server directly, which is what
+-- actually changes what other clients see you as.
 run(function()
     local DeviceSpoofer
     local Device
+    local realInputType, realGetUserInputType
+
+    local function report(value)
+        pcall(function()
+            bedwars.Handler:Get('SendUserInputType'):Fire('SendToServer', {userInputType = value})
+        end)
+    end
 
     DeviceSpoofer = vape.Categories.Legit:CreateModule({
         Name = 'DeviceSpoofer',
         Function = function(callback)
+            local controller = bedwars.UserInputController
             if callback then
-                DeviceSpoofer:Clean(lplr:GetAttributeChangedSignal('UserInputType'):Connect(function()
-                    if lplr:GetAttribute('UserInputType') ~= Device.Value then
-                        lplr:SetAttribute('UserInputType', Device.Value)
-                    end
-                end))
+                if not controller or typeof(controller.getUserInputType) ~= 'function' then
+                    notif('DeviceSpoofer', 'The input controller is unavailable.', 5, 'warning')
+                    DeviceSpoofer:Toggle()
+                    return
+                end
+                -- Remember what we really are before replacing the getter, so turning the
+                -- module off can put the truth back.
+                realInputType = controller:getUserInputType()
+                realGetUserInputType = controller.getUserInputType
+                controller.getUserInputType = function()
+                    return Device.Value:upper()
+                end
+                report(Device.Value:upper())
+            else
+                if controller and realGetUserInputType then
+                    controller.getUserInputType = realGetUserInputType
+                end
+                if realInputType then
+                    report(realInputType)
+                end
+                realGetUserInputType, realInputType = nil, nil
             end
-        end
+        end,
+        Tooltip = 'Spoofs the device you show up as to the server'
     })
 
     Device = DeviceSpoofer:CreateDropdown({
@@ -27447,7 +27351,7 @@ run(function()
         List = {'Mobile', 'PC', 'Gamepad'},
         Function = function(val)
             if DeviceSpoofer.Enabled then
-                lplr:SetAttribute('UserInputType', val)
+                report(val:upper())
             end
         end
     })
@@ -32157,18 +32061,6 @@ end)
 	several of the same kits, so turn that kit's toggle off inside AutoKit if you would rather
 	drive it from here.
 ]]
-
--- Thousands separators for the resource counters. Written out rather than pulled from a
--- library because nothing else in this file needed one.
-local function formatNumber(value)
-	local text = tostring(math.floor(tonumber(value) or 0))
-	local sign = ''
-	if text:sub(1, 1) == '-' then
-		sign, text = '-', text:sub(2)
-	end
-	local out = text:reverse():gsub('(%d%d%d)', '%1,'):reverse()
-	return sign..(out:gsub('^,', ''))
-end
 
 -- Nearest bed that can still be broken (an enemy bed), used by the kits that only want to
 -- fire their ability while attacking a bed.
