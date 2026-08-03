@@ -912,6 +912,52 @@ run(function()
 				armor = {}
 			}
 		end,
+		-- Every AutoKit routine talks to the server through `Handler:Get(name):Fire(method, ...)`,
+		-- but nothing in this build ever defined Handler. The table's __index falls through to
+		-- Knit.Controllers, which has no 'Handler' either, so bedwars.Handler was nil and every
+		-- single kit threw "attempt to index nil value" on its first tick - which is exactly what
+		-- "none of the AutoKits work, they all say the game has changed" was. This is that wrapper,
+		-- over the same Client the rest of the file uses.
+		--
+		-- Lookups are memoised (a kit loop runs at 10Hz and must not re-resolve a remote every
+		-- pass) but only on success, so a remote that is not up yet is retried rather than
+		-- cached as broken for the rest of the match.
+		Handler = (function()
+			local cache = {}
+			local api = {}
+
+			function api:Get(remoteName)
+				local entry = cache[remoteName]
+				if entry then return entry end
+
+				local ok, remote = pcall(function()
+					return bedwars.Client:Get(remoteName)
+				end)
+				remote = ok and remote or nil
+
+				entry = {
+					Remote = remote,
+					instance = remote and remote.instance or nil,
+					Fire = function(_, method, ...)
+						if not remote then
+							error('remote "'..tostring(remoteName)..'" is unavailable', 0)
+						end
+						local call = remote[method]
+						if not call then
+							error('remote "'..tostring(remoteName)..'" has no '..tostring(method), 0)
+						end
+						return call(remote, ...)
+					end
+				}
+
+				if remote then
+					cache[remoteName] = entry
+				end
+				return entry
+			end
+
+			return api
+		end)(),
 		HudAliveCount = require(lplr.PlayerScripts.TS.controllers.global['top-bar'].ui.game['hud-alive-player-counts']).HudAlivePlayerCounts,
 		ItemMeta = require(replicatedStorage.TS.item['item-meta']).items,
 		KillEffectMeta = require(replicatedStorage.TS.locker['kill-effect']['kill-effect-meta']).KillEffectMeta,
@@ -9604,12 +9650,18 @@ end)
 
 -- SilentAim: ProjectileAimbot's trajectory solve, with nothing on screen giving it away.
 --
--- The game calls calculateImportantLaunchValues for two different jobs: the shot it is about to
--- fire, and the PREDICTION pass it uses to draw its own trajectory preview (the call that asks for
--- predictionLifetimeSec). ProjectileAimbot answers both, so the preview arc visibly bends onto the
--- target - that is the lock you can see. SilentAim answers only the real launch and passes every
--- prediction call straight through, so the arc, the crosshair and the camera all stay exactly
--- where you pointed them while the projectile still lands on the target. Aim anywhere you like.
+-- ProjectileAimbot works at the launch-value hook, which is also what draws the game's own preview
+-- arc - so the arc visibly bends onto the target, and that is the lock you can see. SilentAim works
+-- one level lower, on the ProjectileFire remote itself: the client keeps rendering the shot you
+-- actually aimed, and only the velocity in the request to the server is replaced. The arc, the
+-- crosshair and the camera all stay exactly where you pointed them while the projectile lands on
+-- the target. Aim anywhere you like.
+--
+-- Three things were stopping it redirecting anything at all, all fixed below and each noted where
+-- it lives: the trajectory solve was called with the wrong argument list (and read a return value
+-- that does not exist), target lookup went through screen space so anything off camera was
+-- invisible to it whatever Search said, and the redirected call was being truncated at the first
+-- nil argument on its way to the server.
 run(function()
     local SilentAim
     local Targets
@@ -9625,7 +9677,6 @@ run(function()
     local HitChance
     local OtherProjectiles
     local Blacklist
-    local Preview
     local Notify
     local namecall
     local rayCheck = RaycastParams.new()
@@ -9660,8 +9711,32 @@ run(function()
         end
     end
 
-    -- Keep the projectile rendered by the client untouched and redirect only the
-    -- velocity in the ProjectileFire request, matching idk's silent-aim path.
+    -- Find who the shot should go to. This is what Search actually means, and until now it meant
+    -- nothing at all: the dropdown existed but every lookup went through EntityMouse, which is
+    -- screen space and drops anything WorldToViewportPoint says is off camera. Aiming away from
+    -- somebody therefore found no target and redirected nothing, which is most of what "SilentAim
+    -- doesn't redirect" was. Anywhere now searches world space, so where you look genuinely makes
+    -- no difference, and Crosshair FOV is the opt-in that behaves like ProjectileAimbot.
+    local function findTarget(origin)
+        local settings = {
+            Part = 'RootPart',
+            Players = Targets.Players.Enabled,
+            NPCs = Targets.NPCs.Enabled,
+            Wallcheck = Targets.Walls.Enabled,
+            Sort = Sort.Value ~= 'Distance' and sortmethods[Sort.Value] or nil,
+            Origin = origin
+        }
+        if Search.Value == 'Crosshair FOV' then
+            settings.Range = FOV.Value
+            return entitylib.EntityMouse(settings)
+        end
+        settings.Range = Range.Value
+        return entitylib.EntityPosition(settings)
+    end
+
+    -- Keep the projectile rendered by the client untouched and redirect only the velocity in the
+    -- ProjectileFire request, so the arc, the crosshair and the camera all stay where you pointed
+    -- them while the projectile lands on the target.
     local function solveSilent(args)
         local origin, velocity, projectile = args[4], args[6], args[3]
         if typeof(origin) ~= 'Vector3' or typeof(velocity) ~= 'Vector3' or type(projectile) ~= 'string' then return end
@@ -9671,40 +9746,90 @@ run(function()
         if table.find(Blacklist.ListEnabled or {}, (projectile == 'glue_trap' or projectile == 'glue_projectile') and 'gloop' or projectile) then return end
 
         local meta = bedwars.ProjectileMeta[projectile]
+        if not meta then return end
+
+        -- The speed the game is actually sending, which already accounts for how far the bow was
+        -- drawn. Auto Charge replaces it with the full launch speed - that is the whole of what the
+        -- toggle does, and until now it did nothing whatsoever: it was created, shown in the menu,
+        -- and never read anywhere in the module.
         local speed = velocity.Magnitude
-        if not meta or speed <= 0 then return end
-        local target = entitylib.EntityMouse({
-                Part = 'RootPart',
-                Range = FOV.Value,
-                Players = Targets.Players.Enabled,
-                NPCs = Targets.NPCs.Enabled,
-                Wallcheck = Targets.Walls.Enabled,
-                Sort = sortmethods[Sort.Value or 'Distance'],
-            Origin = origin
-        })
-        if not target or (target.RootPart.Position - origin).Magnitude > Range.Value then return end
+        if AutoCharge.Enabled and (meta.launchVelocity or 0) > speed then
+            speed = meta.launchVelocity
+        end
+        if speed <= 0 then return end
+
+        local target = findTarget(origin)
+        if not target or not target.RootPart then return end
+        if (target.RootPart.Position - origin).Magnitude > Range.Value then return end
 
         local targetPart = target[TargetPart.Value]
-        local targetPosition = getPosition(target.Character) or targetPart and targetPart.Position
+        local targetPosition = getPosition(target.Character) or (targetPart and targetPart.Position)
         if not targetPosition then return end
-                    if MaxAngle.Value < 360 then
+
+        if MaxAngle.Value < 360 then
             local delta = targetPosition - origin
             if delta.Magnitude > 0 and math.acos(math.clamp(gameCamera.CFrame.LookVector:Dot(delta.Unit), -1, 1)) > math.rad(MaxAngle.Value) / 2 then return end
-                    end
+        end
 
-                    local playerGravity = workspace.Gravity
+        local playerGravity = workspace.Gravity
         local balloons = target.Character:GetAttribute('InflatedBalloons')
-                    if balloons and balloons > 0 then
+        if balloons and balloons > 0 then
             playerGravity = workspace.Gravity * (1 - (balloons >= 4 and 1.2 or balloons >= 3 and 1 or 0.975))
-                            end
+        end
+
         local pearl = projectile == 'telepearl'
         local targetVelocity = pearl and Vector3.zero or target.RootPart.AssemblyLinearVelocity
-        local airborne = not pearl and (target.Humanoid.FloorMaterial == Enum.Material.Air or math.abs(targetVelocity.Y) > 0.01)
-        local calculated, _, travelTime = prediction.SolveTrajectory(origin, speed * Prediction.Value, meta.gravitationalAcceleration or 196.2, targetPosition, targetVelocity, playerGravity, target.HipHeight, target.Jumping and 42.6 or nil, rayCheck, airborne, target.RootPart.Position, target.RootPart, nil, true)
-        if not calculated or not travelTime or travelTime > (meta.lifetimeSec or 3) then return end
+
+        -- The map has to be resolved here rather than when the module was built. Filtering by
+        -- Include against a list holding a single nil is an EMPTY include list, which makes every
+        -- raycast in the solve return nothing, so on any join where workspace.Map had not streamed
+        -- in yet the ground search was blind for the rest of the session.
+        rayCheck.FilterDescendantsInstances = {workspace:FindFirstChild('Map')}
+
+        -- SolveTrajectory takes (origin, speed, projectileGravity, targetPosition, targetVelocity,
+        -- playerGravity, playerHeight, playerJump, params, iterations, ping) and returns exactly
+        -- two values. The old call passed fourteen arguments: a boolean landed in `iterations` and
+        -- a Vector3 landed in `ping`, and both are put through math.clamp, so this threw on EVERY
+        -- shot - inside a __namecall hook, taking the game's own fire call down with it. On top of
+        -- that it read a third return value as travelTime, which does not exist, so even without
+        -- the error the `not travelTime` guard below would have rejected every single solve. Those
+        -- two together are why nothing was ever redirected.
+        local calculated, travelTime = prediction.SolveTrajectory(
+            origin,
+            speed * Prediction.Value,
+            meta.gravitationalAcceleration or 196.2,
+            targetPosition,
+            targetVelocity,
+            playerGravity,
+            target.HipHeight,
+            target.Jumping and 42.6 or nil,
+            rayCheck,
+            nil,
+            lplr:GetNetworkPing()
+        )
+        if not calculated then return end
+        -- Out of range shots come back with no flight time at all, which is information, not a
+        -- reason to refuse: sending it as far towards them as the projectile reaches beats leaving
+        -- the shot pointing wherever the camera happened to be.
+        if travelTime and travelTime > (meta.lifetimeSec or 3) then return end
+
         targetinfo.Targets[target] = tick() + 1
+
+        -- A full-speed arrow has to be sent as a fully drawn one or the server scales it back down
+        -- to whatever the draw table says. Replaced rather than mutated: that table belongs to the
+        -- local projectile the client has already spawned, and editing it in place would change the
+        -- shot you can see - which is the one thing this module exists not to do.
+        if AutoCharge.Enabled and type(args[8]) == 'table' then
+            local draw = table.clone(args[8])
+            draw.drawDurationSeconds = 5
+            args[8] = draw
+        end
+
+        if Notify.Enabled then
+            notif('SilentAim', 'Redirected onto '..(target.Player and target.Player.Name or 'a target'), 1)
+        end
         return CFrame.lookAt(origin, calculated).LookVector * speed
-                    end
+    end
 
     SilentAim = vape.Categories.Combat:CreateModule({
         Name = 'SilentAim',
@@ -9712,12 +9837,18 @@ run(function()
         Function = function(callback)
             if callback and not namecall then
                 namecall = hookmetamethod(game, '__namecall', newcclosure(function(self, ...)
-                    local args = {...}
+                    -- table.pack keeps the argument COUNT. The old `{...}` plus `unpack(args)` was
+                    -- silently truncating the call at the first nil argument, so a ProjectileFire
+                    -- with an absent draw table or timestamp reached the server missing everything
+                    -- after the hole and was rejected outright.
+                    local args = table.pack(...)
                     if SilentAim.Enabled and not checkcaller() and getnamecallmethod() == 'InvokeServer' and tostring(self) == 'ProjectileFire' then
-                        local velocity = solveSilent(args)
-                        if velocity then args[6] = velocity end
-                end
-                    return namecall(self, unpack(args))
+                        -- Never let a solve error escape into the game's own fire call. Whatever
+                        -- happens in here, the shot still goes out - unredirected at worst.
+                        local ok, velocity = pcall(solveSilent, args)
+                        if ok and velocity then args[6] = velocity end
+                    end
+                    return namecall(self, table.unpack(args, 1, args.n))
                 end))
             end
         end,
@@ -9818,15 +9949,11 @@ run(function()
         Darker = true,
         Placeholder = 'projectile'
     })
-    Preview = SilentAim:CreateDropdown({
-        Name = 'Preview',
-        List = {'Auto', 'Never touch preview', 'Always redirect'},
-        Default = 'Auto',
-        Tooltip = 'Auto - leave the game\'s preview arc alone, unless this build turns out not to separate preview from real shots\nNever touch preview - always leave it alone, even if that means some shots are not redirected\nAlways redirect - redirect everything, exactly like ProjectileAimbot',
-        Function = function()
-            sawRealCall, previewCalls = false, 0
-        end
-    })
+    -- The Preview dropdown that used to sit here has been removed. It could not do anything: this
+    -- module hooks the ProjectileFire remote, and the game's preview arc is drawn entirely on the
+    -- client and never reaches that remote, so there was no preview call here to leave alone or
+    -- redirect. Its only effect was assigning two undeclared globals. The arc is always left alone,
+    -- which is the whole point of the module.
     Notify = SilentAim:CreateToggle({
         Name = 'Notifications',
         Tooltip = 'Notify each time a shot is redirected'
@@ -16720,6 +16847,7 @@ run(function()
 	local AutoKit
 	local Legit
 	local Notify
+	local Fallback
 	local Toggles = {}
 
 	-- Bumped whenever the running routine must stop - the module going off, or the equipped kit
@@ -16754,16 +16882,124 @@ run(function()
 		return meta and meta.name or tostring(kit)
 	end
 
+	----------------------------------------------------------------------------------------------
+	-- Fallback interaction.
+	--
+	-- Every routine below drives the game's own remote, which is precise and instant. When a game
+	-- update moves one of those out from under us the routine still knows WHAT it wants to interact
+	-- with, so rather than giving up we do what a player would: trigger the thing in front of us.
+	--
+	-- Two ways, in order of how reliable they are. A ProximityPrompt is what most of these
+	-- interactions actually are (Miner's petrified players, Hannah's execution, the beekeeper's
+	-- hives), so firing the prompt is the real interaction, not an imitation of one. Failing that
+	-- we press the key the game itself has bound - looked up from ContextActionService rather than
+	-- assumed, so it follows a rebind and follows the game renaming its own actions.
+	----------------------------------------------------------------------------------------------
+	-- Resolved defensively: VirtualInputManager needs an elevated identity and simply is not there
+	-- on some executors, and this runs during module registration where an error would cost the
+	-- whole of AutoKit rather than one fallback.
+	local virtualInput = select(2, pcall(function()
+		return cloneref(game:GetService('VirtualInputManager'))
+	end))
+
+	local function firePrompt(obj)
+		if typeof(obj) ~= 'Instance' then return false end
+		if not fireproximityprompt then return false end
+		local fired = false
+		for _, prompt in obj:GetDescendants() do
+			if prompt:IsA('ProximityPrompt') and prompt.Enabled then
+				pcall(fireproximityprompt, prompt)
+				fired = true
+			end
+		end
+		if not fired and obj:IsA('ProximityPrompt') and obj.Enabled then
+			pcall(fireproximityprompt, obj)
+			fired = true
+		end
+		return fired
+	end
+
+	-- Press whatever the game has bound to `keyCode`. ContextActionService first because that is
+	-- the binding the game actually listens on; VirtualInputManager only if nothing is bound, since
+	-- it goes through the OS-level input path and is far easier for the game to be busy for.
+	local function pressKey(keyCode)
+		local handled = false
+		pcall(function()
+			for name, info in contextActionService:GetAllBoundActionInfo() do
+				for _, input in (info.inputTypes or {}) do
+					if input == keyCode then
+						local proxy = newproxy(true)
+						contextActionService:CallFunction(name, Enum.UserInputState.Begin, proxy)
+						task.delay(0.06, function()
+							pcall(contextActionService.CallFunction, contextActionService, name, Enum.UserInputState.End, proxy)
+						end)
+						handled = true
+						break
+					end
+				end
+				if handled then break end
+			end
+		end)
+		if handled then return true end
+		if not virtualInput then return false end
+		return (pcall(function()
+			virtualInput:SendKeyEvent(true, keyCode, false, game)
+			task.delay(0.06, function()
+				pcall(virtualInput.SendKeyEvent, virtualInput, false, keyCode, false, game)
+			end)
+		end))
+	end
+
+	-- The key each kit's interaction sits on when we have to fall back to pressing it. Kits whose
+	-- ability is not a keypress at all are simply absent, and fall back to the prompt only.
+	local KitKeys = {
+		beekeeper = Enum.KeyCode.F,
+		bigman = Enum.KeyCode.F,
+		davey = Enum.KeyCode.F,
+		farmer_cletus = Enum.KeyCode.F,
+		gingerbread_man = Enum.KeyCode.F,
+		hannah = Enum.KeyCode.F,
+		jailor = Enum.KeyCode.F,
+		grim_reaper = Enum.KeyCode.F,
+		metal_detector = Enum.KeyCode.F,
+		miner = Enum.KeyCode.F,
+		pinata = Enum.KeyCode.F,
+		spirit_assassin = Enum.KeyCode.F,
+		star_collector = Enum.KeyCode.F
+	}
+
+	local lastFallback = {}
+
+	local function fallbackInteract(kit, obj)
+		if not (Fallback and Fallback.Enabled) then return false end
+		-- Rate limited per kit: a prompt or a keypress is not free, and the routine that failed is
+		-- being retried ten times a second.
+		if tick() - (lastFallback[kit] or 0) < 0.4 then return false end
+		lastFallback[kit] = tick()
+		if firePrompt(obj) then return true end
+		local key = KitKeys[kit]
+		if key then return pressKey(key) end
+		return false
+	end
+
 	-- The first failure for a kit is reported once and the loop carries on, so a single field that
-	-- moved in a game update cannot take that kit down for the rest of the match.
+	-- moved in a game update cannot take that kit down for the rest of the match. When the remote
+	-- path fails we do not stop there: the fallback above interacts the way a player would, so a
+	-- moved API costs precision rather than the whole kit.
 	local function guard(kit, func, ...)
 		local ok, err = pcall(func, ...)
-		if not ok and not reported[kit] then
-			reported[kit] = true
-			warn('[AetherV2] AutoKit '..tostring(kit)..': '..tostring(err))
-			if Notify and Notify.Enabled then
-				notif('AutoKit', kitName(kit)..' failed - the game has probably changed', 8, 'warning')
+		if not ok then
+			local recovered = fallbackInteract(kit, ...)
+			if not reported[kit] then
+				reported[kit] = true
+				warn('[AetherV2] AutoKit '..tostring(kit)..': '..tostring(err))
+				if Notify and Notify.Enabled then
+					notif('AutoKit', recovered
+						and (kitName(kit)..'\'s remote has moved - falling back to interacting directly')
+						or (kitName(kit)..' failed - the game has probably changed'), 8, 'warning')
+				end
 			end
+			return recovered
 		end
 		return ok
 	end
@@ -17231,6 +17467,11 @@ run(function()
 		Tooltip = 'Automatically uses kit abilities. Follows whichever kit you are actually playing, so switching kit mid-match takes effect without toggling this off and on'
 	})
 	Legit = AutoKit:CreateToggle({Name = 'Legit Range'})
+	Fallback = AutoKit:CreateToggle({
+		Name = 'Interact fallback',
+		Default = true,
+		Tooltip = 'When a kit\'s remote has moved in a game update, interact the way a player would instead of giving up - fire the ProximityPrompt if the interaction has one, otherwise press whatever key the game has bound for it (F for Miner, Hannah and the rest). Slower and less precise than the remote, but it keeps the kit working through an update'
+	})
 	Notify = AutoKit:CreateToggle({
 		Name = 'Notifications',
 		Tooltip = 'Say something if a kit routine breaks against a game update, instead of failing quietly'
@@ -17881,192 +18122,438 @@ run(function()
 end)
 
 run(function()
-    -- AutoWin (v5 - full match cycle, walked rather than teleported)
+    ----------------------------------------------------------------------------------------------
+    -- AutoWin (v6) - the unattended match brain.
     --
-    -- One fixed plan, run over and over until the game is won:
-    --   1. Stand at the team iron generator and collect iron until we hold the target amount.
-    --   2. Walk to the shop keeper and buy wool (16 wool per 8 iron).
-    --   3. Bridge to the nearest enemy bed - walking the path a grid cell at a time and
-    --      guaranteeing footing under every single cell on the way, so the path is a
-    --      continuous walkable bridge with no gaps.
-    --   4. Break the bed, bank the loot, respawn, and repeat until every enemy bed is gone.
-    --   5. Bridge to the closest player (buying exactly the number of blocks that crossing needs)
-    --      and kill them with a self-contained silent-aura, until nobody is left.
+    -- Written to be left running for hours. Three things make that possible, and everything below
+    -- is arranged around them:
     --
-    -- Everything is self-contained: it never toggles the user's Breaker, Killaura, SilentAura or
-    -- AutoBank modules, so their settings are untouched and cannot break the run.
+    --   1. NOTHING BLOCKS. The old build was a stack of nested `while` loops - walk until you
+    --      arrive, mine until you are full, fight until it dies - so anything that happened while
+    --      one of them was spinning (dying, the match ending, a teammate taking the bed we were
+    --      crossing to) was only noticed when that loop happened to finish. This one is a tick
+    --      machine: the brain re-decides what to do from the live world every 100ms and every
+    --      action it takes is bounded, so it can never be committed to a plan the world has
+    --      already invalidated.
     --
-    -- Progress is reported on a small draggable HUD (grab the title bar to move it) rather than
-    -- through notifications, so a long run doesn't spam the notification stack.
+    --   2. NOTHING CAN KILL IT. Every tick runs inside a pcall, every game API call is isolated,
+    --      and a watchdog thread outside the brain notices when the brain itself has stopped
+    --      making progress and resets it. A BedWars update that moves one field breaks one action
+    --      for one tick instead of ending an eight hour run.
+    --
+    --   3. IT ESCALATES INSTEAD OF GIVING UP. Walking and bridging is the default because nothing
+    --      about it is rejected by the server. When a route genuinely will not go, the run steps
+    --      up a rung at a time - re-plan, tower over it, dash it, speed, fly - up to the ceiling
+    --      set by Aggression, and steps back down as soon as it is moving again.
+    --
+    -- Navigation is a real search, not a greedy walk at the target. A* over the BedWars block grid,
+    -- where empty cells cost extra (we bridge them) and placed blocks in the way cost more again
+    -- (we mine them), gives a route around walls, over gaps and up towers that a straight line
+    -- would spend the whole match nose-first against.
+    --
+    -- Yuzi: the dash is fired directly (useAbility), never by toggling the LongJump module. LongJump
+    -- pins your velocity once its boost window closes, so driving a run through it meant every
+    -- crossing ended with the character frozen waiting for a toggle-off that a stall could skip.
+    --
+    -- With Take over on, this drives your existing modules - AutoBuy, AutoBank, AutoTool, Killaura,
+    -- AntiVoid, NoFallDamage, AutoKit, Anti-AFK - rather than half re-implementing them, and puts
+    -- every one of them back exactly as it found them when it stops.
+    ----------------------------------------------------------------------------------------------
     local AutoWin
-    local IronAmount
-    local WoolAmount
-    local BedReach
-    local PlayerReach
-    local StartDelay
-    local Respawn
-    local BankLoot
-    local KillPlayers
-    local YuziDash
-    local BoostTime
-    local Notify
+    local Aggression, StartDelay
+    local IronAmount, WoolAmount
+    local BedReach, PlayerReach, KillPlayers
+    local YuziDash, AutoEquipKit, DaoPriority
+    local TakeOver, BankLoot, RespawnAfterBed
+    local Requeue, Gamemode, ResumeInLobby, AutoRejoin, KeepAwake, StuckLimit
+    local ShowHUD, Notify
 
-    -- BedWars blocks sit on a 3-stud grid: a block centre is at cell * 3 and you stand 1.5 studs
-    -- above that centre. Every bridging decision below is made in whole cells.
+    -- BedWars' lobby is a different place to the match, so it loads games/6872265039.lua and not
+    -- this file. The queue we want after a match therefore has to be handed over on disk; the
+    -- lobby's AutoQueue module reads exactly this file.
+    local LOBBY_PLACE = 6872265039
+    local STATE_FILE = 'aetherv2/profiles/autowin.json'
+
+    -- Blocks sit on a 3-stud grid. A cell's centre is cell * 3, and standing on that cell puts
+    -- your feet 1.5 studs above the centre. Every routing decision below is in whole cells.
     local CELL = 3
     local STAND = 1.5
-    -- The shop sells wool in fixed bundles; both numbers come from the game's own shop data.
     local WOOL_ITEM, WOOL_PER_BUY, WOOL_PRICE = 'wool_white', 16, 8
-    -- What AutoBank deposits, mirrored here so banking needs no other module.
-    local bankable = {iron = true, gold = true, diamond = true, emerald = true, void_crystal = true}
+    local DAO_TIERS = {'wood_dao', 'stone_dao', 'iron_dao', 'diamond_dao', 'emerald_dao'}
+    -- Yuzi has shipped under both ids; treat either as the dash kit rather than betting on one.
+    local YUZI_KITS = {yuzi = true, dasher = true}
+    local BANKABLE = {iron = true, gold = true, diamond = true, emerald = true, void_crystal = true}
+    -- Never bridge with something that explodes, sticks, or is somebody's bed.
+    local BAD_BLOCKS = {'tnt', 'cannon', 'bed', 'trap', 'gumdrop', 'glue', 'ladder', 'sludge', 'bomb', 'beacon', 'spawner', 'chest'}
 
-    local cellParams = RaycastParams.new()
-    cellParams.FilterType = Enum.RaycastFilterType.Exclude
-    cellParams.RespectCanCollide = true
+    -- Escalation ceilings. Tier 0 is walk and bridge; each rung adds one way of getting past
+    -- something that walking could not, and the ceiling is what Aggression actually sets.
+    local TIER_CEILING = {Safe = 1, Balanced = 2, Blatant = 3}
 
-    ----------------------------------------------------------------------------
-    -- HUD. AutoWin is created with a Size, so the GUI hands us a draggable frame in
-    -- AutoWin.Children that is shown exactly while the module is on.
-    ----------------------------------------------------------------------------
-    local hudPhase, hudAction, hudStock, hudDetail
-    local phaseText, actionText, detailText = 'Idle', 'Waiting...', ''
+    -- Bumped on every enable/disable. Every loop below carries the generation it started with and
+    -- exits the moment it stops matching, so a toggle can never leave a thread from the previous
+    -- run still driving the character.
+    local generation = 0
+
+    -- Forward declared: the walker escalates mid-crossing and so has to be able to apply a tier,
+    -- but the escalation rungs are defined further down (they need the module driver, which needs
+    -- the option handles). Without this the call inside travel would compile as a global read.
+    local applyTier
+
+    ----------------------------------------------------------------------------------------------
+    -- Isolation helpers. Every single call into BedWars goes through one of these, so a field that
+    -- moved in a game update costs one action rather than the run.
+    ----------------------------------------------------------------------------------------------
+    local function safe(fn, ...)
+        if type(fn) ~= 'function' then return false end
+        local ok, res = pcall(fn, ...)
+        if ok then return true, res end
+        return false
+    end
+
+    local function ask(fn, ...)
+        local ok, res = safe(fn, ...)
+        if ok then return res end
+        return nil
+    end
+
+    ----------------------------------------------------------------------------------------------
+    -- Run state, all in one table so a reset is a single assignment rather than a dozen forgotten
+    -- variables. Anything the brain remembers between ticks lives here.
+    ----------------------------------------------------------------------------------------------
+    local run_ = {
+        phase = 'Idle',
+        action = 'Waiting',
+        detail = '',
+        tier = 0,
+        bedFails = {},
+        playerFails = {},
+        lastBedCount = -1,
+        lastProgress = 0,
+        queued = false,
+        equipped = false,
+    }
+
+    local function resetRun()
+        run_.tier = 0
+        run_.bedFails = {}
+        run_.playerFails = {}
+        run_.lastBedCount = -1
+        run_.lastProgress = tick()
+        run_.queued = false
+        run_.equipped = false
+        run_.lastEquipTry = 0
+    end
+
+    local function running(gen)
+        return AutoWin ~= nil and AutoWin.Enabled and (gen == nil or gen == generation)
+    end
+
+    local function maxTier()
+        return TIER_CEILING[Aggression and Aggression.Value or 'Balanced'] or 2
+    end
+
+    ----------------------------------------------------------------------------------------------
+    -- HUD. AutoWin is created with a Size, so the GUI hands us a draggable frame in AutoWin.Children
+    -- that is shown exactly while the module is on. Progress goes here rather than into
+    -- notifications, because an eight hour run would otherwise be an eight hour notification spam.
+    ----------------------------------------------------------------------------------------------
+    local hudPhase, hudAction, hudDetail, hudStock, hudFrame
+
+    local function ironCount()
+        local item = ask(getItem, 'iron')
+        return item and item.amount or 0
+    end
+
+    local function blockName()
+        local wool = ask(getWool)
+        if wool then return wool end
+        local inv = store.inventory and store.inventory.inventory
+        if not inv or not inv.items then return nil end
+        for _, item in pairs(inv.items) do
+            local meta = bedwars.ItemMeta[item.itemType]
+            if meta and meta.block and (item.amount or 0) > 0 then
+                local bad = false
+                for _, word in ipairs(BAD_BLOCKS) do
+                    if string.find(item.itemType, word) then bad = true end
+                end
+                if not bad then return item.itemType end
+            end
+        end
+        return nil
+    end
+
+    local function blockCount()
+        local name = blockName()
+        if not name then return 0 end
+        local item = ask(getItem, name)
+        return item and item.amount or 0
+    end
 
     local function refreshHUD()
         if not hudPhase then return end
-        hudPhase.Text = phaseText
-        hudAction.Text = actionText
-        hudDetail.Text = detailText
-        local iron, wool = 0, 0
-        pcall(function()
-            local it = getItem('iron')
-            iron = it and it.amount or 0
-            wool = select(2, getWool()) or 0
-        end)
-        hudStock.Text = iron .. ' iron   ' .. wool .. ' wool'
+        hudPhase.Text = run_.phase
+        hudAction.Text = run_.action
+        hudDetail.Text = run_.detail
+        local tierText = run_.tier > 0 and ('  |  esc ' .. run_.tier) or ''
+        hudStock.Text = ironCount() .. ' iron   ' .. blockCount() .. ' blocks' .. tierText
     end
 
-    -- Set the current phase/action/detail. Any argument left nil keeps what is already showing,
-    -- and identical text is a no-op, so this is safe to call every loop iteration.
+    -- Any argument left nil keeps whatever is showing, and identical text is a no-op, so this is
+    -- safe to call on every tick.
     local function status(phase, action, detail)
         local changed = false
-        if phase and phase ~= phaseText then phaseText, changed = phase, true end
-        if action and action ~= actionText then actionText, changed = action, true end
-        if detail and detail ~= detailText then detailText, changed = detail, true end
-        if changed and Notify and Notify.Enabled and action then
-            notif('AutoWin', action, 4)
+        if phase and phase ~= run_.phase then run_.phase, changed = phase, true end
+        if action and action ~= run_.action then run_.action, changed = action, true end
+        if detail ~= nil and detail ~= run_.detail then run_.detail = detail end
+        if changed and action and Notify and Notify.Enabled then
+            safe(notif, 'AutoWin', action, 4)
         end
         refreshHUD()
     end
 
-    ----------------------------------------------------------------------------
-    -- Basics.
-    ----------------------------------------------------------------------------
+    ----------------------------------------------------------------------------------------------
+    -- Handing the queue to the lobby.
+    ----------------------------------------------------------------------------------------------
+    local function writeState()
+        safe(function()
+            local data = {
+                enabled = AutoWin ~= nil and AutoWin.Enabled or false,
+                resume = ResumeInLobby ~= nil and ResumeInLobby.Enabled or false,
+                queue = Gamemode and Gamemode.Value or 'Current',
+                fallback = store.queueType,
+                stamp = os.time()
+            }
+            writefile(STATE_FILE, httpService:JSONEncode(data))
+        end)
+    end
+
+    ----------------------------------------------------------------------------------------------
+    -- Driving other modules.
+    --
+    -- Take over remembers a module's enabled state and every option it changes, applies what the
+    -- run wants, and puts all of it back on stop - including when the stop is a config load, an
+    -- uninject or an error, because the restore is registered on the module's own maid rather than
+    -- being something the brain has to remember to do.
+    ----------------------------------------------------------------------------------------------
+    local driven = {}
+
+    local function moduleByName(name)
+        if not vape.Modules then return nil end
+        return vape.Modules[name]
+    end
+
+    local function optionOf(module, name)
+        if not module or not module.Options then return nil end
+        return module.Options[name]
+    end
+
+    -- Set one option and remember what it was. Toggles are flipped, sliders and dropdowns are set.
+    local function driveOption(module, name, value, record)
+        local option = optionOf(module, name)
+        if not option then return end
+        if type(value) == 'boolean' then
+            if option.Enabled == nil or option.Enabled == value then return end
+            table.insert(record, {option = option, kind = 'toggle'})
+            safe(function() option:Toggle() end)
+        elseif option.SetValue then
+            if option.Value == value then return end
+            table.insert(record, {option = option, kind = 'value', old = option.Value})
+            safe(function() option:SetValue(value) end)
+        end
+    end
+
+    -- `options` is a plain name -> wanted-value map. Returns whether the module is on afterwards,
+    -- so callers can fall back to their own implementation when it is missing entirely. `force` is
+    -- for the escalation rungs, which are the Aggression setting's own promise and so are not
+    -- something the Take over toggle should be able to veto.
+    local function takeOver(name, options, force)
+        if not force and (not TakeOver or not TakeOver.Enabled) then return false end
+        local module = moduleByName(name)
+        if not module then return false end
+        if driven[name] then return module.Enabled end
+
+        local record = {turnedOn = false, options = {}}
+        driven[name] = record
+
+        if options then
+            for optionName, value in pairs(options) do
+                driveOption(module, optionName, value, record.options)
+            end
+        end
+        if not module.Enabled then
+            safe(function() module:Toggle(true) end)
+            -- A module the GUI has marked hard-patched refuses to toggle and leaves Enabled alone.
+            -- Recording that we switched it on would make the restore switch it ON at the end of
+            -- the run, which is the opposite of putting things back.
+            record.turnedOn = module.Enabled == true
+        end
+        return module.Enabled
+    end
+
+    -- Turn a driven module back off without releasing it, for the escalation rungs that are only
+    -- wanted while a specific stall is being worked through.
+    local function releaseOne(name)
+        local record = driven[name]
+        if not record then return end
+        driven[name] = nil
+        local module = moduleByName(name)
+        if module then
+            if record.turnedOn and module.Enabled then
+                safe(function() module:Toggle(true) end)
+            end
+            for _, entry in ipairs(record.options) do
+                if entry.kind == 'toggle' then
+                    safe(function() entry.option:Toggle() end)
+                elseif entry.option.SetValue then
+                    safe(function() entry.option:SetValue(entry.old) end)
+                end
+            end
+        end
+    end
+
+    local function releaseAll()
+        local names = {}
+        for name in pairs(driven) do table.insert(names, name) end
+        for _, name in ipairs(names) do releaseOne(name) end
+    end
+
+    local function isDriving(name)
+        return driven[name] ~= nil
+    end
+
+    -- Anything that owns the character's velocity. While one of these is on, the walker below
+    -- stops asserting velocity itself, because two writers fighting over AssemblyLinearVelocity is
+    -- how a character ends up vibrating on the spot instead of going anywhere.
+    local function movementModuleActive()
+        for _, name in ipairs({'Fly', 'InfiniteFly', 'Speed', 'LongJump', 'Scaffold', 'TPAura'}) do
+            local module = moduleByName(name)
+            if module and module.Enabled then return true end
+        end
+        return false
+    end
+
+    ----------------------------------------------------------------------------------------------
+    -- Character basics.
+    ----------------------------------------------------------------------------------------------
     local function myRoot()
-        local c = entitylib.character
-        if entitylib.isAlive and c and c.RootPart and c.RootPart.Parent then
-            return c.RootPart, c
+        local char = entitylib.character
+        if entitylib.isAlive and char and char.RootPart and char.RootPart.Parent then
+            return char.RootPart, char
         end
         return nil
     end
-    local function running()
-        return AutoWin.Enabled
-    end
+
+    -- store.rootpart means GodMode/AntiDeath has parked the hitbox somewhere. Moving the character
+    -- then would drag their parked copy around, so the run holds still until they are done.
     local function alive()
-        return AutoWin.Enabled and entitylib.isAlive and not store.rootpart and myRoot() ~= nil
-    end
-    local function ironCount()
-        local it = getItem('iron')
-        return it and it.amount or 0
-    end
-    local function woolCount()
-        return select(2, getWool()) or 0
+        return entitylib.isAlive and not store.rootpart and myRoot() ~= nil
     end
 
-    ----------------------------------------------------------------------------
-    -- Beds.
-    ----------------------------------------------------------------------------
-    -- Resolve a part from anything the map tags, whether it is a bare part or a model. Beds,
-    -- generators and item drops are each tagged one way on some maps and the other way on others,
-    -- and assuming one shape is what made the walk to the generator quietly never happen.
+    local function hipOf(char, root)
+        local hip = char and char.HipHeight or 3
+        local half = root and root.Size and (root.Size.Y * 0.5) or 1
+        return hip + half
+    end
+
+    ----------------------------------------------------------------------------------------------
+    -- Teams, beds and enemies.
+    ----------------------------------------------------------------------------------------------
     local function partOf(obj)
         if not obj then return nil end
         if obj:IsA('BasePart') then return obj end
         return obj.PrimaryPart or obj:FindFirstChildWhichIsA('BasePart')
     end
-    local function bedPart(bed)
-        return partOf(bed)
-    end
-    -- Our own team id. BedWars stores it as a player attribute, but that can be momentarily
-    -- absent right after a spawn or teleport, so fall back to the match store (and then the
-    -- character) before giving up. Every bed and player team decision below keys off this, so a
-    -- wrong answer here is exactly what makes the cycle bridge to our own bed or hunt a teammate.
+
+    -- Our team id. The player attribute is authoritative but is briefly absent right after a spawn
+    -- or a teleport, so fall back to the match store and then the character. Every bed and target
+    -- decision keys off this: a wrong answer here is what makes a run bridge to its own bed.
     local function myTeam()
         local team = lplr:GetAttribute('Team')
         if team == nil then
-            pcall(function()
-                local mt = bedwars.Store:getState().Game.myTeam
-                team = mt and mt.id
-            end)
+            local state = ask(function() return bedwars.Store:getState().Game.myTeam end)
+            team = state and state.id
         end
         if team == nil and lplr.Character then
             team = lplr.Character:GetAttribute('Team')
         end
         return team
     end
-    -- A bed is an enemy bed only when we actually know our team and this bed is not the one our
-    -- team cannot break (a bed's 'Team<id>NoBreak' attribute marks its owning team). When the team
-    -- is unknown we return false rather than true: skipping a bed for a moment is harmless, but
-    -- treating our own bed as fair game and bridging over to smash it is the reported bug.
+
+    -- Unknown team returns false rather than true: skipping a bed for a moment costs nothing,
+    -- treating our own bed as fair game costs the game.
     local function isEnemyBed(bed)
         local team = myTeam()
         if team == nil then return false end
         return not bed:GetAttribute('Team' .. team .. 'NoBreak')
     end
+
     local function bedShielded(bed)
         return (bed:GetAttribute('BedShieldEndTime') or 0) > workspace:GetServerTimeNow()
     end
+
     local function enemyBeds()
         local beds = {}
-        for _, bed in collectionService:GetTagged('bed') do
-            if bed.Parent and bedPart(bed) and isEnemyBed(bed) then
+        for _, bed in ipairs(collectionService:GetTagged('bed')) do
+            if bed.Parent and partOf(bed) and isEnemyBed(bed) then
                 table.insert(beds, bed)
             end
         end
         return beds
     end
-    -- Our own bed still standing? If it is gone, a respawn is an elimination, so the cycle skips
-    -- the respawn step entirely and carries on from wherever it is.
+
+    -- Our own bed still standing? Without it a respawn is an elimination, so every reset below
+    -- checks this first.
     local function ownBedAlive()
         local team = myTeam()
         if team == nil then return false end
-        for _, bed in collectionService:GetTagged('bed') do
-            if bed.Parent and bedPart(bed) and bed:GetAttribute('Team' .. team .. 'NoBreak') then
+        for _, bed in ipairs(collectionService:GetTagged('bed')) do
+            if bed.Parent and partOf(bed) and bed:GetAttribute('Team' .. team .. 'NoBreak') then
                 return true
             end
         end
         return false
     end
-    local function closestBed(fromPos, skip)
-        local best, bestDist
-        for _, bed in enemyBeds() do
-            if not (skip and skip[bed]) then
-                local part = bedPart(bed)
+
+    local function bedName(bed)
+        local team = bed:GetAttribute('Team') or bed:GetAttribute('TeamName')
+        if type(team) == 'string' then return team .. "'s bed" end
+        return 'the nearest bed'
+    end
+
+    -- Nearest enemy bed we have not written off, cheapest first. Shielded beds are pushed to the
+    -- back rather than skipped, so a run never stands waiting on a shield with a free bed elsewhere.
+    local function pickBed(from)
+        local best, bestScore
+        for _, bed in ipairs(enemyBeds()) do
+            if (run_.bedFails[bed] or 0) < 3 then
+                local part = partOf(bed)
                 if part then
-                    local d = (part.Position - fromPos).Magnitude
-                    if not bestDist or d < bestDist then
-                        best, bestDist = bed, d
+                    local score = (part.Position - from).Magnitude + (bedShielded(bed) and 400 or 0)
+                    if not bestScore or score < bestScore then
+                        best, bestScore = bed, score
+                    end
+                end
+            end
+        end
+        if not best then
+            -- Everything is written off: forget the failures and try the lot again rather than
+            -- standing still with beds left on the map.
+            run_.bedFails = {}
+            for _, bed in ipairs(enemyBeds()) do
+                local part = partOf(bed)
+                if part then
+                    local score = (part.Position - from).Magnitude
+                    if not bestScore or score < bestScore then
+                        best, bestScore = bed, score
                     end
                 end
             end
         end
         return best
     end
-    local function bedName(bed)
-        local team = bed:GetAttribute('Team') or bed:GetAttribute('TeamName')
-        return type(team) == 'string' and (team .. ' bed') or 'the nearest bed'
-    end
 
-    local function nearestEnemy(skip)
+    local function pickEnemy()
         if not entitylib.isAlive then return nil end
         local team = myTeam()
         local all = entitylib.AllPosition({
@@ -18076,668 +18563,1064 @@ run(function()
             Part = 'RootPart',
             Sort = sortmethods.Distance
         })
-        for _, ent in all do
+        local best, bestScore
+        for _, ent in ipairs(all) do
             -- AllPosition already drops anything entitylib marks un-targetable, but that flag is
-            -- computed once when an entity spawns and can be stale for a player whose team was
-            -- assigned a frame later. Re-check the team here so a teammate is never the target.
-            if not (skip and skip[ent.Character])
-                and ent.Player
-                and ent.Targetable
-                and not (team ~= nil and ent.Player:GetAttribute('Team') == team)
-            then
-                return ent
+            -- computed when an entity spawns and can be stale for a player whose team arrived a
+            -- frame later, so the team is re-checked here. A teammate is never a target.
+            local ok = ent.Player and ent.Targetable and ent.RootPart and ent.RootPart.Parent
+            if ok and team ~= nil and ent.Player:GetAttribute('Team') == team then ok = false end
+            if ok and (run_.playerFails[ent.Character] or 0) >= 2 then ok = false end
+            if ok then
+                local root = myRoot()
+                local score = root and (ent.RootPart.Position - root.Position).Magnitude or 0
+                if not bestScore or score < bestScore then
+                    best, bestScore = ent, score
+                end
             end
         end
-        return nil
+        if not best then run_.playerFails = {} end
+        return best
     end
 
-    ----------------------------------------------------------------------------
-    -- Grid helpers. `cell` is integer grid coordinates, `world` the block centre.
-    ----------------------------------------------------------------------------
+    ----------------------------------------------------------------------------------------------
+    -- The block grid.
+    ----------------------------------------------------------------------------------------------
+    local cellParams = RaycastParams.new()
+    cellParams.FilterType = Enum.RaycastFilterType.Exclude
+    cellParams.RespectCanCollide = true
+
     local function cellOf(pos)
         return bedwars.BlockController:getBlockPosition(pos)
     end
+
     local function worldOf(cell)
         return cell * CELL
     end
-    -- The cell our feet are resting on.
-    local function footCell(root, hip)
-        local pos = root.Position
-        return cellOf(Vector3.new(pos.X, pos.Y - hip - STAND, pos.Z))
-    end
-    -- Is this cell filled by anything - a placed block or map geometry? Used both for "can I stand
-    -- on it" (floor cell) and "would I be inside it" (body cells).
-    local function cellSolid(world)
-        if getPlacedBlock(world) then return true end
-        cellParams.FilterDescendantsInstances = {lplr.Character, gameCamera}
-        return workspace:Raycast(world + Vector3.new(0, 1.4, 0), Vector3.new(0, -2.8, 0), cellParams) ~= nil
+
+    -- Solidity is asked for thousands of times per route, so it is cached for a fraction of a
+    -- second. Short enough that a block we just placed is seen almost immediately, long enough that
+    -- one A* pass is not thousands of raycasts.
+    local solidCache, solidStamp = {}, 0
+
+    local function clearGrid()
+        solidCache = {}
+        solidStamp = tick()
     end
 
-    ----------------------------------------------------------------------------
-    -- Blocks and placement.
-    ----------------------------------------------------------------------------
-    local badBlocks = {'tnt', 'cannon', 'bed', 'trap', 'gumdrop', 'glue', 'ladder', 'sludge', 'bomb', 'beacon', 'spawner', 'chest'}
-    local function usableBlock(itemType)
-        for _, bad in badBlocks do
-            if itemType:find(bad) then return false end
-        end
-        return true
+    -- Pack a cell into one number to key the cache with. The strides have to be larger than the
+    -- widest a component can get after the offset, or cells alias onto each other and the router
+    -- reads one cell's solidity for another - which shows up as a bridge built into thin air.
+    -- +-1024 cells is +-3072 studs, comfortably past the edge of any map.
+    local KEY_SPAN, KEY_BIAS = 2048, 1024
+    local function cellKey(cell)
+        return (cell.X + KEY_BIAS) * (KEY_SPAN * KEY_SPAN) + (cell.Y + KEY_BIAS) * KEY_SPAN + (cell.Z + KEY_BIAS)
     end
-    -- Wool first (that is what we buy), then any other sane placeable block so a leftover stack of
-    -- planks still gets us across.
-    local function bridgeBlock()
-        local wool, amount = getWool()
-        if wool and (amount or 0) > 0 then return wool end
-        for _, item in store.inventory.inventory.items do
-            local meta = bedwars.ItemMeta[item.itemType]
-            if meta and meta.block and (item.amount or 0) > 0 and usableBlock(item.itemType) then
-                return item.itemType
-            end
+
+    local function solidAt(cell)
+        if tick() - solidStamp > 0.3 then clearGrid() end
+        local key = cellKey(cell)
+        local cached = solidCache[key]
+        if cached ~= nil then return cached end
+
+        local world = worldOf(cell)
+        local result = ask(getPlacedBlock, world) ~= nil
+        if not result then
+            cellParams.FilterDescendantsInstances = {lplr.Character, gameCamera, AntiFallPart}
+            result = workspace:Raycast(world + Vector3.new(0, 1.45, 0), Vector3.new(0, -2.9, 0), cellParams) ~= nil
         end
-        return nil
+        solidCache[key] = result
+        return result
     end
-    local function blockCount()
-        local wool, amount = getWool()
-        if wool and (amount or 0) > 0 then return amount end
-        for _, item in store.inventory.inventory.items do
-            local meta = bedwars.ItemMeta[item.itemType]
-            if meta and meta.block and (item.amount or 0) > 0 and usableBlock(item.itemType) then
-                return item.amount
-            end
-        end
-        return 0
+
+    local function forgetCell(cell)
+        solidCache[cellKey(cell)] = nil
     end
-    -- The six cells sharing a face with this one. A block can only be placed against something
-    -- that is already there, so this is what decides whether a placement is worth sending.
-    local faceOffsets = {
-        Vector3.new(CELL, 0, 0), Vector3.new(-CELL, 0, 0),
-        Vector3.new(0, CELL, 0), Vector3.new(0, -CELL, 0),
-        Vector3.new(0, 0, CELL), Vector3.new(0, 0, -CELL)
-    }
-    local function hasNeighbour(world)
-        for _, offset in faceOffsets do
-            if cellSolid(world + offset) then return true end
+
+    -- The cell our feet are resting on, derived from the real hip height rather than assumed, so
+    -- R6, R15 and every kit that changes the character's size all land on the right row.
+    local function footCell(root, char)
+        local pos = root.Position
+        return cellOf(Vector3.new(pos.X, pos.Y - hipOf(char, root) - STAND, pos.Z))
+    end
+
+    local function isBadBlock(itemType)
+        for _, word in ipairs(BAD_BLOCKS) do
+            if string.find(itemType, word) then return true end
         end
         return false
     end
-    -- Ask for one block and move on. Placements are fired ahead of where we are walking rather
-    -- than waited on, and the caller only ever steps onto a cell once cellSolid agrees the block
-    -- has actually arrived, so nothing here has to block.
-    local function placeAt(world)
-        if cellSolid(world) then return true end
-        local block = bridgeBlock()
-        if not block then return false end
-        if not hasNeighbour(world) then return false end
-        pcall(bedwars.placeBlock, world, block)
+
+    local function placeAt(cell)
+        if solidAt(cell) then return true end
+        local name = blockName()
+        if not name or isBadBlock(name) then return false end
+        safe(bedwars.placeBlock, worldOf(cell), name)
+        forgetCell(cell)
         return true
     end
-    local function breakAt(world)
-        local block = getPlacedBlock(world)
-        if not block then return false end
-        pcall(bedwars.breakBlock, block, true, true, nil, true, breakmethods.Distance, 360, false)
-        local deadline = tick() + 1.2
-        repeat task.wait(0.05) until not getPlacedBlock(world) or tick() > deadline or not running()
-        return getPlacedBlock(world) == nil
+
+    local function breakAt(cell)
+        local block = ask(getPlacedBlock, worldOf(cell))
+        if not block then return true end
+        safe(bedwars.breakBlock, block, true, true, nil, true, breakmethods.Distance, 360, false)
+        forgetCell(cell)
+        return ask(getPlacedBlock, worldOf(cell)) == nil
     end
 
-    ----------------------------------------------------------------------------
-    -- Movement. The character WALKS. It is never teleported.
+    ----------------------------------------------------------------------------------------------
+    -- Route finding.
     --
-    -- This is the fix for the run going nowhere. The old build hopped: it wrote root.CFrame
-    -- straight onto a cell up to Hop Distance studs away, waited Hop Delay, and did it again.
-    -- BedWars checks how far you move between position samples - the Speed module in this very
-    -- script is capped at 23 studs/s for exactly that reason - so a ten-stud jump inside a single
-    -- frame is always rejected. The server pulled us back, the next iteration measured the same
-    -- distance to the bed and hopped again, and the run sat in that loop forever: teleport, get
-    -- lagged back, teleport, never advance.
+    -- A* over the grid. A cell can be walked on if something is already there, or if we are
+    -- carrying blocks and can put something there; a cell we would have to walk THROUGH can be
+    -- mined out when breaking is allowed. Costs are what make the route sensible rather than merely
+    -- possible: existing ground is cheapest, bridging costs a block, mining costs time, and towering
+    -- straight up costs most of all - so it goes round things it can go round, and only builds when
+    -- building is genuinely the way.
+    ----------------------------------------------------------------------------------------------
+    local HEAD_CELLS = {Vector3.new(0, 1, 0), Vector3.new(0, 2, 0)}
+    local STEP_DIRS = {Vector3.new(1, 0, 0), Vector3.new(-1, 0, 0), Vector3.new(0, 0, 1), Vector3.new(0, 0, -1)}
+    local DROPS = {0, 1, -1, -2, -3}
+
+    -- Minimal binary heap. A linear open list turns a long route into a visible frame hitch.
+    local function heapPush(heap, node, priority)
+        local index = #heap + 1
+        heap[index] = {node = node, priority = priority}
+        while index > 1 do
+            local parent = math.floor(index / 2)
+            if heap[parent].priority <= heap[index].priority then break end
+            heap[parent], heap[index] = heap[index], heap[parent]
+            index = parent
+        end
+    end
+
+    local function heapPop(heap)
+        local size = #heap
+        if size == 0 then return nil end
+        local top = heap[1]
+        heap[1] = heap[size]
+        heap[size] = nil
+        size = size - 1
+        local index = 1
+        while true do
+            local left, right, smallest = index * 2, index * 2 + 1, index
+            if left <= size and heap[left].priority < heap[smallest].priority then smallest = left end
+            if right <= size and heap[right].priority < heap[smallest].priority then smallest = right end
+            if smallest == index then break end
+            heap[index], heap[smallest] = heap[smallest], heap[index]
+            index = smallest
+        end
+        return top.node
+    end
+
+    -- Can we stand on `cell` with our head clear? Returns nil when we cannot, or the extra cost of
+    -- getting it into that state (placing a block, mining what is in the way).
+    local function stepCost(cell, canPlace, allowBreak)
+        local extra = 0
+        if not solidAt(cell) then
+            if not canPlace then return nil end
+            extra = extra + 1.4
+        end
+        for _, offset in ipairs(HEAD_CELLS) do
+            local head = cell + offset
+            if solidAt(head) then
+                if not allowBreak then return nil end
+                if ask(getPlacedBlock, worldOf(head)) == nil then return nil end
+                extra = extra + 2.2
+            end
+        end
+        return extra
+    end
+
+    local function heuristic(cell, goal)
+        local dx = math.abs(cell.X - goal.X)
+        local dy = math.abs(cell.Y - goal.Y)
+        local dz = math.abs(cell.Z - goal.Z)
+        return dx + dz + dy * 1.3
+    end
+
+    -- Returns a list of cells from just after `startCell` to the best cell it reached. When the goal
+    -- is unreachable inside the budget it returns the route to whatever got closest, so the run
+    -- always has somewhere to walk instead of standing still deciding it cannot.
+    local function planRoute(startCell, goalCell, canPlace, allowBreak, gen)
+        clearGrid()
+        local budget = math.clamp(400 + heuristic(startCell, goalCell) * 30, 800, 6000)
+        local limit = heuristic(startCell, goalCell) + 60
+
+        local cameFrom, gScore, closed = {}, {}, {}
+        local heap = {}
+        local startKey = cellKey(startCell)
+        gScore[startKey] = 0
+        heapPush(heap, startCell, heuristic(startCell, goalCell))
+
+        local bestCell, bestScore = startCell, heuristic(startCell, goalCell)
+        local expansions = 0
+
+        while true do
+            local current = heapPop(heap)
+            if not current then break end
+            local key = cellKey(current)
+            if not closed[key] then
+                closed[key] = true
+                expansions = expansions + 1
+
+                local score = heuristic(current, goalCell)
+                if score < bestScore then
+                    bestCell, bestScore = current, score
+                end
+                if score <= 0.5 then
+                    bestCell = current
+                    break
+                end
+                if expansions >= budget then break end
+                -- Yield periodically so a long route is spread over a few frames instead of
+                -- freezing one. The generation check makes a toggle-off abandon the search.
+                if expansions % 350 == 0 then
+                    task.wait()
+                    if not running(gen) then return nil end
+                end
+
+                local base = gScore[key] or 0
+                for _, dir in ipairs(STEP_DIRS) do
+                    for _, dy in ipairs(DROPS) do
+                        local neighbour = current + dir + Vector3.new(0, dy, 0)
+                        local nKey = cellKey(neighbour)
+                        if not closed[nKey] and heuristic(neighbour, goalCell) <= limit then
+                            -- Stepping up or down onto ground only works where ground already is;
+                            -- only the level step is allowed to build its own footing, which is
+                            -- what keeps bridges flat and staircases honest.
+                            local allowedPlace = canPlace and dy == 0
+                            local extra = stepCost(neighbour, allowedPlace, allowBreak)
+                            if extra and (dy == 0 or solidAt(neighbour)) then
+                                local cost = base + 1 + extra + (dy > 0 and 0.8 or 0) + (dy < 0 and math.abs(dy) * 0.3 or 0)
+                                if cost < (gScore[nKey] or math.huge) then
+                                    gScore[nKey] = cost
+                                    cameFrom[nKey] = current
+                                    heapPush(heap, neighbour, cost + heuristic(neighbour, goalCell))
+                                end
+                            end
+                        end
+                    end
+                end
+
+                -- Towering straight up. Expensive, and only when we have something to build with,
+                -- but it is the only way onto a raised island or over a base wall.
+                if canPlace then
+                    local up = current + Vector3.new(0, 1, 0)
+                    local upKey = cellKey(up)
+                    if not closed[upKey] and heuristic(up, goalCell) <= limit then
+                        local extra = stepCost(up, true, allowBreak)
+                        if extra then
+                            local cost = base + 2.6 + extra
+                            if cost < (gScore[upKey] or math.huge) then
+                                gScore[upKey] = cost
+                                cameFrom[upKey] = current
+                                heapPush(heap, up, cost + heuristic(up, goalCell))
+                            end
+                        end
+                    end
+                end
+            end
+        end
+
+        local route, cursor = {}, bestCell
+        local guard = 0
+        while cursor and cellKey(cursor) ~= startKey and guard < 512 do
+            table.insert(route, 1, cursor)
+            cursor = cameFrom[cellKey(cursor)]
+            guard = guard + 1
+        end
+        return route
+    end
+
+    ----------------------------------------------------------------------------------------------
+    -- The walker.
     --
-    -- So the path is now walked. We point the humanoid at the next cell and let the game move us
-    -- at the speed it gives us, jump where the path steps up, tower where it goes straight up,
-    -- and stand still at the edge whenever the next block has not landed yet. There is nothing
-    -- here for the server to reject, and every cell is still bridged before it is walked on.
-    ----------------------------------------------------------------------------
+    -- The character WALKS. Writing a position straight onto a cell several studs away is rejected
+    -- by the server's movement check and pulled back, which is what made the old hop-based build sit
+    -- in place teleporting and being dragged back forever. So the humanoid is pointed at the next
+    -- cell and the game moves us at the speed it gives us. There is nothing here for a server to
+    -- reject.
+    ----------------------------------------------------------------------------------------------
+    local moveDir, driving, holdStill = Vector3.zero, false, false
 
-    -- The direction handed to the humanoid each frame. `driving` is what makes the module take
-    -- the wheel at all: while it is false nothing is written, so the player keeps normal control
-    -- during the phases that are not travelling (mining the generator, breaking a bed, fighting).
-    local moveDir, driving = Vector3.zero, false
+    local function stopMoving()
+        moveDir, driving, holdStill = Vector3.zero, false, false
+    end
 
-    local function startDriving()
+    local function startDriver(gen)
         AutoWin:Clean(runService.Stepped:Connect(function()
-            if not driving then return end
-            -- Leave the hitbox alone if GodMode/AntiDeath has parked it - moving it then would
-            -- fight them and drag the real root around.
+            if not running(gen) or not driving then return end
             if store.rootpart then return end
             local root, char = myRoot()
             if not root or not char or not char.Humanoid then return end
 
             -- Point the humanoid so it turns to face the way we are going and plays the walk.
-            char.Humanoid:Move(moveDir, false)
+            safe(function() char.Humanoid:Move(moveDir, false) end)
 
-            -- ...but do not trust Humanoid:Move on its own. BedWars drives the character through its
-            -- own block-engine controller, which can leave a scripted Move doing nothing at all -
-            -- which is exactly why the walk never started. So we also assert the movement as
-            -- velocity: forward at the humanoid's own walk speed (well inside the server's speed
-            -- check, nothing to lag back), and a hard stop when we are meant to be still on an edge
-            -- or towering. Y is left to gravity and jumps.
-            if isnetworkowner(root) then
-                local vel = root.AssemblyLinearVelocity
-                if moveDir.Magnitude > 0 then
-                    local speed = char.Humanoid.WalkSpeed
-                    if speed <= 0 then speed = 16 end
-                    local horiz = moveDir.Unit * speed
-                    root.AssemblyLinearVelocity = Vector3.new(horiz.X, vel.Y, horiz.Z)
-                else
-                    root.AssemblyLinearVelocity = Vector3.new(0, vel.Y, 0)
-                end
+            -- ...but do not rely on Humanoid:Move alone. BedWars drives the character through its
+            -- own controller, which can leave a scripted Move doing nothing at all. Asserting the
+            -- same movement as velocity is what makes the walk actually start - at the humanoid's
+            -- own walk speed, so it stays well inside the server's speed check. Skipped entirely
+            -- while a movement module owns the velocity, because two writers fighting over it is
+            -- how a character ends up vibrating instead of travelling.
+            if movementModuleActive() then return end
+            if not isnetworkowner(root) then return end
+            local velocity = root.AssemblyLinearVelocity
+            if moveDir.Magnitude > 0 and not holdStill then
+                local speed = char.Humanoid.WalkSpeed
+                if speed <= 0 then speed = 16 end
+                local horizontal = moveDir.Unit * speed
+                root.AssemblyLinearVelocity = Vector3.new(horizontal.X, velocity.Y, horizontal.Z)
+            else
+                root.AssemblyLinearVelocity = Vector3.new(0, velocity.Y, 0)
             end
         end))
-        AutoWin:Clean(function()
-            moveDir, driving = Vector3.zero, false
-        end)
+        AutoWin:Clean(stopMoving)
     end
 
-    local function stopMoving()
-        moveDir, driving = Vector3.zero, false
-    end
-
-    -- Choose the next cell of the path. Returns nil once we are on top of the target column.
-    local function nextCell(from, goal)
-        local dx, dz = goal.X - from.X, goal.Z - from.Z
-        if dx == 0 and dz == 0 then
-            -- Standing directly over or under the target column. Step vertically so a climb or a
-            -- descent can still finish: dropping a level works because the head-room pass breaks
-            -- the block we are currently standing on, and climbing places one above us.
-            local dy = goal.Y - from.Y
-            if dy == 0 then return nil end
-            return from + Vector3.new(0, dy > 0 and 1 or -1, 0)
-        end
-        local step = math.abs(dx) >= math.abs(dz)
-            and Vector3.new(dx > 0 and 1 or -1, 0, 0)
-            or Vector3.new(0, 0, dz > 0 and 1 or -1)
-        local cell = from + step
-        -- Stay at our own altitude until we are close enough that a one-cell-per-step staircase
-        -- lands us exactly at the target's level.
-        local levelDiff = goal.Y - from.Y
-        if levelDiff ~= 0 then
-            local remaining = math.max(math.abs(dx), math.abs(dz))
-            if remaining <= math.abs(levelDiff) + 2 then
-                cell += Vector3.new(0, levelDiff > 0 and 1 or -1, 0)
-            end
-        end
-        return cell
-    end
-
-    -- How many blocks a crossing to `target` would cost: walk the whole path in cells and count
-    -- the ones with nothing to stand on. This is what sizes the wool purchase before a trip.
-    local function bridgeCost(fromPos, target, hip)
-        local ok, cost = pcall(function()
-            local from = cellOf(Vector3.new(fromPos.X, fromPos.Y - hip - STAND, fromPos.Z))
-            local goal = cellOf(Vector3.new(target.X, target.Y - STAND, target.Z))
-            local need, cursor = 0, from
-            for _ = 1, 400 do
-                local cell = nextCell(cursor, goal)
-                if not cell then break end
-                if not cellSolid(worldOf(cell)) then need += 1 end
-                cursor = cell
-            end
-            return need
-        end)
-        return ok and cost or 0
-    end
-
-    -- How many cells of the path to keep bridged in front of us. Walking covers a cell in about
-    -- a seventh of a second, which is not long enough to place a block and wait for it to come
-    -- back, so the blocks are always asked for a few cells early and are there by the time we
-    -- arrive. Standing still at the edge (below) is the fallback when they are not.
-    local LOOKAHEAD = 3
-
-    -- Climb one level straight up: jump, and drop a block into the cell our feet just left.
-    local function towerUp(cursor)
+    -- Climb one level: jump, and drop a block into the cell our feet just left. Placing at the apex
+    -- is too late - you are already falling back down before the block exists - so it goes in as
+    -- soon as we are clear of the cell.
+    local function towerUp(cell, gen)
         local root, char = myRoot()
         if not root or not char or not char.Humanoid then return end
-        if not bridgeBlock() then return end
-        -- Stand still for the climb; the caller is still driving, so this only kills the
-        -- horizontal push, it does not hand control back.
+        if not blockName() then return end
+        holdStill = true
         moveDir = Vector3.zero
         local startY = root.Position.Y
-        pcall(function() char.Humanoid.Jump = true end)
-        local deadline = tick() + 0.7
-        repeat
+        safe(function() char.Humanoid.Jump = true end)
+        local deadline = tick() + 0.8
+        while running(gen) and tick() < deadline do
             task.wait()
             local current = myRoot()
-            if not current then return end
-            -- Place as soon as we are clear of the cell, not at the top of the jump: waiting for
-            -- the apex is what leaves you falling back down before the block exists.
+            if not current then break end
             if current.Position.Y - startY >= CELL + 0.2 then
-                placeAt(worldOf(cursor + Vector3.new(0, 1, 0)))
-                return
+                placeAt(cell + Vector3.new(0, 1, 0))
+                break
             end
-        until tick() > deadline or not running()
+        end
+        holdStill = false
     end
 
-    -- Walk all the way to a (possibly moving) target, bridging the path as we go.
-    -- Returns true on arrival, or false plus a reason ('noblocks', 'blocked', 'stuck').
-    local function travelTo(getTarget, stopRange, allowBreak, label)
-        local stallSince, best = tick(), math.huge
-        -- Loosened. A long bridge across two islands, or a tower up to a raised bed, legitimately
-        -- spends a while showing very little progress, and the old windows were calling those
-        -- stuck and throwing away a run that was working.
-        local deadline = tick() + 300
-        local lastJump = 0
+    ----------------------------------------------------------------------------------------------
+    -- Travel.
+    --
+    -- One call walks us to a moving target, re-planning whenever the world stops agreeing with the
+    -- plan. It returns as soon as anything happens that the brain needs to re-decide on - arrival,
+    -- death, the target vanishing, the match ending - so the brain is never stuck inside it.
+    --
+    -- Returns 'arrived', 'lost', 'noblocks', 'stuck' or 'abort'.
+    ----------------------------------------------------------------------------------------------
+    local LOOKAHEAD = 3
+
+    local function travel(gen, getGoal, stopRange, allowBreak, label, budget)
+        local deadline = tick() + (budget or 45)
+        local route, routeIndex, plannedGoal = nil, 1, nil
+        local best, stallSince = math.huge, tick()
+        local lastJump, lastPlan = 0, 0
         driving = true
 
-        while running() and tick() < deadline do
+        while running(gen) and tick() < deadline do
             if not alive() then
                 stopMoving()
-                return false
+                return 'abort'
             end
-            local target = getTarget()
+            local goal = getGoal()
             local root, char = myRoot()
-            if not target or not root or not char then
+            if not goal or not root or not char then
                 stopMoving()
-                return false
+                return 'lost'
             end
-            local hip = char.HipHeight or 3
 
-            local left = ((target - root.Position) * Vector3.new(1, 0, 1)).Magnitude
-            if left <= stopRange and math.abs(target.Y - root.Position.Y) <= 12 then
+            local flat = ((goal - root.Position) * Vector3.new(1, 0, 1)).Magnitude
+            if flat <= stopRange and math.abs(goal.Y - root.Position.Y) <= 14 then
                 stopMoving()
-                return true
+                return 'arrived'
             end
 
-            status(nil, label, string.format('%d studs left  |  %d blocks', math.floor(left), blockCount()))
-            -- Progress is measured in three dimensions, not on the flat. Towering straight up to
-            -- a bed on a high island closes no horizontal distance at all, and judging it on the
-            -- flat would call a climb that is working perfectly well a stall.
-            local progress = (target - root.Position).Magnitude
-            if progress < best - 1 then
-                best, stallSince = progress, tick()
-            elseif tick() - stallSince > 26 then
-                stopMoving()
-                return false, 'stuck'
-            end
+            status(nil, label, string.format('%d studs  |  %d blocks', math.floor(flat), blockCount()))
 
-            local cursor = footCell(root, hip)
-            local goal = cellOf(Vector3.new(target.X, target.Y - STAND, target.Z))
-            local step = nextCell(cursor, goal)
-            if not step then
-                stopMoving()
-                return true
-            end
-            local world = worldOf(step)
-
-            -- Footing: this is the "no gaps" guarantee. Every cell we walk over is solid, and if
-            -- it is not, we ask for a block there - several cells before we need it.
-            local ahead = cursor
-            for _ = 1, LOOKAHEAD do
-                local cell = nextCell(ahead, goal)
-                if not cell then break end
-                if not cellSolid(worldOf(cell)) then
-                    if not bridgeBlock() then
-                        stopMoving()
-                        return false, 'noblocks'
-                    end
-                    placeAt(worldOf(cell))
-                end
-                ahead = cell
-            end
-
-            -- Head room: we must not walk into a block. Break placed ones out of the way when
-            -- allowed (that is how we tunnel into a base); solid map geometry means stop.
-            local blocked = false
-            for h = 1, 2 do
-                local above = world + Vector3.new(0, CELL * h, 0)
-                if cellSolid(above) then
-                    if allowBreak and getPlacedBlock(above) then
-                        status(nil, 'Tunnelling through blocks')
-                        breakAt(above)
-                    end
-                    if cellSolid(above) then
-                        blocked = true
-                        break
-                    end
-                end
-            end
-            if blocked then
-                moveDir = Vector3.zero
-                if tick() - stallSince > 8 then
+            -- Progress is measured in three dimensions. Towering to a raised bed closes no
+            -- horizontal distance at all, and judging it flat would call a climb that is working
+            -- perfectly well a stall.
+            local remaining = (goal - root.Position).Magnitude
+            if remaining < best - 1.5 then
+                best, stallSince = remaining, tick()
+                run_.lastProgress = tick()
+            elseif tick() - stallSince > 6 then
+                -- Not moving. Re-plan first (cheap, and usually enough after a block landed or an
+                -- enemy filled a gap), then climb the escalation ladder.
+                stallSince = tick()
+                route = nil
+                if run_.tier < maxTier() then
+                    run_.tier = run_.tier + 1
+                    -- Applied here rather than left for the brain's next tick: a crossing can spend
+                    -- a minute inside this loop, and an escalation that only takes effect once we
+                    -- return is an escalation that never happens where it was needed.
+                    applyTier()
+                    status(nil, nil, 'stalled - escalating to ' .. run_.tier)
+                elseif tick() - run_.lastProgress > 40 then
                     stopMoving()
-                    return false, 'blocked'
+                    return 'stuck'
                 end
+            end
+
+            local here = footCell(root, char)
+            local goalCell = cellOf(Vector3.new(goal.X, goal.Y - STAND, goal.Z))
+
+            -- Re-plan when there is no route, the target has walked away from the one we have, or
+            -- we have fallen off it entirely.
+            local needsPlan = route == nil or routeIndex > #route
+            if not needsPlan and plannedGoal and (goalCell - plannedGoal).Magnitude > 2 then needsPlan = true end
+            if not needsPlan and route[routeIndex] and (route[routeIndex] - here).Magnitude > 3.5 then needsPlan = true end
+            if needsPlan and tick() - lastPlan < 0.35 then
+                -- Never re-plan twice in the same breath; it turns a stall into a slideshow.
                 task.wait(0.1)
-                continue
-            end
-
-            -- Only ever step onto a cell that has actually got something under it. If the block
-            -- we asked for has not come back yet we hold position on the edge instead of walking
-            -- off it, and pick the walk back up on a later pass.
-            if not cellSolid(world) then
-                moveDir = Vector3.zero
-                task.wait(0.05)
-                continue
-            end
-
-            local aim = world + Vector3.new(0, STAND + hip, 0)
-            local delta = (aim - root.Position) * Vector3.new(1, 0, 1)
-            moveDir = delta.Magnitude > 0.05 and delta.Unit or Vector3.zero
-
-            if step.Y > cursor.Y and tick() - lastJump > 0.35 then
-                lastJump = tick()
-                if delta.Magnitude <= CELL * 0.5 then
-                    -- Straight up with nowhere to walk to: tower instead.
-                    towerUp(cursor)
-                else
-                    pcall(function() char.Humanoid.Jump = true end)
+            elseif needsPlan then
+                lastPlan = tick()
+                plannedGoal = goalCell
+                route = planRoute(here, goalCell, blockCount() > 0, allowBreak, gen)
+                routeIndex = 1
+                if not running(gen) then
+                    stopMoving()
+                    return 'abort'
+                end
+                if not route or #route == 0 then
+                    -- Nowhere to go at all. With no blocks that is simply the answer; with blocks
+                    -- it means the search is boxed in, which the escalation above will handle.
+                    if blockCount() <= 0 then
+                        stopMoving()
+                        return 'noblocks'
+                    end
+                    task.wait(0.15)
                 end
             end
 
-            task.wait()
+            if route and route[routeIndex] then
+                -- Advance the cursor past everything we have already walked over.
+                local guard = 0
+                while route[routeIndex] and (route[routeIndex] - here).Magnitude < 0.6 and guard < 8 do
+                    routeIndex = routeIndex + 1
+                    guard = guard + 1
+                end
+
+                local next_ = route[routeIndex]
+                if next_ then
+                    -- Footing. Blocks are asked for several cells early, because walking covers a
+                    -- cell in about a seventh of a second and a placement does not come back that
+                    -- fast. Nothing is ever stepped onto before the block has actually arrived.
+                    for offset = 0, LOOKAHEAD do
+                        local cell = route[routeIndex + offset]
+                        if not cell then break end
+                        if not solidAt(cell) then
+                            if not blockName() then
+                                stopMoving()
+                                return 'noblocks'
+                            end
+                            placeAt(cell)
+                        end
+                    end
+
+                    -- Head room. Mine placed blocks out of the way when allowed - that is how we
+                    -- tunnel into a base - and treat map geometry as a wall to route around.
+                    local blocked = false
+                    for _, offset in ipairs(HEAD_CELLS) do
+                        local head = next_ + offset
+                        if solidAt(head) then
+                            if allowBreak and ask(getPlacedBlock, worldOf(head)) then
+                                status(nil, 'Mining through', '')
+                                breakAt(head)
+                            end
+                            if solidAt(head) then blocked = true end
+                        end
+                    end
+
+                    if blocked then
+                        route = nil
+                        moveDir = Vector3.zero
+                        task.wait(0.1)
+                    elseif not solidAt(next_) then
+                        -- The block we asked for has not landed. Hold on the edge rather than
+                        -- walking off it, and pick the walk up on a later pass.
+                        moveDir = Vector3.zero
+                        task.wait(0.05)
+                    else
+                        local aim = worldOf(next_) + Vector3.new(0, STAND + hipOf(char, root), 0)
+                        local delta = (aim - root.Position) * Vector3.new(1, 0, 1)
+                        moveDir = delta.Magnitude > 0.05 and delta.Unit or Vector3.zero
+
+                        if next_.Y > here.Y and tick() - lastJump > 0.35 then
+                            lastJump = tick()
+                            if delta.Magnitude <= CELL * 0.5 then
+                                towerUp(here, gen)
+                            else
+                                safe(function() char.Humanoid.Jump = true end)
+                            end
+                        end
+                        task.wait()
+                    end
+                else
+                    task.wait(0.05)
+                end
+            else
+                task.wait(0.05)
+            end
         end
+
         stopMoving()
+        if not running(gen) then return 'abort' end
+        return 'stuck'
+    end
+
+    ----------------------------------------------------------------------------------------------
+    -- Yuzi.
+    --
+    -- The dash is fired directly rather than by switching LongJump on, because LongJump pins your
+    -- velocity the moment its own boost window closes - left on, that holds the run frozen in place,
+    -- and it is why crossings used to end standing still in mid-map. What is used here is exactly
+    -- the request LongJump sends, nothing more: dao in hand, face the target, fire the ability.
+    --
+    -- Every launch is checked first. A dash is a flat line fired blind, so anything solid in the way
+    -- was a wall taken at full speed and a launch that came up short of the far island was a fall
+    -- into the void. Beam clear and a landing with ground under it, or we do not launch.
+    ----------------------------------------------------------------------------------------------
+    local dashRay = RaycastParams.new()
+    dashRay.RespectCanCollide = true
+    dashRay.FilterType = Enum.RaycastFilterType.Exclude
+
+    -- Deliberately short to begin with, then tracked against how far dashes actually carry on this
+    -- kit and this map rather than assumed.
+    local dashRange = 30
+
+    local function hasYuziKit()
+        local kit = store.equippedKit
+        if kit == nil or kit == '' then kit = lplr:GetAttribute('PlayingAsKit') end
+        if kit == nil then return false end
+        return YUZI_KITS[string.lower(tostring(kit))] == true
+    end
+
+    local function getDao()
+        local hand = store.hand and store.hand.tool
+        if hand and table.find(DAO_TIERS, hand.Name) then
+            return ask(getItem, hand.Name)
+        end
+        -- Best tier we own, so a dash is never fired off the wooden one while an emerald is in the
+        -- bag: the dao in hand is also the sword the fight after it is taken with.
+        for index = #DAO_TIERS, 1, -1 do
+            local item = ask(getItem, DAO_TIERS[index])
+            if item then return item end
+        end
+        return nil
+    end
+
+    local function dashReady()
+        local ready = ask(function()
+            return (lplr.Character:GetAttribute('CanDashNext') or 0) < workspace:GetServerTimeNow()
+                and bedwars.AbilityController:canUseAbility('dash')
+        end)
+        return ready == true
+    end
+
+    local function flatDistance(from, to)
+        return ((to - from) * Vector3.new(1, 0, 1)).Magnitude
+    end
+
+    local function dashFilter()
+        dashRay.FilterDescendantsInstances = {lplr.Character, gameCamera, AntiFallPart}
+    end
+
+    -- Cast at chest height, not from the feet: a dash rides over a one-block lip, and casting low
+    -- reads every kerb as a wall and refuses to ever launch.
+    local function beamClear(from, target)
+        dashFilter()
+        local origin = from + Vector3.new(0, 2, 0)
+        local aim = Vector3.new(target.X, origin.Y, target.Z)
+        local delta = aim - origin
+        if delta.Magnitude < 1 then return true end
+        return workspace:Raycast(origin, delta, dashRay) == nil
+    end
+
+    -- Would this launch put us down over open air? Only a question when the target is further off
+    -- than one dash carries; inside that, we arrive at the target itself.
+    local function landingSafe(from, target)
+        if flatDistance(from, target) <= dashRange then return true end
+        local delta = Vector3.new(target.X, from.Y, target.Z) - from
+        if delta.Magnitude < 1 then return true end
+        dashFilter()
+        local landing = from + delta.Unit * dashRange
+        return workspace:Raycast(landing + Vector3.new(0, 8, 0), Vector3.new(0, -60, 0), dashRay) ~= nil
+    end
+
+    local function fireDash(direction, origin, item)
+        return ask(function()
+            bedwars.SwordController.lastAttack = workspace:GetServerTimeNow()
+            local events = replicatedStorage['events-@easy-games/game-core:shared/game-core-networking@getEvents.Events']
+            events.useAbility:FireServer('dash', {
+                direction = direction,
+                origin = origin,
+                weapon = item.itemType
+            })
+            return true
+        end) == true
+    end
+
+    -- Dash at a (possibly moving) target until we are in range. Returning false simply means the
+    -- caller bridges the rest, so this can never strand a run.
+    local function dashToward(gen, getGoal, stopRange, label)
+        if not YuziDash or not YuziDash.Enabled then return false end
+        local best, stalled = math.huge, 0
+
+        for _ = 1, 10 do
+            if not running(gen) or not alive() then break end
+            local goal, root = getGoal(), myRoot()
+            if not goal or not root then break end
+
+            local left = flatDistance(root.Position, goal)
+            if left <= stopRange + 4 then break end
+            if left < best - 4 then
+                best, stalled = left, 0
+                run_.lastProgress = tick()
+            else
+                stalled = stalled + 1
+                -- Two dashes that got us no closer means the way is blocked or the drop is wrong.
+                -- Stop wasting them and hand back to the bridge.
+                if stalled >= 2 then break end
+            end
+
+            local dao = getDao()
+            if not dao or not dao.tool then break end
+            if not (beamClear(root.Position, goal) and landingSafe(root.Position, goal)) then break end
+
+            local waitUntil = tick() + 4
+            while running(gen) and alive() and not dashReady() and tick() < waitUntil do
+                status('Yuzi', 'Waiting on the dash', string.format('%d studs', math.floor(left)))
+                task.wait(0.1)
+            end
+            if not dashReady() then break end
+
+            stopMoving()
+            -- The dao has to genuinely be in hand before the ability is fired; the server reads the
+            -- held weapon, and store.hand only catches up on the next store update.
+            safe(switchItem, dao.tool, 0.1)
+            local handDeadline = tick() + 0.6
+            while running(gen) and tick() < handDeadline and not (store.hand and store.hand.tool == dao.tool) do
+                task.wait(0.05)
+            end
+
+            root = myRoot()
+            if not root then break end
+            local direction = (Vector3.new(goal.X, root.Position.Y, goal.Z) - root.Position)
+            if direction.Magnitude < 1 then break end
+            direction = direction.Unit
+            root.CFrame = CFrame.lookAt(root.Position, root.Position + direction)
+            status('Yuzi', label or 'Dashing', string.format('%d studs', math.floor(left)))
+
+            if not fireDash(direction, root.Position, dao) then break end
+
+            -- Let the launch play out and settle before measuring, or the next pass reads
+            -- mid-flight numbers and thinks it went nowhere.
+            local settle = tick() + 1.1
+            while running(gen) and tick() < settle do
+                local now, moving = myRoot(), getGoal()
+                if now and moving and flatDistance(now.Position, moving) <= stopRange then break end
+                task.wait(0.05)
+            end
+
+            -- Learn how far a dash really carries here, so the landing check above is answering
+            -- with a measured number instead of a guess.
+            local landed, aim = myRoot(), getGoal()
+            if landed and aim then
+                local covered = left - flatDistance(landed.Position, aim)
+                if covered > 4 then
+                    dashRange = math.clamp(dashRange + (covered - dashRange) * 0.35, 18, 120)
+                end
+            end
+        end
+
+        local root, goal = myRoot(), getGoal()
+        if root and goal then return flatDistance(root.Position, goal) <= stopRange + 4 end
         return false
     end
 
-    ----------------------------------------------------------------------------
-    -- Resources: the iron generator and the shop.
-    ----------------------------------------------------------------------------
-    local function isIronGen(ent)
-        local iron = false
-        pcall(function()
-            local app = ent.RoactTree and ent.RoactTree:FindFirstChild('TeamOreGeneratorApp')
-            if app and (app:FindFirstChild('GlobalOreGenerator') or app:FindFirstChild('TeamGenMain')) then
-                iron = true
-            end
-        end)
-        if not iron then
-            local id = ent:GetAttribute('Id')
-            if type(id) == 'string' and id:find('iron') then iron = true end
+    ----------------------------------------------------------------------------------------------
+    -- Kit and gear.
+    ----------------------------------------------------------------------------------------------
+    -- Pick Yuzi in the pre-game. BedwarsActivateKit is the same remote the game's own kit picker
+    -- fires, so this is the kit genuinely being selected rather than a UI trick - but it only lands
+    -- while the match has not started and only if the account actually owns the kit, so a rejection
+    -- is normal and silent. A run with the wrong kit is still a run.
+    local function equipYuzi()
+        if run_.equipped then return end
+        if not AutoEquipKit or not AutoEquipKit.Enabled then return end
+        if hasYuziKit() then
+            run_.equipped = true
+            return
         end
-        return iron
+        if store.matchState ~= 0 then return end
+        -- Only try once every few seconds: this is polled from the brain's waiting state.
+        if tick() - (run_.lastEquipTry or 0) < 4 then return end
+        run_.lastEquipTry = tick()
+
+        local chosen = ask(function()
+            for id in pairs(bedwars.BedwarsKitMeta) do
+                if YUZI_KITS[string.lower(tostring(id))] then return id end
+            end
+            return nil
+        end)
+        if not chosen then return end
+
+        local accepted = ask(function()
+            return bedwars.Client:Get('BedwarsActivateKit'):CallServer({kit = chosen})
+        end)
+        if accepted then
+            run_.equipped = true
+            status(nil, 'Equipped the Yuzi kit', '')
+        end
     end
+
+    -- Buy the next dao up. AutoBuy only swaps its sword ladder to daos for one of the two kit ids,
+    -- so with Dao priority on this asks for them explicitly and the dash is always on the best
+    -- blade we can afford.
+    local function buyDao(shopId)
+        if not DaoPriority or not DaoPriority.Enabled then return end
+        local owned = 0
+        for index, name in ipairs(DAO_TIERS) do
+            if ask(getItem, name) then owned = index end
+        end
+        for index = owned + 1, #DAO_TIERS do
+            local item = ask(function()
+                return bedwars.Shop.getShopItem(DAO_TIERS[index], lplr, shopId and {shopId = shopId} or nil)
+            end)
+            if item then
+                local currency = ask(getItem, item.currency)
+                if (currency and currency.amount or 0) >= (item.price or math.huge) then
+                    safe(function()
+                        bedwars.Client:Get('BedwarsPurchaseItem'):CallServerAsync({shopItem = item, shopId = shopId})
+                    end)
+                    task.wait(0.25)
+                end
+            end
+        end
+    end
+
+    ----------------------------------------------------------------------------------------------
+    -- Generators, shops and drops.
+    ----------------------------------------------------------------------------------------------
+    local function isIronGen(entry)
+        local iron = ask(function()
+            local app = entry.RoactTree and entry.RoactTree:FindFirstChild('TeamOreGeneratorApp')
+            return app ~= nil and (app:FindFirstChild('GlobalOreGenerator') or app:FindFirstChild('TeamGenMain')) ~= nil
+        end)
+        if iron then return true end
+        local id = entry:GetAttribute('Id')
+        return type(id) == 'string' and string.find(id, 'iron') ~= nil
+    end
+
     local function nearestIronGen()
         local root = myRoot()
         if not root then return nil end
         local from, best, bestDist = root.Position, nil, nil
-        for _, ent in collectionService:GetTagged('Generator') do
-            -- Generators are tagged as models on most maps, so the old :IsA('BasePart') filter
-            -- threw every one of them away: this returned nil, the cycle skipped the walk
-            -- entirely and went to the shop with whatever iron it happened to be carrying.
-            if ent and ent.Parent and isIronGen(ent) then
-                local part = partOf(ent)
+        for _, entry in ipairs(collectionService:GetTagged('Generator')) do
+            -- Generators are models on most maps and bare parts on others, so resolving a part from
+            -- either shape is what stops the walk to the generator quietly never happening.
+            if entry and entry.Parent and isIronGen(entry) then
+                local part = partOf(entry)
                 if part then
-                    local d = (part.Position - from).Magnitude
-                    if not bestDist or d < bestDist then
-                        best, bestDist = part, d
-                    end
+                    local dist = (part.Position - from).Magnitude
+                    if not bestDist or dist < bestDist then best, bestDist = part, dist end
                 end
             end
         end
         return best
     end
 
-    -- Sweep up every dropped resource within reach. Standing on the generator makes the server
-    -- hand them over anyway; asking explicitly just makes it instant.
+    local function shopPos(entry)
+        local pos = ask(function() return entry.RootPart.Position end)
+        if not pos then pos = ask(function() return entry.RootPart:GetPivot().Position end) end
+        return pos
+    end
+
+    local function nearestShop()
+        local root = myRoot()
+        if not root then return nil end
+        local from, bestPos, bestDist = root.Position, nil, nil
+        for _, entry in pairs(store.shop or {}) do
+            if entry.Shop and entry.RootPart then
+                local pos = shopPos(entry)
+                if pos then
+                    local dist = (pos - from).Magnitude
+                    if not bestDist or dist < bestDist then bestPos, bestDist = pos, dist end
+                end
+            end
+        end
+        return bestPos
+    end
+
+    local function shopIdNear(maxDist)
+        local root = myRoot()
+        if not root then return nil end
+        for _, entry in pairs(store.shop or {}) do
+            if entry.Shop and entry.RootPart then
+                local pos = shopPos(entry)
+                if pos and (pos - root.Position).Magnitude <= (maxDist or 18) then return entry.Id end
+            end
+        end
+        return nil
+    end
+
+    -- Sweep up dropped resources in reach. Standing on the generator makes the server hand them
+    -- over anyway; asking explicitly just makes it instant.
     local function vacuum(range)
         local root = myRoot()
         if not root then return end
-        local pos = root.Position
-        for _, drop in collectionService:GetTagged('ItemDrop') do
-            -- Same part-or-model tolerance as the generators above. The remote is handed the
-            -- tagged instance either way; only the distance test needs a real part.
-            local dropPart = drop.Parent and partOf(drop)
-            if dropPart and (dropPart.Position - pos).Magnitude <= range then
+        for _, drop in ipairs(collectionService:GetTagged('ItemDrop')) do
+            local part = drop.Parent and partOf(drop)
+            if part and (part.Position - root.Position).Magnitude <= range then
                 if tick() - (drop:GetAttribute('ClientDropTime') or 0) >= 2 then
-                    task.spawn(function()
-                        pcall(function()
-                            bedwars.Client:Get(remotes.PickupItem):CallServerAsync({itemDrop = drop})
-                        end)
+                    safe(function()
+                        bedwars.Client:Get(remotes.PickupItem):CallServerAsync({itemDrop = drop})
                     end)
                 end
             end
         end
     end
 
-    -- Step 1: stand at the team generator until we hold `target` iron.
-    local function gatherIron(target)
-        if ironCount() >= target then return true end
-        status('Resources', 'Heading to the iron generator', '')
-        local gen = nearestIronGen()
-        if gen then
-            local root = myRoot()
-            if root and (gen.Position - root.Position).Magnitude > 10 then
-                travelTo(function()
-                    return gen.Parent and gen.Position or nil
-                end, 8, false, 'Walking to the generator')
-            end
-        end
-
-        -- Wait at the generator, but only while iron is actually coming in. Standing somewhere
-        -- with no generator in reach used to burn two and a half minutes of the run doing
-        -- nothing at all before the cycle was allowed to carry on with what it already had.
-        -- Tightened in the other direction to the travel windows: standing at a generator that is
-        -- not producing is not slow progress, it is no progress, and the sooner the cycle gives up
-        -- and carries on with what it is holding the better.
-        local deadline = tick() + 70
-        local held, sinceGain = ironCount(), tick()
-        while running() and alive() and ironCount() < target and tick() < deadline do
-            status('Resources', 'Collecting iron', ironCount() .. '/' .. target .. ' iron')
-            vacuum(18)
-            if ironCount() > held then
-                held, sinceGain = ironCount(), tick()
-            elseif tick() - sinceGain > 18 then
-                break
-            end
-            task.wait(0.35)
-        end
-        refreshHUD()
-        return ironCount() >= target
-    end
-
-    local function shopPos(entry)
-        local ok, pos = pcall(function() return entry.RootPart.Position end)
-        if not (ok and pos) then
-            ok, pos = pcall(function() return entry.RootPart:GetPivot().Position end)
-        end
-        return ok and pos or nil
-    end
-    local function nearestShop()
-        local root = myRoot()
-        if not root then return nil end
-        local from, best, bestPos, bestDist = root.Position, nil, nil, nil
-        for _, v in store.shop do
-            if v.Shop and v.RootPart then
-                local pos = shopPos(v)
-                if pos then
-                    local d = (pos - from).Magnitude
-                    if not bestDist or d < bestDist then
-                        best, bestPos, bestDist = v, pos, d
-                    end
-                end
-            end
-        end
-        return best, bestPos
-    end
-    local function shopIdNear(maxDist)
-        local root = myRoot()
-        if not root then return nil end
-        local from = root.Position
-        for _, v in store.shop do
-            if v.Shop and v.RootPart then
-                local pos = shopPos(v)
-                if pos and (pos - from).Magnitude <= (maxDist or 18) then
-                    return v.Id
-                end
-            end
-        end
-        return nil
-    end
-    -- The shop sells 'wool_white' (16 for 8 iron) and the server hands back our team colour.
-    local function woolShopItem(id)
-        local item
-        pcall(function()
-            item = bedwars.Shop.getShopItem(WOOL_ITEM, lplr, id and {shopId = id} or nil)
+    local function woolShopItem(shopId)
+        local item = ask(function()
+            return bedwars.Shop.getShopItem(WOOL_ITEM, lplr, shopId and {shopId = shopId} or nil)
         end)
         if not item then
-            pcall(function()
-                item = bedwars.Shop.getShopItem('wool', lplr, id and {shopId = id} or nil)
+            item = ask(function()
+                return bedwars.Shop.getShopItem('wool', lplr, shopId and {shopId = shopId} or nil)
             end)
         end
         return item
     end
 
-    -- Step 2: buy wool until we hold `target` blocks (or run out of iron).
-    local function buyWool(target)
-        if blockCount() >= target then return true end
-        if not shopIdNear(18) then
-            status('Resources', 'Walking to the shop', '')
-            local _, spos = nearestShop()
-            if not spos then return blockCount() > 0 end
-            travelTo(function() return spos end, 8, false, 'Walking to the shop')
-        end
-        local id = shopIdNear(20)
-        if not id then return blockCount() > 0 end
-
-        local waitShop = tick() + 8
-        repeat task.wait() until store.shopLoaded or tick() > waitShop or not running()
-
-        for _ = 1, 40 do
-            if not running() or not alive() then break end
-            if blockCount() >= target then break end
-            local item = woolShopItem(id)
-            if not item then break end
-            local price = item.price or WOOL_PRICE
-            if ironCount() < price then break end
-            status('Resources', 'Buying wool', blockCount() .. '/' .. target .. ' wool')
-            local sent = pcall(function()
-                bedwars.Client:Get('BedwarsPurchaseItem'):CallServerAsync({shopItem = item, shopId = id})
-            end)
-            if not sent then break end
-            task.wait(0.25)
-        end
-        refreshHUD()
-        return blockCount() > 0
-    end
-
-    -- Buy enough wool for a crossing of `need` blocks, gathering the iron for it first. Never asks
-    -- for less than the Wool amount slider.
-    local function stockFor(need)
-        local want = math.max(WoolAmount.Value, need + 8)
-        if blockCount() >= want then return true end
-        local buys = math.ceil(math.max(want - blockCount(), 0) / WOOL_PER_BUY)
-        local iron = math.max(IronAmount.Value, buys * WOOL_PRICE)
-        gatherIron(iron)
-        return buyWool(want)
-    end
-
-    ----------------------------------------------------------------------------
+    ----------------------------------------------------------------------------------------------
     -- Banking and respawning.
-    ----------------------------------------------------------------------------
-    -- Deposit everything worth keeping into the personal chest, the same way AutoBank does. Fired
-    -- before every respawn so a death never costs us the run's resources; the server simply
-    -- ignores it when we are nowhere near our chest, which costs nothing.
+    ----------------------------------------------------------------------------------------------
+    -- With Take over on this is AutoBank's job and we only make sure it is running. Without it,
+    -- deposit directly - the server simply ignores the request when we are nowhere near our chest,
+    -- which costs nothing.
     local function bankLoot()
-        if not BankLoot.Enabled then return end
+        if not BankLoot or not BankLoot.Enabled then return end
+        if takeOver('AutoBank', {['Range'] = 'Infinite', ['Silent bank'] = true}) then return end
         local chest = replicatedStorage:FindFirstChild('Inventories')
         chest = chest and chest:FindFirstChild(lplr.Name .. '_personal')
         if not chest then return end
+        local inv = store.inventory and store.inventory.inventory
+        if not inv or not inv.items then return end
         local any = false
-        for _, v in store.inventory.inventory.items do
-            if bankable[v.itemType] and v.tool then
+        for _, entry in pairs(inv.items) do
+            if BANKABLE[entry.itemType] and entry.tool then
                 any = true
-                pcall(function()
-                    bedwars.Client:GetNamespace('Inventory'):Get('ChestGiveItem'):CallServer(chest, v.tool)
+                safe(function()
+                    bedwars.Client:GetNamespace('Inventory'):Get('ChestGiveItem'):CallServer(chest, entry.tool)
                 end)
             end
         end
         if any then
-            status(nil, 'Banking loot')
-            task.wait(0.35)
+            status(nil, 'Banking loot', '')
+            task.wait(0.3)
         end
     end
 
-    -- Reset back to our base. Only ever called with our own bed intact, so it is a respawn and not
-    -- an elimination. Reports whether the character actually went down.
-    local function selfRespawn()
+    -- Reset to base. Only ever called with our own bed intact, so it is a respawn and not an
+    -- elimination.
+    local function selfRespawn(gen)
         local before = lplr.Character
-        local sent = pcall(function()
+        local sent = ask(function()
             bedwars.Client:Get(remotes.ResetCharacter):SendToServer()
+            return true
         end)
         if not sent then
-            pcall(function()
-                bedwars.Client:Get(remotes.ResetCharacter):SendToServer({})
-            end)
+            safe(function() bedwars.Client:Get(remotes.ResetCharacter):SendToServer({}) end)
         end
         local deadline = tick() + 4
-        repeat task.wait(0.1) until (not entitylib.isAlive) or lplr.Character ~= before or tick() > deadline or not running()
-        if entitylib.isAlive and lplr.Character == before then return false end
+        while running(gen) and tick() < deadline do
+            if not entitylib.isAlive or lplr.Character ~= before then break end
+            task.wait(0.1)
+        end
         status('Respawning', 'Waiting to respawn', '')
         deadline = tick() + 20
-        repeat task.wait(0.2) until (entitylib.isAlive and myRoot()) or tick() > deadline or not running()
-        task.wait(0.5)
-        return entitylib.isAlive
+        while running(gen) and tick() < deadline do
+            if alive() then break end
+            task.wait(0.2)
+        end
+        task.wait(0.4)
     end
 
-    ----------------------------------------------------------------------------
-    -- Breaking a bed: plain Breaker behaviour aimed at one block.
-    ----------------------------------------------------------------------------
-    local function breakBed(bed)
-        local timeout = tick() + 60
-        while running() and alive() and bed.Parent and bedPart(bed) and tick() < timeout do
-            local part = bedPart(bed)
-            if not part then break end
+    ----------------------------------------------------------------------------------------------
+    -- Actions. Each one is bounded and returns to the brain, which re-decides from scratch.
+    ----------------------------------------------------------------------------------------------
+    local function gatherIron(gen, target)
+        if ironCount() >= target then return true end
+        local gen_ = nearestIronGen()
+        if gen_ then
             local root = myRoot()
-            if not root then break end
-            local dist = (part.Position - root.Position).Magnitude
-            if dist > 25 then return false end
-            root.CFrame = CFrame.lookAt(root.Position, Vector3.new(part.Position.X, root.Position.Y, part.Position.Z))
-            if bedShielded(bed) then
-                status('Bed', 'Waiting for the bed shield to drop', '')
-                task.wait(0.3)
-            else
-                status('Bed', 'Breaking the bed', string.format('%.0f studs away', dist))
-                pcall(bedwars.breakBlock, part, true, true, nil, true, breakmethods.Distance, 360, false)
-                task.wait(0.25)
+            if root and (gen_.Position - root.Position).Magnitude > 10 then
+                status('Resources', 'Walking to the generator', '')
+                travel(gen, function()
+                    return gen_.Parent and gen_.Position or nil
+                end, 8, false, 'Walking to the generator', 40)
             end
         end
-        return bed.Parent == nil or bedPart(bed) == nil
+
+        -- Wait at the generator, but only while iron is actually arriving. Standing somewhere with
+        -- no generator in reach used to burn minutes of a run doing nothing at all.
+        local deadline = tick() + 60
+        local held, sinceGain = ironCount(), tick()
+        while running(gen) and alive() and ironCount() < target and tick() < deadline do
+            status('Resources', 'Collecting iron', ironCount() .. '/' .. target)
+            vacuum(18)
+            if ironCount() > held then
+                held, sinceGain = ironCount(), tick()
+                run_.lastProgress = tick()
+            elseif tick() - sinceGain > 15 then
+                break
+            end
+            task.wait(0.35)
+        end
+        return ironCount() >= target
     end
 
-    ----------------------------------------------------------------------------
-    -- Combat: self-contained silent aura. Faces the target and sends a real attack on the weapon's
-    -- own cadence, without touching the SilentAura module or its settings.
-    ----------------------------------------------------------------------------
+    local function goShopping(gen, wantBlocks)
+        if not shopIdNear(18) then
+            local pos = nearestShop()
+            if not pos then return blockCount() > 0 end
+            status('Resources', 'Walking to the shop', '')
+            travel(gen, function() return pos end, 8, false, 'Walking to the shop', 45)
+        end
+        local shopId = shopIdNear(22)
+        if not shopId then return blockCount() > 0 end
+
+        local waitShop = tick() + 6
+        while running(gen) and not store.shopLoaded and tick() < waitShop do task.wait(0.1) end
+
+        -- Armour, a sword and tools are AutoBuy's job and it is already standing here with us; all
+        -- this has to do is the two things AutoBuy will not - the dao ladder and enough wool for
+        -- the crossing we measured.
+        takeOver('AutoBuy', {['GUI check'] = false, ['Only Bedwars'] = false})
+        buyDao(shopId)
+
+        for _ = 1, 40 do
+            if not running(gen) or not alive() then break end
+            if blockCount() >= wantBlocks then break end
+            local item = woolShopItem(shopId)
+            if not item then break end
+            local price = item.price or WOOL_PRICE
+            if ironCount() < price then break end
+            status('Resources', 'Buying wool', blockCount() .. '/' .. wantBlocks)
+            local sent = ask(function()
+                bedwars.Client:Get('BedwarsPurchaseItem'):CallServerAsync({shopItem = item, shopId = shopId})
+                return true
+            end)
+            if not sent then break end
+            task.wait(0.25)
+        end
+        return blockCount() > 0
+    end
+
+    -- Measure the crossing, gather exactly the iron it needs, and buy it. Never asks for less than
+    -- the Wool amount slider.
+    local function stockUp(gen, goalPos)
+        local root, char = myRoot()
+        if not root then return false end
+        local need = 0
+        if goalPos then
+            -- A cell-by-cell count of what is missing along the straight line. It is an estimate,
+            -- not the route, but it is the right order of magnitude and it is cheap.
+            local from = footCell(root, char)
+            local to = cellOf(Vector3.new(goalPos.X, goalPos.Y - STAND, goalPos.Z))
+            local steps = math.min(math.abs(to.X - from.X) + math.abs(to.Z - from.Z), 300)
+            local cursor = from
+            for _ = 1, steps do
+                local dx, dz = to.X - cursor.X, to.Z - cursor.Z
+                if dx == 0 and dz == 0 then break end
+                if math.abs(dx) >= math.abs(dz) then
+                    cursor = cursor + Vector3.new(dx > 0 and 1 or -1, 0, 0)
+                else
+                    cursor = cursor + Vector3.new(0, 0, dz > 0 and 1 or -1)
+                end
+                if not solidAt(cursor) then need = need + 1 end
+            end
+        end
+
+        local want = math.max(WoolAmount.Value, need + 10)
+        if blockCount() >= want then return true end
+        local buys = math.ceil(math.max(want - blockCount(), 0) / WOOL_PER_BUY)
+        gatherIron(gen, math.max(IronAmount.Value, buys * WOOL_PRICE))
+        if not running(gen) then return false end
+        return goShopping(gen, want)
+    end
+
+    ----------------------------------------------------------------------------------------------
+    -- Breaking a bed.
+    ----------------------------------------------------------------------------------------------
+    local function breakBed(gen, bed)
+        local deadline = tick() + 45
+        while running(gen) and alive() and bed.Parent and tick() < deadline do
+            local part = partOf(bed)
+            local root = myRoot()
+            if not part or not root then break end
+            local dist = (part.Position - root.Position).Magnitude
+            if dist > 26 then return false end
+            root.CFrame = CFrame.lookAt(root.Position, Vector3.new(part.Position.X, root.Position.Y, part.Position.Z))
+            if bedShielded(bed) then
+                status('Bed', 'Waiting out the bed shield', '')
+                task.wait(0.3)
+            else
+                status('Bed', 'Breaking ' .. bedName(bed), string.format('%.0f studs', dist))
+                safe(bedwars.breakBlock, part, true, true, nil, true, breakmethods.Distance, 360, false)
+                run_.lastProgress = tick()
+                task.wait(0.22)
+            end
+        end
+        return bed.Parent == nil or partOf(bed) == nil
+    end
+
+    ----------------------------------------------------------------------------------------------
+    -- Combat.
+    --
+    -- Killaura does the hitting when it is available - it is a far better aura than anything that
+    -- belongs in here, and driving it means one implementation to be right rather than two. The
+    -- fallback below only runs when Killaura is missing or Take over is off, so a run is never left
+    -- walking up to people and doing nothing.
+    ----------------------------------------------------------------------------------------------
     local function swordInHand()
-        local sword = store.tools.sword
+        local sword = store.tools and store.tools.sword
+        -- With a dao on us that IS the sword, and it is what the dash needs in hand anyway.
+        local dao = getDao()
+        if dao and dao.tool then sword = dao end
         if not sword or not sword.tool then return nil end
         if not store.hand or store.hand.tool ~= sword.tool then
-            switchItem(sword.tool, 0)
+            safe(switchItem, sword.tool, 0)
         end
         return sword, bedwars.ItemMeta[sword.tool.Name]
     end
 
-    local function attack(ent)
+    local function swing(ent)
         local sword, meta = swordInHand()
         if not sword then return end
         local root = myRoot()
         if not root or not ent.RootPart or not ent.RootPart.Parent then return end
         local target = ent.Character and ent.Character.PrimaryPart or ent.RootPart
-        local selfpos = root.Position
-        local delta = target.Position - selfpos
+        local selfPos = root.Position
+        local delta = target.Position - selfPos
         if delta.Magnitude > bedwars.CombatConstant.RAYCAST_SWORD_CHARACTER_DISTANCE then return end
 
         local speed = (meta and meta.sword and meta.sword.attackSpeed) or 0.11
         if (tick() - bedwars.SwordController.lastSwing) >= math.max(speed, 0.11) then
-            pcall(function()
-                bedwars.SwordController:playSwordEffect(meta, false)
-            end)
+            safe(function() bedwars.SwordController:playSwordEffect(meta, false) end)
             bedwars.SwordController.lastSwing = tick()
         end
 
-        local dir = CFrame.lookAt(selfpos, target.Position).LookVector
-        local pos = selfpos + dir * math.max(delta.Magnitude - 14.399, 0)
+        local dir = CFrame.lookAt(selfPos, target.Position).LookVector
+        local pos = selfPos + dir * math.max(delta.Magnitude - 14.399, 0)
         bedwars.SwordController.lastAttack = workspace:GetServerTimeNow()
-        pcall(function()
+        safe(function()
             bedwars.Client:Get(remotes.AttackEntity):SendToServer({
                 weapon = sword.tool,
                 chargedAttack = {chargeRatio = 0},
@@ -18754,472 +19637,472 @@ run(function()
         end)
     end
 
-    local function fight(ent)
-        local timeout = tick() + 30
-        while running() and alive() and ent.RootPart and ent.RootPart.Parent and (not ent.Health or ent.Health > 0) and tick() < timeout do
+    local function fight(gen, ent)
+        local auraDriven = takeOver('Killaura', {
+            ['Require mouse down'] = false,
+            ['GUI check'] = false
+        })
+        local deadline = tick() + 25
+        while running(gen) and alive() and tick() < deadline do
+            if not ent.RootPart or not ent.RootPart.Parent then return true end
+            if ent.Health and ent.Health <= 0 then return true end
             local root = myRoot()
             if not root then break end
             local dist = (ent.RootPart.Position - root.Position).Magnitude
-            if dist > PlayerReach.Value + 8 then return false end
+            if dist > PlayerReach.Value + 10 then return false end
             root.CFrame = CFrame.lookAt(root.Position, Vector3.new(ent.RootPart.Position.X, root.Position.Y, ent.RootPart.Position.Z))
-            status('Combat', 'Attacking ' .. (ent.Player and ent.Player.Name or 'target'), string.format('%.0f studs  |  %d hp', dist, math.floor(ent.Health or 0)))
-            attack(ent)
-            task.wait()
+            status('Combat', 'Fighting ' .. (ent.Player and ent.Player.Name or 'a player'),
+                string.format('%.0f studs  |  %d hp', dist, math.floor(ent.Health or 0)))
+            if not auraDriven then swing(ent) end
+            run_.lastProgress = tick()
+            task.wait(auraDriven and 0.1 or 0)
         end
-        return not (ent.RootPart and ent.RootPart.Parent and (not ent.Health or ent.Health > 0))
+        return not (ent.RootPart and ent.RootPart.Parent)
     end
 
-    ----------------------------------------------------------------------------
-    -- Yuzi: dash across instead of bridging across.
-    --
-    -- Detection is LongJump's own: a dao in your hand first, then any dao in the inventory. The
-    -- launch is LongJump's too - we point the body at the base, put the dao in hand and switch the
-    -- module on, so the dash, the arc and the speed are exactly what LongJump does when you use it
-    -- yourself. Nothing about it is re-implemented here.
-    --
-    -- What IS handled here is switching it back off. LongJump pins your velocity once its own boost
-    -- window closes, so left on it would hold the run frozen in place - so each launch is given a
-    -- hard ceiling (Boost time, never above 2.5 seconds) and control is handed straight back, and
-    -- the same ceiling ends the dash early the moment we are in range.
-    ----------------------------------------------------------------------------
-    local daoItems = {'wood_dao', 'stone_dao', 'iron_dao', 'diamond_dao', 'emerald_dao'}
-
-    local function getDao()
-        local hand = store.hand and store.hand.tool
-        if hand and table.find(daoItems, hand.Name) then
-            return getItem(hand.Name)
+    ----------------------------------------------------------------------------------------------
+    -- Escalation. Each rung is a movement module the walker is allowed to lean on; they are all
+    -- released the moment the run is moving again, so the blatant ones are only ever on for the few
+    -- seconds they are actually needed.
+    ----------------------------------------------------------------------------------------------
+    function applyTier()
+        local tier = math.min(run_.tier, maxTier())
+        if tier >= 2 then
+            takeOver('Speed', {}, true)
+        else
+            releaseOne('Speed')
         end
-        for _, name in daoItems do
-            local item = getItem(name)
-            if item then return item end
+        if tier >= 3 then
+            takeOver('Fly', {}, true)
+        else
+            releaseOne('Fly')
         end
-        return nil
     end
 
-    local function dashReady()
-        local ok, ready = pcall(function()
-            return (lplr.Character:GetAttribute('CanDashNext') or 0) < workspace:GetServerTimeNow()
-                and bedwars.AbilityController:canUseAbility('dash')
+    local function calmDown()
+        if run_.tier > 0 and tick() - run_.lastProgress < 4 then
+            run_.tier = 0
+            applyTier()
+        end
+    end
+
+    ----------------------------------------------------------------------------------------------
+    -- End of match.
+    ----------------------------------------------------------------------------------------------
+    local function resolveQueue()
+        local wanted = Gamemode and Gamemode.Value or 'Current'
+        if wanted == 'Current' or wanted == nil then return store.queueType end
+        if wanted == 'Random' then
+            local modes = {}
+            safe(function()
+                for id, meta in pairs(bedwars.QueueMeta) do
+                    if not meta.disabled and not meta.voiceChatOnly and not meta.rankCategory then
+                        table.insert(modes, id)
+                    end
+                end
+            end)
+            if #modes > 0 then return modes[math.random(1, #modes)] end
+            return store.queueType
+        end
+        return wanted
+    end
+
+    -- Queue for the next match. BedWars only accepts this from the party leader and only when the
+    -- party is not already queued, so both are checked rather than fired blind.
+    local function joinQueue()
+        if not Requeue or not Requeue.Enabled then return end
+        if run_.queued then return end
+        local ok = ask(function()
+            local state = bedwars.Store:getState()
+            if state.Game.customMatch then return false end
+            if state.Party.leader.userId ~= lplr.UserId then return false end
+            if state.Party.queueState ~= 0 then return false end
+            return true
         end)
-        return ok and ready or false
+        if not ok then return end
+        run_.queued = true
+        writeState()
+        local mode = resolveQueue()
+        status('Done', 'Queueing for ' .. tostring(mode), '')
+        safe(function() bedwars.QueueController:joinQueue(mode) end)
+        -- One retry a few seconds later: the first call right on the match-end frame is sometimes
+        -- swallowed while the end screen is still animating in.
+        task.delay(6, function()
+            if not running() then return end
+            local still = ask(function()
+                return bedwars.Store:getState().Party.queueState == 0
+            end)
+            if still then safe(function() bedwars.QueueController:joinQueue(mode) end) end
+        end)
     end
 
-    local function flatDistance(from, to)
-        return ((to - from) * Vector3.new(1, 0, 1)).Magnitude
-    end
-
-    ----------------------------------------------------------------------------
-    -- Dash safety.
+    ----------------------------------------------------------------------------------------------
+    -- Staying in the game at all.
     --
-    -- The dash is a flat launch in a straight line, fired blind. Anything solid between us and the
-    -- bed was therefore a wall taken at full speed, and a launch that came up short of the far
-    -- island was a fall into the void - the two ways these runs used to end in a death.
-    --
-    -- So before every launch we shoot a beam at the bed. Clear line, dash. Something in the way,
-    -- walk to a spot that does have a clear line and dash from there instead.
-    ----------------------------------------------------------------------------
-    local dashRay = RaycastParams.new()
-    dashRay.RespectCanCollide = true
-    dashRay.FilterType = Enum.RaycastFilterType.Exclude
+    -- A run measured in hours ends the first time the client is disconnected unless something puts
+    -- it back. Both the error prompt and the disconnect signal are watched, and the rejoin goes to
+    -- the LOBBY place rather than the match: a finished match server is not somewhere to return to,
+    -- and the lobby is where AutoQueue picks the run back up.
+    ----------------------------------------------------------------------------------------------
+    local rejoining = false
 
-    -- Deliberately short to begin with, so the first launches of a run are cautious, and then
-    -- tracked against how far dashes actually carry rather than assumed.
-    local dashRange = 30
-
-    local function dashFilter()
-        dashRay.FilterDescendantsInstances = {lplr.Character, gameCamera, AntiFallPart}
+    local function rejoin()
+        if not AutoRejoin or not AutoRejoin.Enabled then return end
+        -- Once only. Both watchers below can fire for the same disconnect, and a second teleport
+        -- request on top of one already in flight is how a rejoin turns into a kick.
+        if rejoining then return end
+        rejoining = true
+        writeState()
+        safe(function()
+            local teleportService = cloneref(game:GetService('TeleportService'))
+            teleportService:Teleport(LOBBY_PLACE, lplr)
+        end)
     end
 
-    -- Nothing solid between here and the bed. Cast at chest height rather than from the feet: a
-    -- dash rides over a one-block lip, and casting low would read every kerb as a wall and refuse
-    -- to ever launch.
-    local function beamClear(from, target)
-        dashFilter()
-        local origin = from + Vector3.new(0, 2, 0)
-        local aim = Vector3.new(target.X, origin.Y, target.Z)
-        local delta = aim - origin
-        if delta.Magnitude < 1 then return true end
-        return workspace:Raycast(origin, delta, dashRay) == nil
+    local function watchDisconnects(gen)
+        AutoWin:Clean(function() rejoining = false end)
+        safe(function()
+            AutoWin:Clean(guiService.ErrorMessageChanged:Connect(function(message)
+                if not running(gen) then return end
+                if type(message) == 'string' and message ~= '' then
+                    task.delay(2, rejoin)
+                end
+            end))
+        end)
+        safe(function()
+            local prompt = coreGui:FindFirstChild('RobloxPromptGui')
+            prompt = prompt and prompt:FindFirstChild('promptOverlay')
+            if not prompt then return end
+            AutoWin:Clean(prompt.ChildAdded:Connect(function(child)
+                if not running(gen) then return end
+                if string.find(child.Name, 'ErrorPrompt') then
+                    task.delay(2, rejoin)
+                end
+            end))
+        end)
     end
 
-    -- Would this launch put us down over open air? Only a question when the bed is further off
-    -- than one dash carries - inside that, we arrive at the bed itself.
-    local function landingSafe(from, target)
-        local left = flatDistance(from, target)
-        if left <= dashRange then return true end
-        local delta = Vector3.new(target.X, from.Y, target.Z) - from
-        if delta.Magnitude < 1 then return true end
-        dashFilter()
-        local landing = from + delta.Unit * dashRange
-        return workspace:Raycast(landing + Vector3.new(0, 8, 0), Vector3.new(0, -60, 0), dashRay) ~= nil
+    ----------------------------------------------------------------------------------------------
+    -- The brain. One decision, one bounded action, repeat. Everything above is a leaf it calls.
+    ----------------------------------------------------------------------------------------------
+    local function step(gen)
+        -- Match over. Nothing left to do but line the next one up.
+        if store.matchState == 2 then
+            status('Done', 'Match over', '')
+            stopMoving()
+            joinQueue()
+            task.wait(1)
+            return
+        end
+
+        if store.matchState == 0 then
+            -- Back in a pre-game. That is a new match, so the one-shot queue latch has to be armed
+            -- again or a second game played without a teleport would never queue a third.
+            run_.queued = false
+            status('Waiting', 'Waiting for the match', '')
+            equipYuzi()
+            stopMoving()
+            task.wait(0.5)
+            return
+        end
+
+        if not alive() then
+            -- Dead, or somebody else is holding the hitbox. Neither is ours to fight.
+            stopMoving()
+            if not entitylib.isAlive then
+                status('Respawning', 'Waiting to respawn', '')
+                if not ownBedAlive() and #playersService:GetPlayers() > 1 then
+                    -- Eliminated. The match is finished for us either way, so wait it out and
+                    -- queue when it ends rather than spinning here.
+                    status('Done', 'Eliminated - waiting for the match to end', '')
+                end
+            end
+            task.wait(0.4)
+            return
+        end
+
+        calmDown()
+        applyTier()
+        equipYuzi()
+
+        local root = myRoot()
+        if not root then
+            task.wait(0.2)
+            return
+        end
+
+        -- Phase one: beds. A bed left standing is a team that keeps coming back, so nothing else
+        -- matters until they are all gone.
+        local beds = enemyBeds()
+        if #beds ~= run_.lastBedCount then
+            if run_.lastBedCount >= 0 and #beds < run_.lastBedCount then
+                run_.bedFails = {}
+            end
+            run_.lastBedCount = #beds
+        end
+
+        if #beds > 0 then
+            local bed = pickBed(root.Position)
+            if not bed then
+                task.wait(0.3)
+                return
+            end
+            local part = partOf(bed)
+            if not part then
+                task.wait(0.2)
+                return
+            end
+            local getBedPos = function()
+                local live = bed.Parent and partOf(bed)
+                return live and live.Position or nil
+            end
+
+            -- With a dao on us the whole crossing is a dash, so there is nothing to build and
+            -- nothing to build it with. That gathering was most of the cycle's time and none of it
+            -- was spent on anything the dash needs. Gated on the dao rather than the kit id,
+            -- because the dao IS the dash - owning one is what makes the ability available.
+            local dashing = YuziDash.Enabled and getDao() ~= nil
+            if dashing then
+                status('Yuzi', 'Dashing to ' .. bedName(bed), 'skipping the block run')
+                dashToward(gen, getBedPos, BedReach.Value, 'Dashing to ' .. bedName(bed))
+            else
+                status('Resources', 'Preparing for ' .. bedName(bed), '')
+                stockUp(gen, part.Position)
+            end
+            if not running(gen) then return end
+
+            if blockCount() <= 0 and not dashing then
+                -- Neither able to build nor to dash: reset to base and start the cycle over rather
+                -- than standing on a half-finished bridge with nothing to finish it.
+                status('Resources', 'Out of blocks - resetting', '')
+                bankLoot()
+                if RespawnAfterBed.Enabled and ownBedAlive() then selfRespawn(gen) end
+                return
+            end
+
+            status('Bridging', 'Heading for ' .. bedName(bed), '')
+            local result = travel(gen, getBedPos, BedReach.Value, true, 'Heading for ' .. bedName(bed), 120)
+            if result ~= 'arrived' then
+                if result == 'abort' then return end
+                run_.bedFails[bed] = (run_.bedFails[bed] or 0) + 1
+                status('Bridging', 'Could not reach ' .. bedName(bed), result)
+                bankLoot()
+                if RespawnAfterBed.Enabled and ownBedAlive() then selfRespawn(gen) end
+                return
+            end
+
+            if breakBed(gen, bed) then
+                run_.bedFails[bed] = nil
+                run_.lastProgress = tick()
+                status('Bed', 'Bed down', '')
+            else
+                run_.bedFails[bed] = (run_.bedFails[bed] or 0) + 1
+            end
+            bankLoot()
+            if RespawnAfterBed.Enabled and ownBedAlive() then
+                status('Respawning', 'Back to base', '')
+                selfRespawn(gen)
+            end
+            return
+        end
+
+        -- Phase two: the survivors.
+        if not KillPlayers.Enabled then
+            status('Done', 'All beds down - waiting for the match to end', '')
+            stopMoving()
+            task.wait(1)
+            return
+        end
+
+        local ent = pickEnemy()
+        if not ent then
+            status('Done', 'Nobody left to fight', '')
+            stopMoving()
+            task.wait(1)
+            return
+        end
+
+        local name = ent.Player and ent.Player.Name or 'a player'
+        local getEnemyPos = function()
+            if ent.RootPart and ent.RootPart.Parent then return ent.RootPart.Position end
+            return nil
+        end
+
+        if blockCount() < 12 then
+            stockUp(gen, getEnemyPos())
+            if not running(gen) then return end
+        end
+
+        if YuziDash.Enabled and getDao() then
+            dashToward(gen, getEnemyPos, PlayerReach.Value, 'Dashing to ' .. name)
+        end
+
+        status('Combat', 'Closing on ' .. name, '')
+        local result = travel(gen, getEnemyPos, PlayerReach.Value, true, 'Closing on ' .. name, 90)
+        if result == 'abort' then return end
+        if result == 'arrived' then
+            if not fight(gen, ent) then
+                run_.playerFails[ent.Character] = (run_.playerFails[ent.Character] or 0) + 1
+            else
+                run_.playerFails[ent.Character] = nil
+                run_.lastProgress = tick()
+            end
+        else
+            run_.playerFails[ent.Character] = (run_.playerFails[ent.Character] or 0) + 1
+        end
     end
 
-    -- Somewhere close by we could launch from with a clear line. Sampled as rings around us:
-    -- a candidate has to be somewhere we can actually stand and has to see the bed. Nearest ring
-    -- first so we walk as little as possible, and within a ring the spot closest to the bed wins,
-    -- so repositioning always makes progress instead of shuffling sideways.
-    local function clearDashSpot(from, target)
-        local best, bestDist
-        for _, radius in {8, 16, 26} do
-            for step = 0, 11 do
-                local angle = (step / 12) * math.pi * 2
-                local candidate = from + Vector3.new(math.cos(angle) * radius, 0, math.sin(angle) * radius)
-                dashFilter()
-                local ground = workspace:Raycast(candidate + Vector3.new(0, 14, 0), Vector3.new(0, -34, 0), dashRay)
-                if ground then
-                    local stand = ground.Position + Vector3.new(0, 3, 0)
-                    if beamClear(stand, target) and landingSafe(stand, target) then
-                        local d = flatDistance(stand, target)
-                        if not bestDist or d < bestDist then
-                            best, bestDist = stand, d
-                        end
+    ----------------------------------------------------------------------------------------------
+    -- Supervisor and watchdog.
+    ----------------------------------------------------------------------------------------------
+    local function brain(gen)
+        -- Wait for a match, a map, a body and - critically - a team. The bed phase treats an unknown
+        -- team as "no enemy beds" so that it can never smash our own, and starting before the team
+        -- resolves would make it skip bed breaking entirely.
+        local deadline = tick() + 180
+        while running(gen) and tick() < deadline do
+            if store.matchState ~= 0 and store.map and entitylib.isAlive and myTeam() ~= nil then break end
+            status('Waiting', 'Waiting for the map', '')
+            equipYuzi()
+            task.wait(0.4)
+        end
+        if not running(gen) then return end
+        task.wait(StartDelay.Value)
+        resetRun()
+
+        -- The stack a sweat would already have running before the first tick.
+        takeOver('AutoTool', {})
+        takeOver('AutoKit', {})
+        takeOver('NoFallDamage', {})
+        takeOver('AntiVoid', {})
+        if KeepAwake.Enabled then takeOver('Anti-AFK', {}) end
+
+        local failures = 0
+        while running(gen) do
+            local ok, err = pcall(step, gen)
+            if ok then
+                failures = 0
+            else
+                -- One broken action must never end the run. Report it once per burst and carry on;
+                -- a genuinely broken build will show up as the watchdog resetting instead.
+                failures = failures + 1
+                if failures <= 3 then
+                    warn('[AetherV2] AutoWin tick failed: ' .. tostring(err))
+                end
+                if failures > 3 then task.wait(1) end
+            end
+            task.wait(0.1)
+        end
+        stopMoving()
+    end
+
+    -- Outside the brain entirely, so it still fires when the brain is wedged inside something.
+    local function watchdog(gen)
+        while running(gen) do
+            task.wait(5)
+            if not running(gen) then break end
+            local limit = StuckLimit.Value * 60
+            if limit > 0 and store.matchState == 1 and alive() then
+                if tick() - run_.lastProgress > limit then
+                    status('Watchdog', 'No progress - resetting the run', '')
+                    run_.lastProgress = tick()
+                    stopMoving()
+                    clearGrid()
+                    run_.bedFails = {}
+                    run_.playerFails = {}
+                    run_.tier = 0
+                    applyTier()
+                    -- A reset to base is the one move that reliably un-wedges a run: it puts us
+                    -- back at the generator and the shop with a clean route to everything.
+                    if ownBedAlive() then
+                        safe(selfRespawn, gen)
                     end
                 end
             end
-            if best then return best end
-        end
-        return nil
-    end
-
-    -- Dash at a (possibly moving) target until we are in range. Returns whether we got there;
-    -- false simply means the caller carries on and bridges the rest, so this can never strand a run.
-    local function dashToward(getTarget, stopRange, label)
-        local module = LongJump or vape.Modules.LongJump
-        if not module then return false end
-        local cap = math.clamp(BoostTime.Value, 0.2, 2.5)
-        local best, stalled = math.huge, 0
-
-        for _ = 1, 12 do
-            if not running() or not alive() then break end
-            local target, root = getTarget(), myRoot()
-            if not target or not root then break end
-
-            local left = flatDistance(root.Position, target)
-            if left <= stopRange + 4 then break end
-            if left < best - 4 then
-                best, stalled = left, 0
-            else
-                stalled += 1
-                -- Two dashes that got us no closer: the way is blocked or the drop is wrong, so stop
-                -- wasting them and let the bridge take over.
-                if stalled >= 2 then break end
-            end
-
-            local dao = getDao()
-            if not dao then break end
-
-            -- The beam. A wall in the way means reposition rather than launch into it; nowhere
-            -- with a clear line means hand back to the bridge rather than launch anyway.
-            if not (beamClear(root.Position, target) and landingSafe(root.Position, target)) then
-                local spot = clearDashSpot(root.Position, target)
-                if not spot then break end
-                status('Yuzi', 'Repositioning for a clear dash', string.format('%d studs left', math.floor(left)))
-                travelTo(function() return spot end, 4, false, 'Repositioning for a clear dash')
-                root = myRoot()
-                if not root then break end
-                target = getTarget()
-                if not target then break end
-                if not (beamClear(root.Position, target) and landingSafe(root.Position, target)) then break end
-                left = flatDistance(root.Position, target)
-            end
-
-            local waitUntil = tick() + 6
-            while running() and alive() and not dashReady() and tick() < waitUntil do
-                status('Yuzi', 'Waiting for the dash', string.format('%d studs left', math.floor(left)))
-                task.wait(0.1)
-            end
-            if not dashReady() then break end
-
-            stopMoving()
-            -- The dao has to be genuinely IN HAND before LongJump is switched on: it picks its
-            -- method from store.hand first and only falls back to scanning the inventory, and that
-            -- scan is unordered - with a cannon or tnt on you it could place one of those instead of
-            -- dashing. store.hand only catches up on the next store update, so wait for it.
-            switchItem(dao.tool, 0.1)
-            local handDeadline = tick() + 0.6
-            while running() and tick() < handDeadline and not (store.hand and store.hand.tool == dao.tool) do
-                task.wait(0.05)
-            end
-            root = myRoot()
-            if not root then break end
-            root.CFrame = CFrame.lookAt(root.Position, Vector3.new(target.X, root.Position.Y, target.Z))
-            status('Yuzi', label or 'Dashing to the base', string.format('%d studs left', math.floor(left)))
-
-            if not module.Enabled then
-                module:Toggle()
-            end
-            local started = tick()
-            repeat
-                task.wait()
-                local now = myRoot()
-                local moving = getTarget()
-                if now and moving and flatDistance(now.Position, moving) <= stopRange then break end
-            until (tick() - started) >= cap or not running() or not alive() or not module.Enabled
-            if module.Enabled then
-                module:Toggle()
-            end
-            -- Let the launch settle before measuring, or the next pass reads mid-flight numbers.
-            task.wait(0.2)
-
-            -- Learn how far a dash really carries on this kit and this map, so the landing check
-            -- above is answering with a measured number instead of a guess.
-            local landed, aim = myRoot(), getTarget()
-            if landed and aim then
-                local covered = left - flatDistance(landed.Position, aim)
-                if covered > 4 then
-                    dashRange = math.clamp(dashRange + (covered - dashRange) * 0.35, 18, 120)
-                end
-            end
-        end
-
-        local root, target = myRoot(), getTarget()
-        if root and target then
-            return flatDistance(root.Position, target) <= stopRange + 4
-        end
-        return false
-    end
-
-    ----------------------------------------------------------------------------
-    -- Phase 1: one bed per cycle - gather, buy, bridge, break, bank, respawn.
-    ----------------------------------------------------------------------------
-    -- `attempts` maps bed -> failed tries. A bed is only passed over once two runs at it have
-    -- failed, and only while another bed is still worth trying.
-    local function bedCycle(attempts)
-        local root = myRoot()
-        if not root then return false end
-        local skip = {}
-        -- Three runs at a bed before writing it off rather than two: with the dash repositioning
-        -- and a stall window that no longer fires early, a second attempt is often the one that
-        -- works, and giving up here means walking past a bed that was perfectly takeable.
-        for tried, count in attempts do
-            if count >= 3 then skip[tried] = true end
-        end
-        local bed = closestBed(root.Position, skip)
-        if not bed then
-            table.clear(attempts)
-            bed = closestBed(root.Position)
-        end
-        if not bed then return false end
-        local part = bedPart(bed)
-        if not part then return false end
-
-        local _, char = myRoot()
-        local hip = char and char.HipHeight or 3
-
-        -- Yuzi: with a dao on us the whole crossing is done by dashing, so there is nothing to
-        -- build and nothing to build it with. The iron farm and the wool run are skipped outright
-        -- rather than trimmed - that gathering was most of the cycle's time, and none of it was
-        -- being spent on anything the dash needs.
-        local dashing = YuziDash.Enabled and getDao() ~= nil
-        if dashing then
-            status('Yuzi', 'Dao ready - dashing to ' .. bedName(bed), 'skipping the block run')
-        else
-            local need = bridgeCost(root.Position, part.Position, hip)
-            status('Resources', 'Preparing for ' .. bedName(bed), need .. ' blocks of bridge needed')
-            stockFor(need)
-        end
-        if not running() then return false end
-
-        -- Only a dead end when we can neither build nor dash. It used to stop here on blocks
-        -- alone and sit in a two-second loop indefinitely, with a dao in the bag and a perfectly
-        -- good dash going unused.
-        if blockCount() <= 0 and not dashing then
-            status('Resources', 'No blocks and no iron - banking and resetting', '')
-            bankLoot()
-            if Respawn.Enabled and ownBedAlive() then selfRespawn() end
-            task.wait(1)
-            return true
-        end
-
-        local bedPosition = function()
-            return bed.Parent and bedPart(bed) and bedPart(bed).Position or nil
-        end
-
-        if dashing then
-            dashToward(bedPosition, BedReach.Value, 'Dashing to ' .. bedName(bed))
-        end
-
-        status('Bridging', 'Bridging to ' .. bedName(bed), '')
-        local reached, why = travelTo(bedPosition, BedReach.Value, true, 'Bridging to ' .. bedName(bed))
-
-        if not reached then
-            attempts[bed] = (attempts[bed] or 0) + 1
-            status('Bridging', why == 'noblocks' and 'Ran out of blocks mid-bridge' or 'Could not reach that bed', '')
-            -- Get back to base and start the cycle over rather than being left stranded on a
-            -- half-finished bridge with nothing to build with.
-            bankLoot()
-            if Respawn.Enabled and ownBedAlive() then selfRespawn() end
-            return true
-        end
-
-        local broke = breakBed(bed)
-        if broke then
-            attempts[bed] = nil
-        else
-            attempts[bed] = (attempts[bed] or 0) + 1
-        end
-        bankLoot()
-        if Respawn.Enabled and ownBedAlive() then
-            status('Respawning', 'Returning to base', '')
-            selfRespawn()
-        end
-        return true
-    end
-
-    local function bedPhase()
-        local attempts = {}
-        local lastBreak, seen = tick(), #enemyBeds()
-        while running() and #enemyBeds() > 0 do
-            if not alive() then
-                status('Respawning', 'Waiting to respawn', '')
-                repeat task.wait(0.2) until alive() or not running()
-                if not running() then return end
-                task.wait(0.5)
-            end
-            if #enemyBeds() < seen then
-                seen, lastBreak = #enemyBeds(), tick()
-                table.clear(attempts)
-            end
-            if tick() - lastBreak > 360 then
-                status('Beds', 'No bed has gone down in a while - moving on', '')
-                return
-            end
-            bedCycle(attempts)
-            task.wait(0.2)
-        end
-        if running() then
-            status('Beds', 'All enemy beds destroyed', '')
+            refreshHUD()
         end
     end
 
-    ----------------------------------------------------------------------------
-    -- Phase 2: hunt the remaining players.
-    ----------------------------------------------------------------------------
-    local function killPhase()
-        if not KillPlayers.Enabled then return end
-        local skip = {}
-        -- Give up if nobody has actually gone down for a long stretch, so a player we simply
-        -- cannot reach can't keep the phase spinning forever.
-        local lastKill, alivePlayers = tick(), #playersService:GetPlayers()
-        while running() do
-            local now = #playersService:GetPlayers()
-            if now < alivePlayers then
-                alivePlayers, lastKill = now, tick()
-            end
-            if tick() - lastKill > 300 then
-                status('Combat', 'Nobody reachable - standing down', '')
-                return
-            end
-            if not alive() then
-                if not ownBedAlive() then return end
-                status('Respawning', 'Waiting to respawn', '')
-                repeat task.wait(0.2) until alive() or not running()
-                if not running() then return end
-                task.wait(0.5)
-            end
-            local ent = nearestEnemy(skip)
-            if not ent then
-                if next(skip) == nil then return end
-                table.clear(skip)
-                ent = nearestEnemy()
-                if not ent then return end
-            end
-            local name = ent.Player and ent.Player.Name or 'a player'
-
-            local root, char = myRoot()
-            if not root then
-                task.wait(0.2)
-                continue
-            end
-            local need = bridgeCost(root.Position, ent.RootPart.Position, char and char.HipHeight or 3)
-            if need > blockCount() then
-                status('Resources', 'Stocking up to reach ' .. name, need .. ' blocks of bridge needed')
-                stockFor(need)
-                if not running() then return end
-            end
-
-            status('Combat', 'Bridging to ' .. name, '')
-            local reached = travelTo(function()
-                return ent.RootPart and ent.RootPart.Parent and ent.RootPart.Position or nil
-            end, PlayerReach.Value, true, 'Bridging to ' .. name)
-
-            if reached then
-                fight(ent)
-            end
-            if ent.RootPart and ent.RootPart.Parent and (not ent.Health or ent.Health > 0) then
-                skip[ent.Character] = true
-            end
-            task.wait(0.2)
-        end
+    local function shutdown()
+        stopMoving()
+        releaseAll()
+        run_.phase, run_.action, run_.detail, run_.tier = 'Idle', 'Waiting', '', 0
+        refreshHUD()
+        writeState()
     end
 
-    ----------------------------------------------------------------------------
+    ----------------------------------------------------------------------------------------------
     -- Module.
-    ----------------------------------------------------------------------------
+    ----------------------------------------------------------------------------------------------
     AutoWin = vape.Categories.World:CreateModule({
         Name = 'AutoWin',
         Function = function(callback)
             if callback then
-                phaseText, actionText, detailText = 'Starting', 'Waiting for the map', ''
+                generation = generation + 1
+                local gen = generation
+                resetRun()
+                run_.phase, run_.action, run_.detail = 'Starting', 'Waiting for the map', ''
                 refreshHUD()
-                -- Hook the humanoid up before anything can want to move.
-                stopMoving()
-                startDriving()
+                writeState()
+                -- The GUI already made the HUD frame visible because the module is on; Show HUD is
+                -- the user's say over that, so it is applied on top.
+                pcall(function()
+                    if hudFrame then hudFrame.Visible = ShowHUD.Enabled end
+                end)
 
-                -- Wait for our team to be known too: the bed phase treats an unknown team as
-                -- "no enemy beds" (so it never smashes our own), and starting before the team
-                -- resolves would make it skip bed-breaking entirely.
-                repeat task.wait() until (store.matchState ~= 0 and store.map and entitylib.isAlive and myTeam() ~= nil) or not running()
-                if not running() then return end
-                task.wait(StartDelay.Value)
-                if not running() then return end
-
-                -- Keep the resource readout live even while a long step is running.
+                -- Order matters. The threads are registered first so a toggle-off cancels them
+                -- before shutdown puts every driven module back - otherwise a still-running brain
+                -- would switch them straight on again on its way out.
+                startDriver(gen)
+                AutoWin:Clean(task.spawn(function() brain(gen) end))
+                AutoWin:Clean(task.spawn(function() watchdog(gen) end))
                 AutoWin:Clean(task.spawn(function()
-                    while running() do
+                    while running(gen) do
                         refreshHUD()
                         task.wait(0.4)
                     end
                 end))
-
-                if running() then bedPhase() end
-                if running() then killPhase() end
-
-                while running() and store.matchState ~= 2 do
-                    if #enemyBeds() > 0 then
-                        bedPhase()
-                    elseif KillPlayers.Enabled and nearestEnemy() then
-                        killPhase()
-                    else
-                        status('Done', 'Waiting for the match to end', '')
+                watchDisconnects(gen)
+                AutoWin:Clean(vapeEvents.MatchEndEvent.Event:Connect(function()
+                    if not running(gen) then return end
+                    stopMoving()
+                    task.delay(1.5, joinQueue)
+                end))
+                AutoWin:Clean(vapeEvents.EntityDeathEvent.Event:Connect(function(deathTable)
+                    if not running(gen) then return end
+                    if deathTable.entityInstance ~= lplr.Character then return end
+                    stopMoving()
+                    if deathTable.finalKill then
+                        -- Eliminated with nobody left in the party: this match is over for us, so
+                        -- line the next one up instead of waiting out the end screen.
+                        local alone = ask(function()
+                            return #bedwars.Store:getState().Party.members <= 0
+                        end)
+                        if alone and store.matchState ~= 2 then task.delay(3, joinQueue) end
                     end
-                    task.wait(0.5)
-                end
-                if store.matchState == 2 then
-                    status('Done', 'Game won', '')
-                end
+                end))
+                AutoWin:Clean(shutdown)
             else
-                stopMoving()
-                phaseText, actionText, detailText = 'Idle', 'Waiting...', ''
-                refreshHUD()
+                generation = generation + 1
+                shutdown()
             end
         end,
-        Tooltip = 'Plays the match for you: iron, wool, bridge to every enemy bed, break it, bank, respawn, then hunt the survivors. It walks rather than teleports, so there is nothing to lag back. Progress shows on the HUD',
-        Size = UDim2.fromOffset(224, 92)
+        Tooltip = 'Plays the whole match on its own and keeps playing: gears up, routes to every enemy bed and breaks it, hunts the survivors, then queues the next game. Walks and bridges by default and only escalates when a route genuinely will not go. Progress is on the HUD',
+        Size = UDim2.fromOffset(232, 96)
     })
 
-    -- Build the HUD into the draggable frame the GUI made for us.
+    -- The HUD lives in the draggable frame the GUI made for us; grab the title bar to move it.
     if AutoWin.Children then
-        local hud = AutoWin.Children
-        if hud.Position == UDim2.new() then
-            hud.Position = UDim2.fromOffset(16, 220)
+        hudFrame = AutoWin.Children
+        if hudFrame.Position == UDim2.new() then
+            hudFrame.Position = UDim2.fromOffset(16, 220)
         end
         local bg = Instance.new('Frame')
         bg.Size = UDim2.fromScale(1, 1)
         bg.BackgroundColor3 = Color3.new()
         bg.BackgroundTransparency = 0.35
         bg.BorderSizePixel = 0
-        bg.Parent = hud
+        bg.Parent = hudFrame
         local corner = Instance.new('UICorner')
         corner.CornerRadius = UDim.new(0, 5)
         corner.Parent = bg
@@ -19255,7 +20138,7 @@ run(function()
         hudAction.TextXAlignment = Enum.TextXAlignment.Left
         hudAction.TextTruncate = Enum.TextTruncate.AtEnd
         hudAction.TextColor3 = Color3.new(1, 1, 1)
-        hudAction.Text = 'Waiting...'
+        hudAction.Text = 'Waiting'
         hudAction.Parent = bg
 
         hudDetail = Instance.new('TextLabel')
@@ -19272,31 +20155,79 @@ run(function()
 
         hudStock = Instance.new('TextLabel')
         hudStock.Size = UDim2.new(1, -16, 0, 16)
-        hudStock.Position = UDim2.fromOffset(8, 66)
+        hudStock.Position = UDim2.fromOffset(8, 68)
         hudStock.BackgroundTransparency = 1
         hudStock.Font = Enum.Font.GothamMedium
         hudStock.TextSize = 12
         hudStock.TextXAlignment = Enum.TextXAlignment.Left
         hudStock.TextColor3 = Color3.fromRGB(235, 205, 130)
-        hudStock.Text = '0 iron   0 wool'
+        hudStock.Text = '0 iron   0 blocks'
         hudStock.Parent = bg
     end
 
+    ----------------------------------------------------------------------------------------------
+    -- Options.
+    ----------------------------------------------------------------------------------------------
+    Aggression = AutoWin:CreateDropdown({
+        Name = 'Aggression',
+        List = {'Safe', 'Balanced', 'Blatant'},
+        Tooltip = 'How far the run may escalate when a route genuinely will not go. It always starts at walking and steps back down as soon as it is moving again.\nSafe - walk, bridge and dash only, nothing the server can reject\nBalanced - also allows Speed through a bad stretch\nBlatant - also allows Fly. Fastest, and the most obvious to everyone watching'
+    })
+    -- This GUI's dropdowns take their starting value from the first list entry and ignore Default,
+    -- so the wanted default is set explicitly. A saved config still overrides it on load.
+    pcall(function() Aggression:SetValue('Balanced') end)
+    TakeOver = AutoWin:CreateToggle({
+        Name = 'Take over modules',
+        Default = true,
+        Tooltip = 'Drive your existing AutoBuy, AutoBank, AutoTool, AutoKit, Killaura, AntiVoid and NoFallDamage while the run is on, and put every one of them back exactly as it found them when it stops. Off makes AutoWin fully self-contained and slower'
+    })
+    KillPlayers = AutoWin:CreateToggle({
+        Name = 'Kill players',
+        Default = true,
+        Tooltip = 'Once every enemy bed is down, hunt the survivors instead of waiting the match out'
+    })
+    RespawnAfterBed = AutoWin:CreateToggle({
+        Name = 'Respawn after bed',
+        Default = true,
+        Tooltip = 'Reset to base after each bed so the next cycle starts at your generator and your shop. Skipped once your own bed is gone, since a respawn would eliminate you'
+    })
+    BankLoot = AutoWin:CreateToggle({
+        Name = 'Bank loot',
+        Default = true,
+        Tooltip = 'Deposit resources before every reset so dying never costs the run what it has gathered'
+    })
+    YuziDash = AutoWin:CreateToggle({
+        Name = 'Yuzi dash',
+        Default = true,
+        Tooltip = 'With a dao in hand, cross by dashing instead of bridging - no iron run, no wool run, no bridge. The ability is fired directly, so nothing is left holding your velocity afterwards. Anything the dash misses is still bridged'
+    })
+    AutoEquipKit = AutoWin:CreateToggle({
+        Name = 'Auto equip Yuzi',
+        Default = true,
+        Darker = true,
+        Tooltip = 'Select the Yuzi kit before the match starts when the account owns it'
+    })
+    DaoPriority = AutoWin:CreateToggle({
+        Name = 'Dao priority',
+        Default = true,
+        Darker = true,
+        Tooltip = 'Buy the next dao up whenever it is affordable, so the dash is always on the best blade you can carry'
+    })
     IronAmount = AutoWin:CreateSlider({
         Name = 'Iron amount',
         Min = 8,
         Max = 64,
         Default = 16,
         Suffix = ' iron',
-        Tooltip = 'How much iron to collect at the generator before going to the shop. 8 iron buys 16 wool, so 16 iron is two bundles (32 wool)'
+        Tooltip = 'The least iron to collect before shopping. 8 iron buys 16 wool'
     })
     WoolAmount = AutoWin:CreateSlider({
-        Name = 'Wool amount',
+        Name = 'Block amount',
         Min = 16,
         Max = 128,
         Default = 32,
-        Suffix = ' wool',
-        Tooltip = 'The least wool to set off with. Longer crossings automatically buy more than this - the route is measured cell by cell first'
+        Suffix = ' blocks',
+        Tooltip = 'The least to set off with. Longer crossings buy more than this - the route is measured first'
     })
     BedReach = AutoWin:CreateSlider({
         Name = 'Bed reach',
@@ -19314,7 +20245,7 @@ run(function()
         Default = 8,
         Decimal = 10,
         Suffix = ' studs',
-        Tooltip = 'How close to get to a player before attacking'
+        Tooltip = 'How close to get to a player before fighting'
     })
     StartDelay = AutoWin:CreateSlider({
         Name = 'Start delay',
@@ -19325,44 +20256,74 @@ run(function()
         Suffix = ' seconds',
         Tooltip = 'How long to settle after the map loads before starting'
     })
-    YuziDash = AutoWin:CreateToggle({
-        Name = 'Yuzi dash',
+    StuckLimit = AutoWin:CreateSlider({
+        Name = 'Watchdog',
+        Min = 0,
+        Max = 10,
+        Default = 4,
+        Decimal = 10,
+        Suffix = ' minutes',
+        Tooltip = 'Reset the run when it has made no measurable progress for this long. 0 turns the watchdog off'
+    })
+    Requeue = AutoWin:CreateToggle({
+        Name = 'Auto queue',
         Default = true,
-        Tooltip = 'With a dao in your inventory, dash to the base with LongJump instead of bridging. Anything the dash misses is still bridged',
+        Tooltip = 'Queue the next match as soon as this one ends, or as soon as you are eliminated from it'
+    })
+    Gamemode = AutoWin:CreateDropdown({
+        Name = 'Gamemode',
+        List = (function()
+            local list = {'Current', 'Random'}
+            pcall(function()
+                local ids = {}
+                for id, meta in pairs(bedwars.QueueMeta) do
+                    if not meta.disabled and not meta.voiceChatOnly then
+                        table.insert(ids, id)
+                    end
+                end
+                table.sort(ids)
+                for _, id in ipairs(ids) do table.insert(list, id) end
+            end)
+            return list
+        end)(),
+        Darker = true,
+        Tooltip = 'Which queue to join. Current re-queues whatever you were just playing',
+        Function = function()
+            writeState()
+        end
+    })
+    ResumeInLobby = AutoWin:CreateToggle({
+        Name = 'Resume in lobby',
+        Default = true,
+        Darker = true,
+        Tooltip = 'The lobby is a different place, so AutoWin is not loaded there. With this on it leaves a note the lobby\'s AutoQueue module picks up, which queues the mode above and gets you straight back into a match',
+        Function = function()
+            writeState()
+        end
+    })
+    AutoRejoin = AutoWin:CreateToggle({
+        Name = 'Auto rejoin',
+        Default = true,
+        Tooltip = 'Teleport back to the BedWars lobby on a disconnect or an error prompt, so one network blip does not end an overnight run'
+    })
+    KeepAwake = AutoWin:CreateToggle({
+        Name = 'Keep awake',
+        Default = true,
+        Tooltip = 'Run Anti-AFK for the duration, so Roblox\'s twenty minute idle kick never fires'
+    })
+    ShowHUD = AutoWin:CreateToggle({
+        Name = 'Show HUD',
+        Default = true,
+        Tooltip = 'Show the progress HUD while the run is on',
         Function = function(callback)
             pcall(function()
-                BoostTime.Object.Visible = callback
+                if hudFrame then hudFrame.Visible = callback and AutoWin.Enabled end
             end)
         end
     })
-    BoostTime = AutoWin:CreateSlider({
-        Name = 'Boost time',
-        Min = 0.2,
-        Max = 2.5,
-        Default = 2.5,
-        Decimal = 10,
-        Darker = true,
-        Suffix = ' seconds',
-        Tooltip = 'Longest a single dash may boost for. Capped at 2.5 seconds, and never left running past the boost'
-    })
-    Respawn = AutoWin:CreateToggle({
-        Name = 'Respawn after bed',
-        Default = true,
-        Tooltip = 'Reset to base after each bed so the next cycle starts at your generator and shop. Skipped once your own bed is gone, since a respawn would eliminate you'
-    })
-    BankLoot = AutoWin:CreateToggle({
-        Name = 'Bank before respawn',
-        Default = true,
-        Tooltip = 'Deposit iron, gold, diamonds, emeralds and void crystals into your personal chest before every respawn, so dying never costs you the run\'s resources'
-    })
-    KillPlayers = AutoWin:CreateToggle({
-        Name = 'Kill players',
-        Default = true,
-        Tooltip = 'Once every enemy bed is destroyed, bridge to the remaining players and eliminate them'
-    })
     Notify = AutoWin:CreateToggle({
         Name = 'Notifications',
-        Tooltip = 'Also notify on each action change. Off by default - the HUD already shows what it is doing'
+        Tooltip = 'Also notify on each action change. Off by default - the HUD already says what it is doing'
     })
 end)
 
