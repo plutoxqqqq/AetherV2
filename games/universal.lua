@@ -2436,10 +2436,47 @@ run(function()
     local InfiniteJump
     local Mode
     local TP
+    local Distance
     local lastTPDown = 0
     local rayCheck = RaycastParams.new()
     rayCheck.RespectCanCollide = true
     local jumps = 0
+
+    -- Drops you toward the ground on each jump instead of hopping.
+    --
+    -- The old version needed LeftShift held and then fought itself: one handler snapped you down
+    -- to the floor and put you straight back where you started 0.08s later, while the other
+    -- subtracted 12 studs on a jump request. The net movement was nothing, which is why the option
+    -- did not appear to do anything. There is no key to hold now - the toggle is the whole
+    -- control.
+    --
+    -- The drop is clamped to whatever is actually beneath you, so it lands you on the floor rather
+    -- than through it, and it refuses outright when there is nothing under you at all. Dropping
+    -- into the void is never what was wanted.
+    local function teleportDown()
+	local character = entitylib.character
+	local root = character.RootPart
+	if not root or not root.Parent then return false end
+
+	rayCheck.FilterDescendantsInstances = {lplr.Character, gameCamera}
+	rayCheck.CollisionGroup = root.CollisionGroup
+	local ground = workspace:Raycast(root.Position, Vector3.new(0, -500, 0), rayCheck)
+	if not ground then return false end
+
+	local position = root.Position
+	local floor = ground.Position.Y + (character.HipHeight or 3)
+	local target = math.max(position.Y - Distance.Value, floor)
+	-- Already standing on it: nothing to do, and teleporting a hair downward would only fight
+	-- the floor we are resting on.
+	if target >= position.Y - 0.05 then return false end
+
+	root.CFrame = CFrame.new(position.X, target, position.Z) * root.CFrame.Rotation
+	-- Kill the downward velocity we did not actually earn, so the drop does not carry into a
+	-- fall the server would charge us for.
+	local velocity = root.AssemblyLinearVelocity
+	root.AssemblyLinearVelocity = Vector3.new(velocity.X, 0, velocity.Z)
+	return true
+    end
 
     InfiniteJump = vape.Categories.Blatant:CreateModule({
 	Name = 'InfiniteJump',
@@ -2447,28 +2484,26 @@ run(function()
 	Function = function(callback: boolean)
 		if callback then
 			jumps = 0
-
-			InfiniteJump:Clean(runService.PreSimulation:Connect(function()
-				if TP.Enabled and entitylib.isAlive and inputService:IsKeyDown(Enum.KeyCode.LeftShift) and tick() > lastTPDown then
-					lastTPDown = tick() + 2
-					local root = entitylib.character.RootPart
-					local origin = root.CFrame
-					rayCheck.FilterDescendantsInstances = {lplr.Character, gameCamera}
-					rayCheck.CollisionGroup = root.CollisionGroup
-					local ground = workspace:Raycast(root.Position, Vector3.new(0, -500, 0), rayCheck)
-					if ground then
-						root.CFrame = CFrame.new(origin.X, ground.Position.Y + entitylib.character.HipHeight + 2.5, origin.Z)
-						task.delay(0.08, function()
-							if InfiniteJump.Enabled and entitylib.isAlive then
-								entitylib.character.RootPart.CFrame = origin
-							end
-						end)
-					end
-				end
-			end))
+			lastTPDown = 0
 
 			InfiniteJump:Clean(inputService.JumpRequest:Connect(function()
+				if not entitylib.isAlive then return end
 				jumps += 1
+
+				-- TP Down replaces the hop rather than being layered on top of it: jumping up
+				-- and teleporting down in the same frame is what made the old behaviour so
+				-- hard to read.
+				if TP.Enabled then
+					-- JumpRequest repeats for as long as the jump input is held, so without a
+					-- floor on the rate this would fire every frame and read as a teleport
+					-- storm rather than a descent.
+					if tick() >= lastTPDown then
+						lastTPDown = tick() + 0.15
+						teleportDown()
+					end
+					return
+				end
+
 				if jumps > 1 and Mode.Value == 'Velocity' then
 					local power = math.sqrt(2 * workspace.Gravity * entitylib.character.Humanoid.JumpHeight)
 					entitylib.character.RootPart.Velocity = Vector3.new(
@@ -2479,14 +2514,11 @@ run(function()
 				elseif Mode.Value == 'Jump' then
 					entitylib.character.Humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
 				end
-				if TP.Enabled and inputService:IsKeyDown(Enum.KeyCode.LeftShift) then
-					entitylib.character.RootPart.CFrame -= Vector3.new(0, 12, 0)
-				end
 			end))
 		end
 	end,
 	ExtraText = function()
-		return Mode.Value
+		return TP.Enabled and 'TP Down' or Mode.Value
 	end,
     })
     Mode = InfiniteJump:CreateDropdown({
@@ -2495,6 +2527,23 @@ run(function()
     })
     TP = InfiniteJump:CreateToggle({
 	Name = 'TP Down',
+	Function = function(callback)
+		if Distance and Distance.Object then
+			Distance.Object.Visible = callback
+		end
+	end,
+	Tooltip = 'Jumping drops you toward the ground instead of hopping. No key to hold - while this is on, every jump is a descent',
+    })
+    Distance = InfiniteJump:CreateSlider({
+	Name = 'Drop distance',
+	Min = 1,
+	Max = 40,
+	Default = 12,
+	Darker = true,
+	Suffix = function(val)
+		return val == 1 and 'stud' or 'studs'
+	end,
+	Tooltip = 'How far each jump drops you. Never further than the ground below, and never at all when there is no ground below',
     })
 end)
 
