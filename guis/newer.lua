@@ -31,12 +31,16 @@
 	Windows settings-clutter panes (their machinery falls back to sane defaults).
 ]]
 local license = ... or {}
+-- AetherV2's accent, rgb(190, 115, 255), as the HSV the GUI works in. It is the
+-- default in every window and is also the sixth notch on the GUI Theme slider,
+-- so it stays a preset the user can move off and come back to.
+local accent = {Hue = 0.7559524, Sat = 0.5490196, Value = 1, Notch = 6}
 local mainapi = {
 	Categories = {},
 	GUIColor = {
-		Hue = 0.605,
-		Sat = 0.71,
-		Value = 1
+		Hue = accent.Hue,
+		Sat = accent.Sat,
+		Value = accent.Value
 	},
 	HeldKeybinds = {},
 	Keybind = {'RightShift'},
@@ -942,10 +946,9 @@ end
 	module row. Expected shape:
 		{
 			"newModules": [...],
-			"patchedModules": [...],
 			"updatedModules": [...]
 		}
-	Each list becomes a tag ('NEW', 'PATCHED', 'UPDATED') on every module it
+	Each list becomes a tag ('NEW', 'UPDATED') on every module it
 	names. A bare array is still accepted and treated as newModules, which is
 	the format the file used before the three lists existed.
 
@@ -954,8 +957,7 @@ end
 ]]
 local featureLists = {
 	{Tag = 'new', Key = 'newModules'},
-	{Tag = 'updated', Key = 'updatedModules'},
-	{Tag = 'patched', Key = 'patchedModules'}
+	{Tag = 'updated', Key = 'updatedModules'}
 }
 local featureTags = {}
 
@@ -1000,21 +1002,18 @@ do
 end
 
 -- Appends the feature tags for a module onto its existing tag list, skipping
--- any it already carries. 'patched' is dropped when the row is going to draw
--- the red patch badge anyway, so the same word never shows up twice.
-local function applyFeatureTags(tags, name, hasPatchBadge)
+-- any it already carries.
+local function applyFeatureTags(tags, name)
 	for _, tag in featureTags[moduleTagKey(name)] or {} do
-		if not (hasPatchBadge and tag == 'patched') then
-			local duplicate = false
-			for _, existing in tags do
-				if type(existing) == 'string' and existing:lower() == tag then
-					duplicate = true
-					break
-				end
+		local duplicate = false
+		for _, existing in tags do
+			if type(existing) == 'string' and existing:lower() == tag then
+				duplicate = true
+				break
 			end
-			if not duplicate then
-				table.insert(tags, tag)
-			end
+		end
+		if not duplicate then
+			table.insert(tags, tag)
 		end
 	end
 end
@@ -1332,9 +1331,12 @@ components = {
 	ColorSlider = function(optionsettings, children, api)
 		local optionapi = {
 			Type = 'ColorSlider',
-			Hue = optionsettings.DefaultHue or 0.44,
-			Sat = optionsettings.DefaultSat or 1,
-			Value = optionsettings.DefaultValue or 1,
+			-- Colour options default to the AetherV2 accent, the same colour the GUI
+			-- theme starts on, so a module's boxes/chams/HUD match the menu out of the
+			-- box. Each slider still moves independently once the user touches it.
+			Hue = optionsettings.DefaultHue or accent.Hue,
+			Sat = optionsettings.DefaultSat or accent.Sat,
+			Value = optionsettings.DefaultValue or accent.Value,
 			Opacity = optionsettings.DefaultOpacity or 1,
 			Rainbow = false,
 			Index = 0
@@ -2539,7 +2541,7 @@ components = {
 			Window = {Visible = false},
 			Index = getTableSize(api.Options)
 		}
-		optionsettings.Color = optionsettings.Color or Color3.fromRGB(5, 134, 105)
+		optionsettings.Color = optionsettings.Color or Color3.fromRGB(190, 115, 255)
 		
 		local textlist = Instance.new('TextButton')
 		textlist.Name = optionsettings.Name..'TextList'
@@ -2908,36 +2910,6 @@ components = {
 		toggle.Parent = children
 		addTooltip(toggle, optionsettings.Tooltip)
 		addHoverFX(toggle)
-		local semiPatched = optionsettings.SemiPatched
-		if semiPatched then
-			local warnbadge = Instance.new('TextLabel')
-			warnbadge.Name = 'SemiPatched'
-			warnbadge.Size = UDim2.fromOffset(16, 16)
-			warnbadge.Position = UDim2.new(1, -54, 0, 7)
-			warnbadge.BackgroundColor3 = Color3.fromRGB(232, 168, 42)
-			warnbadge.Text = '!'
-			warnbadge.TextColor3 = Color3.new(0, 0, 0)
-			warnbadge.TextSize = 13
-			warnbadge.FontFace = uipallet.Font
-			warnbadge.Parent = toggle
-			addCorner(warnbadge, UDim.new(1, 0))
-			addTooltip(warnbadge, 'Semi-patched: '..tostring(semiPatched)..' (occasionally works but is buggy)')
-		end
-		local patched = optionsettings.Patched
-		if patched then
-			local patchbadge = Instance.new('TextLabel')
-			patchbadge.Name = 'Patched'
-			patchbadge.Size = UDim2.fromOffset(16, 16)
-			patchbadge.Position = UDim2.new(1, semiPatched and -74 or -54, 0, 7)
-			patchbadge.BackgroundColor3 = Color3.fromRGB(207, 68, 68)
-			patchbadge.Text = '✗'
-			patchbadge.TextColor3 = Color3.new(1, 1, 1)
-			patchbadge.TextSize = 12
-			patchbadge.FontFace = uipallet.Font
-			patchbadge.Parent = toggle
-			addCorner(patchbadge, UDim.new(1, 0))
-			addTooltip(patchbadge, 'Patched: '..tostring(patched))
-		end
 		local knobholder = Instance.new('Frame')
 		knobholder.Name = 'Knob'
 		knobholder.Size = UDim2.fromOffset(22, 12)
@@ -2982,7 +2954,7 @@ components = {
 				optionsettings.Function(self.Enabled)
 			end, function(err)
 				if shared.VapeDeveloper then
-					mainapi:CreateNotification('Vape', 'gui error: '.. err, 15, 'warning')
+					mainapi:CreateNotification('AetherV2', 'gui error: '.. err, 15, 'warning')
 					task.defer(error, err)
 				end	
 			end)
@@ -3006,16 +2978,6 @@ components = {
 		end)
 		toggle.MouseButton1Click:Connect(function()
 			optionapi:Toggle()
-			if optionapi.Enabled and semiPatched then
-				pcall(function()
-					mainapi:CreateNotification('Semi-patched', optionsettings.Name..' is semi-patched: '..tostring(semiPatched)..'. It occasionally works but is buggy, so results may be inconsistent.', 8, 'warning')
-				end)
-			end
-			if optionapi.Enabled and patched then
-				pcall(function()
-					mainapi:CreateNotification('Patched', optionsettings.Name..' is patched: '..tostring(patched)..'. It no longer works as intended.', 8, 'warning')
-				end)
-			end
 		end)
 
 		if optionsettings.Default then
@@ -3364,20 +3326,32 @@ function mainapi:CreateGUI()
 	addCorner(window)
 	addWindowStroke(window)
 	makeDraggable(window)
-	local logo = Instance.new('ImageLabel')
+	-- AetherV2's own wordmark, in place of the Vape logo art this fork inherited: the
+	-- header is the one part of the menu you see every single time it opens, so it is
+	-- where the name belongs. Drawn as text rather than an image so it picks up the
+	-- menu's font and needs no artwork of its own. The instance names are unchanged -
+	-- UpdateGUI and the saved layouts still address them.
+	local logo = Instance.new('TextLabel')
 	logo.Name = 'VapeLogo'
-	logo.Size = UDim2.fromOffset(62, 18)
-	logo.Position = UDim2.fromOffset(11, 10)
+	logo.Size = UDim2.fromOffset(getfontsize('AETHER', 15, uipallet.FontSemiBold).X, 18)
+	logo.Position = UDim2.fromOffset(13, 10)
 	logo.BackgroundTransparency = 1
-	logo.Image = getcustomasset('aetherv2/assets/new/guivape.png')
-	logo.ImageColor3 = select(3, uipallet.Main:ToHSV()) > 0.5 and uipallet.Text or Color3.new(1, 1, 1)
+	logo.Text = 'AETHER'
+	logo.TextXAlignment = Enum.TextXAlignment.Left
+	logo.TextColor3 = select(3, uipallet.Main:ToHSV()) > 0.5 and uipallet.Text or Color3.new(1, 1, 1)
+	logo.TextSize = 15
+	logo.FontFace = uipallet.FontSemiBold
 	logo.Parent = window
-	local logov4 = Instance.new('ImageLabel')
+	local logov4 = Instance.new('TextLabel')
 	logov4.Name = 'V4Logo'
-	logov4.Size = UDim2.fromOffset(28, 16)
-	logov4.Position = UDim2.new(1, 1, 0, 1)
+	logov4.Size = UDim2.fromOffset(24, 14)
+	logov4.Position = UDim2.new(1, 5, 0, 2)
 	logov4.BackgroundTransparency = 1
-	logov4.Image = getcustomasset('aetherv2/assets/new/guiv4.png')
+	logov4.Text = 'V2'
+	logov4.TextXAlignment = Enum.TextXAlignment.Left
+	logov4.TextColor3 = Color3.fromHSV(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value)
+	logov4.TextSize = 13
+	logov4.FontFace = uipallet.FontSemiBold
 	logov4.Parent = logo
 	local children = Instance.new('Frame')
 	children.Name = 'Children'
@@ -3993,10 +3967,10 @@ function mainapi:CreateGUI()
 	function categoryapi:CreateGUISlider(optionsettings)
 		local optionapi = {
 			Type = 'GUISlider',
-			Notch = 5,
-			Hue = 0.605,
-			Sat = 0.71,
-			Value = 1,
+			Notch = accent.Notch,
+			Hue = accent.Hue,
+			Sat = accent.Sat,
+			Value = accent.Value,
 			Rainbow = false,
 			CustomColor = false
 		}
@@ -4006,7 +3980,7 @@ function mainapi:CreateGUI()
 			Color3.fromRGB(252, 179, 22),
 			Color3.fromRGB(5, 133, 104),
 			Color3.fromRGB(47, 122, 229),
-			Color3.fromRGB(126, 84, 217),
+			Color3.fromRGB(190, 115, 255),
 			Color3.fromRGB(232, 96, 152)
 		}
 		local slidercolorpos = {
@@ -4083,7 +4057,7 @@ function mainapi:CreateGUI()
 				reset.FontFace = uipallet.Font
 				reset.Parent = slider
 				reset.MouseButton1Click:Connect(function()
-					optionapi:SetValue(nil, nil, nil, 5)
+					optionapi:SetValue(nil, nil, nil, accent.Notch)
 				end)
 			end
 
@@ -4227,10 +4201,10 @@ function mainapi:CreateGUI()
 		local knob = Instance.new('ImageLabel')
 		knob.Name = 'Knob'
 		knob.Size = UDim2.fromOffset(26, 12)
-		knob.Position = UDim2.fromOffset(slidercolorpos[4] - 3, -5)
+		knob.Position = UDim2.fromOffset(slidercolorpos[accent.Notch] - 3, -5)
 		knob.BackgroundTransparency = 1
 		knob.Image = getcustomasset('aetherv2/assets/new/guislider.png')
-		knob.ImageColor3 = slidercolors[4]
+		knob.ImageColor3 = slidercolors[accent.Notch]
 		knob.Parent = holder
 		optionsettings.Function = optionsettings.Function or function() end
 		local rainbowTable = {}
@@ -4319,13 +4293,13 @@ function mainapi:CreateGUI()
 				knob.Image = rainbowknob
 				knob.ImageColor3 = Color3.new(1, 1, 1)
 				tween:Tween(knob, uipallet.Tween, {
-					Position = UDim2.fromOffset(slidercolorpos[4] - 3, -5)
+					Position = UDim2.fromOffset(slidercolorpos[accent.Notch] - 3, -5)
 				})
 			else
 				knob.Image = normalknob
 				knob.ImageColor3 = Color3.fromHSV(self.Hue, self.Sat, self.Value)
 				tween:Tween(knob, uipallet.Tween, {
-					Position = UDim2.fromOffset(slidercolorpos[n or 4] - 3, -5)
+					Position = UDim2.fromOffset(slidercolorpos[n or accent.Notch] - 3, -5)
 				})
 			end
 
@@ -4378,7 +4352,7 @@ function mainapi:CreateGUI()
 					end)
 				end)
 			else
-				self:SetValue(nil, nil, nil, 5)
+				self:SetValue(nil, nil, nil, accent.Notch)
 				knob.Image = normalknob
 				local ind = table.find(mainapi.RainbowTable, self)
 				if ind then
@@ -4683,8 +4657,7 @@ end
 function mainapi:CreateCategory(categorysettings)
 	local categoryapi = {
 		Type = 'Category',
-		Expanded = false,
-		AlwaysMinimized = categorysettings.AlwaysMinimized or false
+		Expanded = false
 	}
 
 	-- Spread new category windows across a lattice instead of stacking every one
@@ -4790,9 +4763,6 @@ function mainapi:CreateCategory(categorysettings)
 			Category = categorysettings.Name
 		}
 
-		local patchedReason = modulesettings.Patched
-		local semiPatchedReason = modulesettings.SemiPatched
-		local hardPatched = patchedReason and not semiPatchedReason
 		local hovered = false
 		-- Whether this module's settings panel is expanded. Replaces the old
 		-- "is modulechildren.Visible" check so the row can keep treating itself as
@@ -4805,7 +4775,7 @@ function mainapi:CreateCategory(categorysettings)
 		local modulebutton = Instance.new('TextButton')
 		modulebutton.Name = modulesettings.Name
 		modulebutton.Size = UDim2.fromOffset(220, 40)
-		modulebutton.BackgroundColor3 = hardPatched and color.Dark(uipallet.Main, 0.04) or uipallet.Main
+		modulebutton.BackgroundColor3 = uipallet.Main
 		addGlass(modulebutton)
 		modulebutton.BorderSizePixel = 0
 		modulebutton.AutoButtonColor = false
@@ -4849,7 +4819,7 @@ function mainapi:CreateCategory(categorysettings)
 
 		modulesettings.Tags = modulesettings.Tags or {}
 		pcall(function()
-			applyFeatureTags(modulesettings.Tags, moduleapi.Name, patchedReason or semiPatchedReason)
+			applyFeatureTags(modulesettings.Tags, moduleapi.Name)
 			for i, tag in modulesettings.Tags do
 				tag = tag:upper()
 				local size = getfontsize(removeTags(tag), 12, uipallet.Font, Vector2.new(100000, 100000))
@@ -4879,25 +4849,6 @@ function mainapi:CreateCategory(categorysettings)
 				indicator.Visible = tag ~= 'MATCHED'
 			end
 		end)
-		if patchedReason or semiPatchedReason then
-			pcall(function()
-				local badgetext = semiPatchedReason and 'SEMI-PATCHED' or 'PATCHED'
-				local badgecolor = semiPatchedReason and Color3.fromRGB(224, 152, 44) or Color3.fromRGB(206, 66, 66)
-				local size = getfontsize(badgetext, 12, uipallet.Font, Vector2.new(100000, 100000))
-				local badge = Instance.new('TextLabel')
-				badge.Name = 'PatchBadge'
-				badge.LayoutOrder = -1
-				badge.Size = UDim2.new(0, size.X + 8, 0, 16)
-				badge.BackgroundColor3 = badgecolor
-				badge.TextSize = 11
-				badge.Text = badgetext
-				badge.TextColor3 = Color3.new(1, 1, 1)
-				badge.FontFace = uipallet.Font
-				badge.Parent = indicatorholder
-				addCorner(badge, UDim.new(0, 4))
-				addTooltip(badge, tostring(semiPatchedReason or patchedReason))
-			end)
-		end
 		local gradient = Instance.new('UIGradient')
 		gradient.Rotation = 90
 		gradient.Enabled = false
@@ -5261,7 +5212,7 @@ function mainapi:CreateCategory(categorysettings)
 				end
 			else
 				txtColor = (hovered or settingsOpen) and uipallet.Text or color.Dark(uipallet.Text, 0.16)
-				bgColor = hardPatched and color.Dark(uipallet.Main, 0.04) or ((hovered or settingsOpen) and color.Light(uipallet.Main, 0.02) or uipallet.Main)
+				bgColor = (hovered or settingsOpen) and color.Light(uipallet.Main, 0.02) or uipallet.Main
 				dots.ImageColor3 = color.Light(uipallet.Main, 0.37)
 				bindicon.ImageColor3 = color.Dark(uipallet.Text, 0.43)
 				bindtext.TextColor3 = color.Dark(uipallet.Text, 0.43)
@@ -5281,14 +5232,6 @@ function mainapi:CreateCategory(categorysettings)
 		end
 
 		function moduleapi:Toggle(multiple)
-			if hardPatched then
-				if mainapi.Notifications and mainapi.Notifications.Enabled then
-					pcall(function() mainapi:CreateNotification('Patched', moduleapi.Name..' is patched: '..tostring(patchedReason), 8, 'warning') end)
-				else
-					pcall(function() game:GetService('StarterGui'):SetCore('SendNotification', {Title = 'Patched', Text = moduleapi.Name..' is patched: '..tostring(patchedReason), Duration = 8}) end)
-				end
-				return
-			end
 			if mainapi.ThreadFix then
 				setthreadidentity(8)
 			end
@@ -5308,9 +5251,6 @@ function mainapi:CreateCategory(categorysettings)
 			end
 			if not multiple then
 				mainapi:UpdateTextGUI()
-			end
-			if self.Enabled and semiPatchedReason then
-				pcall(function() mainapi:CreateNotification('Semi-patched', moduleapi.Name..' is semi-patched: '..tostring(semiPatchedReason)..'. It occasionally works but is buggy.', 8, 'warning') end)
 			end
 			task.spawn(modulesettings.Function, self.Enabled)
 		end
@@ -5838,9 +5778,6 @@ function mainapi:CreateCategory(categorysettings)
 			refreshConfigProfiles()
 			self:ChangeValue()
 		end
-		if not self.Expanded and categorysettings.ExpandWarning then
-			mainapi:CreateNotification(categorysettings.Name, categorysettings.ExpandWarning, 10, 'warning')
-		end
 		self.Expanded = not self.Expanded
 		local targetHeight = self.Expanded and math.min(41 + windowlist.AbsoluteContentSize.Y / scale.Scale, 601) or 41
 		-- Animate the category open/closed instead of snapping. The children frame
@@ -6174,7 +6111,7 @@ function mainapi:CreateCategoryList(categorysettings)
 		Objects = {},
 		Options = {}
 	}
-	categorysettings.Color = categorysettings.Color or Color3.fromRGB(5, 134, 105)
+	categorysettings.Color = categorysettings.Color or Color3.fromRGB(190, 115, 255)
 
 	-- Take a lattice slot like the normal categories do. These list windows all defaulted to the
 	-- same (240, 46), so Friends, Targets and the config list opened stacked on each other (and on
@@ -6258,9 +6195,14 @@ function mainapi:CreateCategoryList(categorysettings)
 	settings.ImageColor3 = color.Dark(uipallet.Text, 0.43)
 	settings.Parent = window
 
-	-- Configs only: a World-icon button to the LEFT of the cog that opens a minimal
-	-- window for downloading preset configs from the repo's configs/ folder, with
-	-- Download and View (credits + tags) actions.
+	-- Configs only: a World-icon button to the LEFT of the cog that opens the repo
+	-- config browser - the configs/ folder of the repository, listed from presets.json,
+	-- with an Info action and a Load action.
+	--
+	-- Loading one is a live switch, not an install: the file is written, registered as a
+	-- profile and handed straight to mainapi:Load, which toggles the modules and applies
+	-- the config's keybind and accent on the spot. Nothing here asks for a rejoin or a
+	-- reinject, and the menu stays open behind the window.
 	if categorysettings.Profiles then
 		local function repoBase()
 			local commit = isfile('aetherv2/profiles/commit.txt') and readfile('aetherv2/profiles/commit.txt') or 'main'
@@ -6276,19 +6218,20 @@ function mainapi:CreateCategoryList(categorysettings)
 		downloadbtn.Image = getcustomasset('aetherv2/assets/new/worldicon.png')
 		downloadbtn.ImageColor3 = color.Dark(uipallet.Text, 0.43)
 		downloadbtn.Parent = window
-		addTooltip(downloadbtn, 'Download preset configs')
+		addTooltip(downloadbtn, 'Browse the configs in the repo')
 		downloadbtn.MouseEnter:Connect(function() downloadbtn.ImageColor3 = uipallet.Text end)
 		downloadbtn.MouseLeave:Connect(function() downloadbtn.ImageColor3 = color.Dark(uipallet.Text, 0.43) end)
 
 		local dl = Instance.new('Frame')
 		dl.Name = 'PresetDownloader'
-		dl.Size = UDim2.fromOffset(340, 320)
-		dl.Position = UDim2.new(0.5, -170, 0.5, -160)
+		dl.Size = UDim2.fromOffset(376, 352)
+		dl.Position = UDim2.new(0.5, -188, 0.5, -176)
 		dl.BackgroundColor3 = uipallet.Main
 		dl.Visible = false
 		dl.Parent = scaledgui
 		addBlur(dl)
 		addCorner(dl)
+		addWindowStroke(dl)
 		makeDraggable(dl)
 		local dlmodal = Instance.new('TextButton')
 		dlmodal.BackgroundTransparency = 1
@@ -6297,31 +6240,39 @@ function mainapi:CreateCategoryList(categorysettings)
 		dlmodal.Parent = dl
 		local dltitle = Instance.new('TextLabel')
 		dltitle.Size = UDim2.new(1, -20, 0, 20)
-		dltitle.Position = UDim2.fromOffset(16, 13)
+		dltitle.Position = UDim2.fromOffset(16, 12)
 		dltitle.BackgroundTransparency = 1
-		dltitle.Text = 'Preset Configs'
+		dltitle.Text = 'Repo Configs'
 		dltitle.TextXAlignment = Enum.TextXAlignment.Left
 		dltitle.TextColor3 = uipallet.Text
 		dltitle.TextSize = 14
-		dltitle.FontFace = uipallet.Font
+		dltitle.FontFace = uipallet.FontSemiBold
 		dltitle.Parent = dl
+		local dlsubtitle = dltitle:Clone()
+		dlsubtitle.Name = 'Subtitle'
+		dlsubtitle.Position = UDim2.fromOffset(16, 30)
+		dlsubtitle.Size = UDim2.new(1, -50, 0, 14)
+		dlsubtitle.Text = 'Loads straight away, no rejoin'
+		dlsubtitle.TextColor3 = color.Dark(uipallet.Text, 0.4)
+		dlsubtitle.TextSize = 11
+		dlsubtitle.FontFace = uipallet.Font
+		dlsubtitle.Parent = dl
 		local dlclose = addCloseButton(dl)
 		-- Live search over the preset list.
 		local dlsearchbkg = Instance.new('Frame')
 		dlsearchbkg.Name = 'SearchBkg'
 		dlsearchbkg.Size = UDim2.new(1, -20, 0, 26)
-		dlsearchbkg.Position = UDim2.fromOffset(10, 40)
+		dlsearchbkg.Position = UDim2.fromOffset(10, 52)
 		dlsearchbkg.BackgroundColor3 = color.Light(uipallet.Main, 0.03)
 		dlsearchbkg.BorderSizePixel = 0
 		dlsearchbkg.Parent = dl
-		addGlass(dlsearchbkg)
 		addCorner(dlsearchbkg)
 		local dlsearch = Instance.new('TextBox')
 		dlsearch.Size = UDim2.new(1, -16, 1, 0)
 		dlsearch.Position = UDim2.fromOffset(8, 0)
 		dlsearch.BackgroundTransparency = 1
 		dlsearch.Text = ''
-		dlsearch.PlaceholderText = 'Search presets (name or tag)'
+		dlsearch.PlaceholderText = 'Search by name or tag'
 		dlsearch.TextXAlignment = Enum.TextXAlignment.Left
 		dlsearch.TextColor3 = uipallet.Text
 		dlsearch.PlaceholderColor3 = color.Dark(uipallet.Text, 0.35)
@@ -6334,17 +6285,17 @@ function mainapi:CreateCategoryList(categorysettings)
 		local dlstatus = Instance.new('TextLabel')
 		dlstatus.Name = 'Status'
 		dlstatus.Size = UDim2.new(1, -20, 0, 30)
-		dlstatus.Position = UDim2.fromOffset(10, 76)
+		dlstatus.Position = UDim2.fromOffset(10, 88)
 		dlstatus.BackgroundTransparency = 1
 		dlstatus.Text = ''
-		dlstatus.TextColor3 = color.Dark(uipallet.Text, 0.25)
+		dlstatus.TextColor3 = color.Dark(uipallet.Text, 0.35)
 		dlstatus.TextSize = 12
 		dlstatus.FontFace = uipallet.Font
 		dlstatus.Parent = dl
 		local dllist = Instance.new('ScrollingFrame')
 		dllist.Name = 'List'
-		dllist.Size = UDim2.new(1, -20, 1, -86)
-		dllist.Position = UDim2.fromOffset(10, 76)
+		dllist.Size = UDim2.new(1, -20, 1, -98)
+		dllist.Position = UDim2.fromOffset(10, 88)
 		dllist.BackgroundTransparency = 1
 		dllist.BorderSizePixel = 0
 		dllist.ScrollBarThickness = 2
@@ -6360,36 +6311,56 @@ function mainapi:CreateCategoryList(categorysettings)
 		end)
 		table.insert(mainapi.Windows, dl)
 
+		-- Repaints the Load button of every row so exactly one of them reads Active.
+		local refreshRows
 		local downloading = {}
+
 		local function download(preset)
 			-- One request per preset at a time; double-clicking the button used
 			-- to fire duplicate imports.
 			if downloading[preset.file] then return end
 			downloading[preset.file] = true
-			mainapi:CreateNotification('Configs', 'Downloading '..tostring(preset.name)..'...', 2, 'info')
+			dlstatus.Text = 'Fetching '..tostring(preset.name)..'...'
+			dlstatus.Visible = true
 			task.spawn(function()
 				local ok, res = pcall(function()
 					return game:HttpGet(repoBase()..preset.file, true)
 				end)
 				if not ok or not res or res == '404: Not Found' then
 					downloading[preset.file] = nil
-					mainapi:CreateNotification('Configs', 'Failed to download '..tostring(preset.name)..'.', 7, 'alert')
+					dlstatus.Visible = false
+					mainapi:CreateNotification('Configs', 'Could not download '..tostring(preset.name)..'.', 7, 'alert')
 					return
 				end
+				-- Writes the config, registers it as a profile, equips it and applies it
+				-- to the running menu. By the time this returns the modules are already on.
 				local suc, result = importJsonConfig(res, preset.name)
 				downloading[preset.file] = nil
+				dlstatus.Visible = false
 				if suc then
 					refreshConfigProfiles()
-					mainapi:CreateNotification('Configs', 'Downloaded preset '..tostring(result)..'.', 5, 'info')
+					categoryapi:ChangeValue()
+					refreshRows()
+					mainapi:CreateNotification('Configs', tostring(result)..' is loaded and active', 5, 'info')
 				else
 					mainapi:CreateNotification('Configs', tostring(result), 8, 'alert')
 				end
 			end)
 		end
 
-		local function view(preset)
+		local function info(preset)
 			local tags = (preset.tags and #preset.tags > 0) and table.concat(preset.tags, ', ') or 'none'
-			mainapi:CreateNotification(tostring(preset.name)..' preset', 'Credits: '..tostring(preset.credits or '?')..'\nTags: '..tags..(preset.description and ('\n'..preset.description) or ''), 9, 'info')
+			mainapi:CreateNotification(tostring(preset.name), 'By '..tostring(preset.credits or '?')..'\nTags: '..tags..(preset.description and ('\n'..preset.description) or ''), 9, 'info')
+		end
+
+		local rowbuttons = {}
+		function refreshRows()
+			for name, button in rowbuttons do
+				local active = mainapi.Profile == name
+				button.Text = active and 'Active' or 'Load'
+				button.BackgroundColor3 = active and color.Light(uipallet.Main, 0.05) or Color3.fromHSV(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value)
+				button.TextColor3 = active and color.Dark(uipallet.Text, 0.4) or mainapi:TextColor(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value)
+			end
 		end
 
 		local function makeRow(preset)
@@ -6399,7 +6370,6 @@ function mainapi:CreateCategoryList(categorysettings)
 			row.Size = UDim2.new(1, 0, 0, 46)
 			row.BackgroundColor3 = color.Light(uipallet.Main, 0.02)
 			row.Parent = dllist
-			addGlass(row)
 			addCorner(row)
 			if preset.description then
 				addTooltip(row, tostring(preset.description))
@@ -6418,7 +6388,7 @@ function mainapi:CreateCategoryList(categorysettings)
 			tagline.Size = UDim2.new(1, -140, 0, 14)
 			tagline.Position = UDim2.fromOffset(12, 24)
 			tagline.Text = (preset.tags and #preset.tags > 0) and table.concat(preset.tags, ' • ') or ''
-			tagline.TextColor3 = color.Dark(uipallet.Text, 0.25)
+			tagline.TextColor3 = color.Dark(uipallet.Text, 0.31)
 			tagline.TextSize = 11
 			tagline.Parent = row
 			local function mkbtn(text, xoff, colour, fn)
@@ -6428,18 +6398,17 @@ function mainapi:CreateCategoryList(categorysettings)
 				b.AnchorPoint = Vector2.new(1, 0)
 				b.BackgroundColor3 = colour
 				b.Text = text
-				-- Contrast-aware: the Download button carries the accent colour,
-				-- which can be bright enough to wash out light text.
-				b.TextColor3 = mainapi:TextColor(colour:ToHSV())
+				b.TextColor3 = uipallet.Text
 				b.TextSize = 12
 				b.FontFace = uipallet.Font
 				b.AutoButtonColor = true
 				b.Parent = row
-				addCorner(b, UDim.new(0, 4))
+				addCorner(b, UDim.new(0, 5))
 				b.MouseButton1Click:Connect(fn)
+				return b
 			end
-			mkbtn('View', -74, color.Light(uipallet.Main, 0.05), function() view(preset) end)
-			mkbtn('Download', -10, Color3.fromHSV(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value), function() download(preset) end)
+			mkbtn('Info', -74, color.Light(uipallet.Main, 0.05), function() info(preset) end)
+			rowbuttons[tostring(preset.name)] = mkbtn('Load', -10, Color3.fromHSV(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value), function() download(preset) end)
 		end
 
 		-- Live search: match against the preset name and its tags.
@@ -6461,40 +6430,47 @@ function mainapi:CreateCategoryList(categorysettings)
 			for _, v in dllist:GetChildren() do
 				if v:IsA('Frame') then v:Destroy() end
 			end
-			dlstatus.Text = 'Loading presets...'
+			table.clear(rowbuttons)
+			dlstatus.Text = 'Loading configs...'
+			dlstatus.Visible = true
 			task.spawn(function()
 				local ok, res = pcall(function()
 					return game:HttpGet(repoBase()..'presets.json', true)
 				end)
 				refreshing = false
 				if not ok or not res or res == '404: Not Found' then
-					dlstatus.Text = 'Could not fetch the preset list. Check your connection and reopen.'
-					mainapi:CreateNotification('Configs', 'Failed to fetch the preset list.', 7, 'alert')
+					dlstatus.Text = 'Could not reach the repo. Check your connection and reopen'
+					mainapi:CreateNotification('Configs', 'Could not fetch the config list.', 7, 'alert')
 					return
 				end
 				local decoded = select(2, pcall(function() return httpService:JSONDecode(res) end))
 				if type(decoded) ~= 'table' or type(decoded.presets) ~= 'table' then
-					dlstatus.Text = 'Preset list is malformed.'
+					dlstatus.Text = 'The config list is malformed'
 					return
 				end
 				if #decoded.presets == 0 then
-					dlstatus.Text = 'No presets available yet.'
+					dlstatus.Text = 'No configs published yet'
 					return
 				end
-				dlstatus.Text = ''
+				dlstatus.Visible = false
 				for _, preset in decoded.presets do
 					pcall(makeRow, preset)
 				end
+				refreshRows()
 				applyFilter()
 			end)
 		end
 
-		downloadbtn.MouseButton1Click:Connect(function()
+		-- Opening it is also offered by the first-run welcome popup, so the opener lives
+		-- on mainapi rather than only on this button.
+		function mainapi.OpenRepoConfigs()
 			clickgui.Visible = false
 			dl.Visible = true
-			dl.Position = UDim2.new(0.5, -170, 0.5, -160)
+			dl.Position = UDim2.new(0.5, -188, 0.5, -176)
 			refresh()
-		end)
+		end
+
+		downloadbtn.MouseButton1Click:Connect(mainapi.OpenRepoConfigs)
 		dlclose.MouseButton1Click:Connect(function()
 			dl.Visible = false
 			clickgui.Visible = true
@@ -7010,6 +6986,185 @@ function mainapi:CreateCategoryList(categorysettings)
 	return categoryapi
 end
 
+--[[
+	First run
+
+	Opening the menu for the very first time drops a short card in front of it: what the
+	menu key is, where configs come from, and where to ask for help. It is written once
+	to profiles/welcome.txt and never shown again, and the file lives in profiles/ so a
+	script update cannot bring it back.
+]]
+function mainapi:CreateWelcome()
+	local seenpath = 'aetherv2/profiles/welcome.txt'
+	if isfile(seenpath) then return end
+
+	local card = Instance.new('Frame')
+	card.Name = 'Welcome'
+	card.Size = UDim2.fromOffset(430, 268)
+	card.Position = UDim2.new(0.5, -215, 0.5, -134)
+	card.BackgroundColor3 = uipallet.Main
+	card.Visible = false
+	card.Parent = scaledgui
+	addBlur(card)
+	addCorner(card)
+	addWindowStroke(card)
+	makeDraggable(card)
+	local cardmodal = Instance.new('TextButton')
+	cardmodal.BackgroundTransparency = 1
+	cardmodal.Text = ''
+	cardmodal.Modal = true
+	cardmodal.Parent = card
+
+	local logo = Instance.new('ImageLabel')
+	logo.Name = 'Logo'
+	logo.Size = UDim2.fromOffset(26, 26)
+	logo.Position = UDim2.fromOffset(22, 22)
+	logo.BackgroundTransparency = 1
+	logo.Image = getcustomasset('aetherv2/assets/new/vape.png')
+	logo.Parent = card
+
+	local title = Instance.new('TextLabel')
+	title.Name = 'Title'
+	title.Size = UDim2.new(1, -110, 0, 22)
+	title.Position = UDim2.fromOffset(58, 22)
+	title.BackgroundTransparency = 1
+	title.Text = 'Welcome to AetherV2'
+	title.TextXAlignment = Enum.TextXAlignment.Left
+	title.TextColor3 = uipallet.Text
+	title.TextSize = 18
+	title.FontFace = uipallet.FontSemiBold
+	title.Parent = card
+
+	local subtitle = title:Clone()
+	subtitle.Name = 'Subtitle'
+	subtitle.Size = UDim2.new(1, -110, 0, 16)
+	subtitle.Position = UDim2.fromOffset(58, 42)
+	subtitle.Text = 'A few things worth knowing before you start'
+	subtitle.TextColor3 = color.Dark(uipallet.Text, 0.4)
+	subtitle.TextSize = 12
+	subtitle.FontFace = uipallet.Font
+	subtitle.Parent = card
+
+	local rows = Instance.new('Frame')
+	rows.Name = 'Rows'
+	rows.Size = UDim2.new(1, -44, 0, 108)
+	rows.Position = UDim2.fromOffset(22, 84)
+	rows.BackgroundTransparency = 1
+	rows.Parent = card
+	local rowlist = Instance.new('UIListLayout')
+	rowlist.SortOrder = Enum.SortOrder.LayoutOrder
+	rowlist.Padding = UDim.new(0, 6)
+	rowlist.Parent = rows
+
+	for index, entry in {
+		{Heading = 'Open and close the menu', Body = 'Press '..table.concat(mainapi.Keybind, ' + '):upper()..'. Rebind it from the key next to the logo'},
+		{Heading = 'Configs live in the repo', Body = 'Profiles has a globe button that lists them, and loading one applies it right away'},
+		{Heading = 'Anything broken or missing', Body = 'discord.gg/aYu5c9v9zv, copied to your clipboard by the button below'}
+	} do
+		local row = Instance.new('Frame')
+		row.Name = 'Row'..index
+		row.LayoutOrder = index
+		row.Size = UDim2.new(1, 0, 0, 32)
+		row.BackgroundColor3 = color.Light(uipallet.Main, 0.02)
+		row.Parent = rows
+		addCorner(row)
+		local heading = Instance.new('TextLabel')
+		heading.Size = UDim2.new(1, -20, 0, 14)
+		heading.Position = UDim2.fromOffset(10, 3)
+		heading.BackgroundTransparency = 1
+		heading.Text = entry.Heading
+		heading.TextXAlignment = Enum.TextXAlignment.Left
+		heading.TextColor3 = uipallet.Text
+		heading.TextSize = 12
+		heading.FontFace = uipallet.Font
+		heading.Parent = row
+		local body = heading:Clone()
+		body.Position = UDim2.fromOffset(10, 16)
+		body.Text = entry.Body
+		body.TextColor3 = color.Dark(uipallet.Text, 0.36)
+		body.TextSize = 11
+		body.Parent = row
+	end
+
+	local function makeButton(text, order, primary, fn)
+		local button = Instance.new('TextButton')
+		button.Name = text
+		button.LayoutOrder = order
+		button.Size = UDim2.fromOffset(126, 30)
+		button.BackgroundColor3 = primary and Color3.fromHSV(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value) or color.Light(uipallet.Main, 0.04)
+		button.AutoButtonColor = true
+		button.Text = text
+		button.TextColor3 = primary and mainapi:TextColor(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value) or uipallet.Text
+		button.TextSize = 13
+		button.FontFace = uipallet.Font
+		button.Parent = card
+		addCorner(button, UDim.new(0, 5))
+		button.MouseButton1Click:Connect(fn)
+		return button
+	end
+
+	local buttons = Instance.new('Frame')
+	buttons.Name = 'Buttons'
+	buttons.Size = UDim2.new(1, -44, 0, 30)
+	buttons.Position = UDim2.fromOffset(22, 206)
+	buttons.BackgroundTransparency = 1
+	buttons.Parent = card
+	local buttonlist = Instance.new('UIListLayout')
+	buttonlist.FillDirection = Enum.FillDirection.Horizontal
+	buttonlist.SortOrder = Enum.SortOrder.LayoutOrder
+	buttonlist.Padding = UDim.new(0, 8)
+	buttonlist.Parent = buttons
+
+	local function dismiss()
+		card.Visible = false
+		clickgui.Visible = true
+		pcall(writefile, seenpath, 'true')
+	end
+
+	makeButton('Browse configs', 1, false, function()
+		dismiss()
+		if mainapi.OpenRepoConfigs then
+			mainapi.OpenRepoConfigs()
+		end
+	end).Parent = buttons
+	makeButton('Copy discord', 2, false, function()
+		if setclipboard then
+			setclipboard('https://discord.gg/aYu5c9v9zv')
+		end
+		mainapi:CreateNotification('AetherV2', 'Discord invite copied to your clipboard', 5, 'info')
+	end).Parent = buttons
+	makeButton('Start', 3, true, dismiss).Parent = buttons
+
+	local footer = Instance.new('TextLabel')
+	footer.Name = 'Footer'
+	footer.Size = UDim2.new(1, -44, 0, 14)
+	footer.Position = UDim2.fromOffset(22, 242)
+	footer.BackgroundTransparency = 1
+	footer.Text = 'Shown once. Everything here lives in the menu if you need it later'
+	footer.TextXAlignment = Enum.TextXAlignment.Left
+	footer.TextColor3 = color.Dark(uipallet.Text, 0.5)
+	footer.TextSize = 11
+	footer.FontFace = uipallet.Font
+	footer.Parent = card
+
+	addCloseButton(card).MouseButton1Click:Connect(dismiss)
+	table.insert(mainapi.Windows, card)
+	mainapi.WelcomeCard = card
+
+	-- Shown the first time the menu is actually opened rather than on injection, so it
+	-- never lands on top of whatever the user was doing before they asked for the menu.
+	local watcher
+	watcher = clickgui:GetPropertyChangedSignal('Visible'):Connect(function()
+		if not clickgui.Visible then return end
+		watcher:Disconnect()
+		if isfile(seenpath) then return end
+		clickgui.Visible = false
+		card.Visible = true
+		card.Position = UDim2.new(0.5, -215, 0.5, -134)
+	end)
+	mainapi:Clean(watcher)
+end
+
 function mainapi:CreateSearch()
 	local xscale = inputService.TouchEnabled and 0.1 or 0.5
 	local searchbkg = Instance.new('Frame')
@@ -7368,10 +7523,9 @@ function mainapi:CreateLegit()
 			Legit = true
 		}
 
-		local patchedReason = modulesettings.Patched
 		local module = Instance.new('TextButton')
 		module.Name = modulesettings.Name
-		module.BackgroundColor3 = patchedReason and color.Dark(uipallet.Main, 0.04) or color.Light(uipallet.Main, 0.02)
+		module.BackgroundColor3 = color.Light(uipallet.Main, 0.02)
 		module.Text = ''
 		module.AutoButtonColor = false
 		module.Parent = children
@@ -7475,7 +7629,7 @@ function mainapi:CreateLegit()
 			modulechildren.Parent = scaledgui
 			makeDraggable(modulechildren, window)
 			local objectstroke = Instance.new('UIStroke')
-			objectstroke.Color = Color3.fromRGB(5, 134, 105)
+			objectstroke.Color = Color3.fromRGB(190, 115, 255)
 			objectstroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 			objectstroke.Thickness = 0
 			objectstroke.Parent = modulechildren
@@ -7485,20 +7639,12 @@ function mainapi:CreateLegit()
 		addMaid(moduleapi)
 
 		function moduleapi:Toggle()
-			if patchedReason then
-				if mainapi.Notifications and mainapi.Notifications.Enabled then
-					pcall(function() mainapi:CreateNotification('Patched', moduleapi.Name..' is patched: '..tostring(patchedReason), 8, 'warning') end)
-				else
-					pcall(function() game:GetService('StarterGui'):SetCore('SendNotification', {Title = 'Patched', Text = moduleapi.Name..' is patched: '..tostring(patchedReason), Duration = 8}) end)
-				end
-				return
-			end
 			moduleapi.Enabled = not moduleapi.Enabled
 			if moduleapi.Children then
 				moduleapi.Children.Visible = moduleapi.Enabled
 			end
 			title.TextColor3 = moduleapi.Enabled and color.Light(uipallet.Text, 0.2) or color.Dark(uipallet.Text, 0.31)
-			module.BackgroundColor3 = moduleapi.Enabled and color.Light(uipallet.Main, 0.05) or (patchedReason and color.Dark(uipallet.Main, 0.04) or color.Light(uipallet.Main, 0.02))
+			module.BackgroundColor3 = moduleapi.Enabled and color.Light(uipallet.Main, 0.05) or color.Light(uipallet.Main, 0.02)
 			tween:Tween(knob, uipallet.Tween, {
 				BackgroundColor3 = moduleapi.Enabled and Color3.fromHSV(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value) or color.Light(uipallet.Main, 0.14)
 			})
@@ -7551,12 +7697,12 @@ function mainapi:CreateLegit()
 		end)
 		module.MouseEnter:Connect(function()
 			if not moduleapi.Enabled then
-				module.BackgroundColor3 = patchedReason and color.Dark(uipallet.Main, 0.04) or color.Light(uipallet.Main, 0.05)
+				module.BackgroundColor3 = color.Light(uipallet.Main, 0.05)
 			end
 		end)
 		module.MouseLeave:Connect(function()
 			if not moduleapi.Enabled then
-				module.BackgroundColor3 = patchedReason and color.Dark(uipallet.Main, 0.04) or color.Light(uipallet.Main, 0.02)
+				module.BackgroundColor3 = color.Light(uipallet.Main, 0.02)
 			end
 		end)
 		module.MouseButton1Click:Connect(function()
@@ -7644,6 +7790,7 @@ function mainapi:CreateLegit()
 	legitapi:CreateCategory('All')
 	legitapi:CreateCategory('Hud')
 	legitapi:CreateCategory('Game')
+	legitapi:CreateCategory('Visuals')
 
 	return legitapi
 end
@@ -7662,7 +7809,7 @@ function mainapi:CreateNotification(title, text, duration, type)
 				Body = httpService:JSONEncode({
 					content = '',
 					embeds = {{
-						title = title or "Vape",
+						title = title or "AetherV2",
 						description = removeTags(text or "None"),
 						color = tonumber(color:ToHex(), 16),
 						timestamp = os.date('%Y-%m-%dT%X.000Z'),
@@ -7787,7 +7934,7 @@ end
 local guipane
 function mainapi:Load(skipgui, profile)
 	if not skipgui then
-		self.GUIColor:SetValue(nil, nil, nil, 5)
+		self.GUIColor:SetValue(nil, nil, nil, accent.Notch)
 	end
 	local guidata = {}
 	local savecheck = true
@@ -7829,7 +7976,7 @@ function mainapi:Load(skipgui, profile)
 		guidata = loadJson('aetherv2/profiles/'..game.GameId..'.gui.txt')
 		if not guidata then
 			guidata = {Categories = {}}
-			self:CreateNotification('Vape', 'Failed to load GUI settings, Try rejoining ur game', 10, 'alert')
+			self:CreateNotification('AetherV2', 'Failed to load GUI settings, Try rejoining ur game', 10, 'alert')
 			delfile('aetherv2/profiles/'..game.GameId..'.gui.txt')
 			savecheck = false
 		end
@@ -7858,7 +8005,7 @@ function mainapi:Load(skipgui, profile)
 				if v.Pinned and object.Pin then
 					object:Pin()
 				end
-				if v.Expanded and object.Expand and not object.AlwaysMinimized then
+				if v.Expanded and object.Expand then
 					object:Expand()
 				end
 				if v.List and object.List and (#object.List > 0 or #v.List > 0) and object.ChangeValue then
@@ -7892,7 +8039,7 @@ function mainapi:Load(skipgui, profile)
 		local savedata = loadJson(configPath)
 		if not savedata then
 			savedata = {Categories = {}, Modules = {}, Legit = {}}
-			self:CreateNotification('Vape', 'Failed to load '..self.Profile..' profile.', 10, 'alert')
+			self:CreateNotification('AetherV2', 'Failed to load '..self.Profile..' profile.', 10, 'alert')
 			savecheck = false
 		end
 
@@ -7909,7 +8056,7 @@ function mainapi:Load(skipgui, profile)
 			if v.Pinned ~= object.Pinned then
 				object:Pin()
 			end
-			if not object.AlwaysMinimized and v.Expanded ~= nil and v.Expanded ~= object.Expanded then
+			if v.Expanded ~= nil and v.Expanded ~= object.Expanded then
 				object:Expand()
 			end
 			if object.Button and object.Button.Toggle and (v.Enabled or false) ~= object.Button.Enabled then
@@ -7963,7 +8110,10 @@ function mainapi:Load(skipgui, profile)
 		-- the table mid-iteration would throw here and abort the whole config load.
 		local legitSnapshot = table.clone(self.Legit.Modules)
 		for i, object in legitSnapshot do
-			local v = savedata.Legit[i]
+			-- Visuals modules used to be registered in a category tab, so a config written
+			-- before they moved has their settings under Modules. Read that once; the next
+			-- save writes them into the Legit section.
+			local v = savedata.Legit[i] or savedata.Modules[i]
 			if not v then
 				if object.Enabled then
 					object:Toggle()
@@ -8129,7 +8279,7 @@ function mainapi:Save(newprofile)
 	for i, v in self.Categories do
 		(v.Type ~= 'Category' and i ~= 'Main' and savedata or guidata).Categories[i] = {
 			Enabled = i ~= 'Main' and v.Button and v.Button.Enabled or nil,
-			Expanded = v.Type ~= 'Overlay' and not v.AlwaysMinimized and v.Expanded or nil,
+			Expanded = v.Type ~= 'Overlay' and v.Expanded or nil,
 			Pinned = v.Pinned,
 			Position = v.Object and {X = v.Object.Position.X.Offset, Y = v.Object.Position.Y.Offset} or nil,
 			Options = mainapi:SaveOptions(v, v.Options),
@@ -8176,6 +8326,108 @@ function mainapi:SaveOptions(object, savedoptions)
 	return savedoptions
 end
 
+-- Everything AetherV2 parks in the shared global tables.
+--
+-- Uninject cleared shared.vape and left the rest behind, and that is what made another
+-- script picked up after a self destruct come back wearing AetherV2's skin: every
+-- Vape-derived script starts with `shared.vape or _G.vape`, so it adopted this instance's
+-- api - and drew itself from AetherV2's assets - instead of building its own. The same
+-- goes for the game-module handles (vapeEvents, store, bedwars, remotes and friends): a
+-- later script that reads one is reading a torn-down instance.
+--
+-- Deliberately absent: shared.VapeDeveloper and shared.VapeCustomProfile, which the
+-- loader sets before we run and the reinject path reads afterwards, and getgenv().Drawing,
+-- which on some executors is the executor's own and not ours to take away.
+local claimedGlobals = {
+	'vape',
+	'vapeEvents',
+	'store',
+	'bedwars',
+	'remotes',
+	'getPlacedBlock',
+	'getSpeed',
+	'getHotbar',
+	'hotbarSwitch',
+	'switchItem',
+	'RealLifeBedWars',
+	'Backtrack',
+	'FakeLag',
+	'EntityAnalyser',
+	'texturepack',
+	'used_init',
+	'_aeroTierReady',
+	'getAeroTier',
+	'IsLongJumping',
+	'LongJumpFireballThrown',
+	'ProjectileAuraFiringLock',
+	'ItemOwner',
+	'AetherV2LoadingScreen',
+	'AetherV2SetLoadingStatus',
+	'AetherV2CloseLoadingScreen'
+}
+local claimedShared = {
+	'vape',
+	'vapereload',
+	'VapeIndependent',
+	'updated',
+	'bindable',
+	'gg',
+	'ACMODVIEWENABLED',
+	'RealLifeBedWars',
+	'vapeserverhoplist',
+	'vapeserverhopprevious',
+	'vapesessioninfo',
+	'MATCH_CONTROLLER_GETPLAYERPARTY_REVERT',
+	'PERMISSION_CONTROLLER_HASANYPERMISSIONS_REVERT'
+}
+
+-- Any ScreenGui we own, wherever it ended up. The menu itself is destroyed by Uninject,
+-- but the loader's progress screen lives outside it and a teardown mid-load would leave
+-- it on screen for whatever loads next.
+local function destroyOwnedScreens()
+	local roots = {}
+	if gethui then
+		local ok, res = pcall(gethui)
+		if ok and res then table.insert(roots, res) end
+	end
+	pcall(function()
+		table.insert(roots, cloneref(game:GetService('CoreGui')))
+	end)
+	pcall(function()
+		table.insert(roots, cloneref(game:GetService('Players')).LocalPlayer:FindFirstChildOfClass('PlayerGui'))
+	end)
+	for _, root in roots do
+		if not root then continue end
+		pcall(function()
+			for _, child in root:GetChildren() do
+				if child:IsA('ScreenGui') and (child:GetAttribute('AetherV2') or child.Name == 'AetherV2Loading') then
+					child:Destroy()
+				end
+			end
+		end)
+	end
+end
+
+local function releaseGlobals()
+	local genv = getgenv and getgenv() or nil
+	for _, name in claimedGlobals do
+		if genv then
+			pcall(function()
+				genv[name] = nil
+			end)
+		end
+		pcall(function()
+			_G[name] = nil
+		end)
+	end
+	for _, name in claimedShared do
+		pcall(function()
+			shared[name] = nil
+		end)
+	end
+	destroyOwnedScreens()
+end
+
 function mainapi:Uninject()
 	-- Hardened teardown. Every step is wrapped so a single erroring module/toggle
 	-- can never abort the uninject partway and leave a half-alive GUI behind -
@@ -8218,10 +8470,13 @@ function mainapi:Uninject()
 	shared.vape = nil
 	shared.vapereload = nil
 	shared.VapeIndependent = nil
+	releaseGlobals()
 end
 
 gui = Instance.new('ScreenGui')
 gui.Name = randomString()
+-- Lets the teardown find this screen again no matter what it was renamed to.
+gui:SetAttribute('AetherV2', true)
 gui.DisplayOrder = 9999999
 gui.ZIndexBehavior = Enum.ZIndexBehavior.Global
 gui.IgnoreGuiInset = true
@@ -8351,19 +8606,12 @@ mainapi:CreateCategory({
 -- icon for now until a dedicated asset is made.
 mainapi:CreateCategory({
 	Name = 'Exploits',
-	AlwaysMinimized = true,
-	ExpandWarning = 'Experimental modules may stop working or be patched quickly. Expect inconsistent results after game updates.',
 	Icon = getcustomasset('aetherv2/assets/new/blatanticon.png'),
 	Size = UDim2.fromOffset(14, 14)
 })
 mainapi:CreateCategory({
 	Name = 'Render',
 	Icon = getcustomasset('aetherv2/assets/new/rendericon.png'),
-	Size = UDim2.fromOffset(15, 14)
-})
-mainapi:CreateCategory({
-	Name = 'Visuals',
-	Icon = getcustomasset('aetherv2/assets/new/rendertab.png'),
 	Size = UDim2.fromOffset(15, 14)
 })
 -- The 'Legit' category is intentionally NOT created as a tab any more. All Legit
@@ -8660,7 +8908,7 @@ local friendssettings = {
 	Icon = getcustomasset('aetherv2/assets/new/friendstab.png'),
 	Size = UDim2.fromOffset(17, 16),
 	Placeholder = 'Roblox username',
-	Color = Color3.fromRGB(5, 134, 105),
+	Color = Color3.fromRGB(190, 115, 255),
 	Function = function()
 		friends.Update:Fire()
 		friends.ColorUpdate:Fire(friendscolor.Hue, friendscolor.Sat, friendscolor.Value)
@@ -8771,16 +9019,33 @@ mainapi:CreateLegit()
 -- window (opened via the search-bar icon) instead of a category tab. Using __index
 -- (rather than a real key) keeps all Legit modules working while ensuring the Legit
 -- api never shows up when the code iterates mainapi.Categories for real tabs.
+-- Visuals is no longer a tab of its own. Its modules are render/HUD work, so they
+-- belong beside the rest of it in the Legit window, under a Visuals tab there. This
+-- proxy keeps every `vape.Categories.Visuals:CreateModule` call in the game modules
+-- working untouched - it just pre-selects the tab and hands the call to the panel.
+local visualsproxy
+local function visualsCategory()
+	visualsproxy = visualsproxy or setmetatable({
+		CreateModule = function(_, modulesettings)
+			modulesettings.Category = modulesettings.Category or 'Visuals'
+			return mainapi.Legit:CreateModule(modulesettings)
+		end
+	}, {__index = mainapi.Legit})
+	return visualsproxy
+end
 setmetatable(mainapi.Categories, {
 	__index = function(_, key)
 		if key == 'Legit' then
 			return mainapi.Legit
+		elseif key == 'Visuals' then
+			return visualsCategory()
 		end
 	end
 })
 mainapi:CreateSearch()
 mainapi.Categories.Main:CreateOverlayBar()
 mainapi.Categories.Main:CreateSettingsDivider()
+mainapi:CreateWelcome()
 
 
 --[[
@@ -9053,12 +9318,12 @@ guipane:CreateDropdown({
 			reloadAether()
 		end
 	end,
-	Tooltip = 'newer - AetherV2 Nexus (glass-morphism)\nnew - The newest vape theme since v4.05\nold - The vape theme pre v4.05\nrise - Rise 6.0'
+	Tooltip = 'newer - AetherV2 Nexus\nnew - the newest vape theme\nold - the pre v4.05 theme\nrise - Rise 6.0'
 })
 mainapi.ThemeModules = guipane:CreateToggle({
 	Name = 'Recolour modules with theme',
 	Default = true,
-	Tooltip = 'Also recolour every module colour that supports it - target boxes, ESP, tracers, particles - when you change the GUI theme. Off gives modules their own colours',
+	Tooltip = 'Also recolour module colours - boxes, ESP, tracers - when the GUI theme changes',
 	Function = function(callback)
 		if callback and mainapi.ApplyThemeToModules then
 			mainapi:ApplyThemeToModules()
@@ -9110,7 +9375,6 @@ guipane:CreateButton({
 			BlatantCategory = 3,
 			ExploitsCategory = 4,
 			RenderCategory = 4,
-			VisualsCategory = 5,
 			LegitCategory = 6,
 			UtilityCategory = 7,
 			WorldCategory = 8,
@@ -9949,7 +10213,7 @@ function mainapi:UpdateGUI(hue, sat, val, default)
 
 	for i, v in mainapi.Categories do
 		if i == 'Main' then
-			v.Object.VapeLogo.V4Logo.ImageColor3 = Color3.fromHSV(hue, sat, val)
+			v.Object.VapeLogo.V4Logo.TextColor3 = Color3.fromHSV(hue, sat, val)
 			for _, button in v.Buttons do
 				if button.Enabled then
 					button.Object.TextColor3 = rainbow and Color3.fromHSV(mainapi:Color((hue - (button.Index * 0.025)) % 1)) or Color3.fromHSV(hue, sat, val)

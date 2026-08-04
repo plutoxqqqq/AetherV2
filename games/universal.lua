@@ -2,7 +2,7 @@ local vape = shared.vape
 local loadstring = function(...)
 	local res, err = loadstring(...)
 	if err and vape then
-		vape:CreateNotification('Vape', 'Failed to load : ' .. err, 30, 'alert')
+		vape:CreateNotification('AetherV2', 'Failed to load : ' .. err, 30, 'alert')
 	end
 	return res
 end
@@ -171,7 +171,7 @@ local function serverHop(pointer, filter)
 		table.insert(visited, game.JobId)
 	end
 	if not pointer then
-		notif('Vape', 'Searching for an available server.', 2)
+		notif('AetherV2', 'Searching for an available server.', 2)
 	end
 
 	local suc, httpdata = pcall(function()
@@ -197,7 +197,7 @@ local function serverHop(pointer, filter)
 				cacheExpire, cache = tick() + 60, httpdata
 				table.insert(attempted, v.id)
 
-				notif('Vape', 'Found! Teleporting.', 5)
+				notif('AetherV2', 'Found! Teleporting.', 5)
 				teleportService:TeleportToPlaceInstance(game.PlaceId, v.id)
 				return
 			end
@@ -206,11 +206,11 @@ local function serverHop(pointer, filter)
 		if data.nextPageCursor then
 			serverHop(data.nextPageCursor, filter)
 		else
-			notif('Vape', 'Failed to find an available server.', 5, 'warning')
+			notif('AetherV2', 'Failed to find an available server.', 5, 'warning')
 		end
 	else
 		notif(
-			'Vape',
+			'AetherV2',
 			'Failed to grab servers. (' .. (data and data.errors[1].message or 'no data') .. ')',
 			5,
 			'warning'
@@ -1501,7 +1501,7 @@ run(function()
 		end
 		MethodRay.Object.Visible = val == 'Raycast'
 	end,
-	Tooltip = 'FindPartOnRay* - Deprecated methods of raycasting used in old games\nRaycast - The modern raycast method\nPointToRay - Method to generate a ray from screen coords\nRay - Hooking Ray.new',
+	Tooltip = 'FindPartOnRay* - old deprecated raycasts\nRaycast - the modern one\nPointToRay - ray from screen coords\nRay - hooks Ray.new',
     })
     MethodRay = SilentAim:CreateDropdown({
 	Name = 'Raycast Type',
@@ -1848,7 +1848,7 @@ run(function()
 			AntiFall:Toggle()
 		end
 	end,
-	Tooltip = 'Part - Moves a part under you that does various methods to stop you from falling\nClassic - Teleports you out of the void after reaching the part destroy plane',
+	Tooltip = 'Part - a part under you that stops the fall\nClassic - teleports you out of the void',
     })
     Mode = AntiFall:CreateDropdown({
 	Name = 'Move Mode',
@@ -2130,7 +2130,7 @@ run(function()
 			Fly:Toggle()
 		end
 	end,
-	Tooltip = 'Velocity - Uses smooth physics based movement\nImpulse - Same as velocity while using forces instead\nCFrame - Directly adjusts the position of the root\nTP - Large teleports within intervals\nPulse - Controllable bursts of speed\nWalkSpeed - The classic mode of speed, usually detected on most games',
+	Tooltip = 'Velocity/Impulse - physics\nCFrame - root\nTP - large teleports\nPulse - speed bursts\nWalkSpeed - classic, detected',
     })
     FloatMode = Fly:CreateDropdown({
 	Name = 'Float Mode',
@@ -2155,7 +2155,7 @@ run(function()
 			Platform.Parent = Fly.Enabled and gameCamera or nil
 		end
 	end,
-	Tooltip = 'Velocity - Uses smooth physics based movement\nImpulse - Same as velocity while using forces instead\nCFrame - Directly adjusts the position of the root\nTP - Teleports you to the ground within intervals\nFloor - Spawns a part under you\nJump - Presses space after going below a certain Y Level\nBounce - Vertical bouncing motion',
+	Tooltip = 'Velocity/Impulse - physics\nCFrame - root\nTP - teleport\nFloor - part under you\nJump - hop at a Y level\nBounce - bouncing',
     })
     local states = { 'None' }
     for _, v in Enum.HumanoidStateType:GetEnumItems() do
@@ -2359,7 +2359,7 @@ run(function()
     Mode = HighJump:CreateDropdown({
 	Name = 'Mode',
 	List = { 'Impulse', 'Velocity', 'CFrame', 'Instant' },
-	Tooltip = 'Velocity - Uses smooth movement to boost you upward\nImpulse - Same as velocity while using forces instead\nCFrame - Directly adjusts the position upward\nInstant - Teleports you to the peak of the jump',
+	Tooltip = 'Velocity - smooth boost up\nImpulse - the same using forces\nCFrame - moves you up\nInstant - teleport to the peak',
     })
     Value = HighJump:CreateSlider({
 	Name = 'Velocity',
@@ -2544,82 +2544,6 @@ run(function()
 		return val == 1 and 'stud' or 'studs'
 	end,
 	Tooltip = 'How far each jump drops you. Never further than the ground below, and never at all when there is no ground below',
-    })
-end)
-
-run(function()
-    local Invisible
-    local oldcf
-    local animtrack
-    local proper = true
-
-    local function animationTrickery()
-	if entitylib.isAlive then
-		local isR15 = entitylib.character.Humanoid.RigType == Enum.HumanoidRigType.R15
-		local anim = Instance.new('Animation')
-		anim.AnimationId = 'rbxassetid://'..(isR15 and '18537363391' or '215384594')
-		animtrack = entitylib.character.Humanoid.Animator:LoadAnimation(anim)
-		animtrack.Priority = Enum.AnimationPriority.Action4
-		animtrack:Play(0, 0.001, 0)
-		anim:Destroy()
-
-		task.delay(0, function()
-			animtrack.TimePosition = isR15 and 0.77 or 0.38
-		end)
-	end
-    end
-
-    Invisible = vape.Categories.Blatant:CreateModule({
-	Name = 'Invisible',
-	Patched = 'Patched by server-side character replication checks.',
-	Function = function(callback)
-		if callback then
-			animationTrickery()
-
-			local bindKey = httpService:GenerateGUID(true)
-			runService:BindToRenderStep(bindKey, 0, function()
-				if entitylib.isAlive and oldcf then
-					entitylib.character.RootPart.CFrame = oldcf
-					animtrack:AdjustWeight(0.001)
-				end
-			end)
-
-			Invisible:Clean(function()
-				runService:UnbindFromRenderStep(bindKey)
-			end)
-
-			Invisible:Clean(runService.Heartbeat:Connect(function(dt)
-				if entitylib.isAlive then
-					local isR15 = entitylib.character.Humanoid.RigType == Enum.HumanoidRigType.R15
-					local root = entitylib.character.RootPart
-					local cf = root.CFrame - Vector3.new(0, entitylib.character.Humanoid.HipHeight + (root.Size.Y / 2) - 1, 0)
-					oldcf = root.CFrame
-
-					root.CFrame = cf * CFrame.Angles(math.rad(isR15 and 180 or 90), 0, 0)
-					animtrack:AdjustWeight(100)
-				end
-			end))
-
-			Invisible:Clean(entitylib.Events.LocalAdded:Connect(function(char)
-				local animator = char.Humanoid:WaitForChild('Animator', 1)
-				if animator and Invisible.Enabled then
-					oldroot = nil
-					Invisible:Toggle()
-					Invisible:Toggle()
-				end
-			end))
-		else
-			if animtrack then
-				animtrack:Stop()
-				animtrack:Destroy()
-			end
-
-			if entitylib.isAlive and oldcf then
-				entitylib.character.RootPart.CFrame = oldcf
-			end
-		end
-	end,
-	Tooltip = 'Turns you invisible'
     })
 end)
 
@@ -2843,7 +2767,6 @@ run(function()
     BoxSwingColor = Killaura:CreateColorSlider({
 	Name = 'Target Color',
 	Darker = true,
-	DefaultHue = 0.6,
 	DefaultOpacity = 0.5,
 	Visible = false,
     })
@@ -3007,7 +2930,7 @@ run(function()
     Mode = LongJump:CreateDropdown({
 	Name = 'Mode',
 	List = { 'Velocity', 'Impulse', 'CFrame' },
-	Tooltip = 'Velocity - Uses smooth physics based movement\nImpulse - Same as velocity while using forces instead\nCFrame - Directly adjusts the position of the root',
+	Tooltip = 'Velocity - smooth physics\nImpulse - the same using forces\nCFrame - moves the root directly',
     })
     Value = LongJump:CreateSlider({
 	Name = 'Speed',
@@ -3289,7 +3212,7 @@ run(function()
 		table.clear(modified)
 		fflag = nil
 	end,
-	Tooltip = 'Part - Modifies parts collision status around you\nCharacter - Modifies the local collision status of the character\nCFrame - Teleports you past parts\nMotor - Same as CFrame with a bypass\nFFlag - Directly adjusts all physics collisions',
+	Tooltip = 'Part - nearby parts\nCharacter - local collisions\nCFrame - teleport past\nMotor - CFrame with bypass\nFFlag - all physics',
     })
     StudLimit = Phase:CreateSlider({
 	Name = 'Wall Size',
@@ -3391,7 +3314,7 @@ run(function()
 			Speed:Toggle()
 		end
 	end,
-	Tooltip = 'Velocity - Uses smooth physics based movement\nImpulse - Same as velocity while using forces instead\nCFrame - Directly adjusts the position of the root\nTP - Large teleports within intervals\nPulse - Controllable bursts of speed\nWalkSpeed - The classic mode of speed, usually detected on most games',
+	Tooltip = 'Velocity/Impulse - physics\nCFrame - root\nTP - large teleports\nPulse - speed bursts\nWalkSpeed - classic, detected',
     })
     Options = {
 	MoveMethod = Speed:CreateDropdown({
@@ -3581,7 +3504,7 @@ run(function()
 			Truss.Parent = Spider.Enabled and gameCamera or nil
 		end
 	end,
-	Tooltip = 'Velocity - Uses smooth movement to boost you upward\nCFrame - Directly adjusts the position upward\nPart - Positions a climbable part infront of you',
+	Tooltip = 'Velocity - smooth boost up\nCFrame - moves you up\nPart - a climbable part in front of you',
     })
     Value = Spider:CreateSlider({
 	Name = 'Speed',
@@ -7051,7 +6974,7 @@ run(function()
     Mode = Gravity:CreateDropdown({
 	Name = 'Mode',
 	List = { 'Workspace', 'Velocity', 'Impulse' },
-	Tooltip = 'Workspace - Adjusts the gravity for the entire game\nVelocity - Adjusts the local players gravity\nImpulse - Same as velocity while using forces instead',
+	Tooltip = 'Workspace - gravity for the whole game\nVelocity - only yours\nImpulse - the same using forces',
     })
     Value = Gravity:CreateSlider({
 	Name = 'Gravity',
@@ -8125,7 +8048,7 @@ run(function()
 	end)
 
 	if not success or typeof(json) ~= 'table' then
-		notif('Vape', 'Invalid json format for fflag', 12, 'warning')
+		notif('AetherV2', 'Invalid json format for fflag', 12, 'warning')
 		return
 	end
 
@@ -8140,7 +8063,7 @@ run(function()
 		pcall(setfflag, i, tostring(v))
 	end
 
-	notif('Vape', 'FFlags applied, Go in a new game to take effect', 12, 'info')
+	notif('AetherV2', 'FFlags applied, Go in a new game to take effect', 12, 'info')
     end
 
     FFlag = vape.Categories.Legit:CreateModule({
@@ -8153,7 +8076,7 @@ run(function()
 		if call then
 			ChangeFFlag(true)
 		else
-			notif('Vape', 'Inorder to disable fflags you have applied, You need to restart roblox', 20, 'info')
+			notif('AetherV2', 'Inorder to disable fflags you have applied, You need to restart roblox', 20, 'info')
 		end
 	end,
     })

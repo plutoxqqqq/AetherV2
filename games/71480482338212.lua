@@ -1045,7 +1045,7 @@ run(function()
 			remote = packages.remotes[i]
 		end
 		if remote == '' then
-			notif('Vape', 'Failed to grab remote ('..i..')', 10, 'alert')
+			notif('AetherV2', 'Failed to grab remote ('..i..')', 10, 'alert')
 		end
 		remotes[i] = remote
 	end
@@ -1734,7 +1734,7 @@ run(function()
     end
     AimMode = AimAssist:CreateDropdown({
     	Name = 'Aim perspective',
-    	Tooltip = 'First person - aims with your camera\nThird person - turns your character to where you should be looking\nMouse - moves your mouse and camera\nDynamic - whichever of the two you are already in',
+    	Tooltip = 'First person - camera\nThird person - turns your character\nMouse - moves your mouse\nDynamic - whichever you are in',
     	List = {'First person', 'Third person', 'Mouse', 'Dynamic'},
     	Default = 'First person'
     })
@@ -2622,7 +2622,6 @@ run(function()
         Name = 'Target color',
         Darker = true,
         DefaultOpacity = 0.5,
-        DefaultHue = 1,
     })
     Attackcolor = SilentAura:CreateColorSlider({
         Name = 'Attack color',
@@ -3037,7 +3036,7 @@ run(function()
                 AntiFallPart.CanCollide = val == 'Collide'
             end
         end,
-    Tooltip = 'Normal - Smoothly moves you towards the nearest safe point\nVelocity - Launches you upward after touching\nCollide - Allows you to walk on the part'
+    Tooltip = 'Normal - slides you to safety\nVelocity - launches you upward\nCollide - lets you walk on the part'
     })
     local materials = {'ForceField'}
     for _, v in Enum.Material:GetEnumItems() do
@@ -4471,23 +4470,6 @@ run(function()
     })
 end)
 
-run(function()
-    local InfiniteShield
-    
-    InfiniteShield = vape.Categories.Blatant:CreateModule({
-        Name = 'InfiniteShield',
-        Patched = 'Patched by server-side shield validation.',
-        Function = function(callback)
-            if callback then
-                repeat
-                    bedwars.Client:Get('PlayerEatCake'):SendToServer({block = lplr})
-                    task.wait(0.1)
-                until not InfiniteShield.Enabled
-            end
-        end,
-        Tooltip = 'Gives you +10 shield infinitely'
-    })
-end)
 
 run(function()
     local InstantKill
@@ -5207,7 +5189,6 @@ run(function()
     BoxSwingColor = Killaura:CreateColorSlider({
         Name = 'Target Color',
         Darker = true,
-        DefaultHue = 0.6,
         DefaultOpacity = 0.5,
         Visible = false
     })
@@ -6275,138 +6256,6 @@ run(function()
 end)
 
 
-run(function()
-    local ProjectileExploit
-    local CustomProjectiles
-    local Targets
-    local Range
-    local List
-    local rayCheck = RaycastParams.new()
-    rayCheck.FilterType = Enum.RaycastFilterType.Include
-    local projectileRemote = {InvokeServer = function(self, ...) end}
-    local FireDelays = {}
-    task.spawn(function()
-	projectileRemote = bedwars.Client:Get(remotes.FireProjectile).instance
-    end)
-
-    local function getAmmo(check)
-	for _, item in store.inventory.inventory.items do
-		if check.ammoItemTypes and table.find(check.ammoItemTypes, item.itemType) then
-			return item.itemType
-		end
-	end
-	return nil
-    end
-
-    local function getProjectiles()
-	local items = {}
-	for _, item in store.inventory.inventory.items do
-		local itemMeta = bedwars.ItemMeta[item.itemType]
-		local proj = itemMeta and itemMeta.projectileSource
-		local ammo = proj and getAmmo(proj)
-		if ammo and table.find(List.ListEnabled, ammo) then
-			table.insert(items, {
-				item,
-				ammo,
-				proj.projectileType(ammo),
-				proj
-			})
-		end
-	end
-	return items
-    end
-
-    ProjectileExploit = vape.Categories.Blatant:CreateModule({
-	Name = 'ProjectileExploit',
-	Patched = 'Patched by server-side projectile validation.',
-	Function = function(callback)
-		if callback then
-			repeat
-				if (workspace:GetServerTimeNow() - bedwars.SwordController.lastAttack) > 0.5 then
-					local ent = entitylib.EntityPosition({
-						Part = 'RootPart',
-						Range = Range.Value,
-						Players = Targets.Players.Enabled,
-						NPCs = Targets.NPCs.Enabled,
-						Wallcheck = Targets.Walls.Enabled
-					})
-
-					if ent then
-						local pos = entitylib.character.RootPart.Position
-						for _, data in getProjectiles() do
-							local item, ammo, projectile, itemMeta = unpack(data)
-							if (FireDelays[item.itemType] or 0) < tick() then
-								rayCheck.FilterDescendantsInstances = {workspace.Map}
-								if #CustomProjectiles.ListEnabled > 0 then
-									projectile = CustomProjectiles.ListEnabled[math.random(1, #CustomProjectiles.ListEnabled)]
-								end
-								local meta = bedwars.ProjectileMeta[projectile]
-								if not meta then
-									continue
-								end
-								local projSpeed, gravity = meta.launchVelocity, meta.gravitationalAcceleration or 196.2
-								local calc = prediction.SolveTrajectory(pos, projSpeed, gravity, ent.RootPart.Position, ent.RootPart.Velocity, workspace.Gravity, ent.HipHeight, ent.Jumping and 42.6 or nil, rayCheck)
-								if calc then
-									targetinfo.Targets[ent] = tick() + 1
-									local switched = switchItem(item.tool)
-
-									task.spawn(function()
-										local dir, id = CFrame.lookAt(pos, calc).LookVector, httpService:GenerateGUID(true)
-										local shootPosition = (CFrame.new(pos, calc) * CFrame.new(Vector3.new(-bedwars.BowConstantsTable.RelX, -bedwars.BowConstantsTable.RelY, -bedwars.BowConstantsTable.RelZ))).Position
-										bedwars.ProjectileController:createLocalProjectile(meta, ammo, projectile, shootPosition, id, dir * projSpeed, {drawDurationSeconds = 1})
-										local _, res = pcall(function()
-											return projectileRemote:InvokeServer(item.tool, ammo, projectile, shootPosition, pos, dir * projSpeed, id, {drawDurationSeconds = 1, shotId = httpService:GenerateGUID(false)}, workspace:GetServerTimeNow())
-										end)
-										if not res then
-											FireDelays[item.itemType] = tick()
-										else
-											local shoot = itemMeta.launchSound
-											shoot = shoot and shoot[math.random(1, #shoot)] or nil
-											if shoot then
-												bedwars.SoundManager:playSound(shoot)
-											end
-										end
-									end)
-
-									FireDelays[item.itemType] = tick() + itemMeta.fireDelaySec
-									if switched then
-										task.wait(0.05)
-									end
-								end
-							end
-						end
-					end
-				end
-				task.wait(0.1)
-			until not ProjectileExploit.Enabled
-		end
-	end,
-	Tooltip = 'Shoots people around you with custom projectile types'
-    })
-    Targets = ProjectileExploit:CreateTargets({
-	Players = true,
-	Walls = true
-    })
-    List = ProjectileExploit:CreateTextList({
-	Name = 'Projectiles',
-	Default = {'arrow', 'snowball'}
-    })
-    CustomProjectiles = ProjectileExploit:CreateTextList({
-	Name = 'Exploited Projectiles',
-	Default = {'meteor_shower'},
-	Placeholder = 'projectile'
-    })
-    Range = ProjectileExploit:CreateSlider({
-	Name = 'Range',
-	Min = 1,
-	Max = 50,
-	Default = 50,
-	Suffix = function(val)
-		return val == 1 and 'stud' or 'studs'
-	end
-    })
-end)
-
 
 run(function()
     local Mode
@@ -6610,7 +6459,7 @@ run(function()
     			Truss.Parent = Spider.Enabled and gameCamera or nil
     		end
     	end,
-    	Tooltip = 'Velocity - Uses smooth movement to boost you upward\nCFrame - Directly adjusts the position upward\nPart - Positions a climbable part infront of you',
+    	Tooltip = 'Velocity - smooth boost up\nCFrame - moves you up\nPart - a climbable part in front of you',
     })
     Value = Spider:CreateSlider({
     	Name = 'Speed',
@@ -18778,7 +18627,6 @@ run(function()
     })
     Color = DamageIndicator:CreateColorSlider({
         Name = 'Color',
-        DefaultHue = 0,
         Function = function(hue, sat, val)
             if DamageIndicator.Enabled then
                 tab.baseColor = Color3.fromHSV(hue, sat, val)

@@ -1154,7 +1154,7 @@ run(function()
 			remote = packages.remotes[i]
 		end
 		if remote == '' then
-			notif('Vape', 'Failed to grab remote ('..i..')', 10, 'alert')
+			notif('AetherV2', 'Failed to grab remote ('..i..')', 10, 'alert')
 		end
 		remotes[i] = remote
 	end
@@ -1989,7 +1989,7 @@ run(function()
     end
     AimMode = AimAssist:CreateDropdown({
 	Name = 'Aim perspective',
-	Tooltip = 'First person - aims with your camera\nThird person - turns your character to where you should be looking\nMouse - moves your mouse and camera\nDynamic - whichever of the two you are already in',
+	Tooltip = 'First person - camera\nThird person - turns your character\nMouse - moves your mouse\nDynamic - whichever you are in',
 	List = {'First person', 'Third person', 'Mouse', 'Dynamic'},
 	Default = 'First person'
     })
@@ -3033,7 +3033,7 @@ run(function()
     Mouse = SilentAura:CreateToggle({Name = 'Require mouse down'})
     Dynamic = SilentAura:CreateToggle({
         Name = 'Dynamic hits',
-        Tooltip = 'Times each hit off how far away the target is instead of the sword\'s swing cooldown. Close range hits sooner, long range waits longer so the server is less likely to throw the hit away'
+        Tooltip = 'Times each hit off the range to the target instead of the swing cooldown, so the server keeps more of them'
     })
     LegitAura = SilentAura:CreateToggle({Name = 'Swing only'})
     SilentAim = SilentAura:CreateToggle({
@@ -3046,7 +3046,7 @@ run(function()
     })
     FaceTarget = SilentAura:CreateToggle({
         Name = 'Face target',
-        Tooltip = 'On - turns to face the target (body with Silent Aim, camera without it)\nOff - never turns. Hits inside Max angle still land, since they are worked out from positions rather than aim',
+        Tooltip = 'On - turns to face the target\nOff - never turns, though hits inside Max angle still land',
         Default = true,
     })
     Show = SilentAura:CreateToggle({
@@ -3063,7 +3063,6 @@ run(function()
         Name = 'Target color',
         Darker = true,
         DefaultOpacity = 0.5,
-        DefaultHue = 1,
     })
     Attackcolor = SilentAura:CreateColorSlider({
         Name = 'Attack color',
@@ -3852,7 +3851,7 @@ run(function()
                 ClutchBlocks.Object.Visible = val == 'Clutch'
             end)
         end,
-        Tooltip = 'Normal - slides you to the nearest safe point\nVelocity - launches you up on contact\nCollide - lets you walk on the barrier\nClutch - places a floor under you the moment a void fall starts\nFly - switches Fly on the instant no land is under you, off again over land'
+        Tooltip = 'Normal - slide to safety\nVelocity - launch up\nCollide - walk on it\nClutch - floor under you\nFly - fly over the void'
     })
     FlyRelease = AntiFall:CreateSlider({
         Name = 'Release height',
@@ -4534,7 +4533,7 @@ run(function()
         Min = 35,
         Max = 120,
         Default = 60,
-        Tooltip = 'How fast the drop has to be before Legit clutches or TP puts you on the floor. Blatant does not use this - it caps a speed rather than waiting for one'
+        Tooltip = 'How fast the drop has to be before Legit clutches or TP floors you. Blatant ignores it'
     })
     FallThreshold = NoFall:CreateSlider({
         Name = 'Fall threshold',
@@ -4543,13 +4542,13 @@ run(function()
         Default = 85,
         Suffix = ' studs/s',
         Visible = false,
-        Tooltip = 'RakNet: how fast the fall has to get before packet spoofing starts. Blatant repeatedly sends GroundHit throughout every descent'
+        Tooltip = 'RakNet: how fast the fall must get before packet spoofing starts. Blatant always sends it'
     })
     SpoofState = NoFall:CreateDropdown({
         Name = 'Reported state',
         List = {'Running', 'Landed', 'RunningNoPhysics'},
         Visible = false,
-        Tooltip = 'RakNet only: the humanoid state written into the outgoing physics packet during a dangerous fall. Running is what a grounded player reports and is safest; try Landed if a fall still registers'
+        Tooltip = 'RakNet only: the humanoid state sent during a dangerous fall. Running is safest, try Landed if it fails'
     })
     GroundDistance = NoFall:CreateSlider({
         Name = 'Ground Check',
@@ -4575,7 +4574,7 @@ run(function()
     })
     Zephyr = NoFall:CreateToggle({
         Name = 'Zephyr',
-        Tooltip = 'Legit only: jumps just before you land so the Zephyr/WindWalker kit negates the fall. Falls back to the normal clutch when it cannot fire'
+        Tooltip = 'Legit only: jumps just before landing so a Zephyr/WindWalker kit negates the fall'
     })
     TelepearlClutch = NoFall:CreateToggle({
         Name = 'Telepearl',
@@ -5356,7 +5355,7 @@ run(function()
         Name = 'Mode',
         List = {'Terrain', 'Part', 'Realistic'},
         Default = 'Terrain',
-        Tooltip = 'Terrain - real Roblox water with waves, filled in around you\nPart - one water-material plane across the map, cheaper and always available\nRealistic - glassy reflective terrain water that comes alive only when you go in it: underwater fog, colour, god-rays and sway, plus buoyancy that floats and slows you. All of it is dropped the moment you surface',
+        Tooltip = 'Terrain - real Roblox water\nPart - one cheap plane across the map\nRealistic - reflective water with underwater effects',
         Function = function()
             if Water.Enabled then
                 clearTerrain()
@@ -5395,7 +5394,6 @@ run(function()
     })
     Color = Water:CreateColorSlider({
         Name = 'Color',
-        DefaultHue = 0.55,
         DefaultOpacity = 0.7,
         Function = function()
             if not Water.Enabled then return end
@@ -5712,11 +5710,11 @@ run(function()
                 end))
             end
         end,
-        Tooltip = 'Towers you straight up: while you hold jump it fills the cell under your feet on every cell you rise through, so the pillar has no gaps'
+        Tooltip = 'Towers straight up while you hold jump, filling every cell you rise through so there are no gaps'
     })
     LimitItems = AutoBuildUp:CreateToggle({
         Name = 'Limit to items',
-        Tooltip = 'Only builds while you are holding blocks. Switch to a sword (or anything that is not a block) and towering stops until you hold blocks again'
+        Tooltip = 'Only builds while you hold blocks. Switch to a sword and towering waits for blocks again'
     })
 end)
 
@@ -6007,13 +6005,13 @@ run(function()
                 end))
             end
         end,
-        Tooltip = 'Spots a rubber-band - an impossible one-frame jump backward, sideways onto ground you just left, or straight down - and holds your own position for a moment so the whole pull is undone, not just its first frame. With Force position on it also keeps the server\'s copy of you exactly on your real position every frame (no teleport), which is what lets you fly the void without being dragged down'
+        Tooltip = 'Detects a rubber-band pull and undoes the whole thing, not just its first frame'
     })
     Mode = AntiLagback:CreateDropdown({
         Name = 'Mode',
         List = {'Restore', 'Nearest Land', 'Freeze'},
         Default = 'Restore',
-        Tooltip = 'Restore - undo the pull and keep your momentum\nNearest Land - drop onto the closest solid block so a yank cannot void you\nFreeze - hold still until the server settles'
+        Tooltip = 'Restore - undo the pull, keep momentum\nNearest Land - drop onto solid ground\nFreeze - hold still'
     })
     Sensitivity = AntiLagback:CreateSlider({
         Name = 'Sensitivity',
@@ -6039,7 +6037,7 @@ run(function()
         Default = 0.3,
         Decimal = 100,
         Suffix = ' seconds',
-        Tooltip = 'How long to keep re-asserting your position after a lagback. A pull lasts several frames, so undoing only the first one lets the server win'
+        Tooltip = 'How long to keep re-asserting your position after a lagback, since a pull lasts several frames'
     })
     Vertical = AntiLagback:CreateToggle({
         Name = 'Vertical pulls',
@@ -6049,7 +6047,7 @@ run(function()
     ForcePosition = AntiLagback:CreateToggle({
         Name = 'Force position',
         Default = true,
-        Tooltip = 'Keep the server\'s copy of you sitting on your exact position every frame, so it never lags a step behind you and the void can never slowly drag you down. This is what replaces the old void-fly touch-down - it never teleports you: the only place it ever puts you is where you already are'
+        Tooltip = 'Pins the server copy of you to your real position every frame, so the void cannot drag you down'
     })
     Notify = AntiLagback:CreateToggle({
         Name = 'Notifications',
@@ -6335,7 +6333,7 @@ run(function()
                 giveBack()
             end
         end,
-        Tooltip = 'Moves your hitbox off your body so nothing can damage you, while your body, camera and hits carry on as normal. The desync is cycled, skipped over the void and dropped if the anticheat pushes back',
+        Tooltip = 'Moves your hitbox off your body so nothing can damage you, while your hits carry on as normal',
         ExtraText = function()
             return Mode.Value
         end
@@ -6344,7 +6342,7 @@ run(function()
         Name = 'Mode',
         List = {'Offset', 'Under map', 'Teleport'},
         Default = 'Offset',
-        Tooltip = 'Offset - hitbox a few studs off your body, small enough to pass for jitter so it can be held longer\nUnder map - parked below the world, unreachable but a big lie, so keep hide time short',
+        Tooltip = 'Offset - a few studs away, subtle enough to hold longer\nUnder map - unreachable but obvious, keep it short',
         Function = function(val)
             pcall(function()
                 Offset.Object.Visible = val == 'Offset'
@@ -6381,7 +6379,7 @@ run(function()
         Decimal = 10,
         Suffix = ' studs',
         Darker = true,
-        Tooltip = 'How far off your body the hitbox sits. 6 clears a sword swing and an arrow without being a big enough jump to look like anything'
+        Tooltip = 'How far off your body the hitbox sits. 6 clears a sword swing without looking like much'
     })
     HideTime = GodMode:CreateSlider({
         Name = 'Hide time',
@@ -6390,7 +6388,7 @@ run(function()
         Default = 0.55,
         Decimal = 100,
         Suffix = ' seconds',
-        Tooltip = 'Longest the hitbox may be away from your body in one go. This is the anticheat budget - raise it for more immunity, lower it if you ever get pulled'
+        Tooltip = 'Longest the hitbox may be away from your body at once. Raise for immunity, lower if you get pulled'
     })
     SyncTime = GodMode:CreateSlider({
         Name = 'Sync time',
@@ -6399,7 +6397,7 @@ run(function()
         Default = 0.25,
         Decimal = 100,
         Suffix = ' seconds',
-        Tooltip = 'How long the hitbox goes back on your body between hides. This is the window where you can actually be hit, so it is kept short'
+        Tooltip = 'How long the hitbox goes back on your body between hides. This is when you can be hit'
     })
     Recover = GodMode:CreateSlider({
         Name = 'Recover',
@@ -6422,7 +6420,7 @@ run(function()
     SyncAir = GodMode:CreateToggle({
         Name = 'Sync while airborne',
         Default = true,
-        Tooltip = 'Put the hitbox back on your body whenever you are off the ground. A jump moves the hidden hitbox fast enough to look impossible, which is what lagged you back mid-jump. Off gives more immunity in the air but the jump lagback can come back'
+        Tooltip = 'Puts the hitbox back on your body while airborne, since a jump moves it fast enough to lag you back'
     })
     Notify = GodMode:CreateToggle({
         Name = 'Notifications',
@@ -6824,7 +6822,7 @@ run(function()
                 lockedTarget = nil
             end
         end,
-        Tooltip = 'Safely teleports around targets and faces them. Single locks one target for the hold time; Switch rotates between everyone in range'
+        Tooltip = 'Teleports around targets and faces them. Single locks one, Switch rotates between them'
     })
     Targets = TPAura:CreateTargets({Players = true, NPCs = true})
     Mode = TPAura:CreateDropdown({Name = 'Mode', List = {'Single', 'Switch'}, Default = 'Single'})
@@ -7468,7 +7466,7 @@ run(function()
                 setLag(false)
             end
         end,
-        Tooltip = 'Over the void, withholds replication, touches the nearest ground and comes straight back, so the server keeps seeing you land. Do not run FakeLag alongside it - both drive the same replication flags'
+        Tooltip = 'Over the void, withholds replication and touches ground so the server sees you land. Not with FakeLag'
     })
 
     Interval = InfiniteFly:CreateSlider({
@@ -7582,23 +7580,6 @@ run(function()
     })
 end)
 
-run(function()
-    local InfiniteShield
-
-    InfiniteShield = vape.Categories.Blatant:CreateModule({
-        Name = 'InfiniteShield',
-        Patched = 'Patched by server-side shield validation.',
-        Function = function(callback)
-            if callback then
-                repeat
-                    bedwars.Client:Get('PlayerEatCake'):SendToServer({block = lplr})
-                    task.wait(0.1)
-                until not InfiniteShield.Enabled
-            end
-        end,
-        Tooltip = 'Gives you +10 shield infinitely'
-    })
-end)
 
 run(function()
     local InstantKill
@@ -8281,7 +8262,7 @@ run(function()
     TargetSkilled = Killaura:CreateToggle({
         Name = 'Target skilled',
         Darker = true,
-        Tooltip = 'Hit whoever is playing best first, using EntityAnalyser\'s rating of them. Target Mode still decides between players it rates the same, and anyone on your Targets list still comes first'
+        Tooltip = 'Hit whoever is playing best first, using EntityAnalyser. Your Targets list still comes first'
     })
     -- Only shown while EntityAnalyser is on, because it is the module doing the rating. The state
     -- event is what carries that across - EntityAnalyser is created further down the file, so
@@ -8326,7 +8307,6 @@ run(function()
     BoxSwingColor = Killaura:CreateColorSlider({
         Name = 'Target Color',
         Darker = true,
-        DefaultHue = 0.6,
         DefaultOpacity = 0.5,
         Visible = false
     })
@@ -8772,11 +8752,11 @@ run(function()
     })
     LimitItems = LongJump:CreateToggle({
         Name = 'Limit to items',
-        Tooltip = 'Only long-jumps from an item in your hand (dao, jade hammer, void axe, cannon, tnt, grappling hook). Enable it without one and LongJump turns itself back off instead of freezing you'
+        Tooltip = 'Only long-jumps from a held item. Without one LongJump turns itself back off instead of freezing you'
     })
     ChangeDir = LongJump:CreateToggle({
         Name = 'Change direction mid-air',
-        Tooltip = 'Steer the boost while you are in the air with your movement keys, instead of flying in a straight line from where you set off. With Camera Direction on it also follows where you look when no keys are held'
+        Tooltip = 'Steer the boost with your movement keys instead of flying in a straight line'
     })
 
     -- LongJumpBypass: reuses two built-in behaviours back to back. On key it activates a compatible
@@ -8878,7 +8858,7 @@ run(function()
                 return task.spawn(function() if LongJumpBypass.Enabled then LongJumpBypass:Toggle() end end)
             end
         end,
-        Tooltip = 'Activates a compatible tool, flies forward at 37 studs/s and climbs for two seconds (height-capped for safety), then cancels all velocity and free-falls'
+        Tooltip = 'Fires a compatible tool, flies forward and climbs briefly, then cancels velocity and free-falls'
     })
     BypassBoost = LongJumpBypass:CreateSlider({
         Name = 'Boost',
@@ -9652,23 +9632,25 @@ run(function()
 	local FOV
 	local OtherProjectiles
 	local Blacklist
-	
+
+	-- Ground search params for the arc solve. Exclude rather than Include-the-map,
+	-- the same way ProjectileAimbot does it: targets stand on player-placed blocks
+	-- far more often than on the static map, and an Include list built at load time
+	-- is empty on any join where the map has not streamed in yet - which makes every
+	-- cast miss and the solve lead the target into the floor of the world.
 	local rayCheck = RaycastParams.new()
-	rayCheck.FilterType = Enum.RaycastFilterType.Include
-	rayCheck.FilterDescendantsInstances = {workspace:FindFirstChild('Map')}
-	
-	local hooked = false
-	local removeNamecall
-	local fireRemote
-	local hookVersion = 0
-	
+	rayCheck.FilterType = Enum.RaycastFilterType.Exclude
+	rayCheck.RespectCanCollide = true
+
+	local oldnamecall
+
 	local function getMousePosition()
 		if inputService.TouchEnabled then
 			return gameCamera.ViewportSize / 2
 		end
 		return inputService.GetMouseLocation(inputService)
 	end
-	
+
 	local function getPosition(ent)
 		if TargetPart.Value == 'Closest' then
 			local localPosition, magnitude, part = getMousePosition(), 9e9, nil
@@ -9694,28 +9676,28 @@ run(function()
 		end
 		return
 	end
-	
+
 	local function solveSilent(args)
 		local origin, velocity, projType = args[4], args[6], args[3]
 		if typeof(origin) ~= 'Vector3' or typeof(velocity) ~= 'Vector3' or type(projType) ~= 'string' then
 			return
 		end
-	
+
 		if (not OtherProjectiles.Enabled) and not projType:find('arrow') then
 			return
 		end
-	
+
 		if table.find(Blacklist.ListEnabled or {}, ((projType == 'glue_trap' or projType == 'glue_projectile') and 'gloop' or projType)) then
 			return
 		end
-	
+
 		local meta = bedwars.ProjectileMeta[projType]
 		if not meta then return end
-	
+
 		local speed = velocity.Magnitude
 		if speed <= 0 then return end
 		local gravity = meta.gravitationalAcceleration or 196.2
-	
+
 		local plr = entitylib.EntityMouse({
 			Part = 'RootPart',
 			Range = FOV.Value,
@@ -9723,10 +9705,10 @@ run(function()
 			NPCs = Targets.NPCs.Enabled,
 			Wallcheck = Targets.Walls.Enabled,
 			Sort = sortmethods[Sort.Value or 'Distance'],
-			Origin = origin,
+			Origin = origin
 		})
 		if not plr then return end
-	
+
 		local targetpart = plr[TargetPart.Value]
 		local targetpos = getPosition(plr.Character) or targetpart and targetpart.Position
 		if not targetpos then return end
@@ -9735,46 +9717,65 @@ run(function()
 		if balloons and balloons > 0 then
 			playerGravity = workspace.Gravity * (1 - (balloons >= 4 and 1.2 or balloons >= 3 and 1 or 0.975))
 		end
-	
+
+		-- A pearl is thrown to land somewhere, not to hit somebody, so it is solved
+		-- against where they are standing rather than where they are heading.
 		local pearl = projType == 'telepearl'
 		local targetVelocity = pearl and Vector3.zero or plr.RootPart.AssemblyLinearVelocity
-		local targetAirborne = not pearl and plr.Humanoid.FloorMaterial == Enum.Material.Air or math.abs(targetVelocity.Y) > 0.01
-		local calc, _, travelTime = prediction.SolveTrajectory(origin, speed * Prediction.Value, gravity, targetpos, targetVelocity, playerGravity, plr.HipHeight, plr.Jumping and 42.6 or nil, rayCheck, targetAirborne, plr.RootPart.Position, plr.RootPart, nil, true)
+
+		rayCheck.FilterDescendantsInstances = {lplr.Character, gameCamera}
+		local calc, travelTime = prediction.SolveTrajectory(
+			origin,
+			speed * Prediction.Value,
+			gravity,
+			targetpos,
+			targetVelocity,
+			playerGravity,
+			plr.HipHeight,
+			plr.Jumping and 42.6 or nil,
+			rayCheck,
+			nil,
+			lplr:GetNetworkPing()
+		)
 		if not calc or not travelTime or travelTime > (meta.lifetimeSec or 3) then return end
-	
+
 		targetinfo.Targets[plr] = tick() + 1
 		return CFrame.lookAt(origin, calc).LookVector * speed
 	end
-	
+
 	SilentAim = vape.Categories.Combat:CreateModule({
 		Name = 'SilentAim',
 		Function = function(callback)
-			hookVersion += 1
-			if callback and not namecall then
-				namecall = hookmetamethod(game, '__namecall', newcclosure(function(...)
+			-- Installed once and left in place: a metamethod hook cannot be lifted
+			-- cleanly, so it stays inert behind the Enabled check instead.
+			if callback and not oldnamecall and hookmetamethod and newcclosure and checkcaller and getnamecallmethod then
+				oldnamecall = hookmetamethod(game, '__namecall', newcclosure(function(...)
 					if SilentAim.Enabled and not checkcaller() and getnamecallmethod() == 'InvokeServer' and tostring(...) == 'ProjectileFire' then
 						local self = ...
-						local args = {select(2, ...)}
-						print('yo its kinda working')
-						local newVelocity = solveSilent(args)
-						if newVelocity then
+						-- table.pack keeps the argument count, so a call that ends in a
+						-- nil is passed on with the same arity it arrived with.
+						local args = table.pack(select(2, ...))
+						-- Guarded: anything thrown in here would come out of a __namecall
+						-- the whole game runs through, not just ours.
+						local ok, newVelocity = pcall(solveSilent, args)
+						if ok and newVelocity then
 							args[6] = newVelocity
 						end
-						return namecall(self, self.InvokeServer(self, unpack(args)))
+						return oldnamecall(self, table.unpack(args, 1, args.n))
 					end
-					return namecall(...)
+					return oldnamecall(...)
 				end))
 			end
 		end,
-		Tooltip = 'Redirects only the projectile values sent to the server, so enemies get hit while your shot flies exactly where you aimed on your own screen'
+		Tooltip = 'Redirects the projectile sent to the server so your shot still lands on target'
 	})
 	Targets = SilentAim:CreateTargets({
 		Players = true,
-		Walls = true,
+		Walls = true
 	})
 	TargetPart = SilentAim:CreateDropdown({
 		Name = 'Part',
-		List = {'RootPart', 'Head', 'Dynamic', 'Closest'},
+		List = {'RootPart', 'Head', 'Dynamic', 'Closest'}
 	})
 	local methods = {'Damage', 'Distance'}
 	for i in sortmethods do
@@ -9807,7 +9808,7 @@ run(function()
 				Blacklist.Object.Visible = call
 			end
 		end,
-	    Default = true
+		Default = true
 	})
 	Blacklist = SilentAim:CreateTextList({
 		Name = 'Blacklist',
@@ -9819,7 +9820,6 @@ end)
 	
 run(function()
     local ProjectileAura
-    local InstaKill
     local Targets
     local TargetMode
     local Range
@@ -9853,7 +9853,7 @@ run(function()
         for _, item in store.inventory.inventory.items do
             local itemMeta = bedwars.ItemMeta[item.itemType]
             local proj = itemMeta and itemMeta.projectileSource
-            local ammo = proj and (getAmmo(proj) or (InstaKill.Enabled and item.itemType:find('bow') and 'arrow'))
+            local ammo = proj and getAmmo(proj)
             if ammo then
                 table.insert(items, {
                     item,
@@ -9902,9 +9902,6 @@ run(function()
                                         local switched = switchItem(item.tool)
 
                                         task.spawn(function()
-                                            if InstaKill.Enabled and ammo:find('arrow') then
-                                                ammo = 'volley_arrow'
-                                            end
                                             local dir, id = CFrame.lookAt(pos, calc).LookVector, httpService:GenerateGUID(true)
                                             local shootPosition = (CFrame.new(pos, calc) * CFrame.new(Vector3.new(-bedwars.BowConstantsTable.RelX, -bedwars.BowConstantsTable.RelY, -bedwars.BowConstantsTable.RelZ))).Position
                                             bedwars.ProjectileController:createLocalProjectile(meta, ammo, projectile, shootPosition, id, dir * projSpeed, {drawDurationSeconds = 1})
@@ -9920,7 +9917,7 @@ run(function()
                                             end
                                         end)
 
-                                        FireDelays[item.itemType] = (InstaKill.Enabled and ammo:find('arrow')) and 0 or (tick() + itemMeta.fireDelaySec)
+                                        FireDelays[item.itemType] = tick() + itemMeta.fireDelaySec
                                         if switched then
                                             task.wait(0.05)
                                         end
@@ -9962,153 +9959,8 @@ run(function()
             return val == 1 and 'stud' or 'studs'
         end
     })
-    InstaKill = ProjectileAura:CreateToggle({
-        Name = 'InstaKill',
-        Patched = 'server-side projectile cooldown validation',
-        Tooltip = 'Manipulates projectile cooldown values to fire a volley instantly. Patched: the server validates projectile cooldowns and rejects the rapid shots'
-    })
 end)
 
-
-run(function()
-    local ProjectileExploit
-    local CustomProjectiles
-    local Targets
-    local Range
-    local List
-    -- Ground search params for the trajectory solve, and nothing else. Exclude rather than
-    -- Include-the-map: in this game a target is almost always standing on a block somebody
-    -- placed, which is not part of the static map, so an Include list of the map alone casts
-    -- straight past whatever they are stood on and reports the floor of the world far below -
-    -- and the solve then leads them as though they were about to fall into it. Worse, the list
-    -- was built at load time, so on any join where the map had not streamed in yet it held a
-    -- single nil, and an EMPTY Include list makes every cast return nothing at all.
-    local rayCheck = RaycastParams.new()
-    rayCheck.FilterType = Enum.RaycastFilterType.Exclude
-    rayCheck.RespectCanCollide = true
-    local projectileRemote = {InvokeServer = function(self, ...) end}
-    local FireDelays = {}
-    task.spawn(function()
-	projectileRemote = bedwars.Client:Get(remotes.FireProjectile).instance
-    end)
-
-    local function getAmmo(check)
-	for _, item in store.inventory.inventory.items do
-		if check.ammoItemTypes and table.find(check.ammoItemTypes, item.itemType) then
-			return item.itemType
-		end
-	end
-	return nil
-    end
-
-    local function getProjectiles()
-	local items = {}
-	for _, item in store.inventory.inventory.items do
-		local itemMeta = bedwars.ItemMeta[item.itemType]
-		local proj = itemMeta and itemMeta.projectileSource
-		local ammo = proj and getAmmo(proj)
-		if ammo and table.find(List.ListEnabled, ammo) then
-			table.insert(items, {
-				item,
-				ammo,
-				proj.projectileType(ammo),
-				proj
-			})
-		end
-	end
-	return items
-    end
-
-    ProjectileExploit = vape.Categories.Blatant:CreateModule({
-	Name = 'ProjectileExploit',
-	Patched = 'Patched by server-side projectile validation.',
-	Function = function(callback)
-		if callback then
-			repeat
-				if (workspace:GetServerTimeNow() - bedwars.SwordController.lastAttack) > 0.5 then
-					local ent = entitylib.EntityPosition({
-						Part = 'RootPart',
-						Range = Range.Value,
-						Players = Targets.Players.Enabled,
-						NPCs = Targets.NPCs.Enabled,
-						Wallcheck = Targets.Walls.Enabled
-					})
-
-					if ent then
-						local pos = entitylib.character.RootPart.Position
-						for _, data in getProjectiles() do
-							local item, ammo, projectile, itemMeta = unpack(data)
-							if (FireDelays[item.itemType] or 0) < tick() then
-								rayCheck.FilterDescendantsInstances = {lplr.Character, gameCamera}
-								if #CustomProjectiles.ListEnabled > 0 then
-									projectile = CustomProjectiles.ListEnabled[math.random(1, #CustomProjectiles.ListEnabled)]
-								end
-								local meta = bedwars.ProjectileMeta[projectile]
-								if not meta then
-									continue
-								end
-								local projSpeed, gravity = meta.launchVelocity, meta.gravitationalAcceleration or 196.2
-								local calc = prediction.SolveTrajectory(pos, projSpeed, gravity, ent.RootPart.Position, ent.RootPart.Velocity, workspace.Gravity, ent.HipHeight, ent.Jumping and 42.6 or nil, rayCheck)
-								if calc then
-									targetinfo.Targets[ent] = tick() + 1
-									local switched = switchItem(item.tool)
-
-									task.spawn(function()
-										local dir, id = CFrame.lookAt(pos, calc).LookVector, httpService:GenerateGUID(true)
-										local shootPosition = (CFrame.new(pos, calc) * CFrame.new(Vector3.new(-bedwars.BowConstantsTable.RelX, -bedwars.BowConstantsTable.RelY, -bedwars.BowConstantsTable.RelZ))).Position
-										bedwars.ProjectileController:createLocalProjectile(meta, ammo, projectile, shootPosition, id, dir * projSpeed, {drawDurationSeconds = 1})
-										local _, res = pcall(function()
-											return projectileRemote:InvokeServer(item.tool, ammo, projectile, shootPosition, pos, dir * projSpeed, id, {drawDurationSeconds = 1, shotId = httpService:GenerateGUID(false)}, workspace:GetServerTimeNow())
-										end)
-										if not res then
-											FireDelays[item.itemType] = tick()
-										else
-											local shoot = itemMeta.launchSound
-											shoot = shoot and shoot[math.random(1, #shoot)] or nil
-											if shoot then
-												bedwars.SoundManager:playSound(shoot)
-											end
-										end
-									end)
-
-									FireDelays[item.itemType] = tick() + itemMeta.fireDelaySec
-									if switched then
-										task.wait(0.05)
-									end
-								end
-							end
-						end
-					end
-				end
-				task.wait(0.1)
-			until not ProjectileExploit.Enabled
-		end
-	end,
-	Tooltip = 'Shoots people around you with custom projectile types'
-    })
-    Targets = ProjectileExploit:CreateTargets({
-	Players = true,
-	Walls = true
-    })
-    List = ProjectileExploit:CreateTextList({
-	Name = 'Projectiles',
-	Default = {'arrow', 'snowball'}
-    })
-    CustomProjectiles = ProjectileExploit:CreateTextList({
-	Name = 'Exploited Projectiles',
-	Default = {'meteor_shower'},
-	Placeholder = 'projectile'
-    })
-    Range = ProjectileExploit:CreateSlider({
-	Name = 'Range',
-	Min = 1,
-	Max = 50,
-	Default = 50,
-	Suffix = function(val)
-		return val == 1 and 'stud' or 'studs'
-	end
-    })
-end)
 
 
 run(function()
@@ -10318,7 +10170,7 @@ run(function()
 			Truss.Parent = Spider.Enabled and gameCamera or nil
 		end
 	end,
-	Tooltip = 'Velocity - Uses smooth movement to boost you upward\nCFrame - Directly adjusts the position upward\nPart - Positions a climbable part infront of you',
+	Tooltip = 'Velocity - smooth boost up\nCFrame - moves you up\nPart - a climbable part in front of you',
     })
     Value = Spider:CreateSlider({
 	Name = 'Speed',
@@ -14565,7 +14417,7 @@ run(function()
     })
     SpotifyMode = MP3Player:CreateToggle({
         Name = 'Spotify mode',
-        Tooltip = 'Play a song from a Spotify link. Spotify only serves audio to a logged-in session, so you get its 30-second preview, saved into songs/spotify',
+        Tooltip = 'Play a song from a Spotify link. Only its 30-second preview, saved into songs/spotify',
         Function = function(callback)
             pcall(function()
                 SpotifyLink.Object.Visible = callback
@@ -14617,7 +14469,6 @@ run(function()
     HUDColor = MP3Player:CreateColorSlider({
         Name = 'HUD color',
         Darker = true,
-        DefaultHue = 0.35,
         DefaultOpacity = 0.55,
         Function = refreshHUD
     })
@@ -14686,7 +14537,7 @@ run(function()
 	Name = 'Mode',
 	List = {'Push', 'TP'},
 	Default = 'Push',
-	Tooltip = 'Push nudges you up each frame while fully buried. TP teleports you to the top of the block column and also fires on partial burials, like legs only'
+	Tooltip = 'Push nudges you up while fully buried. TP jumps you to the top and also fires on partial burials'
     })
 end)
 
@@ -16096,7 +15947,7 @@ run(function()
         Default = 0,
         Decimal = 10,
         Suffix = 's',
-        Tooltip = 'Waits this long after the triggering action before sending the message (0 = instant). Applies to every AutoToxic line, including AutoGG'
+        Tooltip = 'How long to wait after the triggering action before sending, 0 for instant'
     })
     for _, v in {'Kill', 'Death', 'Bed', 'BedDestroyed', 'Win'} do
         Toggles[v] = AutoToxic:CreateToggle({
@@ -16563,7 +16414,7 @@ run(function()
                 table.clear(lastHurt)
             end
         end,
-        Tooltip = 'Alerts for possible cheaters. Every check needs several impossible readings before it says anything, and readings taken while your own connection is poor are discarded rather than counted'
+        Tooltip = 'Alerts for likely cheaters. Needs several impossible readings, and ignores ones taken on a poor connection'
     })
 
     MinStrikes = CheatDetector:CreateSlider({
@@ -16571,7 +16422,7 @@ run(function()
         Min = 2,
         Max = 12,
         Default = 5,
-        Tooltip = 'How many impossible readings of the same kind a player has to produce before being flagged. Raise it if you see anything you disagree with'
+        Tooltip = 'How many impossible readings of one kind before a player is flagged. Raise it for fewer flags'
     })
     for name in Checks do
         Toggles[name] = CheatDetector:CreateToggle({
@@ -17675,9 +17526,9 @@ run(function()
         end
         if not module.Enabled then
             safe(function() module:Toggle(true) end)
-            -- A module the GUI has marked hard-patched refuses to toggle and leaves Enabled alone.
-            -- Recording that we switched it on would make the restore switch it ON at the end of
-            -- the run, which is the opposite of putting things back.
+            -- A module whose toggle refused (one that errored out on the way in, say) leaves
+            -- Enabled alone. Recording that we switched it on would make the restore switch it
+            -- ON at the end of the run, which is the opposite of putting things back.
             record.turnedOn = module.Enabled == true
         end
         return module.Enabled
@@ -19915,7 +19766,7 @@ run(function()
                 shutdown()
             end
         end,
-        Tooltip = 'Plays the whole match on its own and keeps playing: gears up, routes to every enemy bed and breaks it, hunts the survivors, then queues the next game. Walks and bridges by default and only escalates when a route genuinely will not go. Progress is on the HUD',
+        Tooltip = 'Plays the whole match alone - gears up, breaks every bed, hunts survivors and queues the next game',
         Size = UDim2.fromOffset(232, 96)
     })
 
@@ -19999,7 +19850,7 @@ run(function()
     Aggression = AutoWin:CreateDropdown({
         Name = 'Aggression',
         List = {'Safe', 'Balanced', 'Blatant'},
-        Tooltip = 'How far the run may escalate when a route genuinely will not go. It always starts at walking and steps back down as soon as it is moving again.\nSafe - walk, bridge and dash only, nothing the server can reject\nBalanced - also allows Speed through a bad stretch\nBlatant - also allows Fly. Fastest, and the most obvious to everyone watching'
+        Tooltip = 'How far the run may escalate\nSafe - walk and bridge\nBalanced - also Speed\nBlatant - also Fly'
     })
     -- This GUI's dropdowns take their starting value from the first list entry and ignore Default,
     -- so the wanted default is set explicitly. A saved config still overrides it on load.
@@ -20007,7 +19858,7 @@ run(function()
     TakeOver = AutoWin:CreateToggle({
         Name = 'Take over modules',
         Default = true,
-        Tooltip = 'Drive your existing AutoBuy, AutoBank, AutoTool, YuziExtender, Killaura, AntiVoid and NoFallDamage while the run is on, and put every one of them back exactly as it found them when it stops. Off makes AutoWin fully self-contained and slower'
+        Tooltip = 'Drives your other modules during the run and puts every one of them back afterwards'
     })
     KillPlayers = AutoWin:CreateToggle({
         Name = 'Kill players',
@@ -20017,7 +19868,7 @@ run(function()
     RespawnAfterBed = AutoWin:CreateToggle({
         Name = 'Respawn after bed',
         Default = true,
-        Tooltip = 'Reset to base after each bed so the next cycle starts at your generator and your shop. Skipped once your own bed is gone, since a respawn would eliminate you'
+        Tooltip = 'Reset to base after each bed. Skipped once your own bed is gone, since dying would end you'
     })
     BankLoot = AutoWin:CreateToggle({
         Name = 'Bank loot',
@@ -20027,7 +19878,7 @@ run(function()
     YuziDash = AutoWin:CreateToggle({
         Name = 'Yuzi dash',
         Default = true,
-        Tooltip = 'With a dao in hand, cross by dashing instead of bridging - no iron run, no wool run, no bridge. The ability is fired directly, so nothing is left holding your velocity afterwards. Anything the dash misses is still bridged'
+        Tooltip = 'With a dao in hand, cross by dashing instead of bridging. Anything the dash misses is still bridged'
     })
     AutoEquipKit = AutoWin:CreateToggle({
         Name = 'Auto equip Yuzi',
@@ -20055,7 +19906,7 @@ run(function()
         Max = 128,
         Default = 32,
         Suffix = ' blocks',
-        Tooltip = 'The least to set off with when the crossing has to be BUILT. The route is measured first, so a longer gap buys more than this - and a route that is already walkable (a bridge is up, the map connects) buys nothing beyond a small reserve for patching holes'
+        Tooltip = 'Least to set off with when the crossing has to be built. A measured route can ask for more'
     })
     BedReach = AutoWin:CreateSlider({
         Name = 'Bed reach',
@@ -20124,7 +19975,7 @@ run(function()
         Name = 'Resume in lobby',
         Default = true,
         Darker = true,
-        Tooltip = 'The lobby is a different place, so AutoWin is not loaded there. With this on it leaves a note the lobby\'s AutoQueue module picks up, which queues the mode above and gets you straight back into a match',
+        Tooltip = 'Leaves a note the lobby AutoQueue picks up, so you are put straight back into a match',
         Function = function()
             writeState()
         end
@@ -22478,7 +22329,7 @@ run(function()
                 folder = nil
             end
         end,
-        Tooltip = 'Rates how well each player is actually playing - fights, movement, game sense, objectives, economy and teamwork - from what the game already replicates, and marks them overhead. Purely a read-out: it never changes another module\'s settings. Other modules can read it from getgenv().EntityAnalyser'
+        Tooltip = 'Rates how well each player is playing and marks them overhead. Read-only, it never changes other modules'
     })
 
     SweatAt = EntityAnalyser:CreateSlider({
@@ -22514,7 +22365,7 @@ run(function()
         Min = 2,
         Max = 40,
         Default = 22,
-        Tooltip = 'Score a player has to drop under to be marked new. The bands are always read in descending order, so dragging these past each other can never make a rating unreachable'
+        Tooltip = 'Score a player has to drop under to be marked new. Bands are read top down'
     })
     MinConfidence = EntityAnalyser:CreateSlider({
         Name = 'Minimum confidence',
@@ -22522,7 +22373,7 @@ run(function()
         Max = 90,
         Default = 15,
         Suffix = '%',
-        Tooltip = 'How much of the rating has to be actually evidenced before it commits to one. Below this everyone reads Unknown, however good their score looks'
+        Tooltip = 'How much of the rating must be evidenced before it commits. Below this everyone reads Unknown'
     })
     SampleRange = EntityAnalyser:CreateSlider({
         Name = 'Sample range',
@@ -22530,7 +22381,7 @@ run(function()
         Max = 250,
         Default = 90,
         Suffix = ' studs',
-        Tooltip = 'Inside this, and throughout any fight, players are read every frame. Outside it they are read twice a second, which costs almost nothing'
+        Tooltip = 'Inside this range players are read every frame, outside it twice a second'
     })
     Labels = EntityAnalyser:CreateToggle({
         Name = 'Labels',
@@ -22545,7 +22396,7 @@ run(function()
                 clearTags()
             end
         end,
-        Tooltip = 'Show the rating over each player\'s head. They are billboards in their own folder, so they cannot clash with ESP, PlayerOutline, KitESP or any aura visual'
+        Tooltip = 'Show the rating above each player. Its own billboards, so it never clashes with ESP'
     })
     ShowScore = EntityAnalyser:CreateToggle({
         Name = 'Show score',
@@ -22557,7 +22408,7 @@ run(function()
         Name = 'Show role',
         Default = true,
         Darker = true,
-        Tooltip = 'Also show what they are actually playing as - Rusher, Defender, Fighter, Support, Economy or ResourceControl. Mixed is left off the label'
+        Tooltip = 'Also show the role they are playing - Rusher, Defender, Fighter, Support or Economy'
     })
     ShowConfidence = EntityAnalyser:CreateToggle({
         Name = 'Show confidence',
@@ -23229,7 +23080,7 @@ run(function()
         Name = 'Mode',
         List = {'Toggle', 'On Key', 'Bed patcher'},
         Default = 'Toggle',
-        Tooltip = 'Toggle builds and maintains the shell. On Key builds once. Bed patcher walks your existing defence ring by ring and fills in whatever is missing',
+        Tooltip = 'Toggle builds and maintains the shell, On Key builds once, Bed patcher fills in what is missing',
         Function = function()
             syncModeOptions()
         end,
@@ -24128,14 +23979,14 @@ run(function()
                 task.wait(0.1)
             until not AutoBank.Enabled
         end,
-        Tooltip = 'Stores resources somewhere safe. Chest puts them in your personal chest while you are stood at it; Skybox drops them and holds the drops out of the world, then hands the lot back at a shop'
+        Tooltip = 'Stores resources somewhere safe, in your personal chest or held above the map until a shop'
     })
 
     Mode = AutoBank:CreateDropdown({
         Name = 'Mode',
         List = {'Skybox', 'Chest'},
         Default = 'Skybox',
-        Tooltip = 'Skybox - drops the resources and holds them above the map, then hands them back at a shop\nChest - legit: walk up to your personal chest and it puts them in, exactly as banking by hand does',
+        Tooltip = 'Skybox - holds the drops above the map until a shop\nChest - walks up and banks them like you would',
         Function = function()
             -- Reload rather than switching under the running loop: leaving Skybox has to hand
             -- the sky stash back first, which the disable path already does properly.
@@ -24166,7 +24017,7 @@ run(function()
         Default = true,
         Darker = true,
         Visible = false,
-        Tooltip = 'Empties the chest back into your inventory while you are stood at both the chest and a shop, so AutoBuy can spend what you banked'
+        Tooltip = 'Empties the chest back into your inventory at a shop, so AutoBuy can spend what you banked'
     })
     Whitelist = AutoBank:CreateTextList({
         Name = 'Whitelist',
@@ -25542,7 +25393,7 @@ run(function()
                 task.wait(0.1)
             until not AutoSteal.Enabled
         end,
-        Tooltip = 'Steals from enemy team crates and nearby chests (never a personal chest, yours or anybody else\'s), and can auto-bank the loot'
+        Tooltip = 'Steals from enemy crates and nearby chests, never a personal one, and can auto-bank the loot'
     })
 
     Range = AutoSteal:CreateSlider({
@@ -26434,7 +26285,7 @@ run(function()
         Name = 'Break mode',
         List = methods,
         Default = methods[1],
-        Tooltip = 'Health - most-health block first, always by the way in that needs the fewest blocks broken. Equal health is decided by Breaker Type\nDistance - nearest block first',
+        Tooltip = 'Health - most health first, by the shortest way in\nDistance - nearest block first',
         Function = function()
             locked = nil
         end
@@ -26526,11 +26377,11 @@ run(function()
         Name = 'Breaker Type',
         List = {'Blatant', 'Legit'},
         Default = 'Blatant',
-        Tooltip = 'Blatant - always the quickest way in, visible or not\nLegit - only what you can see, preferring the way in closest to you while still favouring the efficient one'
+        Tooltip = 'Blatant - the quickest way in, visible or not\nLegit - only what you can actually see'
     })
     Closest = Breaker:CreateToggle({
         Name = 'Closest break',
-        Tooltip = 'Marks one block as soon as it is in range and stays on it until it is broken, instead of switching between blocks and leaving them all half mined',
+        Tooltip = 'Stays on one block until it breaks instead of leaving several half mined',
         Function = function(callback)
             Mode.Object.Visible = not callback
             locked = nil
@@ -26861,7 +26712,6 @@ run(function()
     })
     Color = DamageIndicator:CreateColorSlider({
         Name = 'Color',
-        DefaultHue = 0,
         Function = function(hue, sat, val)
             if DamageIndicator.Enabled then
                 tab.baseColor = Color3.fromHSV(hue, sat, val)
@@ -32633,7 +32483,7 @@ run(function()
 				restoreSignals()
 			end
 		end,
-		Tooltip = 'Removes Krystal lagbacks: keeps momentum reported maxed and suppresses the local movement-correction listeners so the skate never snaps back'
+		Tooltip = 'Removes Krystal lagbacks by keeping momentum maxed and muting the correction listeners'
 	})
 
 	Momentum = KrystalDisabler:CreateSlider({
@@ -32655,7 +32505,7 @@ run(function()
 				restoreSignals()
 			end
 		end,
-		Tooltip = 'Silences the local CFrame/Velocity listeners the server corrects you through. Needs an executor with getconnections and hookfunction'
+		Tooltip = 'Silences the listeners the server corrects you through. Needs getconnections and hookfunction'
 	})
 end)
 
@@ -33365,7 +33215,7 @@ run(function()
 	})
 	TargetPriorities = AutoCaitlyn:CreateToggle({
 		Name = 'Target Priorities',
-		Tooltip = 'Scores every available contract by reward, health, distance and whether their bed is gone, instead of only contracting who you hit',
+		Tooltip = 'Scores every contract by reward, health, distance and bed state instead of only who you hit',
 		Function = function()
 			if activeSession then
 				activeSession.priorityId = nil

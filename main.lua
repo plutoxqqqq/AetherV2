@@ -20,6 +20,13 @@ if shared.vape then
 		pcall(function() old.gui:Destroy() end)
 	end
 	shared.vape = nil
+	-- Uninject clears these itself; repeating it here covers the case where the old
+	-- instance was broken enough that its own teardown never got that far. A stale
+	-- _G.vape is what lets the NEXT script find this one and run on its GUI.
+	pcall(function() _G.vape = nil end)
+	if getgenv then
+		pcall(function() getgenv().vape = nil end)
+	end
 end
 
 local vape
@@ -27,7 +34,7 @@ local compile = loadstring
 local loadstring = function(...)
 	local res, err = compile(...)
 	if err and vape then
-		vape:CreateNotification('Vape', 'Failed to load : '..err, 30, 'alert')
+		vape:CreateNotification('AetherV2', 'Failed to load : '..err, 30, 'alert')
 	end
 	return res
 end
@@ -79,8 +86,8 @@ end
 -- this is the fallback path). Self-contained + wires the _G.AetherV2* globals.
 local function buildNewerLoadingScreen(screen)
 	local tweenService = game:GetService('TweenService')
-	local primary = Color3.fromRGB(74, 141, 255)
-	local cyan = Color3.fromRGB(96, 226, 214)
+	local primary = Color3.fromRGB(190, 115, 255)
+	local cyan = Color3.fromRGB(226, 186, 255)
 
 	local background = Instance.new('Frame')
 	background.Name = 'Backdrop'
@@ -325,8 +332,8 @@ end
 -- Kept in sync with the copy in the other loader file.
 local function buildNewLoadingScreen(screen)
 	local tweenService = game:GetService('TweenService')
-	local accent = Color3.fromRGB(120, 235, 215)
-	local faint = Color3.fromRGB(214, 224, 244)
+	local accent = Color3.fromRGB(190, 115, 255)
+	local faint = Color3.fromRGB(224, 218, 244)
 
 	-- Barely there: dark at the very top and bottom, clear through the middle, so the logo and bar
 	-- read on a bright map without the screen becoming a wall.
@@ -427,7 +434,7 @@ local function buildNewLoadingScreen(screen)
 	local shimmer = Instance.new('UIGradient')
 	shimmer.Color = ColorSequence.new({
 		ColorSequenceKeypoint.new(0, accent),
-		ColorSequenceKeypoint.new(0.5, Color3.fromRGB(240, 255, 252)),
+		ColorSequenceKeypoint.new(0.5, Color3.fromRGB(246, 236, 255)),
 		ColorSequenceKeypoint.new(1, accent)
 	})
 	shimmer.Offset = Vector2.new(-1, 0)
@@ -879,10 +886,30 @@ local function finishLoading()
 				--task.spawn(redirect)
 			end
 			vape:CreateNotification('Finished Loading', (vape.VapeButton and 'Press the button in the top right' or 'Press '..table.concat(vape.Keybind, ' + '):upper())..' to open GUI', 5)
+		end
+		-- Update notice.
+		--
+		-- This used to read "Script has updated from <40 hex chars> to <40 hex chars>",
+		-- which named two commits nobody can tell apart and fired for every commit the
+		-- repository received - including ones that changed nothing this install has.
+		-- init.lua now only leaves shared.updated behind when files on THIS machine were
+		-- actually replaced, and hands over the version either side of it.
+		local update = shared.updated
+		shared.updated = nil
+		if type(update) == 'table' then
 			task.delay(1, function()
-				if shared.updated then
-					vape:CreateNotification('AetherV2', `Script has updated from {shared.updated} to {readfile('aetherv2/profiles/commit.txt')}`, 10, 'info')
+				local text
+				if update.From and update.To and update.From ~= update.To then
+					text = 'Updated to v'..update.To..' (was v'..update.From..')'
+				elseif update.To then
+					text = 'Updated to the latest v'..update.To..' build'
+				else
+					text = 'Updated to the latest build'
 				end
+				if update.Files and update.Files > 0 then
+					text = text..' - '..update.Files..' file'..(update.Files == 1 and '' or 's')..' changed'
+				end
+				vape:CreateNotification('AetherV2', text, 8, 'info')
 			end)
 		end
 		if #loadingWarnings > 0 then

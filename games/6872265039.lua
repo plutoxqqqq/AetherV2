@@ -2315,12 +2315,12 @@ run(function()
                 end))
             end
         end,
-        Tooltip = 'Queues a match from the lobby on its own. This is what lets AutoWin keep playing after a match ends: the lobby is a different place, so AutoWin itself is not loaded here'
+        Tooltip = 'Queues a match from the lobby on its own, which is what lets AutoWin keep playing'
     })
     Mode = AutoQueue:CreateDropdown({
         Name = 'Gamemode',
         List = queueList(),
-        Tooltip = 'Which queue to join. From AutoWin follows the gamemode set in AutoWin on the match side, so there is only one place to change it'
+        Tooltip = 'Which queue to join. From AutoWin follows the gamemode set on the match side'
     })
     Delay = AutoQueue:CreateSlider({
         Name = 'Queue delay',
@@ -2328,12 +2328,12 @@ run(function()
         Max = 30,
         Default = 5,
         Suffix = ' seconds',
-        Tooltip = 'How long to settle after arriving in the lobby before queueing. Too short and the party state has not arrived yet and the request is dropped'
+        Tooltip = 'How long to settle in the lobby before queueing, so the party state has arrived'
     })
     Resume = AutoQueue:CreateToggle({
         Name = 'Resume from AutoWin',
         Default = true,
-        Tooltip = 'Switch AutoQueue on by itself when AutoWin was running when you left the match. This is the half that makes an unattended run survive being sent back to the lobby - without it nothing here knows a run was in progress'
+        Tooltip = 'Turns AutoQueue on by itself when AutoWin was running as you left the match'
     })
     Notify = AutoQueue:CreateToggle({
         Name = 'Notifications',

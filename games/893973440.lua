@@ -314,7 +314,6 @@ run(function()
     	BoxSwingColor = Killaura:CreateColorSlider({
     		Name = 'Target Color',
     		Darker = true,
-    		DefaultHue = 0.6,
     		DefaultOpacity = 0.5,
     		Visible = false
     	})

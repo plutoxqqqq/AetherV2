@@ -49,8 +49,8 @@ end
 -- ScreenGui and wires the _G.AetherV2* globals the loader drives during startup.
 local function buildNewerLoadingScreen(screen)
 	local tweenService = game:GetService('TweenService')
-	local primary = Color3.fromRGB(74, 141, 255)
-	local cyan = Color3.fromRGB(96, 226, 214)
+	local primary = Color3.fromRGB(190, 115, 255)
+	local cyan = Color3.fromRGB(226, 186, 255)
 
 	-- Backdrop with a slow diagonal gradient drift.
 	local background = Instance.new('Frame')
@@ -302,8 +302,8 @@ end
 -- Kept in sync with the copy in the other loader file.
 local function buildNewLoadingScreen(screen)
 	local tweenService = game:GetService('TweenService')
-	local accent = Color3.fromRGB(120, 235, 215)
-	local faint = Color3.fromRGB(214, 224, 244)
+	local accent = Color3.fromRGB(190, 115, 255)
+	local faint = Color3.fromRGB(224, 218, 244)
 
 	-- Barely there: dark at the very top and bottom, clear through the middle, so the logo and bar
 	-- read on a bright map without the screen becoming a wall.
@@ -406,7 +406,7 @@ local function buildNewLoadingScreen(screen)
 	local shimmer = Instance.new('UIGradient')
 	shimmer.Color = ColorSequence.new({
 		ColorSequenceKeypoint.new(0, accent),
-		ColorSequenceKeypoint.new(0.5, Color3.fromRGB(240, 255, 252)),
+		ColorSequenceKeypoint.new(0.5, Color3.fromRGB(246, 236, 255)),
 		ColorSequenceKeypoint.new(1, accent)
 	})
 	shimmer.Offset = Vector2.new(-1, 0)
@@ -798,15 +798,24 @@ end
 
 local prefetchPaths = nil
 
+-- The version this install is on right now, e.g. '3.5'. Read straight off disk, so
+-- calling it before the update reports the version being replaced and calling it
+-- after reports the one that landed.
+local function installedVersion()
+	if not isfile('aetherv2/version.txt') then return nil end
+	local body = readfile('aetherv2/version.txt')
+	if type(body) ~= 'string' then return nil end
+	local found = body:match('version%s*=%s*([^\r\n]+)')
+	return found and (found:gsub('%s+$', '')) or nil
+end
+
 if not shared.VapeDeveloper then
 	local oldCommit = isfile('aetherv2/profiles/commit.txt') and readfile('aetherv2/profiles/commit.txt') or ''
 	_G.AetherV2SetLoadingStatus('Checking for updates', 0.12)
 	local commit = license.Commit or resolveCommit()
 
 	if commit and commit ~= oldCommit then
-		if oldCommit ~= '' then
-			shared.updated = oldCommit
-		end
+		local previousVersion = installedVersion()
 
 		-- Update only what actually changed.
 		--
@@ -819,6 +828,10 @@ if not shared.VapeDeveloper then
 		-- against, keeping files would mean keeping whatever is stale among them.
 		local newFiles = fetchFileList(commit)
 		local oldFiles = readFileList()
+
+		-- How many files this update actually replaced. nil means the comparison was not
+		-- available and everything was refetched, so there is no honest number to report.
+		local changedFiles
 
 		if newFiles and oldFiles then
 			local changed = 0
@@ -835,15 +848,25 @@ if not shared.VapeDeveloper then
 					local target = 'aetherv2/'..path
 					if isfile(target) and not isUserFile('/'..target) then
 						delfile(target)
+						changed += 1
 					end
 				end
 			end
+			changedFiles = changed
 			_G.AetherV2SetLoadingStatus('Updating '..changed..' file'..(changed == 1 and '' or 's'), 0.16)
 		else
 			wipeFolder('aetherv2')
 			wipeFolder('aetherv2/games')
 			wipeFolder('aetherv2/guis')
 			wipeFolder('aetherv2/libraries')
+		end
+
+		-- Only an update the user would actually notice is worth announcing. A first
+		-- install has nothing to compare against, and a commit that moved no file this
+		-- install carries (a README edit, a change to another game's module) is not an
+		-- update to this install at all - both used to fire the notification anyway.
+		if oldCommit ~= '' and (changedFiles == nil or changedFiles > 0) then
+			shared.updated = {From = previousVersion, Files = changedFiles}
 		end
 
 		writefile('aetherv2/profiles/commit.txt', commit)
@@ -973,6 +996,12 @@ end
 
 _G.AetherV2SetLoadingStatus('Checking version', 0.18)
 downloadFile('aetherv2/version.txt')
+
+-- version.txt is only back on disk now, so this is the first point the version that
+-- arrived can be read. main.lua turns the pair into the update notification.
+if type(shared.updated) == 'table' then
+	shared.updated.To = installedVersion()
+end
 
 local versionData = readfile("aetherv2/version.txt")
 local maintenance = versionData:match("maintenance%s*=%s*([^\r\n]+)")
