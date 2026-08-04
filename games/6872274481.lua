@@ -2,9 +2,6 @@ local license = ... or {}
 if type(license) ~= 'table' then license = {} end
 license.Closet = license.Closet == true
 
--- Teleports into a match can execute the cached game script before Roblox has
--- finished constructing ReplicatedStorage/LocalPlayer. Waiting for the engine's
--- load barrier prevents the bootstrap from indexing a half-created BedWars tree.
 if not game:IsLoaded() then
 	game.Loaded:Wait()
 end
@@ -66,17 +63,10 @@ local lplr = playersService.LocalPlayer
 local assetfunction = getcustomasset
 
 local vape = shared.vape
--- 'Exploits' category safety net. The `new`, `newer` and `old` GUI themes create a real
--- Exploits tab; any other theme (e.g. `rise`, which has an unusual category layout) won't,
--- so we alias Exploits -> Blatant there. This guarantees `vape.Categories.Exploits` is
--- always a valid category, so the exploit modules below never get skipped for indexing nil.
 if vape.Categories and not vape.Categories.Exploits then
 	vape.Categories.Exploits = vape.Categories.Blatant
 end
--- 'Visuals' category safety net (same idea as Exploits above). The `new` and `newer` themes
--- have a real Visuals tab, but `old` and `rise` don't - so alias Visuals -> Render there, which
--- every theme has. Without this, moving a module to Visuals (e.g. ChillLighting) would make it,
--- and the other Visuals modules, silently disappear on those themes.
+
 if vape.Categories and not vape.Categories.Visuals then
 	vape.Categories.Visuals = vape.Categories.Render
 end
@@ -9655,325 +9645,180 @@ run(function()
     })
 end)
 
--- SilentAim: ProjectileAimbot's trajectory solve, with nothing on screen giving it away.
---
--- ProjectileAimbot works at the launch-value hook, which is also what draws the game's own preview
--- arc - so the arc visibly bends onto the target, and that is the lock you can see. SilentAim works
--- one level lower, on the ProjectileFire remote itself: the client keeps rendering the shot you
--- actually aimed, and only the velocity in the request to the server is replaced. The arc, the
--- crosshair and the camera all stay exactly where you pointed them while the projectile lands on
--- the target. Aim anywhere you like.
---
--- Three things were stopping it redirecting anything at all, all fixed below and each noted where
--- it lives: the trajectory solve was called with the wrong argument list (and read a return value
--- that does not exist), target lookup went through screen space so anything off camera was
--- invisible to it whatever Search said, and the redirected call was being truncated at the first
--- nil argument on its way to the server.
 run(function()
-    local SilentAim
-    local Targets
-    local TargetPart
-    local Sort
-    local Search
-    local FOV
-    local Range
-    local MaxAngle
-    local Prediction
-    local AutoCharge
-    local MouseDown
-    local HitChance
-    local OtherProjectiles
-    local Blacklist
-    local Notify
-    local namecall
-    -- Ground search params for the trajectory solve, and nothing else. Exclude rather than
-    -- Include-the-map: in this game a target is almost always standing on a block somebody
-    -- placed, which is not part of the static map, so an Include list of the map alone casts
-    -- straight past whatever they are stood on and reports the floor of the world far below -
-    -- and the solve then leads them as though they were about to fall into it. Worse, the list
-    -- was built at load time, so on any join where the map had not streamed in yet it held a
-    -- single nil, and an EMPTY Include list makes every cast return nothing at all.
-    local rayCheck = RaycastParams.new()
-    rayCheck.FilterType = Enum.RaycastFilterType.Exclude
-    rayCheck.RespectCanCollide = true
-
-    local function getMousePosition()
-        return inputService.TouchEnabled and gameCamera.ViewportSize / 2 or inputService:GetMouseLocation()
-    end
-
-    local function getPosition(ent)
-        if TargetPart.Value == 'Closest' then
-            local mouse, magnitude, part = getMousePosition(), math.huge
-            for _, current in ent:GetChildren() do
-                if current:IsA('BasePart') then
-                    local position, visible = gameCamera:WorldToViewportPoint(current.Position)
-                    if visible then
-                        local distance = (mouse - Vector2.new(position.X, position.Y)).Magnitude
-                        if distance < magnitude then
-                            magnitude, part = distance, current
-                        end
-                    end
-                end
-            end
-            return part and part.Position or ent.PrimaryPart and ent.PrimaryPart.Position
-        elseif TargetPart.Value == 'Dynamic' then
-            local tool = store.hand and store.hand.tool
-            if tool and tool.Name:find('headhunter') and ent:FindFirstChild('Head') then
-                return ent.Head.Position
-            end
-            return ent.PrimaryPart and ent.PrimaryPart.Position
-        end
-    end
-
-    -- Find who the shot should go to. This is what Search actually means, and until now it meant
-    -- nothing at all: the dropdown existed but every lookup went through EntityMouse, which is
-    -- screen space and drops anything WorldToViewportPoint says is off camera. Aiming away from
-    -- somebody therefore found no target and redirected nothing, which is most of what "SilentAim
-    -- doesn't redirect" was. Anywhere now searches world space, so where you look genuinely makes
-    -- no difference, and Crosshair FOV is the opt-in that behaves like ProjectileAimbot.
-    local function findTarget(origin)
-        local settings = {
-            Part = 'RootPart',
-            Players = Targets.Players.Enabled,
-            NPCs = Targets.NPCs.Enabled,
-            Wallcheck = Targets.Walls.Enabled,
-            Sort = Sort.Value ~= 'Distance' and sortmethods[Sort.Value] or nil,
-            Origin = origin
-        }
-        if Search.Value == 'Crosshair FOV' then
-            settings.Range = FOV.Value
-            return entitylib.EntityMouse(settings)
-        end
-        settings.Range = Range.Value
-        return entitylib.EntityPosition(settings)
-    end
-
-    -- Keep the projectile rendered by the client untouched and redirect only the velocity in the
-    -- ProjectileFire request, so the arc, the crosshair and the camera all stay where you pointed
-    -- them while the projectile lands on the target.
-    local function solveSilent(args)
-        local origin, velocity, projectile = args[4], args[6], args[3]
-        if typeof(origin) ~= 'Vector3' or typeof(velocity) ~= 'Vector3' or type(projectile) ~= 'string' then return end
-        if MouseDown.Enabled and not inputService:IsMouseButtonPressed(0) then return end
-        if HitChance.Value < 100 and math.random(100) > HitChance.Value then return end
-        if not OtherProjectiles.Enabled and not projectile:find('arrow') then return end
-        if table.find(Blacklist.ListEnabled or {}, (projectile == 'glue_trap' or projectile == 'glue_projectile') and 'gloop' or projectile) then return end
-
-        local meta = bedwars.ProjectileMeta[projectile]
-        if not meta then return end
-
-        -- The speed the game is actually sending, which already accounts for how far the bow was
-        -- drawn. Auto Charge replaces it with the full launch speed - that is the whole of what the
-        -- toggle does, and until now it did nothing whatsoever: it was created, shown in the menu,
-        -- and never read anywhere in the module.
-        local speed = velocity.Magnitude
-        if AutoCharge.Enabled and (meta.launchVelocity or 0) > speed then
-            speed = meta.launchVelocity
-        end
-        if speed <= 0 then return end
-
-        local target = findTarget(origin)
-        if not target or not target.RootPart then return end
-        if (target.RootPart.Position - origin).Magnitude > Range.Value then return end
-
-        local targetPart = target[TargetPart.Value]
-        local targetPosition = getPosition(target.Character) or (targetPart and targetPart.Position)
-        if not targetPosition then return end
-
-        if MaxAngle.Value < 360 then
-            local delta = targetPosition - origin
-            if delta.Magnitude > 0 and math.acos(math.clamp(gameCamera.CFrame.LookVector:Dot(delta.Unit), -1, 1)) > math.rad(MaxAngle.Value) / 2 then return end
-        end
-
-        local playerGravity = workspace.Gravity
-        local balloons = target.Character:GetAttribute('InflatedBalloons')
-        if balloons and balloons > 0 then
-            playerGravity = workspace.Gravity * (1 - (balloons >= 4 and 1.2 or balloons >= 3 and 1 or 0.975))
-        end
-
-        local pearl = projectile == 'telepearl'
-        local targetVelocity = pearl and Vector3.zero or target.RootPart.AssemblyLinearVelocity
-
-        -- The map has to be resolved here rather than when the module was built. Filtering by
-        -- Include against a list holding a single nil is an EMPTY include list, which makes every
-        -- raycast in the solve return nothing, so on any join where workspace.Map had not streamed
-        -- in yet the ground search was blind for the rest of the session.
-        rayCheck.FilterDescendantsInstances = {lplr.Character, gameCamera}
-
-        -- SolveTrajectory takes (origin, speed, projectileGravity, targetPosition, targetVelocity,
-        -- playerGravity, playerHeight, playerJump, params, iterations, ping) and returns exactly
-        -- two values. The old call passed fourteen arguments: a boolean landed in `iterations` and
-        -- a Vector3 landed in `ping`, and both are put through math.clamp, so this threw on EVERY
-        -- shot - inside a __namecall hook, taking the game's own fire call down with it. On top of
-        -- that it read a third return value as travelTime, which does not exist, so even without
-        -- the error the `not travelTime` guard below would have rejected every single solve. Those
-        -- two together are why nothing was ever redirected.
-        local calculated, travelTime = prediction.SolveTrajectory(
-            origin,
-            speed * Prediction.Value,
-            meta.gravitationalAcceleration or 196.2,
-            targetPosition,
-            targetVelocity,
-            playerGravity,
-            target.HipHeight,
-            target.Jumping and 42.6 or nil,
-            rayCheck,
-            nil,
-            lplr:GetNetworkPing()
-        )
-        if not calculated then return end
-        -- Out of range shots come back with no flight time at all, which is information, not a
-        -- reason to refuse: sending it as far towards them as the projectile reaches beats leaving
-        -- the shot pointing wherever the camera happened to be.
-        if travelTime and travelTime > (meta.lifetimeSec or 3) then return end
-
-        targetinfo.Targets[target] = tick() + 1
-
-        -- A full-speed arrow has to be sent as a fully drawn one or the server scales it back down
-        -- to whatever the draw table says. Replaced rather than mutated: that table belongs to the
-        -- local projectile the client has already spawned, and editing it in place would change the
-        -- shot you can see - which is the one thing this module exists not to do.
-        if AutoCharge.Enabled and type(args[8]) == 'table' then
-            local draw = table.clone(args[8])
-            draw.drawDurationSeconds = 5
-            args[8] = draw
-        end
-
-        if Notify.Enabled then
-            notif('SilentAim', 'Redirected onto '..(target.Player and target.Player.Name or 'a target'), 1)
-        end
-        return CFrame.lookAt(origin, calculated).LookVector * speed
-    end
-
-    SilentAim = vape.Categories.Combat:CreateModule({
-        Name = 'SilentAim',
-        Disabled = not canDebug,
-        Function = function(callback)
-            if callback and not namecall then
-                namecall = hookmetamethod(game, '__namecall', newcclosure(function(self, ...)
-                    -- table.pack keeps the argument COUNT. The old `{...}` plus `unpack(args)` was
-                    -- silently truncating the call at the first nil argument, so a ProjectileFire
-                    -- with an absent draw table or timestamp reached the server missing everything
-                    -- after the hole and was rejected outright.
-                    local args = table.pack(...)
-                    if SilentAim.Enabled and not checkcaller() and getnamecallmethod() == 'InvokeServer' and tostring(self) == 'ProjectileFire' then
-                        -- Never let a solve error escape into the game's own fire call. Whatever
-                        -- happens in here, the shot still goes out - unredirected at worst.
-                        local ok, velocity = pcall(solveSilent, args)
-                        if ok and velocity then args[6] = velocity end
-                    end
-                    return namecall(self, table.unpack(args, 1, args.n))
-                end))
-            end
-        end,
-        Tooltip = 'Redirects only the projectile values sent to the server, so enemies get hit while your local shot stays where you aimed'
-    })
-    Targets = SilentAim:CreateTargets({
-        Players = true,
-        Walls = true
-    })
-    TargetPart = SilentAim:CreateDropdown({
-        Name = 'Part',
-        List = {'RootPart', 'Head', 'Dynamic', 'Closest'},
-        Tooltip = 'Which part of the target to solve the shot onto'
-    })
-    local methods = {'Damage', 'Distance'}
-    for i in sortmethods do
-        if not table.find(methods, i) then
-            table.insert(methods, i)
-        end
-    end
-    Sort = SilentAim:CreateDropdown({
-        Name = 'Target Mode',
-        List = methods,
-        Default = 'Distance'
-    })
-    Search = SilentAim:CreateDropdown({
-        Name = 'Search',
-        List = {'Anywhere', 'Crosshair FOV'},
-        Default = 'Anywhere',
-        Tooltip = 'Anywhere - targets in world space, so where you look makes no difference\nCrosshair FOV - only near your cursor, like ProjectileAimbot',
-        Function = function(val)
-            pcall(function()
-                FOV.Object.Visible = val == 'Crosshair FOV'
-            end)
-        end
-    })
-    FOV = SilentAim:CreateSlider({
-        Name = 'FOV',
-        Min = 1,
-        Max = 1000,
-        Default = 1000,
-        Darker = true,
-        Visible = false,
-        Tooltip = 'Screen radius the target has to be inside, in Crosshair FOV search'
-    })
-    Range = SilentAim:CreateSlider({
-        Name = 'Range',
-        Min = 10,
-        Max = 1000,
-        Default = 400,
-        Suffix = ' studs',
-        Tooltip = 'How far away a target can be'
-    })
-    MaxAngle = SilentAim:CreateSlider({
-        Name = 'Max angle',
-        Min = 1,
-        Max = 360,
-        Default = 360,
-        Tooltip = 'How far off your real aim the shot may be bent. 360 is anywhere at all'
-    })
-    Prediction = SilentAim:CreateSlider({
-        Name = 'Prediction',
-        Min = 0.1,
-        Max = 2,
-        Default = 1,
-        Decimal = 10
-    })
-    HitChance = SilentAim:CreateSlider({
-        Name = 'Hit chance',
-        Min = 1,
-        Max = 100,
-        Default = 100,
-        Suffix = '%',
-        Tooltip = 'Chance each shot is redirected at all, so not every single arrow is perfect'
-    })
-    AutoCharge = SilentAim:CreateToggle({
-        Name = 'Auto Charge',
-        Default = true,
-        Tooltip = 'Fully charges your bow so the projectile deals full damage'
-    })
-    MouseDown = SilentAim:CreateToggle({
-        Name = 'Require mouse down',
-        Tooltip = 'Only redirect while the mouse is held'
-    })
-    OtherProjectiles = SilentAim:CreateToggle({
-        Name = 'Other Projectiles',
-        Default = true,
-        Function = function(call)
-            pcall(function()
-                Blacklist.Object.Visible = call
-            end)
-        end,
-        Tooltip = 'Redirect everything you throw, not just arrows'
-    })
-    Blacklist = SilentAim:CreateTextList({
-        Name = 'Blacklist',
-        Default = {'gloop', 'telepearl'},
-        Darker = true,
-        Placeholder = 'projectile'
-    })
-    -- The Preview dropdown that used to sit here has been removed. It could not do anything: this
-    -- module hooks the ProjectileFire remote, and the game's preview arc is drawn entirely on the
-    -- client and never reaches that remote, so there was no preview call here to leave alone or
-    -- redirect. Its only effect was assigning two undeclared globals. The arc is always left alone,
-    -- which is the whole point of the module.
-    Notify = SilentAim:CreateToggle({
-        Name = 'Notifications',
-        Tooltip = 'Notify each time a shot is redirected'
-    })
+	local SilentAim
+	local Targets
+	local TargetPart
+	local Sort
+	local Prediction
+	local FOV
+	local OtherProjectiles
+	local Blacklist
+	
+	local rayCheck = RaycastParams.new()
+	rayCheck.FilterType = Enum.RaycastFilterType.Include
+	rayCheck.FilterDescendantsInstances = {workspace:FindFirstChild('Map')}
+	
+	local hooked = false
+	local removeNamecall
+	local fireRemote
+	local hookVersion = 0
+	
+	local function getMousePosition()
+		if inputService.TouchEnabled then
+			return gameCamera.ViewportSize / 2
+		end
+		return inputService.GetMouseLocation(inputService)
+	end
+	
+	local function getPosition(ent)
+		if TargetPart.Value == 'Closest' then
+			local localPosition, magnitude, part = getMousePosition(), 9e9, nil
+			for _, v in ent:GetChildren() do
+				if v:IsA('BasePart') then
+					local position, vis = gameCamera.WorldToViewportPoint(gameCamera, v.Position)
+					if vis then
+						local mag = (localPosition - Vector2.new(position.x, position.y)).Magnitude
+						if mag < magnitude then
+							magnitude = mag
+							part = v
+						end
+					end
+				end
+			end
+			return part and part.Position or ent.PrimaryPart and ent.PrimaryPart.Position
+		elseif TargetPart.Value == 'Dynamic' then
+			local tool = store.hand.tool
+			if tool and tool.Name:find('headhunter') and ent:FindFirstChild('Head') then
+				return ent.Head.Position
+			end
+			return ent.PrimaryPart and ent.PrimaryPart.Position
+		end
+		return
+	end
+	
+	local function solveSilent(args)
+		local origin, velocity, projType = args[4], args[6], args[3]
+		if typeof(origin) ~= 'Vector3' or typeof(velocity) ~= 'Vector3' or type(projType) ~= 'string' then
+			return
+		end
+	
+		if (not OtherProjectiles.Enabled) and not projType:find('arrow') then
+			return
+		end
+	
+		if table.find(Blacklist.ListEnabled or {}, ((projType == 'glue_trap' or projType == 'glue_projectile') and 'gloop' or projType)) then
+			return
+		end
+	
+		local meta = bedwars.ProjectileMeta[projType]
+		if not meta then return end
+	
+		local speed = velocity.Magnitude
+		if speed <= 0 then return end
+		local gravity = meta.gravitationalAcceleration or 196.2
+	
+		local plr = entitylib.EntityMouse({
+			Part = 'RootPart',
+			Range = FOV.Value,
+			Players = Targets.Players.Enabled,
+			NPCs = Targets.NPCs.Enabled,
+			Wallcheck = Targets.Walls.Enabled,
+			Sort = sortmethods[Sort.Value or 'Distance'],
+			Origin = origin,
+		})
+		if not plr then return end
+	
+		local targetpart = plr[TargetPart.Value]
+		local targetpos = getPosition(plr.Character) or targetpart and targetpart.Position
+		if not targetpos then return end
+		local playerGravity = workspace.Gravity
+		local balloons = plr.Character:GetAttribute('InflatedBalloons')
+		if balloons and balloons > 0 then
+			playerGravity = workspace.Gravity * (1 - (balloons >= 4 and 1.2 or balloons >= 3 and 1 or 0.975))
+		end
+	
+		local pearl = projType == 'telepearl'
+		local targetVelocity = pearl and Vector3.zero or plr.RootPart.AssemblyLinearVelocity
+		local targetAirborne = not pearl and plr.Humanoid.FloorMaterial == Enum.Material.Air or math.abs(targetVelocity.Y) > 0.01
+		local calc, _, travelTime = prediction.SolveTrajectory(origin, speed * Prediction.Value, gravity, targetpos, targetVelocity, playerGravity, plr.HipHeight, plr.Jumping and 42.6 or nil, rayCheck, targetAirborne, plr.RootPart.Position, plr.RootPart, nil, true)
+		if not calc or not travelTime or travelTime > (meta.lifetimeSec or 3) then return end
+	
+		targetinfo.Targets[plr] = tick() + 1
+		return CFrame.lookAt(origin, calc).LookVector * speed
+	end
+	
+	SilentAim = vape.Categories.Combat:CreateModule({
+		Name = 'SilentAim',
+		Function = function(callback)
+			hookVersion += 1
+			if callback and not namecall then
+				namecall = hookmetamethod(game, '__namecall', newcclosure(function(...)
+					if SilentAim.Enabled and not checkcaller() and getnamecallmethod() == 'InvokeServer' and tostring(...) == 'ProjectileFire' then
+						local self = ...
+						local args = {select(2, ...)}
+						print('yo its kinda working')
+						local newVelocity = solveSilent(args)
+						if newVelocity then
+							args[6] = newVelocity
+						end
+						return namecall(self, self.InvokeServer(self, unpack(args)))
+					end
+					return namecall(...)
+				end))
+			end
+		end,
+		Tooltip = 'Redirects only the projectile values sent to the server, so enemies get hit while your shot flies exactly where you aimed on your own screen'
+	})
+	Targets = SilentAim:CreateTargets({
+		Players = true,
+		Walls = true,
+	})
+	TargetPart = SilentAim:CreateDropdown({
+		Name = 'Part',
+		List = {'RootPart', 'Head', 'Dynamic', 'Closest'},
+	})
+	local methods = {'Damage', 'Distance'}
+	for i in sortmethods do
+		if not table.find(methods, i) then
+			table.insert(methods, i)
+		end
+	end
+	Sort = SilentAim:CreateDropdown({
+		Name = 'Target Mode',
+		List = methods,
+		Default = 'Distance'
+	})
+	Prediction = SilentAim:CreateSlider({
+		Name = 'Prediction',
+		Min = 0.1,
+		Max = 2,
+		Default = 1,
+		Decimal = 10
+	})
+	FOV = SilentAim:CreateSlider({
+		Name = 'FOV',
+		Min = 1,
+		Max = 1000,
+		Default = 1000
+	})
+	OtherProjectiles = SilentAim:CreateToggle({
+		Name = 'Other Projectiles',
+		Function = function(call)
+			if Blacklist and Blacklist.Object then
+				Blacklist.Object.Visible = call
+			end
+		end,
+	    Default = true
+	})
+	Blacklist = SilentAim:CreateTextList({
+		Name = 'Blacklist',
+		Default = {'gloop', 'telepearl'},
+		Darker = true,
+		Placeholder = 'projectile'
+	})
 end)
-
+	
 run(function()
     local ProjectileAura
     local InstaKill
