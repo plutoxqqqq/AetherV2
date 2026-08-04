@@ -1706,7 +1706,9 @@ components = {
 		window.AutoButtonColor = false
 		window.Visible = false
 		window.Text = ''
-		window.Parent = clickgui
+		-- Panel modules (Legit, Kits) live in their own window and hide the click GUI while
+		-- they are open, so their popups have to hang off that window instead.
+		window.Parent = api.Panel or clickgui
 		optionapi.Window = window
 		addBlur(window)
 		addCorner(window)
@@ -1864,10 +1866,11 @@ components = {
 			if mainapi.ThreadFix then
 				setthreadidentity(8)
 			end
-			local actualPosition = (textlist.AbsolutePosition + Vector2.new(0, 60)) / scale.Scale
+			local origin = api.Panel and api.Panel.AbsolutePosition or Vector2.zero
+			local actualPosition = ((textlist.AbsolutePosition - origin) + Vector2.new(0, 60)) / scale.Scale
 			window.Position = UDim2.fromOffset(actualPosition.X + 220, actualPosition.Y)
 		end)
-		
+
 		optionapi.Object = textlist
 		api.Options.Targets = optionapi
 		
@@ -2111,7 +2114,7 @@ components = {
 		window.AutoButtonColor = false
 		window.Visible = false
 		window.Text = ''
-		window.Parent = api.Legit and mainapi.Legit.Window or clickgui
+		window.Parent = api.Panel or clickgui
 		optionapi.Window = window
 		addBlur(window)
 		addCorner(window)
@@ -2374,7 +2377,7 @@ components = {
 			if mainapi.ThreadFix then
 				setthreadidentity(8)
 			end
-			local actualPosition = (textlist.AbsolutePosition - (api.Legit and mainapi.Legit.Window.AbsolutePosition or -guiService:GetGuiInset())) / scale.Scale
+			local actualPosition = (textlist.AbsolutePosition - (api.Panel and api.Panel.AbsolutePosition or -guiService:GetGuiInset())) / scale.Scale
 			window.Position = UDim2.fromOffset(actualPosition.X + 220, actualPosition.Y)
 		end)
 		
@@ -2782,8 +2785,8 @@ mainapi.Components = setmetatable(components, {
 			end)
 		end
 
-		if mainapi.Legit then
-			for _, v in mainapi.Legit.Modules do
+		for _, panel in {mainapi.Legit, mainapi.Kits} do
+			for _, v in panel.Modules do
 				rawset(v, 'Create'..ind, function(_, settings)
 					return func(settings, v.Children, v)
 				end)
@@ -5814,7 +5817,9 @@ function mainapi:CreateSearch()
 	local xscale = inputService.TouchEnabled and 0.1 or 0.5
 	local searchbkg = Instance.new('Frame')
 	searchbkg.Name = 'Search'
-	searchbkg.Size = UDim2.fromOffset(220, 37)
+	-- Wider than the 220 of a module row so both panel buttons fit beside the text box.
+	-- The results list centres the 220-wide clones inside it.
+	searchbkg.Size = UDim2.fromOffset(260, 37)
 	searchbkg.Position = UDim2.new(xscale, 0, 0, 13)
 	searchbkg.AnchorPoint = Vector2.new(xscale, 0)
 	searchbkg.BackgroundColor3 = color.Dark(uipallet.Main, 0.02)
@@ -5827,25 +5832,42 @@ function mainapi:CreateSearch()
 	searchicon.Image = getcustomasset('aetherv2/assets/new/search.png')
 	searchicon.ImageColor3 = color.Light(uipallet.Main, 0.37)
 	searchicon.Parent = searchbkg
+	-- Kits sits to the LEFT of Legit. Same construction, different asset and a window of
+	-- its own; the two buttons share no state whatsoever.
+	local kitsicon = Instance.new('ImageButton')
+	kitsicon.Name = 'Kits'
+	kitsicon.Size = UDim2.fromOffset(29, 16)
+	kitsicon.Position = UDim2.fromOffset(8, 11)
+	kitsicon.BackgroundTransparency = 1
+	kitsicon.Image = getcustomasset('aetherv2/assets/new/friendstab.png')
+	kitsicon.ScaleType = Enum.ScaleType.Fit
+	kitsicon.Parent = searchbkg
+	local kitsdivider = Instance.new('Frame')
+	kitsdivider.Name = 'KitsDivider'
+	kitsdivider.Size = UDim2.fromOffset(2, 12)
+	kitsdivider.Position = UDim2.fromOffset(43, 13)
+	kitsdivider.BackgroundColor3 = color.Light(uipallet.Main, 0.14)
+	kitsdivider.BorderSizePixel = 0
+	kitsdivider.Parent = searchbkg
 	local legiticon = Instance.new('ImageButton')
 	legiticon.Name = 'Legit'
 	legiticon.Size = UDim2.fromOffset(29, 16)
-	legiticon.Position = UDim2.fromOffset(8, 11)
+	legiticon.Position = UDim2.fromOffset(51, 11)
 	legiticon.BackgroundTransparency = 1
 	legiticon.Image = getcustomasset('aetherv2/assets/new/legit.png')
 	legiticon.Parent = searchbkg
 	local legitdivider = Instance.new('Frame')
 	legitdivider.Name = 'LegitDivider'
 	legitdivider.Size = UDim2.fromOffset(2, 12)
-	legitdivider.Position = UDim2.fromOffset(43, 13)
+	legitdivider.Position = UDim2.fromOffset(86, 13)
 	legitdivider.BackgroundColor3 = color.Light(uipallet.Main, 0.14)
 	legitdivider.BorderSizePixel = 0
 	legitdivider.Parent = searchbkg
 	addBlur(searchbkg)
 	addCorner(searchbkg)
 	local search = Instance.new('TextBox')
-	search.Size = UDim2.new(1, -50, 0, 37)
-	search.Position = UDim2.fromOffset(50, 0)
+	search.Size = UDim2.new(1, -93, 0, 37)
+	search.Position = UDim2.fromOffset(93, 0)
 	search.BackgroundTransparency = 1
 	search.Text = ''
 	search.PlaceholderText = ''
@@ -5881,6 +5903,35 @@ function mainapi:CreateSearch()
 
 	children:GetPropertyChangedSignal('CanvasPosition'):Connect(function()
 		divider.Visible = children.CanvasPosition.Y > 10 and children.Visible
+	end)
+	-- Lays the two panel buttons out left to right, skipping whichever ones are hidden,
+	-- and reflows the text box behind them. Called by the 'Show legit mode' / 'Show kits
+	-- mode' settings toggles.
+	local function updateSearchLayout()
+		local x = 8
+		for _, entry in {{Button = kitsicon, Divider = kitsdivider}, {Button = legiticon, Divider = legitdivider}} do
+			if entry.Button.Visible then
+				entry.Button.Position = UDim2.fromOffset(x, 11)
+				entry.Divider.Position = UDim2.fromOffset(x + 35, 13)
+				entry.Divider.Visible = true
+				x = x + 43
+			else
+				entry.Divider.Visible = false
+			end
+		end
+		local offset = x == 8 and 10 or x
+		search.Position = UDim2.fromOffset(offset, 0)
+		search.Size = UDim2.new(1, -offset, 0, 37)
+	end
+	self.UpdateSearchLayout = updateSearchLayout
+	-- Position everything from the layout function rather than from the literals above, so
+	-- there is only one place the spacing is decided.
+	updateSearchLayout()
+
+	kitsicon.MouseButton1Click:Connect(function()
+		clickgui.Visible = false
+		self.Kits.Window.Visible = true
+		self.Kits.Window.Position = UDim2.new(0.5, -350, 0.5, -194)
 	end)
 	legiticon.MouseButton1Click:Connect(function()
 		clickgui.Visible = false
@@ -5940,17 +5991,35 @@ function mainapi:CreateSearch()
 			setthreadidentity(8)
 		end
 		children.CanvasSize = UDim2.fromOffset(0, windowlist.AbsoluteContentSize.Y / scale.Scale)
-		searchbkg.Size = UDim2.fromOffset(220, math.min(37 + windowlist.AbsoluteContentSize.Y / scale.Scale, 437))
+		searchbkg.Size = UDim2.fromOffset(260, math.min(37 + windowlist.AbsoluteContentSize.Y / scale.Scale, 437))
 	end)
 
 	self.Legit.Icon = legiticon
+	self.Kits.Icon = kitsicon
 end
 
-function mainapi:CreateLegit()
+--[[
+	Panel windows (Legit, Kits)
+
+	Both of the icons sitting to the left of the search bar open a standalone
+	window built by this one factory. Each call produces an entirely separate
+	api, window, module table and config section - the two panels share code,
+	never state, so toggling or configuring one can never affect the other.
+
+	config = {
+		Field    - key on mainapi the api is stored under ('Legit' / 'Kits')
+		Window   - Instance name for the frame
+		Icon     - header icon asset path
+		Tabs     - category names, first one is focused by default
+		Default  - ApiCategory used by modules that do not name one
+	}
+]]
+local function createPanel(config)
+	local self = mainapi
 	local legitapi = {Modules = {}, Categories = {}}
 
 	local window = Instance.new('Frame')
-	window.Name = 'LegitGUI'
+	window.Name = config.Window
 	window.Size = UDim2.fromOffset(700, 389)
 	window.Position = UDim2.new(0.5, -350, 0.5, -194)
 	window.BackgroundColor3 = uipallet.Main
@@ -5969,7 +6038,7 @@ function mainapi:CreateLegit()
 	icon.Size = UDim2.fromOffset(16, 16)
 	icon.Position = UDim2.fromOffset(18, 13)
 	icon.BackgroundTransparency = 1
-	icon.Image = getcustomasset('aetherv2/assets/new/legittab.png')
+	icon.Image = getcustomasset(config.Icon)
 	icon.ImageColor3 = uipallet.Text
 	icon.Parent = window
 	local close = addCloseButton(window)
@@ -6106,10 +6175,14 @@ function mainapi:CreateLegit()
 		mainapi:Remove(modulesettings.Name)
 		local moduleapi = {
 			Enabled = false,
-			ApiCategory = modulesettings.Category or 'Game',
+			ApiCategory = modulesettings.Category or config.Default,
 			Options = {},
+			Bind = {},
 			Name = modulesettings.Name,
-			Legit = true
+			-- Panel is the window every option popup of this module anchors to. Legit
+			-- stays set for the handful of places that still branch on it by name.
+			Panel = window,
+			Legit = config.Field == 'Legit'
 		}
 
 		local patchedReason = modulesettings.Patched
@@ -6144,6 +6217,60 @@ function mainapi:CreateLegit()
 		knobmain.Position = UDim2.fromOffset(2, 2)
 		knobmain.BackgroundColor3 = uipallet.Main
 		knobmain.Parent = knob
+		-- Keybind chip. Panel modules are ordinary gameplay modules (the Kits window is
+		-- full of routines that are only useful on a key), so they get the same binding
+		-- affordance the category tabs have, in the tile's bottom-right corner.
+		local bind = Instance.new('TextButton')
+		bind.Name = 'Bind'
+		bind.Size = UDim2.fromOffset(20, 21)
+		bind.Position = UDim2.new(1, -14, 1, -12)
+		bind.AnchorPoint = Vector2.new(1, 1)
+		bind.BackgroundColor3 = Color3.new(1, 1, 1)
+		bind.BackgroundTransparency = 0.92
+		bind.BorderSizePixel = 0
+		bind.AutoButtonColor = false
+		bind.Text = ''
+		bind.Parent = module
+		addCorner(bind, UDim.new(0, 4))
+		addTooltip(bind, 'Click to bind')
+		local bindicon = Instance.new('ImageLabel')
+		bindicon.Name = 'Icon'
+		bindicon.Size = UDim2.fromOffset(12, 12)
+		bindicon.Position = UDim2.new(0.5, -6, 0, 5)
+		bindicon.BackgroundTransparency = 1
+		bindicon.Image = getcustomasset('aetherv2/assets/new/bind.png')
+		bindicon.ImageColor3 = color.Dark(uipallet.Text, 0.43)
+		bindicon.Parent = bind
+		local bindtext = Instance.new('TextLabel')
+		bindtext.Name = 'TextLabel'
+		bindtext.Size = UDim2.fromScale(1, 1)
+		bindtext.Position = UDim2.fromOffset(0, 1)
+		bindtext.BackgroundTransparency = 1
+		bindtext.Visible = false
+		bindtext.Text = ''
+		bindtext.TextColor3 = color.Dark(uipallet.Text, 0.43)
+		bindtext.TextSize = 12
+		bindtext.FontFace = uipallet.Font
+		bindtext.Parent = bind
+		local bindcover = Instance.new('ImageLabel')
+		bindcover.Name = 'Cover'
+		bindcover.Size = UDim2.fromOffset(154, 32)
+		bindcover.Position = UDim2.new(0, 0, 1, -32)
+		bindcover.BackgroundTransparency = 1
+		bindcover.Visible = false
+		bindcover.Image = getcustomasset('aetherv2/assets/new/bindbkg.png')
+		bindcover.ScaleType = Enum.ScaleType.Slice
+		bindcover.SliceCenter = Rect.new(0, 0, 141, 40)
+		bindcover.Parent = module
+		local bindcovertext = Instance.new('TextLabel')
+		bindcovertext.Name = 'Text'
+		bindcovertext.Size = UDim2.new(1, -10, 1, -3)
+		bindcovertext.BackgroundTransparency = 1
+		bindcovertext.Text = 'PRESS A KEY TO BIND'
+		bindcovertext.TextColor3 = uipallet.Text
+		bindcovertext.TextSize = 11
+		bindcovertext.FontFace = uipallet.Font
+		bindcovertext.Parent = bindcover
 		local dotsbutton = Instance.new('TextButton')
 		dotsbutton.Name = 'Dots'
 		dotsbutton.Size = UDim2.fromOffset(14, 24)
@@ -6228,6 +6355,37 @@ function mainapi:CreateLegit()
 		modulesettings.Function = modulesettings.Function or function() end
 		addMaid(moduleapi)
 
+		function moduleapi:SetBind(tab, mouse)
+			-- Panel tiles never create mobile buttons, so a Mobile entry (only ever written
+			-- by a category module) is treated as "no bind" rather than being handed to a
+			-- path that has no button to place.
+			if tab.Mobile then
+				self.Bind = {}
+				tab = self.Bind
+			else
+				self.Bind = table.clone(tab)
+			end
+
+			if mouse then
+				bindcovertext.Text = #tab <= 0 and 'BIND REMOVED' or 'BOUND TO'
+				bindcover.Size = UDim2.fromOffset(getfontsize(bindcovertext.Text, bindcovertext.TextSize).X + 20, 32)
+				task.delay(1, function()
+					bindcover.Visible = false
+				end)
+			end
+
+			if #tab <= 0 then
+				bindtext.Visible = false
+				bindicon.Visible = true
+				bind.Size = UDim2.fromOffset(20, 21)
+			else
+				bindtext.Visible = true
+				bindicon.Visible = false
+				bindtext.Text = table.concat(tab, ' + '):upper()
+				bind.Size = UDim2.fromOffset(math.max(getfontsize(bindtext.Text, bindtext.TextSize, bindtext.Font).X + 10, 20), 21)
+			end
+		end
+
 		function moduleapi:Toggle()
 			if patchedReason then
 				pcall(function() notif('Patched', moduleapi.Name..' is patched: '..tostring(patchedReason), 8, 'warning') end)
@@ -6240,6 +6398,8 @@ function mainapi:CreateLegit()
 			end
 			title.TextColor3 = moduleapi.Enabled and color.Light(uipallet.Text, 0.2) or color.Dark(uipallet.Text, 0.31)
 			module.BackgroundColor3 = moduleapi.Enabled and color.Light(uipallet.Main, 0.05) or module.BackgroundColor3
+			bindicon.ImageColor3 = moduleapi.Enabled and color.Light(uipallet.Text, 0.2) or color.Dark(uipallet.Text, 0.43)
+			bindtext.TextColor3 = bindicon.ImageColor3
 			tween:Tween(knob, uipallet.Tween, {
 				BackgroundColor3 = moduleapi.Enabled and Color3.fromHSV(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value) or color.Light(uipallet.Main, 0.14)
 			})
@@ -6289,6 +6449,24 @@ function mainapi:CreateLegit()
 		end)
 		dotsbutton.MouseLeave:Connect(function()
 			dots.ImageColor3 = color.Light(uipallet.Main, 0.37)
+		end)
+		bind.MouseEnter:Connect(function()
+			bindtext.Visible = false
+			bindicon.Visible = true
+			bindicon.Image = getcustomasset('aetherv2/assets/new/edit.png')
+			if not moduleapi.Enabled then bindicon.ImageColor3 = color.Dark(uipallet.Text, 0.16) end
+		end)
+		bind.MouseLeave:Connect(function()
+			bindtext.Visible = #moduleapi.Bind > 0
+			bindicon.Visible = not bindtext.Visible
+			bindicon.Image = getcustomasset('aetherv2/assets/new/bind.png')
+			if not moduleapi.Enabled then bindicon.ImageColor3 = color.Dark(uipallet.Text, 0.43) end
+		end)
+		bind.MouseButton1Click:Connect(function()
+			bindcovertext.Text = 'PRESS A KEY TO BIND'
+			bindcover.Size = UDim2.fromOffset(getfontsize(bindcovertext.Text, bindcovertext.TextSize).X + 20, 32)
+			bindcover.Visible = true
+			mainapi.Binding = moduleapi
 		end)
 		module.MouseEnter:Connect(function()
 			if not moduleapi.Enabled then
@@ -6380,13 +6558,35 @@ function mainapi:CreateLegit()
 		children.CanvasSize = UDim2.fromOffset(0, windowlist.AbsoluteContentSize.Y / scale.Scale)
 	end)
 
-	self.Legit = legitapi
+	self[config.Field] = legitapi
 
-	legitapi:CreateCategory('All')
-	legitapi:CreateCategory('Hud')
-	legitapi:CreateCategory('Game')
+	for _, tab in config.Tabs do
+		legitapi:CreateCategory(tab)
+	end
 
 	return legitapi
+end
+
+function mainapi:CreateLegit()
+	return createPanel({
+		Field = 'Legit',
+		Window = 'LegitGUI',
+		Icon = 'aetherv2/assets/new/legittab.png',
+		Tabs = {'All', 'Hud', 'Game'},
+		Default = 'Game'
+	})
+end
+
+-- Kits: its own window, its own module table, its own config section. Nothing about
+-- it is wired to the Legit panel beyond sharing the factory above.
+function mainapi:CreateKits()
+	return createPanel({
+		Field = 'Kits',
+		Window = 'KitsGUI',
+		Icon = 'aetherv2/assets/new/friendstab.png',
+		Tabs = {'All', 'Auto', 'Ability', 'Aim', 'Visual'},
+		Default = 'Auto'
+	})
 end
 
 function mainapi:CreateNotification(title, text, duration, type)
@@ -6607,7 +6807,7 @@ function mainapi:Load(skipgui, profile)
 	if isfile(configPath) then
 		local savedata = loadJson(configPath)
 		if not savedata then
-			savedata = {Categories = {}, Modules = {}, Legit = {}}
+			savedata = {Categories = {}, Modules = {}, Legit = {}, Kits = {}}
 			self:CreateNotification('Vape', 'Failed to load '..self.Profile..' profile.', 10, 'alert')
 			savecheck = false
 		end
@@ -6615,6 +6815,7 @@ function mainapi:Load(skipgui, profile)
 		savedata.Categories = savedata.Categories or {}
 		savedata.Modules = savedata.Modules or {}
 		savedata.Legit = savedata.Legit or {}
+		savedata.Kits = savedata.Kits or {}
 
 		for i, v in savedata.Categories do
 			local object = self.Categories[i]
@@ -6678,23 +6879,34 @@ function mainapi:Load(skipgui, profile)
 		-- Snapshot the table first: a game module can still be registering itself on another
 		-- thread while this runs (the loader stops waiting on one that stalls), and adding to
 		-- the table mid-iteration would throw here and abort the whole config load.
-		local legitSnapshot = table.clone(self.Legit.Modules)
-		for i, object in legitSnapshot do
-			local v = savedata.Legit[i]
-			if not v then
-				if object.Enabled then
+		for _, panel in {{Api = self.Legit, Data = savedata.Legit}, {Api = self.Kits, Data = savedata.Kits, Migrate = true}} do
+			local snapshot = table.clone(panel.Api.Modules)
+			for i, object in snapshot do
+				-- Kit modules used to live in the category tabs, so a config written before
+				-- they moved has their settings under Modules. Read that once; the next save
+				-- writes them to the panel's own section and the old entry drops out.
+				local v = panel.Data[i] or (panel.Migrate and savedata.Modules[i]) or nil
+				if not v then
+					if object.Enabled then
+						object:Toggle()
+					end
+					if object.SetBind then
+						object:SetBind({})
+					end
+					continue
+				end
+				if object.Options and v.Options then
+					self:LoadOptions(object, v.Options)
+				end
+				if object.Enabled ~= (v.Enabled or false) then
 					object:Toggle()
 				end
-				continue
-			end
-			if object.Options and v.Options then
-				self:LoadOptions(object, v.Options)
-			end
-			if object.Enabled ~= (v.Enabled or false) then
-				object:Toggle()
-			end
-			if v.Position and object.Children then
-				object.Children.Position = UDim2.fromOffset(v.Position.X, v.Position.Y)
+				if object.SetBind then
+					object:SetBind(v.Bind or {})
+				end
+				if v.Position and object.Children then
+					object.Children.Position = UDim2.fromOffset(v.Position.X, v.Position.Y)
+				end
 			end
 		end
 
@@ -6792,7 +7004,10 @@ function mainapi:LoadOptions(object, savedoptions)
 end
 
 function mainapi:Remove(obj)
-	local tab = (self.Modules[obj] and self.Modules or self.Legit.Modules[obj] and self.Legit.Modules or self.Categories)
+	local tab = (self.Modules[obj] and self.Modules
+		or self.Legit.Modules[obj] and self.Legit.Modules
+		or self.Kits and self.Kits.Modules[obj] and self.Kits.Modules
+		or self.Categories)
 	if tab and tab[obj] then
 		local newobj = tab[obj]
 		if self.ThreadFix then
@@ -6827,7 +7042,8 @@ function mainapi:Save(newprofile)
 	local savedata = {
 		Modules = {},
 		Categories = {},
-		Legit = {}
+		Legit = {},
+		Kits = {}
 	}
 
 	-- Keybinds and the GUI accent travel WITH the config now, not only in the shared gui file, so
@@ -6873,6 +7089,16 @@ function mainapi:Save(newprofile)
 	for i, v in self.Legit.Modules do
 		savedata.Legit[i] = {
 			Enabled = v.Enabled,
+			Bind = v.Bind,
+			Position = v.Children and {X = v.Children.Position.X.Offset, Y = v.Children.Position.Y.Offset} or nil,
+			Options = mainapi:SaveOptions(v, v.Options)
+		}
+	end
+
+	for i, v in self.Kits.Modules do
+		savedata.Kits[i] = {
+			Enabled = v.Enabled,
+			Bind = v.Bind,
 			Position = v.Children and {X = v.Children.Position.X.Offset, Y = v.Children.Position.Y.Offset} or nil,
 			Options = mainapi:SaveOptions(v, v.Options)
 		}
@@ -6904,9 +7130,11 @@ function mainapi:Uninject()
 			v:Toggle()
 		end
 	end
-	for _, v in self.Legit.Modules do
-		if v.Enabled then
-			v:Toggle()
+	for _, panel in {self.Legit, self.Kits} do
+		for _, v in panel.Modules do
+			if v.Enabled then
+				v:Toggle()
+			end
 		end
 	end
 	for _, v in self.Categories do
@@ -7477,14 +7705,17 @@ targets.Update = Instance.new('BindableEvent')
 mainapi:Clean(targets.Update)
 
 mainapi:CreateLegit()
--- Route every `vape.Categories.Legit:CreateModule` registration into the Legit
--- window (opened via the search-bar icon) instead of a category tab. Using __index
--- (rather than a real key) keeps all Legit modules working while ensuring the Legit
--- api never shows up when the code iterates mainapi.Categories for real tabs.
+mainapi:CreateKits()
+-- Route every `vape.Categories.Legit:CreateModule` / `vape.Categories.Kits:CreateModule`
+-- registration into the matching window (opened via its search-bar icon) instead of a
+-- category tab. Using __index (rather than real keys) keeps those modules working while
+-- ensuring neither api shows up when the code iterates mainapi.Categories for real tabs.
 setmetatable(mainapi.Categories, {
 	__index = function(_, key)
 		if key == 'Legit' then
 			return mainapi.Legit
+		elseif key == 'Kits' then
+			return mainapi.Kits
 		end
 	end
 })
@@ -7727,12 +7958,19 @@ guipane:CreateToggle({
 	Name = 'Show legit mode',
 	Function = function(enabled)
 		clickgui.Search.Legit.Visible = enabled
-		clickgui.Search.LegitDivider.Visible = enabled
-		clickgui.Search.TextBox.Size = UDim2.new(1, enabled and -50 or -10, 0, 37)
-		clickgui.Search.TextBox.Position = UDim2.fromOffset(enabled and 50 or 10, 0)
+		if mainapi.UpdateSearchLayout then mainapi.UpdateSearchLayout() end
 	end,
 	Default = true,
 	Tooltip = 'Shows the button to change to Legit Mode'
+})
+guipane:CreateToggle({
+	Name = 'Show kits mode',
+	Function = function(enabled)
+		clickgui.Search.Kits.Visible = enabled
+		if mainapi.UpdateSearchLayout then mainapi.UpdateSearchLayout() end
+	end,
+	Default = true,
+	Tooltip = 'Shows the button that opens the Kits window'
 })
 local scaleslider = {Object = {}, Value = 1}
 mainapi.Scale = guipane:CreateToggle({
@@ -8730,7 +8968,7 @@ function mainapi:UpdateGUI(hue, sat, val, default)
 		end
 	end
 
-	if not clickgui.Visible and not mainapi.Legit.Window.Visible then return end
+	if not clickgui.Visible and not mainapi.Legit.Window.Visible and not mainapi.Kits.Window.Visible then return end
 	local rainbow = mainapi.GUIColor.Rainbow and mainapi.RainbowMode.Value ~= 'Retro'
 
 	for i, v in mainapi.Categories do
@@ -8803,20 +9041,22 @@ function mainapi:UpdateGUI(hue, sat, val, default)
 		end
 	end
 
-	if mainapi.Legit.Icon then
-		mainapi.Legit.Icon.ImageColor3 = Color3.fromHSV(hue, sat, val)
-	end
+	for _, panel in {mainapi.Legit, mainapi.Kits} do
+		if panel.Icon then
+			panel.Icon.ImageColor3 = Color3.fromHSV(hue, sat, val)
+		end
 
-	if mainapi.Legit.Window.Visible then
-		for _, v in mainapi.Legit.Modules do
-			if v.Enabled then
-				tween:Cancel(v.Object.Knob)
-				v.Object.Knob.BackgroundColor3 = Color3.fromHSV(hue, sat, val)
-			end
+		if panel.Window.Visible then
+			for _, v in panel.Modules do
+				if v.Enabled then
+					tween:Cancel(v.Object.Knob)
+					v.Object.Knob.BackgroundColor3 = Color3.fromHSV(hue, sat, val)
+				end
 
-			for _, option in v.Options do
-				if option.Color then
-					option:Color(hue, sat, val, rainbow)
+				for _, option in v.Options do
+					if option.Color then
+						option:Color(hue, sat, val, rainbow)
+					end
 				end
 			end
 		end
@@ -8915,6 +9155,18 @@ local function keybindStart(inputObj)
 				end
 				if mainapi.PushUndo then mainapi:PushUndo(v) end
 				v:Toggle(true)
+			end
+		end
+		-- Panel windows (Legit, Kits) hold ordinary gameplay modules, so their binds are
+		-- honoured on the same pass. They keep no text-GUI entry, hence no UpdateTextGUI.
+		for _, panel in {mainapi.Legit, mainapi.Kits} do
+			for i, v in panel.Modules do
+				if v.Bind and checkKeybinds(mainapi.HeldKeybinds, v.Bind, inputObj.KeyCode.Name) then
+					if mainapi.ToggleNotifications.Enabled then
+						mainapi:CreateNotification('Module Toggled', i.."<font color='#FFFFFF'> has been </font>"..(not v.Enabled and "<font color='#5AFF5A'>Enabled</font>" or "<font color='#FF5A5A'>Disabled</font>").."<font color='#FFFFFF'>!</font>", 0.75)
+					end
+					v:Toggle()
+				end
 			end
 		end
 		if toggled then

@@ -157,6 +157,11 @@ local TrapDisabler
 local AntiFallPart
 local bedwars, remotes, sides, oldinvrender, oldSwing = {}, {}, {}
 
+-- Every kit module registers here instead of into a category tab. On the default GUI this
+-- is the Kits window opened by the friends icon beside the search bar; GUIs that do not
+-- implement that window fall back to the Minigames tab so nothing is lost on them.
+local kits = vape.Categories.Kits or vape.Categories.Minigames
+
 local function addBlur(parent)
 	local blur = Instance.new('ImageLabel')
 	blur.Name = 'Blur'
@@ -459,6 +464,18 @@ local function notif(...) return vape:CreateNotification(...) end
 local function removeTags(str)
 	str = str:gsub('<br%s*/>', '\n')
 	return (str:gsub('<[^<>]->', ''))
+end
+
+-- Thousands separators for the resource counters. Written out rather than pulled from a
+-- library because nothing else in this file needed one.
+local function formatNumber(value)
+	local text = tostring(math.floor(tonumber(value) or 0))
+	local sign = ''
+	if text:sub(1, 1) == '-' then
+		sign, text = '-', text:sub(2)
+	end
+	local out = text:reverse():gsub('(%d%d%d)', '%1,'):reverse()
+	return sign..(out:gsub('^,', ''))
 end
 
 local function roundPos(vec)
@@ -1798,8 +1815,10 @@ end
 local AntiFallDirection
 local Fly
 local LongJump
--- LongJump is the authoritative compatible-tool detector. Consumers such as Extender listen for
--- this edge instead of maintaining a second, inevitably stale list of tool activation rules.
+-- LongJump is the authoritative compatible-tool detector. Anything that needs to know a
+-- long-jump tool has genuinely entered its launch window listens for this edge instead of
+-- maintaining a second, inevitably stale list of tool activation rules. (Extender used to be
+-- its main consumer; it now hooks the four kit controllers directly.)
 local longJumpActivation = Instance.new('BindableEvent')
 vape:Clean(longJumpActivation)
 local Attacking
@@ -2708,10 +2727,44 @@ run(function()
     local SwingTime
     local Perfect
     local FaceTarget
+    local Dynamic
 
     local Show
     local Targetcolor
     local Attackcolor
+
+    --[[
+        Hit pacing, taken from idk's SilentAura - the one place its implementation was clearly
+        ahead of this one. Aether's aura had no attack gate at all: it fired the hit remote on
+        every frame the target was in range, which the server throws away and which reads as
+        obviously machine-driven. Every hit now waits for the sword's own swing cooldown.
+
+        Dynamic hits replaces that with a delay scaled by how close the target is - a hit sent
+        early from far away is the one the server is most likely to reject, so at range the
+        delay stretches out and up close it tightens.
+    ]]
+    local lastHit = 0
+
+    local function dynamicHitDelay(ent, meta)
+        local delay = ((meta.displayName and meta.displayName:find(' Chainsaw')) and 0.11 or 0.29) + 0.03
+        local distance = math.min(14.4, (entitylib.character.RootPart.Position - ent.RootPart.Position).Magnitude)
+        return delay * distance / 14.4
+    end
+
+    local function readyToHit(ent, sword, meta)
+        if Dynamic.Enabled then
+            return (tick() - lastHit) >= dynamicHitDelay(ent, meta)
+        end
+        local ok, remaining = pcall(function()
+            return bedwars.SwordController:getRemainingSwingCooldown(sword.tool.Name)
+        end)
+        if ok and type(remaining) == 'number' then
+            return remaining <= 0
+        end
+        -- The controller does not expose the cooldown in this build. Fall back to the swing
+        -- time the module is already configured with rather than to no gate at all.
+        return (tick() - lastHit) >= (Perfect.Enabled and ((meta.sword and meta.sword.attackSpeed) or 0.11) or math.max(SwingTime.Value, 0.11))
+    end
 
     local function getAttackData()
         if not entitylib.isAlive then
@@ -2876,6 +2929,11 @@ run(function()
                             end
                             lastattacked = tick()
 
+                            if not readyToHit(ent, sword, meta) then
+                                continue
+                            end
+                            lastHit = tick()
+
                             local dir = CFrame.lookAt(localPosition, ent.RootPart.Position).LookVector
                             local pos = localPosition + dir * math.max(delta.Magnitude - 14.4, 0)
                             bedwars.SwordController.lastAttack = workspace:GetServerTimeNow()
@@ -2889,7 +2947,10 @@ run(function()
                                         cursorDirection = {value = dir},
                                     },
                                     targetPosition = {
-                                        value = ent.RootPart.Position,
+                                        -- The character's pivot rather than the root part's
+                                        -- position: it is what the server resolves the hit
+                                        -- against, so it is what should be reported.
+                                        value = ent.Character:GetPivot().Position,
                                     },
                                     selfPosition = {value = pos},
                                 },
@@ -2980,6 +3041,10 @@ run(function()
         Default = true,
     })
     Mouse = SilentAura:CreateToggle({Name = 'Require mouse down'})
+    Dynamic = SilentAura:CreateToggle({
+        Name = 'Dynamic hits',
+        Tooltip = 'Times each hit off how far away the target is instead of the sword\'s swing cooldown. Close range hits sooner, long range waits longer so the server is less likely to throw the hit away'
+    })
     LegitAura = SilentAura:CreateToggle({Name = 'Swing only'})
     SilentAim = SilentAura:CreateToggle({
         Name = 'Silent Aim',
@@ -5585,111 +5650,9 @@ run(function()
     })
 end)
 
--- Krystal Disabler (ported from the BedFight module). Krystal (the GlacialSkater kit) skates
--- on momentum; the server periodically corrects the client, which reads as a lagback. We hook
--- the controller's own updateMomentum so momentum is always reported maxed, and suppress the
--- local CFrame/Velocity correction listeners so the skate never snaps back. Fails gracefully
--- (notif + untoggle) if this game doesn't expose the Krystal controller.
-run(function()
-    local KrystalDisabler
-    local oldUpdateMomentum
-    local momentumRemote
-    local patchedSignals = setmetatable({}, {__mode = 'k'})
-    local targetMomentum = 9e9
+-- KrystalDisabler was replaced by InfiniteKrystal (further down, in the Kits window),
+-- which pins the skate's momentum through the controller's own updateMomentum.
 
-    local function getController()
-        return bedwars and bedwars.GlacialSkaterController
-    end
-
-    local function setKrystalMomentum(controller)
-        controller = controller or getController()
-        if not controller then return end
-        controller.momentum = targetMomentum
-        controller.lastMomentumReport = targetMomentum
-        if momentumRemote then
-            pcall(function()
-                momentumRemote:SendToServer({momentumValue = targetMomentum})
-            end)
-        end
-    end
-
-    local function patchMovementSignal(signal)
-        if not signal or not getconnections or not hookfunction then return end
-        for _, connection in getconnections(signal) do
-            local func = connection and connection.Function
-            if func and patchedSignals[func] == nil then
-                -- Keep the original hookfunction returns so we can restore it on toggle-off.
-                -- Store `false` if the hook itself failed, so cleanup never tries to restore
-                -- something we never actually replaced.
-                local ok, original = pcall(hookfunction, func, function() end)
-                patchedSignals[func] = (ok and original) or false
-            end
-        end
-    end
-
-    -- Undo every movement-signal hook we installed, handing each listener its original
-    -- function back so the client's correction listeners work normally again after disable.
-    local function restoreSignals()
-        for func, original in pairs(patchedSignals) do
-            if type(original) == 'function' then
-                pcall(hookfunction, func, original)
-            end
-        end
-        table.clear(patchedSignals)
-    end
-
-    local function patchCharacter(character)
-        local root = character and character.RootPart
-        if not root then return end
-        patchMovementSignal(root:GetPropertyChangedSignal('CFrame'))
-        patchMovementSignal(root:GetPropertyChangedSignal('Velocity'))
-        patchMovementSignal(root:GetPropertyChangedSignal('AssemblyLinearVelocity'))
-    end
-
-    KrystalDisabler = vape.Categories.Exploits:CreateModule({
-        Name = 'KrystalDisabler',
-        Function = function(callback)
-            local controller = getController()
-            if callback then
-                if not controller or type(controller.updateMomentum) ~= 'function' then
-                    notif('KrystalDisabler', 'Krystal controller is unavailable.', 5, 'warning')
-                    KrystalDisabler:Toggle()
-                    return
-                end
-
-                momentumRemote = bedwars.Client and bedwars.Client:Get('MomentumUpdate')
-                if not oldUpdateMomentum then
-                    oldUpdateMomentum = controller.updateMomentum
-                    controller.updateMomentum = function(self, ...)
-                        setKrystalMomentum(self)
-                        local result = oldUpdateMomentum(self, ...)
-                        setKrystalMomentum(self)
-                        return result
-                    end
-                end
-
-                KrystalDisabler:Clean(runService.PreSimulation:Connect(function()
-                    setKrystalMomentum(getController())
-                end))
-
-                KrystalDisabler:Clean(entitylib.Events.LocalAdded:Connect(patchCharacter))
-                if entitylib.isAlive then
-                    patchCharacter(entitylib.character)
-                end
-                setKrystalMomentum(controller)
-                pcall(controller.updateMomentum, controller)
-            else
-                if controller and oldUpdateMomentum then
-                    controller.updateMomentum = oldUpdateMomentum
-                end
-                oldUpdateMomentum = nil
-                momentumRemote = nil
-                restoreSignals()
-            end
-        end,
-        Tooltip = 'Removes Krystal lagbacks: keeps momentum reported maxed and suppresses the local movement-correction listeners so the skate never snaps back'
-    })
-end)
 
 -- (InfiniteSigrid removed. Re-asserting the ElkKitMounted remote to sustain the ride locked the
 -- player server-side - you moved locally but stayed pinned for everyone else and could be hit.
@@ -6916,8 +6879,9 @@ run(function()
         return false
     end
 
-    AutoKaida = vape.Categories.Blatant:CreateModule({
+    AutoKaida = kits:CreateModule({
         Name = 'AutoKaida',
+        Category = 'Auto',
         Function = function(callback)
             if callback then
                 repeat
@@ -7177,8 +7141,9 @@ run(function()
         return character:GetAttribute("GrimReaperChannel") == true
     end
 
-    ReaperFix = vape.Categories.Exploits:CreateModule({
+    ReaperFix = kits:CreateModule({
         Name = "ReaperBypass",
+        Category = 'Ability',
         Function = function(callback)
             if not callback then
                 return
@@ -7800,12 +7765,115 @@ run(function()
     local Limit
     local LegitAura
     local TargetSkilled
+    local FastHits
+    local FastProjectiles
+    local FastLegitSwitch
+    local FastFireRate
 	local Particles, Boxes = {}, {}
     local anims, AnimDelay, AnimTween, armC0 = vape.Libraries.auraanims, tick()
 	local AttackRemote = {FireServer = function() end}
+    local projectileRemote = {InvokeServer = function() end}
     task.spawn(function()
 		AttackRemote = bedwars.Client:Get(remotes.AttackEntity).instance
                 end)
+    task.spawn(function()
+        projectileRemote = bedwars.Client:Get(remotes.FireProjectile).instance
+    end)
+
+    ----------------------------------------------------------------------------
+    -- Fast Hits.
+    ----------------------------------------------------------------------------
+    -- A sword alone is capped by its own swing cooldown. Fast Hits throws whatever you have
+    -- listed - arrows, snowballs - at the same target in between swings, so the target takes
+    -- the sword's damage and the projectile's. Only one shot is ever in flight at a time and
+    -- the sword goes straight back into your hand, so the aura itself is unaffected.
+    local fastHitCooldown = 0
+    local fastHitBusy = false
+
+    -- Ground search for the Fast Hits trajectory solve. Exclude rather than include-the-map,
+    -- for the same reason ProjectileAura does it: targets stand on placed blocks.
+    local fastRayCheck = RaycastParams.new()
+    fastRayCheck.FilterType = Enum.RaycastFilterType.Exclude
+    fastRayCheck.RespectCanCollide = true
+
+    local function fastAmmoFor(projectileSource)
+        for _, item in store.inventory.inventory.items do
+            if projectileSource.ammoItemTypes and table.find(projectileSource.ammoItemTypes, item.itemType) then
+                return item.itemType
+            end
+        end
+        return nil
+    end
+
+    -- Everything in the inventory that can launch something on the Projectiles list. The list
+    -- is matched against the ammo, the launcher and the launcher's display name, so 'arrow'
+    -- and 'Bow' both select a bow.
+    local function fastLaunchers()
+        local launchers = {}
+        for _, item in store.inventory.inventory.items do
+            local meta = bedwars.ItemMeta[item.itemType]
+            local source = meta and meta.projectileSource
+            local ammo = source and fastAmmoFor(source)
+            if ammo then
+                local enabled = FastProjectiles.ListEnabled
+                if table.find(enabled, ammo) or table.find(enabled, item.itemType) or table.find(enabled, meta.displayName) then
+                    table.insert(launchers, {item, ammo, source.projectileType(ammo), source})
+                end
+            end
+        end
+        return launchers
+    end
+
+    local function fireFastHit(ent, sword)
+        if fastHitBusy or tick() < fastHitCooldown then return end
+        local launchers = fastLaunchers()
+        if #launchers == 0 then return end
+
+        fastHitBusy = true
+        task.spawn(function()
+            pcall(function()
+                local origin = entitylib.character.RootPart.Position
+                local item, ammo, projectile = unpack(launchers[1])
+                local meta = bedwars.ProjectileMeta[projectile]
+                if not meta then return end
+
+                local speed = meta.launchVelocity
+                local gravity = meta.gravitationalAcceleration or 196.2
+                fastRayCheck.FilterDescendantsInstances = {lplr.Character, gameCamera}
+                local aim = prediction.SolveTrajectory(origin, speed, gravity, ent.RootPart.Position, ent.RootPart.Velocity, workspace.Gravity, ent.HipHeight, ent.Jumping and 42.6 or nil, fastRayCheck, nil, lplr:GetNetworkPing())
+                if not aim then return end
+
+                -- Tell the rest of the file a shot is in flight so nothing swaps the launcher
+                -- out from under it, the same signal ProjectileAura publishes.
+                store.lastProjectileFire = workspace:GetServerTimeNow()
+                -- Legit switch goes through the hotbar the way a player would; without it the
+                -- item is swapped straight into the hand. Either way the switch is given a
+                -- moment to land - firing before the server has seen the equip is how a shot
+                -- gets thrown away.
+                if FastLegitSwitch.Enabled then
+                    local slot = getHotbar(item.tool)
+                    if slot then hotbarSwitch(slot) end
+                else
+                    switchItem(item.tool)
+                end
+                if not Killaura.Enabled or not FastHits.Enabled then return end
+
+                local id = httpService:GenerateGUID(true)
+                local direction = CFrame.lookAt(origin, aim).LookVector
+                local shootPosition = (CFrame.new(origin, aim) * CFrame.new(Vector3.new(-bedwars.BowConstantsTable.RelX, -bedwars.BowConstantsTable.RelY, -bedwars.BowConstantsTable.RelZ))).Position
+                bedwars.ProjectileController:createLocalProjectile(meta, ammo, projectile, shootPosition, id, direction * speed, {drawDurationSeconds = 1})
+                projectileRemote:InvokeServer(item.tool, ammo, projectile, shootPosition, origin, direction * speed, id, {drawDurationSeconds = 1, shotId = httpService:GenerateGUID(false)}, workspace:GetServerTimeNow() - 0.045)
+
+                -- Straight back to the sword, or the next pass of the aura loop has nothing to
+                -- swing with.
+                if sword and sword.tool then
+                    switchItem(sword.tool, 0)
+                end
+            end)
+            fastHitCooldown = tick() + FastFireRate.Value
+            fastHitBusy = false
+        end)
+    end
 
     ----------------------------------------------------------------------------
     -- Skill-first targeting.
@@ -8012,7 +8080,11 @@ run(function()
                         })
 
                         if #plrs > 0 then
-                            switchItem(sword.tool, 0)
+                            -- Fast Hits owns the hand while a shot is going out; switching back
+                            -- here would undo the equip before the server has seen it.
+                            if not fastHitBusy then
+                                switchItem(sword.tool, 0)
+                            end
                             local selfpos = entitylib.character.RootPart.Position
                             local localfacing = entitylib.character.RootPart.CFrame.LookVector * Vector3.new(1, 0, 1)
 
@@ -8088,6 +8160,13 @@ run(function()
                     if Face.Enabled and attacked[1] then
                         local vec = attacked[1].Entity.RootPart.Position * Vector3.new(1, 0, 1)
                         entitylib.character.RootPart.CFrame = CFrame.lookAt(entitylib.character.RootPart.Position, Vector3.new(vec.X, entitylib.character.RootPart.Position.Y + 0.001, vec.Z))
+                    end
+
+                    -- Extra damage between swings. Only ever aimed at the target the aura is
+                    -- already committed to, and only while there actually is a sword to go back
+                    -- to afterwards.
+                    if FastHits.Enabled and sword and attacked[1] then
+                        fireFastHit(attacked[1].Entity, sword)
                     end
 
                     task.wait()
@@ -8176,6 +8255,40 @@ run(function()
     Sort = Killaura:CreateDropdown({
         Name = 'Target Mode',
         List = methods
+    })
+    FastHits = Killaura:CreateToggle({
+        Name = 'Fast Hits',
+        Function = function(callback)
+            pcall(function()
+                FastProjectiles.Object.Visible = callback
+                FastLegitSwitch.Object.Visible = callback
+                FastFireRate.Object.Visible = callback
+            end)
+        end,
+        Tooltip = 'Deals extra damage between swings by throwing listed projectiles at the same target'
+    })
+    FastProjectiles = Killaura:CreateTextList({
+        Name = 'Projectiles',
+        Default = {'arrow', 'snowball'},
+        Darker = true,
+        Visible = false,
+        Tooltip = 'Which projectiles Fast Hits is allowed to use'
+    })
+    FastLegitSwitch = Killaura:CreateToggle({
+        Name = 'Legit Switch',
+        Darker = true,
+        Visible = false,
+        Tooltip = 'Switch to the projectile through the hotbar instead of straight into the hand'
+    })
+    FastFireRate = Killaura:CreateSlider({
+        Name = 'Fire rate',
+        Min = 0,
+        Max = 2,
+        Decimal = 100,
+        Default = 0.05,
+        Darker = true,
+        Visible = false,
+        Suffix = 'seconds'
     })
     TargetSkilled = Killaura:CreateToggle({
         Name = 'Target skilled',
@@ -8769,362 +8882,187 @@ run(function()
     })
 end)
 
+--[[
+    Extender
+
+    One module covering all four kit mobility abilities that used to have an extender each
+    (JadeExtender, VoidRegentExtender, CatExtender and YuziExtender). Each of those hooked the
+    controller method that performs the move and pushed the character on with an impulse the
+    moment it fired; this does the same, through the same four hooks, behind one set of
+    settings:
+
+      * Range      - how much further the ability should carry you, in studs.
+      * Kits       - which of the four abilities to extend, one toggle each.
+
+    Hooking the controller (rather than watching velocity or ability cooldowns, as the old
+    Aether module did) is what makes this exact: the impulse is applied on the frame the game
+    itself performs the move, so it can never fire on knockback, an explosion or a hotbar
+    change, and an ability the server refuses never produces one either.
+
+    A controller may not exist yet when the module is switched on - kit controllers are built
+    when the match starts - so each hook waits for its controller and installs late if needed.
+]]
 run(function()
-    -- Extender: one module for every kit mobility ability. It watches for a dash / jump /
-    -- teleport actually being cast, then carries the move further by holding your speed up
-    -- while it plays out. No kit gate - it acts on the ability being used, so it can never
-    -- be blocked by a mismatched kit id.
-    --
-    -- Detection used to be "canUseAbility went true -> false". That call answers "can I use
-    -- this RIGHT NOW", and the answer is no whenever the item granting the ability is not in
-    -- your hand - so changing hotbar slots produced exactly the same edge as casting, and the
-    -- module fired on it. Three things stop that now:
-    --   * an ability is only watched while the item that grants it is actually held, and the
-    --     watch is re-seeded (not edged) on any frame your hand changed,
-    --   * a dash is confirmed against the character's own CanDashNext cooldown stamp, which
-    --     only ever moves when a dash was really spent,
-    --   * nothing boosts on the edge alone. The edge only arms; the boost waits until the
-    --     character has genuinely been launched, so an ability the server refused - or a slot
-    --     change that slipped through - never moves you.
     local Extender
-    local Distance
-    local Duration
-    local Smooth
-    local Fallback
+    local Range
+    local KitToggles = {}
 
-    -- Ability -> the items that grant it. Anything not listed here is a kit ability, which no
-    -- held item gates, so those are watched the whole time.
-    local ABILITY_ITEMS = {
-        jade_hammer_jump = {jade_hammer = true},
-        void_axe_jump = {void_axe = true},
-        dash = {wood_dao = true, stone_dao = true, iron_dao = true, diamond_dao = true, emerald_dao = true}
+    -- name -> everything needed to hook it. `Impulse` receives the root part and the direction
+    -- the move went in, and returns the impulse to apply; the multiplier is derived from Range
+    -- so one slider drives all four.
+    --
+    -- The reference build expressed each of these as a "multiplier" of the ability's own push.
+    -- The numbers below are those pushes at multiplier 1, so Range studs of extra travel comes
+    -- out the same regardless of which ability produced it.
+    local ABILITIES = {
+        {
+            Name = 'Jade Hammer',
+            Kit = 'jade',
+            Controller = 'JadeHammerController',
+            Method = 'useJadeHammer',
+            Ability = 'jade_hammer_jump',
+            -- The hammer throws you upwards, so its extension goes up too.
+            Impulse = function(root)
+                return Vector3.new(0, root.AssemblyMass * Range.Value * 1.025, 0)
+            end
+        },
+        {
+            Name = 'Void Regent',
+            Kit = 'regent',
+            Controller = 'VoidAxeController',
+            Method = 'useVoidAxe',
+            Ability = 'void_axe_jump',
+            Impulse = function(root)
+                local direction = root.CFrame.LookVector * Vector3.new(1, 0, 1)
+                if direction.Magnitude <= 0 then return nil end
+                return direction.Unit * root.AssemblyMass * Range.Value * 3.5
+            end
+        },
+        {
+            Name = 'Cat Pounce',
+            Kit = 'cat',
+            Controller = 'CatController',
+            Method = 'leap',
+            -- leap(self, character, direction): the direction is the second argument.
+            Argument = 3,
+            Impulse = function(root, direction)
+                local flat = direction * Vector3.new(1, 0, 1)
+                if flat.Magnitude <= 0 then return nil end
+                return flat.Unit * root.AssemblyMass * Range.Value * 3.5
+            end
+        },
+        {
+            Name = 'Yuzi Dash',
+            Kit = 'dasher',
+            Controller = 'DaoController',
+            Method = 'dashForward',
+            -- dashForward(self, direction): the direction is the first argument.
+            Argument = 2,
+            Impulse = function(root, direction)
+                local flat = direction * Vector3.new(1, 0, 1)
+                if flat.Magnitude <= 0 then return nil end
+                return flat.Unit * root.AssemblyMass * Range.Value * 3.5
+            end
+        }
     }
-    local KIT_ABILITIES = {'elektra_tp', 'ELEKTRA_TP', 'CAT_POUNCE', 'cat_pounce'}
 
-    local ABILITIES = {}
-    for ability in ABILITY_ITEMS do
-        table.insert(ABILITIES, ability)
-    end
-    for _, ability in KIT_ABILITIES do
-        table.insert(ABILITIES, ability)
-    end
+    -- Installed hooks, so toggling off puts every controller back exactly as it was and a
+    -- controller somebody else has since re-hooked is left alone.
+    local installed = {}
 
-    -- How long a cast has to actually throw us before we forget about it, and what counts as
-    -- being thrown. Sprinting tops out well under this, so ordinary running never qualifies.
-    local ARM_WINDOW = 0.3
-    local LAUNCH_SPEED = 46
-    local LAUNCH_GAIN = 16
-    -- Jump abilities throw you upwards rather than forwards, so a horizontal-only check would
-    -- never confirm the jade hammer or void axe jump. Nothing reaches this without an ability
-    -- edge having armed it first, so it cannot be tripped by an ordinary jump.
-    local LAUNCH_LIFT = 45
-    -- The dash velocity lands a frame or two after the cooldown edge, so give the ability a
-    -- moment to reach its own peak before measuring what to hold it at - otherwise the boost
-    -- ends up feeding back into its own baseline.
-    local SAMPLE = 0.05
-
-    local prevReady, lastHand = {}, nil
-    local armedUntil, armSpeed = 0, 0
-    local armConfirmed, armPos, armStamp = false, nil, 0
-    local boostStart, boostUntil, peakSpeed, boostDir = 0, 0, 0, nil
-    local lastDash, prevSpeed = 0, 0
-    local oldUseAbility
-
-    local function heldName()
-        local hand = store.hand
-        return hand and hand.tool and hand.tool.Name or nil
-    end
-
-    local function grants(ability, held)
-        local items = ABILITY_ITEMS[ability]
-        if not items then return true end
-        return held ~= nil and items[held] == true
-    end
-
-    -- True when what you are holding grants one of the item abilities above, in which case the
-    -- cooldown watch already covers you and the velocity fallback has no business firing.
-    local function heldGrantsAbility(held)
-        if not held then return false end
-        for _, items in ABILITY_ITEMS do
-            if items[held] then return true end
+    local function unhook()
+        for _, entry in installed do
+            if entry.Controller[entry.Method] == entry.Hook then
+                entry.Controller[entry.Method] = entry.Original
+            end
         end
-        return false
+        table.clear(installed)
     end
 
-    local function flatVelocity(root)
-        local vel = root.AssemblyLinearVelocity
-        return Vector3.new(vel.X, 0, vel.Z)
-    end
-
-    local function dashStamp()
-        local character = lplr.Character
-        return character and character:GetAttribute('CanDashNext') or 0
-    end
-
-    -- A cast was seen. Remember how fast we were BEFORE it so the launch check has something to
-    -- compare against - the ability's velocity often lands on the very frame the cooldown edges,
-    -- and measuring after that would leave nothing to detect. `confirmed` marks the casts we are
-    -- sure of - a spent dash cooldown, or an ability that genuinely went ready->used while its item
-    -- was held - as opposed to the velocity fallback's guess. Also stash where we were, so a
-    -- teleport (which adds no speed at all) can still be recognised as the ability having moved us.
-    -- Nothing touches the character yet.
-    local function arm(baseline, confirmed)
-        armedUntil = tick() + ARM_WINDOW
-        armStamp = tick()
-        armSpeed = baseline
-        armConfirmed = confirmed or false
-        armPos = (entitylib.isAlive and entitylib.character.RootPart and entitylib.character.RootPart.Position) or nil
-    end
-
-    -- Did the ability actually throw us? Strict version, for the velocity fallback where we are only
-    -- guessing a cast happened, so it demands a real speed spike to avoid firing on knockback.
-    local function launched(root, speed, baseline)
-        if speed >= LAUNCH_SPEED and speed >= baseline + LAUNCH_GAIN then return true end
-        return root.AssemblyLinearVelocity.Y >= LAUNCH_LIFT
-    end
-
-    -- For a cast we already confirmed, the boost only has to prove the ability moved us at all -
-    -- not that it hit some big number. A dash adds speed, a jump throws us up, a teleport jumps our
-    -- position; any of the three is the move doing its job. This is what makes Extender carry the
-    -- jade hammer jump, the void axe jump and the Elektra / cat teleports too, instead of only the
-    -- dao dash that happened to clear the old speed gate. An ability the server refused produces
-    -- none of these, so a refused cast still never boosts.
-    local function launchedConfirmed(root, speed, baseline)
-        if speed >= baseline + 6 then return true end
-        if root.AssemblyLinearVelocity.Y >= 18 then return true end
-        if armPos and (root.Position - armPos).Magnitude >= 8 then return true end
-        return false
-    end
-
-    -- The ability really did throw us: start carrying it.
-    local function launch(root)
-        armedUntil = 0
-        boostStart = tick()
-        boostUntil = boostStart + (Duration and Duration.Value or 0.45)
-
-        local horiz = flatVelocity(root)
-        peakSpeed = horiz.Magnitude
-
-        if horiz.Magnitude > 4 then
-            boostDir = horiz.Unit
-        else
-            -- A teleport leaves you with almost no horizontal speed, so aim the carry where
-            -- you are looking instead.
-            local look = (gameCamera and gameCamera.CFrame.LookVector) or root.CFrame.LookVector
-            look = Vector3.new(look.X, 0, look.Z)
-            boostDir = look.Magnitude > 0 and look.Unit or nil
+    local function install(ability)
+        -- Kit controllers are created with the match, so wait rather than give up. The loop
+        -- also exits the moment the module is switched off again.
+        local controller = bedwars[ability.Controller]
+        while not controller and Extender.Enabled do
+            task.wait(0.5)
+            controller = bedwars[ability.Controller]
         end
+        if not Extender.Enabled or not controller then return end
+
+        local original = controller[ability.Method]
+        if typeof(original) ~= 'function' then return end
+        -- Already hooked (a second install racing the first, e.g. a fast off/on).
+        for _, entry in installed do
+            if entry.Controller == controller and entry.Method == ability.Method then return end
+        end
+
+        local entry = {Controller = controller, Method = ability.Method, Original = original}
+        entry.Hook = function(...)
+            -- Whether the ability was actually available has to be read BEFORE the original
+            -- runs, because running it is what spends the cooldown.
+            local available = true
+            if ability.Ability then
+                local ok, ready = pcall(function()
+                    return bedwars.AbilityController:canUseAbility(ability.Ability)
+                end)
+                available = ok and ready and true or false
+            end
+
+            -- Read out of the varargs here: the guarded block below is a closure, which
+            -- cannot see `...` of the function it sits in.
+            local direction = ability.Argument and select(ability.Argument, ...) or nil
+            local results = {original(...)}
+
+            local toggle = KitToggles[ability.Name]
+            if Extender.Enabled and available and toggle and toggle.Enabled
+                and entitylib.isAlive and store.equippedKit == ability.Kit
+                and (not ability.Argument or typeof(direction) == 'Vector3') then
+                pcall(function()
+                    local root = entitylib.character.RootPart
+                    local impulse = ability.Impulse(root, direction)
+                    if impulse then
+                        root:ApplyImpulse(impulse)
+                    end
+                end)
+            end
+
+            return unpack(results)
+        end
+
+        controller[ability.Method] = entry.Hook
+        table.insert(installed, entry)
     end
 
-    local function reset()
-        table.clear(prevReady)
-        lastHand = nil
-        armedUntil, armSpeed = 0, 0
-        armConfirmed, armPos, armStamp = false, nil, 0
-        boostStart, boostUntil, peakSpeed, boostDir = 0, 0, 0, nil
-        lastDash, prevSpeed = 0, 0
-    end
-
-    Extender = vape.Categories.Blatant:CreateModule({
+    Extender = kits:CreateModule({
         Name = 'Extender',
+        Category = 'Ability',
         Function = function(callback)
             if callback then
-                reset()
-                lastDash = dashStamp()
-                lastHand = heldName()
-
-                -- LongJump already knows exactly when a supported tool (dao, hammer, axe,
-                -- cannon, TNT or hook) has genuinely entered its launch window. Reuse that edge
-                -- directly; duplicating its item/cooldown guesses was the reason Extender missed
-                -- casts whenever BedWars changed a controller detail.
-                Extender:Clean(longJumpActivation.Event:Connect(function(velocity)
-                    local baseline = velocity and Vector3.new(velocity.X, 0, velocity.Z).Magnitude or prevSpeed
-                    arm(baseline, true)
-                end))
-
-                -- Observe the cast itself rather than inferring every tool from cooldown state.
-                -- Current controllers do not consistently flip canUseAbility on the cast frame,
-                -- which was why manually using the same tool went undetected while LongJump's
-                -- slower activation path happened to work.
-                local controller = bedwars.AbilityController
-                if controller and type(controller.useAbility) == 'function' then
-                    oldUseAbility = controller.useAbility
-                    controller.useAbility = function(self, ability, ...)
-                        local result = oldUseAbility(self, ability, ...)
-                        if table.find(ABILITIES, ability) then
-                            arm(prevSpeed, true)
-                        end
-                        return result
-                    end
-                    Extender:Clean(function()
-                        if controller.useAbility ~= oldUseAbility then
-                            controller.useAbility = oldUseAbility
-                        end
-                        oldUseAbility = nil
-                    end)
+                for _, ability in ABILITIES do
+                    task.spawn(install, ability)
                 end
-
-                Extender:Clean(runService.PreSimulation:Connect(function()
-                    if not entitylib.isAlive then return end
-                    local root = entitylib.character.RootPart
-                    if not root or not isnetworkowner(root) then return end
-
-                    local now = tick()
-                    local held = heldName()
-                    local handChanged = held ~= lastHand
-                    lastHand = held
-
-                    local horiz = flatVelocity(root)
-                    local speed = horiz.Magnitude
-                    -- The slower of this frame and the last one, so an ability whose velocity
-                    -- lands on the same frame as its cooldown edge is still measurable.
-                    local baseline = math.min(prevSpeed, speed)
-
-                    -- CanDashNext is stamped forward every time a dash is actually spent, and
-                    -- unlike canUseAbility it does not care what you are holding, so a slot
-                    -- change cannot move it.
-                    local stamp = dashStamp()
-                    if stamp > lastDash + 0.01 then
-                        arm(baseline, true)
-                    end
-                    if stamp ~= lastDash then
-                        lastDash = stamp
-                    end
-
-                    for _, ability in ABILITIES do
-                        if not grants(ability, held) then
-                            -- Not in hand: the ability does not exist for us right now, so
-                            -- there is no ready state worth remembering.
-                            prevReady[ability] = nil
-                        else
-                            local ok, ready = pcall(function()
-                                return bedwars.AbilityController:canUseAbility(ability)
-                            end)
-                            ready = (ok and ready) and true or false
-
-                            if handChanged or prevReady[ability] == nil then
-                                -- Just picked the item up. This flip is the item arriving, not
-                                -- a cast, so seed the state rather than treating it as an edge.
-                                prevReady[ability] = ready
-                            else
-                                if prevReady[ability] and not ready then
-                                    arm(baseline, true)
-                                end
-                                prevReady[ability] = ready
-                            end
-                        end
-                    end
-
-                    prevSpeed = speed
-
-                    if boostUntil <= now then
-                        if armedUntil > now then
-                            local confirm
-                            if armConfirmed then
-                                -- Give a confirmed cast the SAMPLE window to reach its peak, then
-                                -- carry it on the loose movement test so jumps and teleports count.
-                                confirm = (now - armStamp >= SAMPLE) and launchedConfirmed(root, speed, armSpeed)
-                            else
-                                confirm = launched(root, speed, armSpeed)
-                            end
-                            if confirm then
-                                launch(root)
-                            end
-                        else
-                            armedUntil = 0
-
-                            -- Opt-in safety net for kits whose ability never edges the cooldown
-                            -- API. Off by default because a bare velocity spike is also what
-                            -- knockback and explosions look like, which is what made the old
-                            -- build fire at things that were not abilities at all.
-                            if Fallback and Fallback.Enabled and not heldGrantsAbility(held)
-                                and speed >= LAUNCH_SPEED + 14 and speed >= baseline + LAUNCH_GAIN * 2 then
-                                launch(root)
-                            end
-                        end
-                        return
-                    end
-
-                    if not boostDir then return end
-
-                    local direction = speed > 4 and horiz.Unit or boostDir
-
-                    -- Knocked off the line we launched on: something hit us, so let the ability
-                    -- go rather than dragging the character through the knockback.
-                    if direction:Dot(boostDir) < 0.2 then
-                        boostUntil = 0
-                        boostDir = nil
-                        return
-                    end
-
-                    -- Follow where we are actually going so the move stays steerable instead of
-                    -- running on a rail.
-                    boostDir = direction
-
-                    if now - boostStart < SAMPLE then
-                        peakSpeed = math.max(peakSpeed, speed)
-                        return
-                    end
-
-                    local total = math.max(boostUntil - boostStart, 0.001)
-                    local progress = math.clamp((now - boostStart) / total, 0, 1)
-                    local envelope = 1
-
-                    if Smooth and Smooth.Enabled then
-                        -- Ease in, then fall away on a cosine tail, so the speed curve reads as
-                        -- a dash decaying rather than a rectangular block of velocity that snaps
-                        -- back to walking pace the instant the timer runs out.
-                        local rise = math.clamp(progress / 0.15, 0, 1)
-                        local fall = math.cos(math.clamp((progress - 0.15) / 0.85, 0, 1) * (math.pi / 2))
-                        envelope = rise * fall
-                    end
-
-                    -- Distance is measured in studs. Convert it to the extra velocity
-                    -- required over the configured carry time instead of treating the
-                    -- distance value itself as studs/second.
-                    local extraSpeed = Distance.Value / math.max(Duration.Value, 0.1)
-                    local target = (peakSpeed + extraSpeed) * envelope
-
-                    -- Only ever add to what the ability is already doing. Pinning the speed to a
-                    -- fixed number the whole way through is the part that looked obviously
-                    -- driven, and it also fought the game whenever the move was faster than us.
-                    if target > speed then
-                        local applied = direction * target
-                        root.AssemblyLinearVelocity = Vector3.new(applied.X, root.AssemblyLinearVelocity.Y, applied.Z)
-                    end
-                end))
             else
-                reset()
+                unhook()
             end
         end,
-        Tooltip = 'Carries your kit\'s mobility ability further. Detects the jade hammer jump, void axe jump, Yuzi dash or Elektra teleport being cast and holds your speed up'
+        Tooltip = 'Carries your kit\'s mobility ability further. Extends the jade hammer jump, void regent axe dash, cat pounce and Yuzi dash by pushing you on at the moment the game performs the move'
     })
-    Distance = Extender:CreateSlider({
-        Name = 'Extra Distance',
+
+    Range = Extender:CreateSlider({
+        Name = 'Extension range',
         Min = 1,
         Max = 80,
         Default = 20,
         Suffix = ' studs',
-        Tooltip = 'How much extra forward speed to carry during the ability so it takes you further'
+        Tooltip = 'How much further the ability takes you'
     })
-    Duration = Extender:CreateSlider({
-        Name = 'Duration',
-        Min = 0.1,
-        Max = 1.5,
-        Decimal = 100,
-        Default = 0.45,
-        Suffix = 'seconds',
-        Tooltip = 'How long the ability is carried for. Shorter reads as a slightly longer dash; longer turns it into an obvious glide'
-    })
-    Smooth = Extender:CreateToggle({
-        Name = 'Smooth',
-        Default = true,
-        Tooltip = 'Eases the extra speed in and lets it decay away instead of holding a flat speed for the whole duration and dropping it all at once'
-    })
-    Fallback = Extender:CreateToggle({
-        Name = 'Velocity fallback',
-        Tooltip = 'Also fire on a big speed spike with no dash or jump item held, for kits whose ability never reaches the cooldown API. Off by default - knockback looks the same from velocity alone'
-    })
+    for _, ability in ABILITIES do
+        KitToggles[ability.Name] = Extender:CreateToggle({
+            Name = ability.Name,
+            Default = true,
+            Tooltip = 'Extend the '..ability.Name..' ability'
+        })
+    end
 end)
 
 run(function()
@@ -9362,8 +9300,9 @@ run(function()
         return meta
     end
 
-    OwlAura = vape.Categories.Blatant:CreateModule({
+    OwlAura = kits:CreateModule({
         Name = 'OwlAura',
+        Category = 'Aim',
         Function = function(callback)
             if callback then
                 local owls = collection('Owl', OwlAura, function(self, obj)
@@ -10541,8 +10480,9 @@ run(function()
 
     local old
 
-    TerraAimbot = vape.Categories.Blatant:CreateModule({
+    TerraAimbot = kits:CreateModule({
         Name = 'TerraAimbot',
+        Category = 'Aim',
         Function = function(callback)
             if callback then
                 old = bedwars.BlockKickerKitController.getKickBlockProjectileOriginPosition
@@ -10591,62 +10531,80 @@ run(function()
     })
 end)
 
+-- VulcanAssist (from idk; replaces Aether's VulcanAimbot, which did the same job).
+-- Points the Vulcan turret camera at whoever is nearest the crosshair, leading the shot with
+-- the trajectory solver and allowing for a target that is currently off the ground.
 run(function()
-    local VulcanAimbot
+    local VulcanAssist
     local Targets
     local Range
     local Sort
 
-    VulcanAimbot = vape.Categories.Blatant:CreateModule({
-        Name = 'VulcanAimbot',
+    VulcanAssist = kits:CreateModule({
+        Name = 'VulcanAssist',
+        Category = 'Aim',
         Function = function(callback)
-            if callback then
-                repeat
-                    if entitylib.isAlive then
-                        local turret = bedwars.Store:getState().Game.selectedTurret
-                        if turret then
-                            local origin = turret.Rotate.Position
-                            local ent = entitylib.EntityMouse({
-                                Range = Range.Value,
-                                Origin = origin,
-                                Wallcheck = Targets.Walls.Enabled or nil,
-                                Part = 'RootPart',
-                                Players = Targets.Players.Enabled,
-                                NPCs = Targets.NPCs.Enabled,
-                                Sort = sortmethods[Sort.Value]
-                            })
-                            if ent then
-                                local pos = prediction.SolveTrajectory(origin, 320, 10, ent.RootPart.Position, ent.RootPart.Velocity, workspace.Gravity, ent.HipHeight, nil, store.airRay)
-                                if pos then
-                                    local delta = pos - origin
-
-                                    -- mathing
-                                    bedwars.TurretCameraController.angleX = math.atan2(-delta.X, -delta.Z)
-                                    bedwars.TurretCameraController.angleY = math.clamp(math.atan2(delta.Y, math.sqrt(delta.X^2 + delta.Z^2)), -0.8, 0.8)
-                                end
+            if not callback then return end
+            repeat
+                if entitylib.isAlive then
+                    local turret = bedwars.Store:getState().Game.selectedTurret
+                    if turret then
+                        local origin = turret.Rotate.Position
+                        local ent = entitylib.EntityMouse({
+                            Range = Range.Value,
+                            Origin = origin,
+                            Wallcheck = Targets.Walls.Enabled or nil,
+                            Part = 'RootPart',
+                            Players = Targets.Players.Enabled,
+                            NPCs = Targets.NPCs.Enabled,
+                            Sort = sortmethods[Sort.Value]
+                        })
+                        if ent then
+                            -- A target already in the air keeps falling for the whole flight, so
+                            -- the solver is told to simulate the jump rather than assume they are
+                            -- standing still on the ground.
+                            local airborne = ent.Humanoid and ent.Humanoid.FloorMaterial == Enum.Material.Air
+                            if not airborne then
+                                airborne = math.abs(ent.RootPart.AssemblyLinearVelocity.Y) > 0.01
+                            end
+                            local pos = prediction.SolveTrajectory(
+                                origin,
+                                320,
+                                10,
+                                ent.RootPart.Position,
+                                ent.RootPart.AssemblyLinearVelocity,
+                                workspace.Gravity,
+                                ent.HipHeight,
+                                airborne and ent.RootPart.AssemblyLinearVelocity.Y or nil,
+                                store.airRay
+                            )
+                            if pos then
+                                local delta = pos - origin
+                                bedwars.TurretCameraController.angleX = math.atan2(-delta.X, -delta.Z)
+                                bedwars.TurretCameraController.angleY = math.clamp(math.atan2(delta.Y, math.sqrt(delta.X^2 + delta.Z^2)), -0.8, 0.8)
                             end
                         end
                     end
-                    task.wait(0.1)
-                until not VulcanAimbot.Enabled
-            end
+                end
+                task.wait(0.1)
+            until not VulcanAssist.Enabled
         end,
-        Tooltip = 'Automatically aims your camera toward opponents'
+        Tooltip = 'Automatically aims the Vulcan turret camera toward opponents'
     })
 
-    Targets = VulcanAimbot:CreateTargets({Walls = true, Players = true})
+    Targets = VulcanAssist:CreateTargets({Walls = true, Players = true})
     local methods = {'Distance', 'Damage'}
     for i in sortmethods do
         if not table.find(methods, i) then
             table.insert(methods, i)
         end
     end
-    Sort = VulcanAimbot:CreateDropdown({
+    Sort = VulcanAssist:CreateDropdown({
         Name = 'Target mode',
         List = methods,
         Default = methods[1]
     })
-    Range = VulcanAimbot:CreateSlider({
+    Range = VulcanAssist:CreateSlider({
         Name = 'Range',
         Min = 1,
         Max = 1000,
@@ -11825,8 +11783,9 @@ run(function()
 	end
     end
 
-    KitDisplay = vape.Categories.Render:CreateModule({
+    KitDisplay = kits:CreateModule({
 	Name = 'KitDisplay',
+	Category = 'Visual',
 	Function = function(call)
 		if call then
 			local DraftApp = lplr.PlayerGui:WaitForChild('MatchDraftApp', 9e9)
@@ -11898,8 +11857,9 @@ run(function()
 	end
     end
 
-    KitESP = vape.Categories.Render:CreateModule({
+    KitESP = kits:CreateModule({
 	Name = 'KitESP',
+	Category = 'Visual',
 	Function = function(callback)
 		if callback then
 			repeat
@@ -13679,209 +13639,144 @@ run(function()
     Settings.GeneratorGlow = IRLReplica:CreateToggle({Name = 'Generator Glow', Default = true, Function = function(v) setEnabled(Settings.GeneratorGlow, v); RealLifeBedWars.ApplyParticles() end})
 end)
 
+--[[
+    SkinChanger
+
+    Replaced with the reference build's approach. Rather than cloning skin models onto your
+    hand and welding them, it sets the itemSkin field the game already carries on every
+    inventory entry and re-renders the viewmodel, so the item shows up with that skin (and its
+    sounds) through the game's own path. One dropdown per item kind - pick the skin family and
+    every matching item you hold uses it.
+
+    Client-side only: nobody else sees the change.
+]]
 run(function()
     local SkinChanger
-    local Skin, SkinType
+    local Dropdowns = {}
 
-    local ModelOffsets = setmetatable({
-        bow_default = CFrame.Angles(0, math.rad(90), math.rad(-90)) * CFrame.new(-0.4, 0, 0),
-        bow_max = CFrame.Angles(math.rad(-38), math.rad(90), math.rad(-45)) * CFrame.new(1.5, 0, 0),
-        bow_headhunter = CFrame.Angles(math.rad(-90), math.rad(-90), 0) * CFrame.new(-2, 1, 0),
-        sword = CFrame.Angles(math.rad(-95), math.rad(-90), 0) * CFrame.new(0, 2, 0),
-        hammer = CFrame.Angles(math.rad(-90), math.rad(90), 0),
-    }, {
-        __index = function()
-            return CFrame.Angles(math.rad(-90), 0, 0)
-        end,
-    })
+    local ITEM_KINDS = {
+        {Name = 'Pickaxe', Match = 'pickaxe$'},
+        {Name = 'Axe', Match = 'axe$'},
+        {Name = 'Crossbow', Match = 'crossbow$'},
+        {Name = 'Bow', Match = 'bow$'},
+        {Name = 'Headhunter', Match = 'headhunter$'},
+        {Name = 'Sword', Match = 'sword$'},
+        {Name = 'Dao', Match = 'dao$'},
+        {Name = 'Harpoon', Match = 'harpoon$'},
+        {Name = 'Lasso', Match = 'lasso$'},
+        {Name = 'Staff', Match = 'staff'}
+    }
 
-    local Names, Saved = {}, {}
+    -- kind -> skin tag -> itemType -> skin id, and kind -> pretty name -> skin tag.
+    local skinsByKind = {}
+    local tagsByDisplayName = {}
 
-    local function Added(Item, Parent)
-        if not Skin.Value or not Item then
-            return
-        end
-        local Meta = bedwars.ItemMeta[Item.Name]
-        if Meta then
-            local Type = 'none'
-            if Meta.block then
-                Type = 'block'
-            elseif Meta.projectileSource then
-                if Item.Name:find('bow') then
-                    Type = `bow_{Item.Name:find('cross') and 'max' or 'default'}`
-                elseif Item.Name:find('headhunter') then
-                    if Type:find('victorious') then
-                        Type = 'bow_headhunter'
-                    else
-                        Type = 'bow_max'
-                    end
-                end
-            elseif Meta.sword then
-                Type = 'sword'
-            else
-                Type = Item.Name
-            end
-
-            for _, skin in Names[Skin.Value] do
-                if not skin:find(Item.Name) then
-                    continue
-                end
-                if SkinType.Value ~= 'All' and not skin:find(SkinType.Value:lower()) then
-                    continue
-                end
-                local ItemSkin = replicatedStorage.Items:FindFirstChild(skin)
-
-                if ItemSkin then
-                    local Model = Instance.new('Model', Item)
-                    ItemSkin = ItemSkin.Handle:Clone()
-                    ItemSkin.Parent = Model
-                    table.insert(Saved, Model)
-                    SkinChanger:Clean(Model)
-                    for _, v in Model:GetDescendants() do
-                        pcall(function()
-                            v.Anchored = false
-                        end)
-                        pcall(function()
-                            v.CanCollide = false
-                        end)
-                    end
-                    Model:PivotTo(Parent.RightHand.CFrame * ModelOffsets[Type])
-
-                    local Weld = Instance.new('WeldConstraint', Model)
-                    Weld.Part0 = Parent.RightHand
-                    Weld.Part1 = Model.Handle
-                    if Item:FindFirstChild('Handle') then
-                        Item.Handle:Destroy()
-                    end
-
-                    Item:SetAttribute('ItemSkin', skin)
-                    break
-                end
-            end
-        end
+    local function prettify(text)
+        return (text:gsub('_', ' '):gsub('%a+', function(word)
+            return word:sub(1, 1):upper()..word:sub(2)
+        end))
     end
+
+    local function kindOf(itemType)
+        for _, kind in ITEM_KINDS do
+            if itemType:find(kind.Match) then
+                return kind.Name
+            end
+        end
+        return nil
+    end
+
+    local function selectedSkin(itemType)
+        if not SkinChanger.Enabled then return nil end
+        local kind = kindOf(itemType)
+        if not kind or not Dropdowns[kind] then return nil end
+        local tag = tagsByDisplayName[kind] and tagsByDisplayName[kind][Dropdowns[kind].Value]
+        if not tag then return nil end
+        return skinsByKind[kind][tag][itemType]
+    end
+
+    -- Applied to the whole inventory (and the held item, which the store tracks separately)
+    -- because a skin the game has not been told about is simply not drawn.
+    local function applySkins()
+        pcall(function()
+            local inventory = store.inventory.inventory
+            for _, item in inventory.items do
+                item.itemSkin = selectedSkin(item.itemType)
+            end
+            if inventory.hand then
+                inventory.hand.itemSkin = selectedSkin(inventory.hand.itemType)
+            end
+            bedwars.InventoryViewmodelController:handleStore(bedwars.Store:getState())
+        end)
+    end
+
+    -- A skin id is the item it reskins with the skin's own name on the end
+    -- ('wood_bow_victorious_diamond' = 'wood_bow' + 'victorious_diamond'), and only the base
+    -- item exists in ItemMeta. Walking the id back a segment at a time until ItemMeta
+    -- recognises it splits the two apart without needing a table of suffixes to keep current.
+    local function splitSkinId(skinId)
+        -- cut is the index of the underscore currently being treated as the split point.
+        local cut = #skinId + 1
+        while cut do
+            local base = skinId:sub(1, cut - 1)
+            if bedwars.ItemMeta[base] then
+                return base, skinId:sub(cut + 1)
+            end
+            cut = base:match('^.*()_')
+        end
+        return nil
+    end
+
+    -- Built once from the game's own kit-skin metadata. Guarded: a build that has renamed or
+    -- removed the skin tables leaves the module registered with no dropdowns rather than
+    -- taking the whole chunk out.
+    pcall(function()
+        for _, kitSkin in bedwars.BedwarsKitSkin do
+            for _, skinId in (kitSkin.itemSkins or {}) do
+                local itemType, tag = splitSkinId(skinId)
+                local kind = itemType and kindOf(itemType)
+                if kind and tag and tag ~= '' then
+                    skinsByKind[kind] = skinsByKind[kind] or {}
+                    skinsByKind[kind][tag] = skinsByKind[kind][tag] or {}
+                    skinsByKind[kind][tag][itemType] = skinId
+                    tagsByDisplayName[kind] = tagsByDisplayName[kind] or {}
+                    tagsByDisplayName[kind][prettify(tag)] = tag
+                end
+            end
+        end
+    end)
 
     SkinChanger = vape.Categories.Render:CreateModule({
         Name = 'SkinChanger',
-        Tooltip = 'Changes your item skins with others',
-        Disabled = not getgenv().canDebug,
         Function = function(callback)
             if callback then
-                repeat
-                    task.wait()
-                until store.map or not SkinChanger.Enabled
-                if not SkinChanger.Enabled then return end
-
-                SkinChanger:Clean(vapeEvents.InventoryHeldChanged.Event:Connect(function(Tool)
-                    for _, v in Saved do
-                        pcall(function()
-                            v:Destroy()
-                        end)
-                    end
-                    if Tool then
-                        for _, parent in {lplr.Character, gameCamera.Viewmodel} do
-                            local Model = parent:WaitForChild(Tool.Name, 5)
-                            if Model then
-                                task.delay(0, Added, Model, parent)
-                            end
-                        end
-                    end
-                end))
-                SkinChanger:Clean(store.map.Blocks.ChildAdded:Connect(function(v)
-                    task.defer(function()
-                        local Meta = bedwars.ItemMeta[v.Name]
-                        if Meta then
-                            for _, SkinName in Names[Skin.Value] do
-                                if not SkinName:find(v.Name) then
-                                    continue
-                                end
-                                if SkinType.Value ~= 'All' and not SkinName:find(SkinType.Value:lower()) then
-                                    continue
-                                end
-                                local ItemSkin = replicatedStorage.Assets.Blocks:FindFirstChild(SkinName)
-                                if ItemSkin then
-                                    ItemSkin = ItemSkin:Clone()
-                                    ItemSkin.Parent = workspace
-                                    local OldTransparencies = {}
-                                    for _, v2 in v:QueryDescendants('BasePart') do
-                                        OldTransparencies[v2] = v2.Transparency
-                                        v2.Transparency = 1
-                                    end
-                                    task.spawn(pcall, function()
-                                        v:WaitForChild('TeamLight', 5):Destroy()
-                                    end)
-
-                                    for _, v2 in ItemSkin:GetDescendants() do
-                                        pcall(function()
-                                            v2.CanCollide = false
-                                            v2.CanQuery = false
-                                            v2.CanTouch = false
-                                        end)
-                                    end
-
-                                    v:SetAttribute('ItemSkin', SkinName)
-
-                                    local Base = v:FindFirstChild('Barrel') or v:FindFirstChild('Bottom') or v
-
-                                    local Connection = runService.PreRender:Connect(function()
-                                        if not Base or not Base.Parent then
-                                            return
-                                        end
-                                        ItemSkin:PivotTo(Base.CFrame)
-                                    end)
-
-                                    local callback = function()
-                                        if v and v.Parent then
-                                            for i, v in OldTransparencies do
-                                                i.Transparency = v
-                                            end
-                                        end
-                                    end
-                                    SkinChanger:Clean(ItemSkin)
-                                    SkinChanger:Clean(Connection)
-                                    SkinChanger:Clean(callback)
-                                    v.Destroying:Once(function()
-                                        if Connection then
-                                            Connection:Disconnect()
-                                        end
-                                        if ItemSkin and ItemSkin.Parent then
-                                            ItemSkin:Destroy()
-                                        end
-                                    end)
-                                end
-                            end
-                        end
-                    end)
-                end))
+                SkinChanger:Clean(vapeEvents.InventoryChanged.Event:Connect(applySkins))
             end
+            applySkins()
         end,
+        Tooltip = 'Reskins the items you hold, along with their sounds. Only you can see it'
     })
 
-    local list = {}
-    for _, v in bedwars.BedwarsKitSkin do
-        if v.itemSkins then
-            if Names[v.name] then
-                for _, v2 in v.itemSkins do
-                    table.insert(Names[v.name], v2)
-                end
-            else
-                table.insert(list, v.name)
-                Names[v.name] = v.itemSkins
+    for _, kind in ITEM_KINDS do
+        if tagsByDisplayName[kind.Name] then
+            local names = {}
+            for displayName in tagsByDisplayName[kind.Name] do
+                table.insert(names, displayName)
             end
+            table.sort(names)
+            table.insert(names, 1, 'None')
+            Dropdowns[kind.Name] = SkinChanger:CreateDropdown({
+                Name = kind.Name..' Skin',
+                List = names,
+                Default = 'None',
+                Function = function()
+                    if SkinChanger.Enabled then
+                        applySkins()
+                    end
+                end
+            })
         end
     end
-    table.sort(list, function(a, b)
-        return a < b
-    end)
-    Skin = SkinChanger:CreateDropdown({
-        Name = 'Item Skin',
-        List = list,
-    })
-    SkinType = SkinChanger:CreateDropdown({
-        Name = 'Skin Type',
-        List = { 'All', 'Gold', 'Platinum', 'Diamond', 'Emerald', 'Nightmare', 'Void' },
-        Default = 'All',
-    })
 end)
 
 run(function()
@@ -15822,8 +15717,9 @@ run(function()
     end
 
 
-    TritonClutch = vape.Categories.Utility:CreateModule({
+    TritonClutch = kits:CreateModule({
 	Name = 'TritonClutch',
+	Category = 'Ability',
 	Function = function(callback)
 		if callback then
 			local lasty, attempted
@@ -16533,6 +16429,11 @@ run(function()
     -- Switching targets needs a mouse movement. Landing on a different player inside this is the
     -- one killaura signature that cannot be produced by clicking quickly.
     local SWITCH_WINDOW = 0.25
+    -- Sustained-rate signal from idk's detector. One hit this fast proves nothing - people do
+    -- click at this pace - so it only counts as a run: BURST_HITS of them inside BURST_MEMORY.
+    local BURST_INTERVAL = 0.28
+    local BURST_HITS = 3
+    local BURST_MEMORY = 60
     -- Reach has to be over by this much before it counts. Under it we are arguing with our own
     -- interpolation, not with the player.
     local REACH_SLACK = 1.5
@@ -16558,23 +16459,25 @@ run(function()
         return count
     end
 
-    local function Added(player, reason)
+    local function Added(player, reason, detail)
         if not CheatersFlagged[player] then
             CheatersFlagged[player] = true
             whitelist.customtags[player.Name] = {{text = 'CHEATER', color = Color3.new(1, 0, 0)}}
-            notif('CheatDetector', `{player.Name} flagged for {reason:lower()}`, 10, 'alert')
+            -- Say what was actually measured, not just which check fired. A flag you cannot
+            -- sanity-check yourself is a flag you have to take on trust.
+            notif('CheatDetector', `{player.Name} flagged for {reason:lower()}{detail and ' ('..detail..')' or ''}`, 10, 'alert')
         end
     end
 
     -- One strike is an oddity, several is a pattern. Nothing reaches Added until the pattern is
     -- there, and the threshold is the one thing the user gets to tune.
-    local function strike(plr, reason, label)
+    local function strike(plr, reason, label, detail)
         if not plr or plr == lplr or CheatersFlagged[plr] then return end
         strikes[plr] = strikes[plr] or {}
         strikes[plr][reason] = strikes[plr][reason] or {}
         table.insert(strikes[plr][reason], tick())
         if strikeCount(plr, reason) >= MinStrikes.Value then
-            Added(plr, label or reason)
+            Added(plr, label or reason, detail)
         end
     end
 
@@ -16658,8 +16561,9 @@ run(function()
                                 and math.abs(root.AssemblyLinearVelocity.Y) < 12
                                 and (now - (lastHurt[plr] or 0)) > 1.5
 
-                            if usable and (distance / delta) > SPEED_CEILING then
-                                strike(plr, 'Speed', 'speeding')
+                            local speed = distance / delta
+                            if usable and speed > SPEED_CEILING then
+                                strike(plr, 'Speed', 'speeding', `{math.floor(speed)} studs/s, ceiling {SPEED_CEILING}`)
                             end
                         end
                     end
@@ -16674,6 +16578,24 @@ run(function()
     ------------------------------------------------------------------------
     Checks.Killaura = function()
         local last = {}
+        -- Sustained-rate signal, taken from idk's detector. A single hit at aura pace is a fast
+        -- mouse; a stream of them is a machine holding a rate no hand keeps up. Timestamps of
+        -- each fast hit per player, aged out after BURST_MEMORY.
+        local bursts = {}
+
+        local function burstCount(plr)
+            local list = bursts[plr]
+            if not list then return 0 end
+            local now, count = os.clock(), 0
+            for i = #list, 1, -1 do
+                if now - list[i] > BURST_MEMORY then
+                    table.remove(list, i)
+                else
+                    count += 1
+                end
+            end
+            return count
+        end
 
         CheatDetector:Clean(vapeEvents.EntityDamageEvent.Event:Connect(function(damageTable)
             if damageTable.damageType ~= 0 or not damageTable.fromEntity then return end
@@ -16695,12 +16617,22 @@ run(function()
             if interval <= 0.008 then return end
 
             if interval < MIN_HUMAN_INTERVAL then
-                strike(from, 'Killaura', 'using killaura')
+                strike(from, 'Killaura', 'using killaura', `hits {math.floor(interval * 1000)}ms apart`)
             elseif victim and previous.Victim and victim ~= previous.Victim and interval < SWITCH_WINDOW then
                 -- Landing on a different player a fifth of a second apart means the aim moved
                 -- between them instantly. This is the signature worth having; hitting one person
                 -- quickly is just a fast mouse.
-                strike(from, 'Killaura', 'using killaura')
+                strike(from, 'Killaura', 'using killaura', 'switched target instantly')
+            elseif interval < BURST_INTERVAL then
+                -- Not fast enough to mean anything on its own, so this only ever contributes a
+                -- strike once a run of them has built up - and the strike still has to clear the
+                -- Minimum strikes threshold like every other reading.
+                bursts[from] = bursts[from] or {}
+                table.insert(bursts[from], now)
+                if burstCount(from) >= BURST_HITS then
+                    table.clear(bursts[from])
+                    strike(from, 'Killaura', 'using killaura', `{BURST_HITS} hits in a row under {math.floor(BURST_INTERVAL * 1000)}ms`)
+                end
             end
         end))
     end
@@ -16730,8 +16662,9 @@ run(function()
             -- have been and anyone hitting a target running away from them read as reach.
             local allowance = math.clamp(ping() * 60, 0, 12)
 
-            if distance > (weaponReach(attacker) + allowance + REACH_SLACK) then
-                strike(attacker, 'Reach', 'using reach')
+            local limit = weaponReach(attacker) + allowance + REACH_SLACK
+            if distance > limit then
+                strike(attacker, 'Reach', 'using reach', `{math.floor(distance * 10) / 10} studs, limit {math.floor(limit * 10) / 10}`)
             end
         end))
     end
@@ -17552,8 +17485,9 @@ run(function()
 		end
 	}
 
-	AutoKit = vape.Categories.Utility:CreateModule({
+	AutoKit = kits:CreateModule({
 		Name = 'AutoKit',
+		Category = 'Auto',
 		Function = function(callback)
 			if callback then
 				AutoKit:Clean(stopKit)
@@ -17623,8 +17557,9 @@ end)
 run(function()
     local MissileTP
 
-    MissileTP = vape.Categories.Utility:CreateModule({
+    MissileTP = kits:CreateModule({
         Name = 'MissileTP',
+        Category = 'Ability',
         Function = function(callback)
             if callback then
                 MissileTP:Toggle()
@@ -17727,8 +17662,9 @@ end)
 run(function()
     local RavenTP
 
-    RavenTP = vape.Categories.Utility:CreateModule({
+    RavenTP = kits:CreateModule({
         Name = 'RavenTP',
+        Category = 'Ability',
         Function = function(callback)
             if callback then
                 RavenTP:Toggle()
@@ -18490,9 +18426,17 @@ run(function()
     ----------------------------------------------------------------------------------------------
     local driven = {}
 
+    -- Modules live in three places now: the category tabs, the Legit window and the Kits
+    -- window. AutoWin drives AutoKit (and could drive anything else that moved), so look in
+    -- all of them rather than only the tabs.
     local function moduleByName(name)
-        if not vape.Modules then return nil end
-        return vape.Modules[name]
+        if vape.Modules and vape.Modules[name] then return vape.Modules[name] end
+        for _, panel in {vape.Kits, vape.Legit} do
+            if panel and panel.Modules and panel.Modules[name] then
+                return panel.Modules[name]
+            end
+        end
+        return nil
     end
 
     local function optionOf(module, name)
@@ -19785,7 +19729,7 @@ run(function()
     -- which costs nothing.
     local function bankLoot()
         if not BankLoot or not BankLoot.Enabled then return end
-        if takeOver('AutoBank', {['Range'] = 'Infinite', ['Silent bank'] = true}) then return end
+        if takeOver('AutoBank', {}) then return end
         local chest = replicatedStorage:FindFirstChild('Inventories')
         chest = chest and chest:FindFirstChild(lplr.Name .. '_personal')
         if not chest then return end
@@ -19840,10 +19784,9 @@ run(function()
     --   * With our bed gone the respawn IS the elimination. That check existed, but as a bare
     --     ownBedAlive() at each site, and one missed site throws the match.
     --   * A reset while a hitbox swap is in flight is what leaves your body frozen in place.
-    --     AutoBank's silent bank parks your real root on the chest for a fraction of a second, and
-    --     the run banks IMMEDIATELY before resetting - so respawning into the middle of that swap
-    --     was routine, not rare. Wait for the swap to finish (store.rootpart is the whole script's
-    --     flag for "somebody owns the hitbox") and skip the reset entirely if it will not clear.
+    --     Anything that parks your real root elsewhere for a moment (GodMode, AntiDeath) sets
+    --     store.rootpart, which is the whole script's flag for "somebody owns the hitbox". Wait
+    --     for the swap to finish, and skip the reset entirely if it will not clear.
     -- `force` is for the watchdog, whose reset is the last thing standing between a wedged run and
     -- an hour of nothing. It skips the Respawn after bed preference - not the two safety checks.
     local function resetToBase(gen, force)
@@ -23796,6 +23739,8 @@ run(function()
     local Mode
     local Smart
     local Switch
+    local WoolOnly
+    local LimitItem
 
     local function getBedNear()
         local localPosition = entitylib.isAlive and entitylib.character.RootPart.Position or Vector3.zero
@@ -23866,13 +23811,120 @@ run(function()
         by exactly 1 block per layer.
     ]]
 
+    --[[
+        Bed patcher (replaced with the reference build's routine)
+
+        The onion algorithm above builds a shell. Patching is a different job: the shell is
+        already there and has holes in it, and running the builder to fill them re-walks the
+        whole structure from the bed outwards every pass.
+
+        Instead, walk the defence the way it was built - one horizontal ring per level, out
+        from the bed - and place into any cell of that ring that is empty. Rings are generated
+        in the bed's own orientation so the patch lines up with a defence that is not axis
+        aligned, and a level whose centre column is missing is skipped entirely: there is no
+        ring at a height the defence never reached.
+    ]]
+    local PATCH_LEVELS = 6
+
+    -- A diamond ring of grid offsets at `radius` cells out and `radius - i` cells up. Taken
+    -- from the reference build unchanged, because the order it yields cells in is what makes
+    -- the patch fill inwards-out rather than jumping about.
+    local function ringOffsets(radius, spacing)
+        local offsets = {}
+        for i = radius, 0, -1 do
+            for j = i, 0, -1 do
+                table.insert(offsets, Vector3.new(j, radius - i, i + 1 - j) * spacing)
+                table.insert(offsets, Vector3.new(-j, radius - i, i + 1 - j) * spacing)
+                table.insert(offsets, Vector3.new(j, radius - i, -(i - j)) * spacing)
+                table.insert(offsets, Vector3.new(-j, radius - i, -(i - j)) * spacing)
+            end
+        end
+        return offsets
+    end
+
+    -- The single block to patch with: the toughest one that passes the options. 'Limit to
+    -- item' means exactly what is in your hand, and nothing at all if that is not a block.
+    local function getPatchBlock()
+        if LimitItem.Enabled then
+            local hand = store.hand
+            if not hand or hand.toolType ~= 'block' or not hand.tool then return nil end
+            local itemType = hand.tool.Name
+            if WoolOnly.Enabled and not itemType:find('wool') then return nil end
+            if table.find(Blacklist.ListEnabled, itemType:find('wool') and 'wool' or itemType) then return nil end
+            return {itemType, 0, hand.tool}
+        end
+
+        local best
+        for _, item in store.inventory.inventory.items do
+            local meta = bedwars.ItemMeta[item.itemType]
+            local block = meta and meta.block
+            if not block then continue end
+            if WoolOnly.Enabled and not item.itemType:find('wool') then continue end
+            if table.find(Blacklist.ListEnabled, item.itemType:find('wool') and 'wool' or item.itemType) then continue end
+            if not best or (block.health or 0) > best[2] then
+                best = {item.itemType, block.health or 0, item.tool}
+            end
+        end
+        return best
+    end
+
+    local function patchBed(bed)
+        local bedCFrame = bed:IsA('BasePart') and bed.CFrame or bed:GetPivot()
+        -- The two cells the bed itself sits in. A ring passes over them, and asking the server
+        -- to build into your own bed is never going to succeed.
+        local cellA, cellB = bedCells(bed)
+
+        -- Ring 1 is the shell touching the bed, which is part of any defence, so it is always
+        -- worth scanning. Past that, a ring is only walked when the one inside it exists -
+        -- otherwise the patcher would march outwards building a defence you never had, which
+        -- is the shell builder's job, not this one's.
+        --
+        -- The reference build gated each ring on there being a block in the column directly
+        -- above the bed. That is the first block an opponent breaks, so the moment somebody
+        -- actually broke into the defence the patcher stopped repairing it.
+        local previousFilled = true
+        for level = 1, PATCH_LEVELS do
+            if not BedProtector.Enabled or not previousFilled then return end
+
+            local filled = false
+            for _, offset in ringOffsets(level, 3) do
+                if not BedProtector.Enabled then return end
+
+                local position = (bedCFrame * CFrame.new(offset)).Position
+                local cell = roundPos(position)
+                if cell == cellA or cell == cellB then continue end
+                if getPlacedBlock(position) then
+                    filled = true
+                    continue
+                end
+
+                if not entitylib.isAlive then return end
+                if (entitylib.character.RootPart.Position - position).Magnitude > PlaceRange.Value then continue end
+
+                local block = getPatchBlock()
+                if not block then return end
+
+                if Switch.Enabled then
+                    local slot = getHotbar(block[3])
+                    if slot and hotbarSwitch(slot) then task.wait() end
+                end
+                task.spawn(bedwars.placeBlock, position, block[1], false)
+                filled = true
+                task.wait(0.1)
+            end
+            previousFilled = filled
+        end
+    end
+
     BedProtector = vape.Categories.World:CreateModule({
         Name = 'BedProtector',
         Function = function(callback)
             if callback then
                 repeat
                     local bed = getBedNear()
-                    if bed then
+                    if bed and Mode.Value == 'Bed patcher' then
+                        patchBed(bed)
+                    elseif bed then
                         -- Seed the protected set with BOTH grid cells the bed occupies so
                         -- the shell wraps the whole two-block bed instead of half of it.
                         local cellA, cellB = bedCells(bed)
@@ -23936,11 +23988,9 @@ run(function()
                                     task.wait(0.05)
                                 end
 
-                                -- If we didn't place anything this layer, stop early (bed might be unreachable).
-                                -- Bed patcher never stops early: an inner layer being intact does not
-                                -- mean the outer layers have no holes, so we keep scanning every layer
-                                -- and only the missing blocks (holes) get filled.
-                                if not placedAny and Mode.Value ~= 'Bed patcher' then break end
+                                -- Nothing placed this layer means the bed is out of reach, so
+                                -- there is no point walking the outer ones.
+                                if not placedAny then break end
                                 if not BedProtector.Enabled then break end
                             end
 
@@ -23964,14 +24014,25 @@ run(function()
         Tooltip = 'Automatically places strong blocks around the bed'
     })
 
-    -- Options (unchanged from original)
+    -- Options. Smart belongs to the shell builder and Wool only / Limit to item belong to the
+    -- patcher, so each set follows the Mode dropdown.
+    local function syncModeOptions()
+        -- The dropdown fires its callback while it is still being created, before Mode itself
+        -- has been assigned.
+        if not Mode then return end
+        if Smart and Smart.Object then Smart.Object.Visible = Mode.Value == 'Toggle' end
+        local patching = Mode.Value == 'Bed patcher'
+        if WoolOnly and WoolOnly.Object then WoolOnly.Object.Visible = patching end
+        if LimitItem and LimitItem.Object then LimitItem.Object.Visible = patching end
+    end
+
     Mode = BedProtector:CreateDropdown({
         Name = 'Mode',
         List = {'Toggle', 'On Key', 'Bed patcher'},
         Default = 'Toggle',
-        Tooltip = 'Toggle builds and maintains the shell. On Key builds once. Bed patcher only repairs holes in your existing defence',
-        Function = function(val)
-            if Smart then Smart.Object.Visible = (val == 'Toggle') end
+        Tooltip = 'Toggle builds and maintains the shell. On Key builds once. Bed patcher walks your existing defence ring by ring and fills in whatever is missing',
+        Function = function()
+            syncModeOptions()
         end,
     })
     Blacklist = BedProtector:CreateTextList({
@@ -23989,6 +24050,17 @@ run(function()
     })
     Switch = BedProtector:CreateToggle({Name = 'Auto Switch'})
     Smart = BedProtector:CreateToggle({Name = 'Smart', Default = true})
+    WoolOnly = BedProtector:CreateToggle({
+        Name = 'Wool only',
+        Tooltip = 'Bed patcher only. Patches holes with wool instead of the toughest block you have'
+    })
+    LimitItem = BedProtector:CreateToggle({
+        Name = 'Limit to item',
+        Tooltip = 'Bed patcher only. Patches with the block in your hand and nothing else'
+    })
+    -- Mode's own callback runs while these two are still nil (it fires as the dropdown is
+    -- created), so the first sync happens here instead.
+    syncModeOptions()
 end)
 run(function()
     local BlockIn
@@ -24536,292 +24608,221 @@ run(function()
     })
 end)
 
+--[[
+    AutoBank
+
+    Replaced wholesale with the reference build's design, which does not use the personal
+    chest at all. Whitelisted resources are DROPPED, and every drop we made is then held far
+    out of the world where nobody can reach it - the item entity is ours to move, so parking it
+    at the top of the skybox is a safe deposit box that no server-side range check applies to.
+    Walk up to a shop (or die) and the whole stash is pulled back to your head and picked up.
+
+    A count of everything currently banked can be shown above the hotbar.
+]]
 run(function()
     local AutoBank
-    local UIToggle
-    local Range
-    local SilentBank
+    local Whitelist
+    local DisplayResources
     local UI
-    local Chests
-    local Items = {}
-    -- Hidden-hitbox bank state (Infinite range). We own the character's root only while a far bank
-    -- is in flight; bankRevert always puts it back, on success or on any error.
-    local bankBusy = false
-    -- bankChar is the character the parked root came OUT of. See bankRevert: handing it back to any
-    -- other character is what leaves the body rendered frozen in place client-side.
-    local bankRoot, bankChar, bankClone, bankHip, bankOwnsRoot = nil, nil, nil, nil, false
-    -- When the last deposit for a given tool went out. Nearby banking empties the inventory
-    -- almost immediately so this never matters there, but Infinite range keeps asking from
-    -- across the map, and without a cooldown a stack the server won't take would be re-sent
-    -- ten times a second for the rest of the match.
-    local sent = {}
 
-    local function addItem(itemType, shop)
-        local item = Instance.new('ImageLabel')
-        item.Image = bedwars.getIcon({itemType = itemType}, true)
-        item.Size = UDim2.fromOffset(32, 32)
-        item.Name = itemType
-        item.BackgroundTransparency = 1
-        item.LayoutOrder = #UI:GetChildren()
-        item.Parent = UI
-        local itemtext = Instance.new('TextLabel')
-        itemtext.Name = 'Amount'
-        itemtext.Size = UDim2.fromScale(1, 1)
-        itemtext.BackgroundTransparency = 1
-        itemtext.Text = ''
-        itemtext.TextColor3 = Color3.new(1, 1, 1)
-        itemtext.TextSize = 16
-        itemtext.TextStrokeTransparency = 0.3
-        itemtext.Font = Enum.Font.Arial
-        itemtext.Parent = item
-        Items[itemType] = {Object = itemtext, Type = shop}
-    end
+    -- Drops we made and are currently holding out of the world.
+    local droppedItems = {}
+    -- itemType -> when we may next try to drop it. A stack the server refuses would otherwise
+    -- be re-dropped ten times a second for the rest of the match.
+    local dropCooldowns = {}
+    local displayEntries = {}
 
-    local function refreshBank(echest)
-        for i, v in Items do
-            local item = echest:FindFirstChild(i)
-            v.Object.Text = item and item:GetAttribute('Amount') or ''
+    -- Somewhere nothing else occupies, with the stash laid out on a grid so two drops never
+    -- share a position and shove each other around.
+    local BANK_ORIGIN = CFrame.new(1000, 100000, 1000)
+    local BANK_SPACING = 1200
+    local BANK_COLUMNS = 32
+
+    local function untrackDrop(drop)
+        local index = table.find(droppedItems, drop)
+        if index then
+            table.remove(droppedItems, index)
         end
     end
 
-    local function nearChest()
-        if not entitylib.isAlive then return end
-        -- Infinite range: the deposit is addressed to your personal inventory in
-        -- ReplicatedStorage rather than to a chest in the world, so there is no position in the
-        -- request to be near anything. Dropping the proximity check is all the client can do -
-        -- if the server checks the distance itself, banking from across the map is simply
-        -- refused and nothing is lost by asking.
-        if Range and Range.Value == 'Infinite' then return true end
-        local pos = entitylib.character.RootPart.Position
-        for _, chest in Chests do
-            if (chest.Position - pos).Magnitude < 20 then
-                return true
-            end
-        end
-    end
-
-    local function bankTools(chest, tools)
-        for _, tool in tools do
-            task.spawn(function()
-                pcall(function()
-                    bedwars.Client:GetNamespace('Inventory'):Get('ChestGiveItem'):CallServer(chest, tool)
-                end)
-            end)
-        end
-    end
-
-    local function nearestChest()
-        if not entitylib.isAlive then return nil end
-        local pos = entitylib.character.RootPart.Position
-        local best, bestd = nil, math.huge
-        for _, c in Chests do
-            local d = (c.Position - pos).Magnitude
-            if d < bestd then best, bestd = c, d end
-        end
-        return best, bestd
-    end
-
-    -- Always puts the character back the way we found it, whatever happened during the bank, so a
-    -- failure mid-swap can never leave you stuck with a clone for a body.
-    local function bankRevert()
-        -- The swap only unwinds back into the character it was taken from. A bank is a fraction of
-        -- a second, but AutoWin banks immediately before resetting to base, so "respawned while the
-        -- root was parked" is a routine race rather than a rare one - and handing the old root to
-        -- the new character (as its PrimaryPart, no less) leaves the visible body welded to a part
-        -- nothing drives. That renders as a character frozen on the spot that only you can see,
-        -- while your real character carries on moving normally.
-        local reverted = false
-        if bankRoot and bankRoot.Parent and bankChar and bankChar == lplr.Character and bankChar.Parent then
-            reverted = pcall(function()
-                bankChar.Parent = replicatedStorage
-                bankRoot.Parent = bankChar
-                if bankClone then
-                    bankRoot.CFrame = bankClone.CFrame
-                    bankRoot.AssemblyLinearVelocity = bankClone.AssemblyLinearVelocity
-                end
-				bankChar.PrimaryPart = bankRoot
-				entitylib.character.RootPart = bankRoot
-				entitylib.character.HumanoidRootPart = bankRoot
-                bankChar.Parent = workspace
-                bankRoot.CanCollide = true
-                bankRoot.Transparency = 1
-                if bankHip and entitylib.isAlive then
-                    entitylib.character.Humanoid.HipHeight = bankHip
-                end
-            end)
-        end
-        if not reverted and bankRoot then
-            -- Nothing of ours left to give it back to. Bin the parked root rather than leaving it
-            -- loose in workspace for every bank that raced a respawn.
-            pcall(function()
-                if bankRoot.Parent ~= bankChar then bankRoot:Destroy() end
-            end)
-        end
-        if bankClone then
-            pcall(function() bankClone:Destroy() end)
-            bankClone = nil
-        end
-        bankRoot, bankChar, bankHip = nil, nil, nil
-        if bankOwnsRoot then
-            store.rootpart = nil
-            bankOwnsRoot = false
-        end
-    end
-
-    -- Bank from across the map with nothing visibly moving: park the network-owned root on the
-    -- nearest personal chest for a fraction of a second (a local clone stays behind as your body) so
-    -- the server's own range check on ChestGiveItem passes, fire the deposits, then put the root
-    -- straight back. Same proven swap AntiDeath/GodMode use, guarded by store.rootpart so it never
-    -- fights them, and every path ends in bankRevert.
-    local function silentBank(chest, tools, target)
-        bankBusy = true
+    -- Bring one drop back to the head and ask for it. The request is asynchronous, so the drop
+    -- is only untracked once the server has actually handed it over.
+    local function reclaim(drop)
+        if not drop or not drop.Parent or not entitylib.isAlive then return end
+        drop.Velocity = Vector3.zero
+        drop.CFrame = entitylib.character.Head.CFrame
         task.spawn(function()
-            local ok = pcall(function()
-                local character = lplr.Character
-                bankRoot = entitylib.character.HumanoidRootPart
-                bankChar = character
-                bankHip = entitylib.character.Humanoid.HipHeight
-                if not character or not character.Parent or not bankRoot then error('no character') end
-
-                character.Parent = replicatedStorage
-				bankClone = bankRoot:Clone()
-				bankClone.Name = 'HumanoidRootPart'
-                bankClone.Parent = character
-                bankRoot.Transparency = 1
-                bankRoot.Parent = workspace
-                store.rootpart = bankRoot
-                bankOwnsRoot = true
-				character.PrimaryPart = bankClone
-				entitylib.character.RootPart = bankClone
-				entitylib.character.HumanoidRootPart = bankClone
-                character.Parent = workspace
-                pcall(function() bedwars.QueryUtil:setQueryIgnored(bankClone, true) end)
-                pcall(function() bedwars.QueryUtil:setQueryIgnored(bankRoot, true) end)
-
-                local aim = CFrame.new(target.Position + Vector3.new(0, 3, 0))
-                local hold = runService.Heartbeat:Connect(function()
-                    if bankRoot and bankRoot.Parent then
-                        bankRoot.CFrame = aim
-                        bankRoot.AssemblyLinearVelocity = Vector3.zero
+            pcall(function()
+                bedwars.Client:Get(remotes.PickupItem):CallServerAsync({itemDrop = drop}):andThen(function(success)
+                    if success then
+                        untrackDrop(drop)
                     end
                 end)
-				bankTools(chest, tools)
-                -- Cut the swap short the moment we stop being the character it was taken from
-                -- (died or respawned mid-bank), so the parked root is binned promptly instead of
-                -- being held on the chest until the timer runs out.
-                local deadline = tick() + 0.3
-                repeat
-                    task.wait()
-                until tick() >= deadline or lplr.Character ~= character or not character.Parent
-                hold:Disconnect()
             end)
-            bankRevert()
-            bankBusy = false
-            if ok then
-                pcall(function() refreshBank(chest) end)
-            end
         end)
     end
 
-    local function handleState()
-        local chest = replicatedStorage.Inventories:FindFirstChild(lplr.Name..'_personal')
-        if not chest then return end
-
-        -- Always DEPOSIT the configured resources into the personal chest. The old code gated
-        -- depositing behind a "distance from spawn > 80" check, but the personal chest sits AT
-        -- spawn, so that branch never ran and it silently withdrew instead of banking.
-        local tools = {}
-        for _, v in store.inventory.inventory.items do
-            local item = Items[v.itemType]
-            if item and v.tool and tick() - (sent[v.tool] or 0) >= 1.5 then
-                sent[v.tool] = tick()
-                table.insert(tools, v.tool)
+    -- True while standing at a shop NPC, which is the cue to hand the stash back.
+    local function atShop()
+        if not entitylib.isAlive then return false end
+        local position = entitylib.character.RootPart.Position
+        for _, npc in store.shop do
+            local root = npc.RootPart
+            if root and root.Parent and (root.Position - position).Magnitude <= 30 then
+                return true
             end
         end
-        if #tools == 0 then return end
+        return false
+    end
 
-        -- Infinite range from afar goes through the silent hitbox bank (unless you turn it off);
-        -- Nearby, or already standing on the chest, just fires the remote as before.
-        local target, dist = nearestChest()
-		if Range and Range.Value == 'Infinite' and SilentBank.Enabled
-			and target and dist and dist > 20 and not store.rootpart and not bankBusy then
-			silentBank(chest, tools, target)
-		elseif Range and Range.Value == 'Infinite' and SilentBank.Enabled and not target then
-			-- Do not consume the cooldown on a request the server cannot validate;
-			-- collection signals will populate a chest and the next pass will retry.
-			for _, tool in tools do sent[tool] = nil end
-		else
-            bankTools(chest, tools)
-            task.spawn(function() refreshBank(chest) end)
-        end
+    local function addDisplayEntry(itemType)
+        local icon = Instance.new('ImageLabel')
+        icon.Name = itemType
+        icon.Image = bedwars.getIcon({itemType = itemType}, true)
+        icon.Size = UDim2.fromOffset(32, 32)
+        icon.BackgroundTransparency = 1
+        icon.LayoutOrder = #UI:GetChildren()
+        icon.Parent = UI
+        local amount = Instance.new('TextLabel')
+        amount.Name = 'Amount'
+        amount.Size = UDim2.fromScale(1, 1)
+        amount.BackgroundTransparency = 1
+        amount.Text = ''
+        amount.TextColor3 = Color3.new(1, 1, 1)
+        amount.TextSize = 16
+        amount.TextStrokeTransparency = 0.3
+        amount.Font = Enum.Font.Arial
+        amount.Parent = icon
+        displayEntries[itemType] = amount
     end
 
     AutoBank = vape.Categories.Inventory:CreateModule({
         Name = 'AutoBank',
         Function = function(callback)
-            if callback then
-                Chests = collection('personal-chest', AutoBank)
-                UI = Instance.new('Frame')
-                UI.Size = UDim2.new(1, 0, 0, 32)
-                UI.Position = UDim2.fromOffset(0, -240)
-                UI.BackgroundTransparency = 1
-                UI.Visible = UIToggle.Enabled
-                UI.Parent = vape.gui
-                AutoBank:Clean(UI)
-                local Sort = Instance.new('UIListLayout')
-                Sort.FillDirection = Enum.FillDirection.Horizontal
-                Sort.HorizontalAlignment = Enum.HorizontalAlignment.Center
-                Sort.SortOrder = Enum.SortOrder.LayoutOrder
-                Sort.Parent = UI
-                addItem('iron', true)
-                addItem('gold', true)
-                addItem('diamond', false)
-                addItem('emerald', true)
-                addItem('void_crystal', true)
-
-                repeat
-                    local hotbar = lplr.PlayerGui:FindFirstChild('hotbar')
-                    hotbar = hotbar and hotbar['1']:FindFirstChild('HotbarHealthbarContainer')
-                    if hotbar then
-                        UI.Position = UDim2.fromOffset(0, (hotbar.AbsolutePosition.Y + guiService:GetGuiInset().Y) - 40)
+            if not callback then
+                -- Give everything back rather than leaving it stranded in the sky. Bounded:
+                -- drain what we can and stop, instead of spinning until the module is switched
+                -- back on (which is what the reference build did, and never returned).
+                local deadline = tick() + 3
+                while #droppedItems > 0 and tick() < deadline and entitylib.isAlive do
+                    for _, drop in table.clone(droppedItems) do
+                        reclaim(drop)
                     end
-
-                    local newState = nearChest()
-                    if newState then
-                        handleState()
-                    end
-
                     task.wait(0.1)
-                until (not AutoBank.Enabled)
-            else
-                -- Put the hitbox back if a far bank was still in flight when we turned off.
-                bankRevert()
-                bankBusy = false
-                table.clear(Items)
-                table.clear(sent)
+                end
+                table.clear(droppedItems)
+                table.clear(dropCooldowns)
+                table.clear(displayEntries)
+                return
             end
+
+            UI = Instance.new('Frame')
+            UI.Size = UDim2.new(1, 0, 0, 32)
+            UI.Position = UDim2.fromOffset(0, -240)
+            UI.BackgroundTransparency = 1
+            UI.Visible = DisplayResources.Enabled
+            UI.Parent = vape.gui
+            AutoBank:Clean(UI)
+            local layout = Instance.new('UIListLayout')
+            layout.FillDirection = Enum.FillDirection.Horizontal
+            layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+            layout.SortOrder = Enum.SortOrder.LayoutOrder
+            layout.Parent = UI
+
+            table.clear(displayEntries)
+            for _, itemType in Whitelist.ListEnabled do
+                addDisplayEntry(itemType)
+            end
+
+            -- The stash has to be re-asserted every frame: the server keeps trying to drop the
+            -- items back down, so a slower loop lets them fall into the world.
+            AutoBank:Clean(runService.PreRender:Connect(function()
+                local totals = {}
+                for index, drop in droppedItems do
+                    if not drop or not drop.Parent or drop.Parent ~= workspace.ItemDrops then
+                        untrackDrop(drop)
+                    else
+                        totals[drop.Name] = (totals[drop.Name] or 0) + (drop:GetAttribute('Amount') or 0)
+                        drop.Velocity = Vector3.zero
+                        drop.CFrame = BANK_ORIGIN + Vector3.new(
+                            (index % BANK_COLUMNS) * BANK_SPACING,
+                            0,
+                            math.floor(index / BANK_COLUMNS) * BANK_SPACING
+                        )
+                    end
+                end
+                for itemType, label in displayEntries do
+                    label.Text = formatNumber(totals[itemType] or 0)
+                end
+            end))
+
+            repeat
+                local hotbar = lplr.PlayerGui:FindFirstChild('hotbar')
+                hotbar = hotbar and hotbar['1']:FindFirstChild('HotbarHealthbarContainer')
+                if hotbar then
+                    UI.Position = UDim2.fromOffset(0, (hotbar.AbsolutePosition.Y + guiService:GetGuiInset().Y) - 60)
+                end
+
+                if not entitylib.isAlive or atShop() then
+                    -- Dead, or at a shop and about to spend it: hand the stash back.
+                    for _, drop in table.clone(droppedItems) do
+                        reclaim(drop)
+                    end
+                else
+                    for _, item in store.inventory.inventory.items do
+                        local name = item.tool and item.tool.Name
+                        if name and table.find(Whitelist.ListEnabled, name) and (dropCooldowns[name] or 0) < os.clock() then
+                            task.spawn(function()
+                                local drop
+                                pcall(function()
+                                    drop = bedwars.Client:Get(remotes.DropItem):CallServer({
+                                        item = item.tool,
+                                        amount = item.amount
+                                    })
+                                end)
+                                if not AutoBank.Enabled then return end
+                                if not drop or not drop.Parent or table.find(droppedItems, drop) then
+                                    -- Refused, or handed us something we already hold. Back off
+                                    -- rather than hammering the same stack.
+                                    dropCooldowns[name] = os.clock() + 5
+                                    return
+                                end
+                                table.insert(droppedItems, drop)
+                                -- The pickup prompt and its billboard come with the drop; stripped
+                                -- so nobody can walk into the stash and take it if it is ever seen.
+                                drop:ClearAllChildren()
+                                drop.AncestryChanged:Once(function()
+                                    untrackDrop(drop)
+                                end)
+                            end)
+                        end
+                    end
+                end
+
+                task.wait(0.1)
+            until not AutoBank.Enabled
         end,
-        Tooltip = 'Automatically puts resources in your personal chest'
+        Tooltip = 'Stores resources somewhere safe. Drops them and holds the drops out of the world, then hands the lot back when you reach a shop'
     })
-    Range = AutoBank:CreateDropdown({
-        Name = 'Range',
-        List = {'Nearby', 'Infinite'},
-        Default = 'Nearby',
-        Tooltip = 'Nearby banks within 20 studs of a personal chest.\nInfinite banks from anywhere: it briefly parks your hidden hitbox on the nearest chest so the server accepts the deposit, with nothing visibly moving'
-    })
-    SilentBank = AutoBank:CreateToggle({
-        Name = 'Silent bank',
-        Default = true,
-        Tooltip = 'Infinite range only. On: park the hidden hitbox on the chest for a split second so far deposits go through with nothing visibly moving. Off: just ask the server (which usually refuses from range), leaving your body where it is'
-    })
-    UIToggle = AutoBank:CreateToggle({
-        Name = 'UI',
-        Function = function(callback)
+
+    Whitelist = AutoBank:CreateTextList({
+        Name = 'Whitelist',
+        Default = {'emerald', 'diamond', 'iron'},
+        Function = function()
             if AutoBank.Enabled then
+                AutoBank:Toggle()
+                AutoBank:Toggle()
+            end
+        end
+    })
+    DisplayResources = AutoBank:CreateToggle({
+        Name = 'Display resources',
+        Default = true,
+        Function = function(callback)
+            if AutoBank.Enabled and UI then
                 UI.Visible = callback
             end
-        end,
-        Default = true
+        end
     })
 end)
 
@@ -27518,21 +27519,50 @@ run(function()
     })
 end)
 
+-- DeviceSpoofer, replaced with the reference build's version. Aether's only ever wrote a
+-- local attribute back onto the player, which the server never reads. This hooks the input
+-- controller the game asks for the device type and tells the server directly, which is what
+-- actually changes what other clients see you as.
 run(function()
     local DeviceSpoofer
     local Device
+    local realInputType, realGetUserInputType
+
+    local function report(value)
+        pcall(function()
+            bedwars.Handler:Get('SendUserInputType'):Fire('SendToServer', {userInputType = value})
+        end)
+    end
 
     DeviceSpoofer = vape.Categories.Legit:CreateModule({
         Name = 'DeviceSpoofer',
         Function = function(callback)
+            local controller = bedwars.UserInputController
             if callback then
-                DeviceSpoofer:Clean(lplr:GetAttributeChangedSignal('UserInputType'):Connect(function()
-                    if lplr:GetAttribute('UserInputType') ~= Device.Value then
-                        lplr:SetAttribute('UserInputType', Device.Value)
-                    end
-                end))
+                if not controller or typeof(controller.getUserInputType) ~= 'function' then
+                    notif('DeviceSpoofer', 'The input controller is unavailable.', 5, 'warning')
+                    DeviceSpoofer:Toggle()
+                    return
+                end
+                -- Remember what we really are before replacing the getter, so turning the
+                -- module off can put the truth back.
+                realInputType = controller:getUserInputType()
+                realGetUserInputType = controller.getUserInputType
+                controller.getUserInputType = function()
+                    return Device.Value:upper()
+                end
+                report(Device.Value:upper())
+            else
+                if controller and realGetUserInputType then
+                    controller.getUserInputType = realGetUserInputType
+                end
+                if realInputType then
+                    report(realInputType)
+                end
+                realGetUserInputType, realInputType = nil, nil
             end
-        end
+        end,
+        Tooltip = 'Spoofs the device you show up as to the server'
     })
 
     Device = DeviceSpoofer:CreateDropdown({
@@ -27540,7 +27570,7 @@ run(function()
         List = {'Mobile', 'PC', 'Gamepad'},
         Function = function(val)
             if DeviceSpoofer.Enabled then
-                lplr:SetAttribute('UserInputType', val)
+                report(val:upper())
             end
         end
     })
@@ -30097,8 +30127,9 @@ end)
 
 run(function()
 	local GrimReaperFix
-	GrimReaperFix = vape.Categories.Utility:CreateModule({
+	GrimReaperFix = kits:CreateModule({
 		Name = 'GrimReaperFix',
+		Category = 'Ability',
 		Function = function(callback)
 			if callback then
 				GrimReaperFix:Clean(runService.Heartbeat:Connect(function()
@@ -32233,5 +32264,1154 @@ run(function()
 			end
 		end,
 		Tooltip = 'koli shit'
+	})
+end)
+
+--[[
+	Kits
+	----
+	Kit modules ported from the reference build. Every one of them registers into the Kits
+	window (the friends icon beside the search bar); on a GUI without that window they fall
+	back to the Minigames tab. Remotes are resolved through bedwars.Handler, which wraps
+	Client:Get, so a name the game has since moved fails on that one call instead of taking
+	the module out.
+
+	These are standalone modules with their own settings. AutoKit still carries a routine for
+	several of the same kits, so turn that kit's toggle off inside AutoKit if you would rather
+	drive it from here.
+]]
+
+-- Nearest bed that can still be broken (an enemy bed), used by the kits that only want to
+-- fire their ability while attacking a bed.
+local function nearBreakableBed(range)
+	if not entitylib.isAlive then return false end
+	local origin = entitylib.character.RootPart.Position
+	local team = lplr:GetAttribute('Team') or -1
+	for _, bed in collectionService:GetTagged('bed') do
+		if (origin - bed.Position).Magnitude <= range and not bed:GetAttribute('Team'..team..'NoBreak') then
+			return true
+		end
+	end
+	return false
+end
+
+run(function()
+	local AutoBeekeeper
+	local Collect, CollectRange, CollectDelay, LimitItem
+	local Deposit, DepositRange, DepositDelay
+
+	AutoBeekeeper = kits:CreateModule({
+		Name = 'AutoBeekeeper',
+		Category = 'Auto',
+		Function = function(callback)
+			if not callback then return end
+			local hives = collection('beehive', AutoBeekeeper)
+			repeat
+				if entitylib.isAlive then
+					local position = entitylib.character.RootPart.Position
+
+					if Collect.Enabled and (not LimitItem.Enabled or (store.hand.tool and store.hand.tool.Name == 'bee_net')) then
+						for _, bee in collectionService:GetTagged('bee') do
+							if not AutoBeekeeper.Enabled then break end
+							local part = bee.PrimaryPart or (bee:IsA('BasePart') and bee)
+							if part and (position - part.Position).Magnitude <= CollectRange.Value then
+								pcall(function()
+									bedwars.Handler:Get('PickUpBee'):Fire('SendToServer', {beeId = bee:GetAttribute('BeeId')})
+								end)
+								if CollectDelay.Value > 0 then
+									task.wait(CollectDelay.Value)
+								end
+							end
+						end
+					end
+
+					-- Only ever deposits into a hive you placed, and stops the moment the last bee
+					-- leaves the inventory so a full hive is not prompted over and over.
+					if Deposit.Enabled and getItem('bee') then
+						for _, hive in hives do
+							if not AutoBeekeeper.Enabled or not getItem('bee') then break end
+							if hive.Parent and (hive:GetAttribute('Level') or 0) < 10
+								and hive:GetAttribute('PlacedByUserId') == lplr.UserId
+								and (position - hive.Position).Magnitude <= DepositRange.Value then
+								local prompt = hive:FindFirstChildWhichIsA('ProximityPrompt', true)
+								if prompt and fireproximityprompt then
+									pcall(fireproximityprompt, prompt)
+									if DepositDelay.Value > 0 then
+										task.wait(DepositDelay.Value)
+									end
+								end
+							end
+						end
+					end
+				end
+				task.wait(0.1)
+			until not AutoBeekeeper.Enabled
+		end,
+		Tooltip = 'Collects nearby bees and deposits them into your own hives'
+	})
+
+	Collect = AutoBeekeeper:CreateToggle({
+		Name = 'Collect bees',
+		Default = true,
+		Function = function(callback)
+			pcall(function()
+				CollectRange.Object.Visible = callback
+				CollectDelay.Object.Visible = callback
+				LimitItem.Object.Visible = callback
+			end)
+		end
+	})
+	CollectRange = AutoBeekeeper:CreateSlider({
+		Name = 'Collect Range',
+		Min = 1,
+		Max = 22,
+		Default = 20,
+		Darker = true,
+		Suffix = function(val)
+			return val <= 1 and 'stud' or 'studs'
+		end
+	})
+	CollectDelay = AutoBeekeeper:CreateSlider({
+		Name = 'Collect delay',
+		Min = 0,
+		Max = 2,
+		Decimal = 100,
+		Default = 0.1,
+		Darker = true,
+		Suffix = 'seconds'
+	})
+	LimitItem = AutoBeekeeper:CreateToggle({
+		Name = 'Limit to item',
+		Darker = true,
+		Tooltip = 'Only collects while the bee net is held'
+	})
+	Deposit = AutoBeekeeper:CreateToggle({
+		Name = 'Deposit bees',
+		Default = true,
+		Function = function(callback)
+			pcall(function()
+				DepositRange.Object.Visible = callback
+				DepositDelay.Object.Visible = callback
+			end)
+		end,
+		Tooltip = 'Automatically puts the bees into a beehive'
+	})
+	DepositRange = AutoBeekeeper:CreateSlider({
+		Name = 'Deposit Range',
+		Min = 1,
+		Max = 14,
+		Default = 14,
+		Darker = true,
+		Suffix = function(val)
+			return val <= 1 and 'stud' or 'studs'
+		end
+	})
+	DepositDelay = AutoBeekeeper:CreateSlider({
+		Name = 'Deposit Delay',
+		Min = 0,
+		Max = 2,
+		Decimal = 100,
+		Default = 0.1,
+		Darker = true,
+		Suffix = 'seconds'
+	})
+end)
+
+run(function()
+	local AutoDavey
+	local JumpOnImpact, BreakOnImpact
+	local oldLaunchSelf
+
+	AutoDavey = kits:CreateModule({
+		Name = 'AutoDavey',
+		Category = 'Auto',
+		Function = function(callback)
+			if callback then
+				if not bedwars.CannonHandController then
+					notif('AutoDavey', 'The cannon controller is unavailable.', 5, 'warning')
+					AutoDavey:Toggle()
+					return
+				end
+				oldLaunchSelf = bedwars.CannonHandController.launchSelf
+				bedwars.CannonHandController.launchSelf = function(...)
+					local results = {oldLaunchSelf(...)}
+					-- The cannon we were fired from is the second argument. Reading the character
+					-- here is guarded because the launch can outlive it.
+					local _, block = ...
+
+					if AutoDavey.Enabled and BreakOnImpact.Enabled and typeof(block) == 'Instance' then
+						task.delay(0.02, function()
+							pcall(function()
+								if block.Parent and entitylib.isAlive
+									and (block.Position - entitylib.character.RootPart.Position).Magnitude <= 30 then
+									task.spawn(bedwars.breakBlock, block, false, nil, true)
+								end
+							end)
+						end)
+					end
+
+					if AutoDavey.Enabled and JumpOnImpact.Enabled then
+						pcall(function()
+							if entitylib.isAlive then
+								entitylib.character.Humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+							end
+						end)
+					end
+
+					return unpack(results)
+				end
+			elseif oldLaunchSelf then
+				if bedwars.CannonHandController then
+					bedwars.CannonHandController.launchSelf = oldLaunchSelf
+				end
+				oldLaunchSelf = nil
+			end
+		end,
+		Tooltip = 'Breaks the cannon and/or jumps the moment it launches you'
+	})
+
+	JumpOnImpact = AutoDavey:CreateToggle({Name = 'Jump on impact'})
+	BreakOnImpact = AutoDavey:CreateToggle({Name = 'Break on impact', Default = true})
+end)
+
+run(function()
+	local AutoDrill
+	local AutoCollect, NotifyCollect, CollectDelay
+	local AutoAttack, LegitRange, Range, AttackDelay, Targets, Sort
+	local attackCooldowns, collectCooldowns = {}, {}
+
+	local function drillPart(drill)
+		return drill.PrimaryPart or drill:FindFirstChild('RootPart') or drill:FindFirstChildWhichIsA('BasePart')
+	end
+
+	-- Drills come from both the tag and the kit's own tablet list; the two overlap, so they are
+	-- merged through a seen-set rather than iterated one after the other.
+	local function getDrills(tracked)
+		local drills, seen = {}, {}
+		local sources = {tracked}
+		if bedwars.DrillTabletController and bedwars.DrillTabletController.drillList then
+			table.insert(sources, bedwars.DrillTabletController.drillList)
+		end
+		for _, source in sources do
+			for _, drill in source do
+				if typeof(drill) == 'Instance' and not seen[drill]
+					and drill:GetAttribute('PlacedByUserId') == lplr.UserId and drillPart(drill) then
+					seen[drill] = true
+					table.insert(drills, drill)
+				end
+			end
+		end
+		return drills
+	end
+
+	local function updateAttackOptions()
+		pcall(function()
+			local on = AutoAttack.Enabled
+			LegitRange.Object.Visible = on
+			Range.Object.Visible = on and not LegitRange.Enabled
+			AttackDelay.Object.Visible = on
+			Targets.Object.Visible = on
+			Sort.Object.Visible = on
+		end)
+	end
+
+	AutoDrill = kits:CreateModule({
+		Name = 'AutoDrill',
+		Category = 'Auto',
+		Function = function(callback)
+			if not callback then
+				table.clear(attackCooldowns)
+				table.clear(collectCooldowns)
+				return
+			end
+
+			local tracked = collection('Drill', AutoDrill)
+			repeat task.wait() until (store.matchState ~= 0 and store.equippedKit == 'drill') or not AutoDrill.Enabled
+
+			repeat
+				if entitylib.isAlive and store.equippedKit == 'drill' then
+					local now = tick()
+					for _, drill in getDrills(tracked) do
+						local part = drillPart(drill)
+						if not part then continue end
+
+						if AutoCollect.Enabled and ((drill:GetAttribute('diamond') or 0) + (drill:GetAttribute('emerald') or 0)) > 0
+							and (collectCooldowns[drill] or 0) < now then
+							local ok = pcall(function()
+								bedwars.Handler:Get('ExtractFromDrill'):Fire('SendToServer', {drill = drill})
+							end)
+							if ok and NotifyCollect.Enabled then
+								notif('AutoDrill', 'Collected drill resources', 4)
+							end
+							collectCooldowns[drill] = now + CollectDelay.Value
+						end
+
+						if AutoAttack.Enabled and (attackCooldowns[drill] or 0) < now then
+							local target = entitylib.EntityPosition({
+								Origin = part.Position,
+								Range = LegitRange.Enabled and 10 or Range.Value,
+								Part = 'RootPart',
+								Players = Targets.Players.Enabled,
+								NPCs = Targets.NPCs.Enabled,
+								Sort = sortmethods[Sort.Value]
+							})
+							if target then
+								targetinfo.Targets[target] = now + 1
+								if pcall(function()
+									bedwars.Handler:Get('DrillAttack'):Fire('SendToServer', {targetPosition = target.RootPart.Position})
+								end) then
+									attackCooldowns[drill] = now + AttackDelay.Value
+								end
+							end
+						end
+					end
+				end
+				task.wait(0.1)
+			until not AutoDrill.Enabled
+		end,
+		Tooltip = 'Collects resources from your drills and attacks with them'
+	})
+
+	AutoCollect = AutoDrill:CreateToggle({
+		Name = 'Auto collect',
+		Default = true,
+		Function = function(callback)
+			pcall(function()
+				NotifyCollect.Object.Visible = callback
+				CollectDelay.Object.Visible = callback
+			end)
+		end
+	})
+	NotifyCollect = AutoDrill:CreateToggle({Name = 'Notify on collect', Darker = true})
+	CollectDelay = AutoDrill:CreateSlider({
+		Name = 'Collect delay',
+		Min = 0.1,
+		Max = 3,
+		Default = 0.5,
+		Decimal = 10,
+		Darker = true,
+		Suffix = 'seconds'
+	})
+	AutoAttack = AutoDrill:CreateToggle({
+		Name = 'Auto attack',
+		Function = function()
+			updateAttackOptions()
+		end
+	})
+	LegitRange = AutoDrill:CreateToggle({
+		Name = 'Legit Range',
+		Darker = true,
+		Function = function()
+			updateAttackOptions()
+		end
+	})
+	Range = AutoDrill:CreateSlider({
+		Name = 'Range',
+		Min = 1,
+		Max = 10,
+		Default = 10,
+		Darker = true,
+		Suffix = function(val)
+			return val <= 1 and 'stud' or 'studs'
+		end
+	})
+	AttackDelay = AutoDrill:CreateSlider({
+		Name = 'Attack delay',
+		Min = 0.1,
+		Max = 1,
+		Default = 0.3,
+		Decimal = 100,
+		Darker = true,
+		Suffix = 'seconds'
+	})
+	Targets = AutoDrill:CreateTargets({Players = true, NPCs = true})
+	local methods = {'Distance', 'Health', 'Damage'}
+	for i in sortmethods do
+		if not table.find(methods, i) then
+			table.insert(methods, i)
+		end
+	end
+	Sort = AutoDrill:CreateDropdown({
+		Name = 'Sort',
+		List = methods,
+		Default = 'Distance'
+	})
+	updateAttackOptions()
+end)
+
+run(function()
+	local AutoRagnar
+	local Range
+
+	AutoRagnar = kits:CreateModule({
+		Name = 'AutoRagnar',
+		Category = 'Auto',
+		Function = function(callback)
+			if not callback then return end
+			repeat
+				if entitylib.isAlive and store.equippedKit == 'berserker' and bedwars.AbilityController then
+					pcall(function()
+						if bedwars.AbilityController:canUseAbility('berserker_rage') and nearBreakableBed(Range.Value) then
+							bedwars.AbilityController:useAbility('berserker_rage')
+						end
+					end)
+				end
+				task.wait(0.1)
+			until not AutoRagnar.Enabled
+		end,
+		Tooltip = 'Uses Berserker Rage as soon as you are near an enemy bed'
+	})
+
+	Range = AutoRagnar:CreateSlider({
+		Name = 'Bed range',
+		Min = 1,
+		Max = 60,
+		Default = 22,
+		Suffix = function(val)
+			return val <= 1 and 'stud' or 'studs'
+		end
+	})
+end)
+
+run(function()
+	local AutoKrystal
+	local Range
+
+	-- Krystal (glacial skater) freezes whoever is defending the bed. The ability id has moved
+	-- between builds, so every known spelling is tried and the first the game accepts is used.
+	local ABILITIES = {'glacial_skater_freeze', 'GLACIAL_SKATER_FREEZE', 'ice_blast', 'freeze'}
+
+	AutoKrystal = kits:CreateModule({
+		Name = 'AutoKrystal',
+		Category = 'Auto',
+		Function = function(callback)
+			if not callback then return end
+			repeat
+				if entitylib.isAlive and store.equippedKit == 'glacial_skater' and bedwars.AbilityController
+					and nearBreakableBed(Range.Value) then
+					for _, ability in ABILITIES do
+						local used = false
+						pcall(function()
+							if bedwars.AbilityController:canUseAbility(ability) then
+								bedwars.AbilityController:useAbility(ability)
+								used = true
+							end
+						end)
+						if used then break end
+					end
+				end
+				task.wait(0.1)
+			until not AutoKrystal.Enabled
+		end,
+		Tooltip = 'Uses the freeze ability while you are on an enemy bed defence'
+	})
+
+	Range = AutoKrystal:CreateSlider({
+		Name = 'Bed range',
+		Min = 1,
+		Max = 60,
+		Default = 22,
+		Suffix = function(val)
+			return val <= 1 and 'stud' or 'studs'
+		end
+	})
+end)
+
+run(function()
+	local AutoVanessa
+	local oldGetChargeTime, oldOverchargeStartTime, chargeHook, controller
+
+	AutoVanessa = kits:CreateModule({
+		Name = 'AutoVanessa',
+		Category = 'Auto',
+		Function = function(callback)
+			if not callback then
+				if controller and oldGetChargeTime and controller.getChargeTime == chargeHook then
+					controller.getChargeTime = oldGetChargeTime
+					controller.overchargeStartTime = oldOverchargeStartTime
+				end
+				controller, oldGetChargeTime, oldOverchargeStartTime, chargeHook = nil, nil, nil, nil
+				return
+			end
+
+			AutoVanessa:Clean(task.spawn(function()
+				local found
+				repeat
+					task.wait()
+					found = bedwars.TripleShotProjectileController
+				until found or not AutoVanessa.Enabled
+				if not found or not AutoVanessa.Enabled then return end
+
+				if typeof(found.getChargeTime) ~= 'function' then return end
+				controller = found
+				oldGetChargeTime = found.getChargeTime
+				oldOverchargeStartTime = found.overchargeStartTime
+				-- Returning nothing makes the controller treat the bow as already fully charged,
+				-- and backdating overchargeStartTime keeps the triple shot armed.
+				chargeHook = function(...)
+					if AutoVanessa.Enabled then return end
+					return oldGetChargeTime(...)
+				end
+				found.getChargeTime = chargeHook
+				found.overchargeStartTime = tick()
+			end))
+		end,
+		Tooltip = 'Fully charges the bow instantly and keeps triple shot armed as Vanessa'
+	})
+end)
+
+run(function()
+	local AutoGrim
+	local Range, Delay
+	local lastConsume = 0
+
+	AutoGrim = kits:CreateModule({
+		Name = 'AutoGrim',
+		Category = 'Auto',
+		Function = function(callback)
+			if not callback then return end
+			repeat
+				-- Read the table through the controller every pass: it is swapped out rather than
+				-- mutated, so a captured reference goes stale after the first soul.
+				local souls = bedwars.GrimReaperController and bedwars.GrimReaperController.soulsByPosition
+				if entitylib.isAlive and souls and tick() - lastConsume >= Delay.Value then
+					local origin = entitylib.character.RootPart.Position
+					for _, soul in souls do
+						if not AutoGrim.Enabled then break end
+						if typeof(soul) == 'Instance' and soul.Parent
+							and (origin - soul:GetPivot().Position).Magnitude <= Range.Value then
+							local consumed = false
+							pcall(function()
+								consumed = bedwars.Handler:Get('ConsumeGrimReaperSoul'):Fire('CallServer', {
+									secret = soul:GetAttribute('GrimReaperSoulSecret')
+								}) and true or false
+							end)
+							if consumed then
+								lastConsume = tick()
+								break
+							end
+						end
+					end
+				end
+				task.wait(0.1)
+			until not AutoGrim.Enabled
+		end,
+		Tooltip = 'Collects Grim Reaper souls that drop around you'
+	})
+
+	Range = AutoGrim:CreateSlider({
+		Name = 'Range',
+		Min = 1,
+		Max = 120,
+		Default = 12,
+		Suffix = function(val)
+			return val <= 1 and 'stud' or 'studs'
+		end
+	})
+	AutoGrim:CreateButton({
+		Name = 'Sync to legit range',
+		Function = function()
+			Range:SetValue(12)
+		end,
+		Tooltip = 'Puts the range back to what the kit actually reaches'
+	})
+	Delay = AutoGrim:CreateSlider({
+		Name = 'Delay',
+		Min = 0,
+		Max = 2,
+		Default = 0.1,
+		Decimal = 10,
+		Suffix = 'seconds'
+	})
+end)
+
+run(function()
+	local AutoZeno
+	local Targets, Mode, LimitItem
+	local Strike, Storm, Shockwave, ShockwaveRange
+	local Range, Delay
+	local cooldowns = {}
+
+	-- Ability ids as the game spells them, paired with the toggle that opts into each.
+	local ABILITIES = {
+		{Id = 'LIGHTNING_STRIKE', Aimed = true},
+		{Id = 'LIGHTNING_STORM', Aimed = true},
+		{Id = 'SHOCKWAVE', Aimed = false}
+	}
+
+	local function holdingStaff()
+		local hand = store.hand
+		local name = hand and hand.tool and hand.tool.Name
+		return name ~= nil and name:find('staff') ~= nil
+	end
+
+	local function wanted(id)
+		if id == 'LIGHTNING_STRIKE' then return Strike.Enabled end
+		if id == 'LIGHTNING_STORM' then return Storm.Enabled end
+		return Shockwave.Enabled
+	end
+
+	AutoZeno = kits:CreateModule({
+		Name = 'AutoZeno',
+		Category = 'Auto',
+		Function = function(callback)
+			if not callback then
+				table.clear(cooldowns)
+				return
+			end
+			repeat
+				if entitylib.isAlive and bedwars.AbilityController and (not LimitItem.Enabled or holdingStaff()) then
+					local now = tick()
+					for _, ability in ABILITIES do
+						if not AutoZeno.Enabled then break end
+						if not wanted(ability.Id) or (cooldowns[ability.Id] or 0) > now then continue end
+
+						local target = entitylib.EntityPosition({
+							Range = ability.Aimed and Range.Value or ShockwaveRange.Value,
+							Part = 'RootPart',
+							Players = Targets.Players.Enabled,
+							NPCs = Targets.NPCs.Enabled,
+							Sort = sortmethods[Mode.Value]
+						})
+						if not target then continue end
+
+						local used = false
+						pcall(function()
+							if bedwars.AbilityController:canUseAbility(ability.Id) then
+								bedwars.AbilityController:useAbility(ability.Id, newproxy(true), {
+									target = ability.Aimed and target.RootPart.Position or Vector3.zero
+								})
+								used = true
+							end
+						end)
+						if used then
+							cooldowns[ability.Id] = now + Delay.Value
+						end
+					end
+				end
+				task.wait(0.1)
+			until not AutoZeno.Enabled
+		end,
+		Tooltip = 'Casts Zeno\'s staff abilities at whoever is nearby'
+	})
+
+	Targets = AutoZeno:CreateTargets({Players = true, NPCs = true})
+	local methods = {'Damage', 'Distance'}
+	for i in sortmethods do
+		if not table.find(methods, i) then
+			table.insert(methods, i)
+		end
+	end
+	Mode = AutoZeno:CreateDropdown({
+		Name = 'Target Mode',
+		List = methods,
+		Default = 'Distance'
+	})
+	LimitItem = AutoZeno:CreateToggle({Name = 'Limit to item', Tooltip = 'Only casts while the staff is held'})
+	Strike = AutoZeno:CreateToggle({Name = 'Use Lightning Strike', Default = true})
+	Storm = AutoZeno:CreateToggle({Name = 'Use Lightning Storm', Default = true})
+	Shockwave = AutoZeno:CreateToggle({
+		Name = 'Auto Shockwave',
+		Function = function(callback)
+			pcall(function()
+				ShockwaveRange.Object.Visible = callback
+			end)
+		end,
+		Tooltip = 'Uses the shockwave ability when a target is near'
+	})
+	ShockwaveRange = AutoZeno:CreateSlider({
+		Name = 'Shockwave Range',
+		Min = 1,
+		Max = 12,
+		Default = 12,
+		Decimal = 5,
+		Darker = true,
+		-- Auto Shockwave is off by default, and a toggle only runs its callback on creation
+		-- when it defaults to on, so this has to start hidden itself.
+		Visible = false,
+		Suffix = function(val)
+			return val <= 1 and 'stud' or 'studs'
+		end
+	})
+	Range = AutoZeno:CreateSlider({
+		Name = 'Range',
+		Min = 1,
+		Max = 60,
+		Default = 35,
+		Decimal = 5,
+		Suffix = function(val)
+			return val <= 1 and 'stud' or 'studs'
+		end
+	})
+	Delay = AutoZeno:CreateSlider({
+		Name = 'Delay',
+		Min = 0,
+		Max = 10,
+		Default = 0.5,
+		Decimal = 5,
+		Suffix = 'seconds'
+	})
+end)
+
+run(function()
+	local DaveyAim
+	local AimMode, PositionMode, SearchRange, LaunchCannon
+
+	local rayParams = RaycastParams.new()
+	rayParams.RespectCanCollide = false
+
+	DaveyAim = kits:CreateModule({
+		Name = 'DaveyAim',
+		Category = 'Aim',
+		Function = function(callback)
+			if not callback then return end
+			-- One-shot: turns itself straight back off, so it is meant to be used on a keybind.
+			DaveyAim:Toggle()
+			if not entitylib.isAlive then return end
+
+			local aimPosition
+			if PositionMode.Value == 'Camera' then
+				rayParams.FilterDescendantsInstances = {lplr.Character, gameCamera}
+				local hit = workspace:Raycast(gameCamera.CFrame.Position, gameCamera.CFrame.LookVector * 1000000, rayParams)
+				aimPosition = hit and hit.Position
+			else
+				local unitRay = lplr:GetMouse().UnitRay
+				rayParams.FilterDescendantsInstances = {lplr.Character, gameCamera}
+				local hit = workspace:Raycast(unitRay.Origin, unitRay.Direction * 1000000, rayParams)
+				aimPosition = hit and hit.Position
+			end
+			if not aimPosition then
+				notif('DaveyAim', 'Nothing under the cursor to aim at.', 4)
+				return
+			end
+
+			-- Nearest cannon inside the search range, rather than the first one the block list
+			-- happens to yield.
+			local origin = entitylib.character.RootPart.Position
+			local cannon, best = nil, SearchRange.Value
+			for _, block in store.blocks do
+				if block.Name == 'cannon' then
+					local distance = (origin - block.Position).Magnitude
+					if distance < best then
+						cannon, best = block, distance
+					end
+				end
+			end
+			if not cannon then
+				notif('DaveyAim', 'No cannon within '..SearchRange.Value..' studs.', 4)
+				return
+			end
+
+			local blockPosition = bedwars.BlockController:getBlockPosition(cannon.Position)
+
+			if AimMode.Value ~= 'Legit' then
+				pcall(function()
+					bedwars.Client:Get(remotes.CannonAim):SendToServer({
+						cannonBlockPos = blockPosition,
+						lookVector = CFrame.lookAt(cannon.Position, aimPosition).LookVector * 200
+					})
+				end)
+				task.wait(0.5)
+				if LaunchCannon.Enabled then
+					pcall(function()
+						bedwars.CannonHandController:launchSelf(cannon)
+					end)
+				end
+			else
+				-- Legit: drives the game's own aim prompts and turns the camera onto the target,
+				-- so what the server sees is the cannon being aimed by hand.
+				local aimPrompt = cannon:FindFirstChild('AimPrompt')
+				if not aimPrompt then
+					notif('DaveyAim', 'That cannon has no aim prompt.', 4)
+					return
+				end
+				aimPrompt:InputHoldBegin()
+				task.wait(aimPrompt.HoldDuration)
+
+				local finish = tick() + 0.3
+				repeat
+					local current = gameCamera.CFrame
+					local step = runService.PostSimulation:Wait()
+					gameCamera.CFrame = current:Lerp(CFrame.lookAt(current.Position, aimPosition), math.min(22 * step, 1))
+					pcall(function()
+						bedwars.Client:Get(remotes.CannonAim):SendToServer({
+							cannonBlockPos = blockPosition,
+							lookVector = gameCamera.CFrame.LookVector
+						})
+					end)
+				until tick() > finish
+
+				local stopPrompt = cannon:FindFirstChild('StopAimingPrompt')
+				if stopPrompt then
+					stopPrompt:InputHoldBegin()
+					task.wait(stopPrompt.HoldDuration)
+				end
+
+				if LaunchCannon.Enabled then
+					local launchPrompt = cannon:FindFirstChild('LaunchSelfPrompt')
+					if launchPrompt then
+						launchPrompt:InputHoldBegin()
+						task.wait(launchPrompt.HoldDuration)
+					end
+				end
+			end
+		end,
+		Tooltip = 'Aims the nearest cannon where you are looking. Bind it - it fires once and turns itself off'
+	})
+
+	AimMode = DaveyAim:CreateDropdown({
+		Name = 'Aim Mode',
+		List = {'Fast', 'Legit'},
+		Default = 'Fast'
+	})
+	PositionMode = DaveyAim:CreateDropdown({
+		Name = 'Position Mode',
+		List = {'Mouse', 'Camera'},
+		Default = 'Mouse'
+	})
+	SearchRange = DaveyAim:CreateSlider({
+		Name = 'Search Range',
+		Min = 1,
+		Max = 30,
+		Default = 10,
+		Suffix = function(val)
+			return val <= 1 and 'stud' or 'studs'
+		end
+	})
+	LaunchCannon = DaveyAim:CreateToggle({Name = 'Launch Cannon'})
+end)
+
+run(function()
+	local InfiniteKrystal
+	local oldUpdateMomentum, hookedUpdateMomentum
+
+	InfiniteKrystal = kits:CreateModule({
+		Name = 'InfiniteKrystal',
+		Category = 'Ability',
+		Function = function(callback)
+			local controller = bedwars.GlacialSkaterController
+			if callback then
+				if not controller or typeof(controller.updateMomentum) ~= 'function' then
+					notif('InfiniteKrystal', 'The Krystal controller is unavailable.', 5, 'warning')
+					InfiniteKrystal:Toggle()
+					return
+				end
+				oldUpdateMomentum = controller.updateMomentum
+				-- Replacing the update outright (rather than wrapping it) is the point: the
+				-- original is what walks the momentum back down.
+				hookedUpdateMomentum = function(skater)
+					if InfiniteKrystal.Enabled then
+						skater.momentum = 1000
+						skater.lastMomentumReport = workspace:GetServerTimeNow()
+						return
+					end
+					return oldUpdateMomentum(skater)
+				end
+				controller.updateMomentum = hookedUpdateMomentum
+			else
+				if controller and oldUpdateMomentum and controller.updateMomentum == hookedUpdateMomentum then
+					controller.updateMomentum = oldUpdateMomentum
+				end
+				oldUpdateMomentum, hookedUpdateMomentum = nil, nil
+			end
+		end,
+		Tooltip = 'Holds the Krystal skate at maximum momentum, which also stops it lagging you back'
+	})
+end)
+
+run(function()
+	local PhaseMine
+	local ignored = {}
+
+	local function ignoreCharacter(character)
+		if not character then return end
+		for _, part in character:GetDescendants() do
+			if part:IsA('BasePart') then
+				table.insert(ignored, part)
+				pcall(function() bedwars.QueryUtil:setQueryIgnored(part, true) end)
+			end
+		end
+		PhaseMine:Clean(character.DescendantAdded:Connect(function(child)
+			if child:IsA('BasePart') then
+				table.insert(ignored, child)
+				pcall(function() bedwars.QueryUtil:setQueryIgnored(child, true) end)
+			end
+		end))
+	end
+
+	PhaseMine = kits:CreateModule({
+		Name = 'PhaseMine',
+		Category = 'Ability',
+		Function = function(callback)
+			if not callback then
+				for _, part in ignored do
+					if part and part.Parent then
+						pcall(function() bedwars.QueryUtil:setQueryIgnored(part, false) end)
+					end
+				end
+				table.clear(ignored)
+				return
+			end
+
+			PhaseMine:Clean(entitylib.Events.EntityAdded:Connect(function(ent)
+				if ent.Player then
+					task.delay(1, ignoreCharacter, ent.Character)
+				end
+			end))
+			for _, ent in entitylib.List do
+				if ent.Character then
+					ignoreCharacter(ent.Character)
+				end
+			end
+		end,
+		Tooltip = 'Lets your mining raycasts pass through other players'
+	})
+end)
+
+run(function()
+	local AutoCyber
+	local DropMode, Whitelist, GeneratorOnly, Visualize, StealSplit, TargetCheck, LimitItem
+	local cachedGenerator, generatorExpiry, cachedDrone = nil, 0, nil
+	local itemCooldowns = {}
+
+	local function teamGenerator()
+		if not cachedGenerator or not cachedGenerator.Parent or os.clock() >= generatorExpiry then
+			cachedGenerator = collectionService:GetTagged((lplr:GetAttribute('Team') or -1)..'_TeamOreGenerator')[1]
+			generatorExpiry = os.clock() + 5
+		end
+		return cachedGenerator
+	end
+
+	local function getDrone()
+		if LimitItem.Enabled then
+			local held = store.hand and store.hand.tool
+			if not held or held.Name ~= 'drone' then return nil end
+		end
+		if cachedDrone and cachedDrone.Parent then return cachedDrone end
+
+		for _, drone in collectionService:GetTagged('Drone') do
+			if drone:GetAttribute('PlayerUserId') == lplr.UserId then
+				-- A drone holding something cannot pick anything else up, so anything it is
+				-- carrying is thrown clear before it goes back out.
+				local function dropHeld()
+					while AutoCyber.Enabled and drone.Parent and drone:GetAttribute('HeldItem') do
+						pcall(function()
+							bedwars.Handler:Get('DropDroneItem'):Fire('SendToServer', {
+								direction = Vector3.new(1000, 10, 0),
+								position = drone.PrimaryPart.Position
+							})
+						end)
+						task.wait(0.1)
+					end
+				end
+				AutoCyber:Clean(drone:GetAttributeChangedSignal('HeldItem'):Connect(function()
+					task.spawn(dropHeld)
+				end))
+				cachedDrone = drone
+				return cachedDrone
+			end
+		end
+
+		if LimitItem.Enabled then return nil end
+		local drone = getItem('drone')
+		if not drone or not drone.tool then return nil end
+		switchItem(drone.tool, 0)
+		local fired = false
+		pcall(function()
+			fired = bedwars.Handler:Get('FireGuidedProjectile'):Fire('CallServer', 'drone') and true or false
+		end)
+		if not fired then return nil end
+		task.wait(0.2)
+		-- One retry only. Recursing here (as the reference build did) spins forever whenever
+		-- the drone never appears.
+		for _, spawned in collectionService:GetTagged('Drone') do
+			if spawned:GetAttribute('PlayerUserId') == lplr.UserId then
+				cachedDrone = spawned
+				return cachedDrone
+			end
+		end
+		return nil
+	end
+
+	local function findTarget(drone)
+		local generator = teamGenerator()
+		local generatorPosition = generator and generator.PrimaryPart and generator.PrimaryPart.Position or Vector3.zero
+		local position = drone.PrimaryPart.Position
+
+		local drops = workspace.ItemDrops:GetChildren()
+		table.sort(drops, function(a, b)
+			return (position - a.Position).Magnitude < (position - b.Position).Magnitude
+		end)
+
+		for _, drop in drops do
+			if (itemCooldowns[drop] or 0) >= os.clock() then continue end
+			if not table.find(Whitelist.ListEnabled, drop.Name) then continue end
+			-- Still falling, or already underneath the map: not something worth chasing.
+			if drop.Position.Y <= 0 or math.abs(drop.Velocity.Y) > 0 then continue end
+			if GeneratorOnly.Enabled and (drop.Position - generatorPosition).Magnitude > 20 then continue end
+			if StealSplit.Enabled and (drop.Position - generatorPosition).Magnitude <= 20 then continue end
+
+			if TargetCheck.Enabled then
+				local blocked = entitylib.EntityPosition({
+					Origin = drop.Position,
+					Range = 60,
+					Part = 'RootPart',
+					Players = true
+				})
+				if blocked then continue end
+			end
+			return drop
+		end
+		return nil
+	end
+
+	AutoCyber = kits:CreateModule({
+		Name = 'AutoCyber',
+		Category = 'Auto',
+		Function = function(callback)
+			if not callback then
+				local drone = cachedDrone
+				if drone and drone.Parent and drone.PrimaryPart then
+					drone.PrimaryPart.CFrame = CFrame.new(drone.PrimaryPart.Position.X, 500, drone.PrimaryPart.Position.Z)
+				end
+				cachedDrone, cachedGenerator, generatorExpiry = nil, nil, 0
+				table.clear(itemCooldowns)
+				return
+			end
+
+			-- Anything that comes out of a generator split flies sideways at speed. Those are the
+			-- drops the drone is for, so they are routed straight to wherever Drop mode says.
+			AutoCyber:Clean(workspace.ItemDrops.ChildAdded:Connect(function(drop)
+				task.wait()
+				if drop.Velocity.X <= 100 then return end
+				itemCooldowns[drop] = os.clock() + 5
+
+				local amount = drop:GetAttribute('Amount') or 1
+				local parent = drop.Parent
+
+				if DropMode.Value == 'Generator' then
+					local generator = teamGenerator()
+					if not generator then
+						notif('AutoCyber', 'Your team generator was not found', 8, 'alert')
+						return
+					end
+					local started = os.clock()
+					repeat
+						drop.Velocity = Vector3.zero
+						drop.CFrame = generator.PrimaryPart.CFrame
+						task.wait()
+					until os.clock() - started >= 1 or not drop.Parent or drop.Parent ~= parent
+					if Visualize.Enabled then
+						notif('AutoCyber', 'Dropped '..formatNumber(amount)..' '..drop.Name, 4)
+					end
+				else
+					repeat
+						if not entitylib.isAlive then break end
+						drop.Velocity = Vector3.zero
+						drop.CFrame = entitylib.character.RootPart.CFrame - Vector3.new(0, 4, 0)
+						task.spawn(function()
+							pcall(function()
+								bedwars.Client:Get(remotes.PickupItem):CallServerAsync({itemDrop = drop})
+							end)
+						end)
+						task.wait(0.02)
+					until not drop.Parent or drop.Parent ~= parent
+					if Visualize.Enabled then
+						notif('AutoCyber', 'Collected '..formatNumber(amount)..' '..drop.Name, 4)
+					end
+				end
+			end))
+
+			repeat
+				local drone = getDrone()
+				if not drone or not drone.PrimaryPart then
+					task.wait(0.5)
+					continue
+				end
+
+				local target = findTarget(drone)
+				if not target then
+					-- Parked out of sight rather than left sitting where it can be shot.
+					drone.PrimaryPart.AssemblyLinearVelocity = Vector3.zero
+					drone.PrimaryPart.CFrame = CFrame.new(drone.PrimaryPart.Position.X, 10000, drone.PrimaryPart.Position.Z)
+					task.wait(0.2)
+					continue
+				end
+
+				task.wait(0.3)
+				drone.PrimaryPart.AssemblyLinearVelocity = Vector3.zero
+				drone.PrimaryPart.CFrame = CFrame.new(drone.PrimaryPart.Position.X, 10000, drone.PrimaryPart.Position.Z)
+
+				local distance, announced = math.huge, math.huge
+				while AutoCyber.Enabled and drone.Parent and target.Parent == workspace.ItemDrops do
+					local targetPosition = target.Position
+					drone.PrimaryPart.CanCollide = false
+					drone.PrimaryPart.AssemblyAngularVelocity = Vector3.zero
+
+					local flatDrone = drone.PrimaryPart.Position * Vector3.new(1, 0, 1)
+					local flatTarget = targetPosition * Vector3.new(1, 0, 1)
+					if (flatDrone - flatTarget).Magnitude > 0.01 then
+						drone.PrimaryPart.AssemblyLinearVelocity = CFrame.lookAt(flatDrone, flatTarget).LookVector * 30
+					end
+					distance = (flatDrone - flatTarget).Magnitude
+
+					if Visualize.Enabled and announced - distance >= 25 then
+						announced = distance
+						notif('AutoCyber', 'Drone is '..math.floor(distance)..' studs from '..target.Name, 1)
+					end
+
+					task.wait()
+					if distance <= 2 then break end
+				end
+
+				if AutoCyber.Enabled and target.Parent == workspace.ItemDrops and distance <= 5 then
+					local started = os.clock()
+					repeat
+						if drone.Parent and target.Parent then
+							drone.PrimaryPart.AssemblyLinearVelocity = Vector3.zero
+							drone.PrimaryPart.AssemblyAngularVelocity = Vector3.new(0, -30, 0)
+							drone.PrimaryPart.CFrame = CFrame.new(target.Position - Vector3.new(0, drone.PrimaryPart.Size.Y, 0))
+						end
+						task.wait(0.02)
+					until os.clock() - started >= 1.25 or not AutoCyber.Enabled
+				elseif Visualize.Enabled and target.Parent == workspace.ItemDrops then
+					notif('AutoCyber', 'Too far to collect '..target.Name, 6)
+				end
+
+				task.wait()
+			until not AutoCyber.Enabled
+		end,
+		Tooltip = 'Sends the Cyber drone out to steal resources for you'
+	})
+
+	DropMode = AutoCyber:CreateDropdown({
+		Name = 'Drop mode',
+		List = {'Player', 'Generator'},
+		Default = 'Player',
+		Tooltip = 'Where a stolen split ends up'
+	})
+	Whitelist = AutoCyber:CreateTextList({
+		Name = 'Whitelist',
+		Default = {'emerald', 'diamond'}
+	})
+	GeneratorOnly = AutoCyber:CreateToggle({
+		Name = 'Generator only',
+		Tooltip = 'Only picks up whitelisted items that came out of a generator'
+	})
+	Visualize = AutoCyber:CreateToggle({
+		Name = 'Visualize',
+		Tooltip = 'Says what the drone is going for and how far away it is'
+	})
+	StealSplit = AutoCyber:CreateToggle({
+		Name = 'Steal split',
+		Tooltip = 'Goes for the enemy team\'s generator split instead of loose drops near yours'
+	})
+	TargetCheck = AutoCyber:CreateToggle({
+		Name = 'Target check',
+		Tooltip = 'Skips a drop that somebody is standing near'
+	})
+	LimitItem = AutoCyber:CreateToggle({
+		Name = 'Limit to item',
+		Tooltip = 'Only works while the drone is held, and never spawns one for you'
 	})
 end)
