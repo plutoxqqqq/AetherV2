@@ -90,6 +90,85 @@ local isfile = isfile or function(file)
 	return suc and res ~= nil and res ~= ''
 end
 
+--[[
+	Retiring the old accent.
+
+	The default accent moved to rgb(190, 115, 255), but changing a default only ever decided
+	what a *fresh* install starts on. Every existing install already had the old teal
+	rgb(5, 133, 104) written into its config - the GUI accent, and every module colour option
+	that had never been touched - and a saved value always beats a default, so the menu kept
+	opening teal and the change looked like it had never happened.
+
+	So the retired colour is rewritten on load, once. The stamp records which accent an
+	install has been through; while it does not match, a saved colour that is still *exactly*
+	the retired default is replaced, and anything the user actually chose is left alone. Once
+	the pass has run the stamp is written and no saved colour is touched again, so picking
+	teal back off the palette sticks.
+
+	Hung off one table rather than a handful of locals, here and for the preset registry and
+	the profile reset below: the main chunk of a GUI file is a single function, and Luau
+	allows a function 200 locals.
+]]
+local configapi = {}
+configapi.Accents = {
+	Path = 'aetherv2/profiles/accent.txt',
+	Stamp = table.concat({
+		math.round(accent.Hue * 1000),
+		math.round(accent.Sat * 1000),
+		math.round(accent.Value * 1000)
+	}, ','),
+	Retired = {Hue = 0.46, Sat = 0.96, Value = 0.52, Notch = 4}
+}
+configapi.Accents.Done = isfile(configapi.Accents.Path) and (function()
+	local suc, res = pcall(readfile, configapi.Accents.Path)
+	return suc and type(res) == 'string' and res:gsub('%s+', '') == configapi.Accents.Stamp
+end)() or false
+-- Stamped once the first load has settled rather than the moment the first colour is
+-- rewritten: game modules register after the menu is already up and their options are read
+-- in a later pass, so the migration has to stay live for the whole session it runs in.
+configapi.Accents.Stamped = configapi.Accents.Done
+
+function configapi.Accents.Mark()
+	if configapi.Accents.Stamped then return end
+	configapi.Accents.Stamped = true
+	pcall(writefile, configapi.Accents.Path, configapi.Accents.Stamp)
+end
+
+-- Was this saved colour left on the retired default, or did the user choose it? Rainbow and
+-- custom colours are always the user's, and so is any preset notch other than the one the
+-- old default sat on.
+function configapi.Accents.IsRetired(saved)
+	local retired = configapi.Accents.Retired
+	if type(saved) ~= 'table' or saved.Rainbow or saved.CustomColor then return false end
+	if saved.Notch and saved.Notch ~= retired.Notch then return false end
+	if type(saved.Hue) ~= 'number' or type(saved.Sat) ~= 'number' or type(saved.Value) ~= 'number' then
+		return saved.Notch == retired.Notch
+	end
+	return math.abs(saved.Hue - retired.Hue) < 0.02
+		and math.abs(saved.Sat - retired.Sat) < 0.02
+		and math.abs(saved.Value - retired.Value) < 0.02
+end
+
+-- Does this option actually default to the accent? One that ships a default of its own (a
+-- white nametag, a black background) is never migrated; one that names the accent
+-- explicitly, as the GUI colour slider does, still is.
+function configapi.Accents.Defaulted(optionsettings)
+	return (optionsettings.DefaultHue or accent.Hue) == accent.Hue
+		and (optionsettings.DefaultSat or accent.Sat) == accent.Sat
+		and (optionsettings.DefaultValue or accent.Value) == accent.Value
+end
+
+-- `defaulted` says whether the option in question takes its default from the accent at all.
+function configapi.Accents.Apply(saved, defaulted)
+	if configapi.Accents.Done or defaulted == false or not configapi.Accents.IsRetired(saved) then return saved end
+	local migrated = table.clone(saved)
+	migrated.Hue, migrated.Sat, migrated.Value = accent.Hue, accent.Sat, accent.Value
+	if migrated.Notch then
+		migrated.Notch = accent.Notch
+	end
+	return migrated
+end
+
 local getfontsize = function(text, size, font)
 	fontsize.Text = text
 	fontsize.Size = size
@@ -627,6 +706,9 @@ components = {
 		end
 		
 		function optionapi:Load(tab)
+			-- A colour saved back when the accent was teal and never touched since is
+			-- brought forward to the current accent, once per install.
+			tab = configapi.Accents.Apply(tab, configapi.Accents.Defaulted(optionsettings))
 			if tab.Rainbow ~= self.Rainbow then
 				self:Toggle()
 			end
@@ -2175,9 +2257,15 @@ function mainapi:CreateCategory(categorysettings)
 		for _, sort in sorting do
 			table.sort(sort)
 			for i, v in sort do
-				mainapi.Modules[v].Index = i
-				mainapi.Modules[v].Object.LayoutOrder = i
-				mainapi.Modules[v].Children.LayoutOrder = i
+				local module = mainapi.Modules[v]
+				module.Index = i
+				-- Two slots per module: the row, then its settings panel directly under it.
+				-- Sharing one order left the pair tied, and a UIListLayout resolves a tie in
+				-- whatever order it feels like.
+				module.Object.LayoutOrder = i * 2
+				if module.Children then
+					module.Children.LayoutOrder = (i * 2) + 1
+				end
 			end
 		end
 
@@ -3222,6 +3310,12 @@ function mainapi:Load(skipgui, profile)
 	end
 	self.Loaded = savecheck
 	self.Categories.TopBar.Options.Bind:SetBind(self.Keybind)
+	-- The colours this pass brought forward are only on disk once the config is written
+	-- back, so record the migration after a save rather than as the values are read.
+	if savecheck and not configapi.Accents.Done then
+		self:Save()
+		configapi.Accents.Mark()
+	end
 
 	if inputService.TouchEnabled and #self.Keybind == 1 and self.Keybind[1] == 'RightShift' then
 		local button = Instance.new('TextButton')
@@ -3985,10 +4079,57 @@ mainapi.RainbowUpdateSpeed = topbar:CreateSlider({
 topbar:CreateButton({
 	Name = 'Reset current profile',
 	Function = function()
-	mainapi.Save = function() end
-		if isfile('aetherv2/profiles/'..mainapi.Profile..mainapi.Place..'.txt') and delfile then
-			delfile('aetherv2/profiles/'..mainapi.Profile..mainapi.Place..'.txt')
+		-- Nothing may write the in-memory state back out from under the reset: the autosave
+		-- loop runs every ten seconds and Uninject saves on its way out.
+		mainapi.Loaded = false
+		mainapi.Save = function() end
+
+		local profile = mainapi.Profile or 'default'
+		-- The config, and the mirror of it that Load falls back to. Deleting only the mirror
+		-- - which is all this used to do - reset nothing at all, because the config it reads
+		-- first was still sitting there.
+		for _, path in {
+			'aetherv2/configs/'..profile..mainapi.Place..'.json',
+			'aetherv2/profiles/'..profile..mainapi.Place..'.txt'
+		} do
+			if isfile(path) and delfile then
+				pcall(delfile, path)
+			end
 		end
+
+		-- GUI settings, window positions and the menu keybind live in the shared gui file.
+		-- The list of configs and which one is active are not settings, so a reset lands
+		-- back on the same profile rather than on 'default'.
+		local profiles = {}
+		for _, entry in mainapi.Profiles or {} do
+			if type(entry) == 'table' and entry.Name then
+				table.insert(profiles, {Name = entry.Name, Bind = {}})
+			end
+		end
+		if #profiles == 0 then
+			profiles = {{Name = 'default', Bind = {}}}
+		end
+		pcall(writefile, 'aetherv2/profiles/'..game.GameId..'.gui.txt', httpService:JSONEncode({
+			Categories = {},
+			Profile = profile,
+			Profiles = profiles,
+			Keybind = {'RightShift'}
+		}))
+
+		for path, value in {
+			['aetherv2/profiles/forcegame.txt'] = 'false',
+			['aetherv2/profiles/forcegameid.txt'] = tostring(game.PlaceId),
+			['aetherv2/profiles/hide.txt'] = 'false',
+			['aetherv2/profiles/disableloading.txt'] = 'false',
+			['aetherv2/profiles/gui.txt'] = 'new'
+		} do
+			pcall(writefile, path, value)
+		end
+		-- Drop the accent stamp too, so the reload lands on the current default accent.
+		if isfile(configapi.Accents.Path) and delfile then
+			pcall(delfile, configapi.Accents.Path)
+		end
+
 		shared.vapereload = true
 		if shared.VapeDeveloper then
 			loadstring(readfile('aetherv2/main.lua'), 'main')(license)
@@ -3996,7 +4137,7 @@ topbar:CreateButton({
 			loadstring(game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..readfile('aetherv2/profiles/commit.txt')..'/main.lua', true), 'main')(license)
 		end
 	end,
-	Tooltip = 'This will set your profile to the default settings of Vape'
+	Tooltip = 'Wipes everything saved for this config and reloads on defaults'
 })
 topbar:CreateButton({
 	Name = 'Download configs',
