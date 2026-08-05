@@ -46,11 +46,6 @@
 		"AutoWarlock",
 		"AutoWizard"
 	],
-	"patchedModules": [
-		"Invisible",
-		"InfiniteShield",
-		"ProjectileExploit"
-	],
 	"updatedModules": [
 		"AntiLagback",
 		"AutoBank",

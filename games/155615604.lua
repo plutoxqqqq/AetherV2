@@ -2334,7 +2334,6 @@ run(function()
     })
     ColorV = DamageIndicator:CreateColorSlider({
         Name = 'Color',
-        DefaultHue = 0,
         Function = function(hue, sat, val)
             if indi then
                 indi.Color = Color3.fromHSV(hue, sat, val)

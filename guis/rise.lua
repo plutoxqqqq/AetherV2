@@ -1,9 +1,12 @@
+-- AetherV2's accent, rgb(190, 115, 255), as the HSV the GUI works in. It is the
+-- default theme colour and stays changeable from the colour slider in settings.
+local accent = {Hue = 0.7559524, Sat = 0.5490196, Value = 1}
 local mainapi = {
 	Categories = {},
 	GUIColor = {
-		Hue = 0.46,
-		Sat = 0.96,
-		Value = 0.52
+		Hue = accent.Hue,
+		Sat = accent.Sat,
+		Value = accent.Value
 	},
 	HeldKeybinds = {},
 	Keybind = {'RightShift'},
@@ -498,9 +501,12 @@ components = {
 	ColorSlider = function(optionsettings, children, api)
 		local optionapi = {
 			Type = 'ColorSlider',
-			Hue = optionsettings.DefaultHue or 0.44,
-			Sat = optionsettings.DefaultSat or 1,
-			Value = optionsettings.DefaultValue or 1,
+			-- Colour options default to the AetherV2 accent, the same colour the GUI
+			-- theme starts on, so a module's boxes/chams/HUD match the menu out of the
+			-- box. Each slider still moves independently once the user touches it.
+			Hue = optionsettings.DefaultHue or accent.Hue,
+			Sat = optionsettings.DefaultSat or accent.Sat,
+			Value = optionsettings.DefaultValue or accent.Value,
 			Opacity = optionsettings.DefaultOpacity or 1,
 			Rainbow = false,
 			Index = 0
@@ -1124,7 +1130,7 @@ components = {
 			Window = {Visible = false},
 			Index = getTableSize(api.Options)
 		}
-		optionsettings.Color = optionsettings.Color or Color3.fromRGB(5, 134, 105)
+		optionsettings.Color = optionsettings.Color or Color3.fromRGB(190, 115, 255)
 		
 		local textlist = Instance.new('TextButton')
 		textlist.Name = optionsettings.Name..'TextList'
@@ -2324,7 +2330,7 @@ function mainapi:Load(skipgui, profile)
 		guidata = loadJson('aetherv2/profiles/'..game.GameId..'.gui.txt')
 		if not guidata then
 			guidata = {Categories = {}}
-			self:CreateNotification('Vape', 'Failed to load GUI settings.', 10, 'alert')
+			self:CreateNotification('AetherV2', 'Failed to load GUI settings.', 10, 'alert')
 			savecheck = false
 		end
 
@@ -2361,7 +2367,7 @@ function mainapi:Load(skipgui, profile)
 				Modules = {},
 				Legit = {}
 			}
-			self:CreateNotification('Vape', 'Failed to load '..self.Profile..' profile.', 10, 'alert')
+			self:CreateNotification('AetherV2', 'Failed to load '..self.Profile..' profile.', 10, 'alert')
 			savecheck = false
 		end
 
@@ -2490,6 +2496,200 @@ function mainapi:SaveOptions(object, savedoptions)
 	return savedoptions
 end
 
+-- Everything AetherV2 parks in the shared global tables.
+--
+-- Uninject cleared shared.vape and left the rest behind, and that is what made another
+-- script picked up after a self destruct come back wearing AetherV2's skin: every
+-- Vape-derived script starts with `shared.vape or _G.vape`, so it adopted this instance's
+-- api - and drew itself from AetherV2's assets - instead of building its own. The same
+-- goes for the game-module handles (vapeEvents, store, bedwars, remotes and friends): a
+-- later script that reads one is reading a torn-down instance.
+--
+-- Deliberately absent: shared.VapeDeveloper and shared.VapeCustomProfile, which the
+-- loader sets before we run and the reinject path reads afterwards, and getgenv().Drawing,
+-- which on some executors is the executor's own and not ours to take away.
+local claimedGlobals = {
+	'vape',
+	'vapeEvents',
+	'store',
+	'bedwars',
+	'remotes',
+	'getPlacedBlock',
+	'getSpeed',
+	'getHotbar',
+	'hotbarSwitch',
+	'switchItem',
+	'RealLifeBedWars',
+	'Backtrack',
+	'FakeLag',
+	'EntityAnalyser',
+	'texturepack',
+	'used_init',
+	'_aeroTierReady',
+	'getAeroTier',
+	'IsLongJumping',
+	'LongJumpFireballThrown',
+	'ProjectileAuraFiringLock',
+	'ItemOwner',
+	'AetherV2LoadingScreen',
+	'AetherV2SetLoadingStatus',
+	'AetherV2CloseLoadingScreen'
+}
+local claimedShared = {
+	'vape',
+	'vapereload',
+	'VapeIndependent',
+	'updated',
+	'bindable',
+	'gg',
+	'ACMODVIEWENABLED',
+	'RealLifeBedWars',
+	'vapeserverhoplist',
+	'vapeserverhopprevious',
+	'vapesessioninfo',
+	'MATCH_CONTROLLER_GETPLAYERPARTY_REVERT',
+	'PERMISSION_CONTROLLER_HASANYPERMISSIONS_REVERT'
+}
+
+-- Any ScreenGui we own, wherever it ended up. The menu itself is destroyed by Uninject,
+-- but the loader's progress screen lives outside it and a teardown mid-load would leave
+-- it on screen for whatever loads next.
+local function destroyOwnedScreens()
+	local roots = {}
+	if gethui then
+		local ok, res = pcall(gethui)
+		if ok and res then table.insert(roots, res) end
+	end
+	pcall(function()
+		table.insert(roots, cloneref(game:GetService('CoreGui')))
+	end)
+	pcall(function()
+		table.insert(roots, cloneref(game:GetService('Players')).LocalPlayer:FindFirstChildOfClass('PlayerGui'))
+	end)
+	for _, root in roots do
+		if not root then continue end
+		pcall(function()
+			for _, child in root:GetChildren() do
+				if child:IsA('ScreenGui') and (child:GetAttribute('AetherV2') or child.Name == 'AetherV2Loading') then
+					child:Destroy()
+				end
+			end
+		end)
+	end
+end
+
+local function releaseGlobals()
+	local genv = getgenv and getgenv() or nil
+	for _, name in claimedGlobals do
+		if genv then
+			pcall(function()
+				genv[name] = nil
+			end)
+		end
+		pcall(function()
+			_G[name] = nil
+		end)
+	end
+	for _, name in claimedShared do
+		pcall(function()
+			shared[name] = nil
+		end)
+	end
+	destroyOwnedScreens()
+end
+
+--[[
+	Repo configs
+
+	The two modern GUIs get a browser for these; here it is one button, because there is
+	nowhere sensible to hang a window off. It pulls configs/presets.json, writes every
+	config it names into aetherv2/configs as a profile for this place, and registers the
+	names in the Profiles tab.
+
+	Nothing asks for a rejoin: clicking a name in Profiles is already a live switch (it
+	saves the outgoing profile and re-loads onto the new one), so the configs are usable
+	the moment the button reports back.
+]]
+function mainapi:DownloadRepoConfigs()
+	if self.DownloadingConfigs then return end
+	self.DownloadingConfigs = true
+	local function finish(text, kind)
+		self.DownloadingConfigs = false
+		self:CreateNotification('AetherV2', text, 8, kind)
+	end
+
+	task.spawn(function()
+		self:CreateNotification('AetherV2', 'Downloading configs from the repo...', 4, 'info')
+		local base = 'https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..(isfile('aetherv2/profiles/commit.txt') and readfile('aetherv2/profiles/commit.txt') or 'main')..'/configs/'
+		local ok, body = pcall(function()
+			return game:HttpGet(base..'presets.json', true)
+		end)
+		if not ok or type(body) ~= 'string' or body == '404: Not Found' then
+			return finish('Could not reach the repo to list configs', 'alert')
+		end
+		local listed = select(2, pcall(function()
+			return httpService:JSONDecode(body)
+		end))
+		if type(listed) ~= 'table' or type(listed.presets) ~= 'table' or #listed.presets == 0 then
+			return finish('The repo has no configs published yet', 'alert')
+		end
+
+		local guipath = 'aetherv2/profiles/'..game.GameId..'.gui.txt'
+		local guidata = isfile(guipath) and loadJson(guipath) or {}
+		if type(guidata) ~= 'table' then guidata = {} end
+		guidata.Profiles = guidata.Profiles or self.Profiles or {{Name = 'default', Bind = {}}}
+
+		local added = 0
+		for _, preset in listed.presets do
+			local suc, wrapper = pcall(function()
+				return httpService:JSONDecode(game:HttpGet(base..tostring(preset.file), true))
+			end)
+			if not suc or type(wrapper) ~= 'table' then continue end
+			-- The file is a wrapper: the config itself is the `config` field, held as a
+			-- JSON string so it survives being carried around as one blob.
+			local name = tostring(preset.name or wrapper.name or ''):gsub('[\\/:*?"<>|]', '-'):gsub('^%s*(.-)%s*$', '%1')
+			if name == '' then continue end
+			local config = wrapper.config
+			if type(config) == 'table' then
+				config = httpService:JSONEncode(config)
+			end
+			if type(config) ~= 'string' or config == '' then continue end
+			pcall(writefile, 'aetherv2/configs/'..name..self.Place..'.json', config)
+			pcall(writefile, 'aetherv2/profiles/'..name..self.Place..'.txt', config)
+			local listedAlready = false
+			for _, profile in guidata.Profiles do
+				if profile.Name == name then
+					listedAlready = true
+					break
+				end
+			end
+			if not listedAlready then
+				table.insert(guidata.Profiles, {Name = name, Bind = {}})
+			end
+			added += 1
+		end
+
+		if added <= 0 then
+			return finish('Could not download any of the repo configs', 'alert')
+		end
+
+		pcall(writefile, guipath, httpService:JSONEncode(guidata))
+		self.Profiles = guidata.Profiles
+		-- Each GUI refreshes its profile list differently (and rise's is a grid, not a
+		-- list), so try both and let a miss fall through - the names are on disk either
+		-- way and the tab picks them up when it is next drawn.
+		pcall(function()
+			local profiles = self.Categories.Profiles
+			if profiles.ChangeValue then
+				profiles:ChangeValue()
+			elseif profiles.Update then
+				profiles:Update()
+			end
+		end)
+		finish(added..' config'..(added == 1 and '' or 's')..' ready in Profiles, pick one to load it', 'info')
+	end)
+end
+
 function mainapi:Uninject()
 	mainapi:Save()
 	mainapi.Loaded = nil
@@ -2526,10 +2726,13 @@ function mainapi:Uninject()
 	shared.vape = nil
 	shared.vapereload = nil
 	shared.VapeIndependent = nil
+	releaseGlobals()
 end
 
 gui = Instance.new('ScreenGui')
 gui.Name = randomString()
+-- Lets the teardown find this screen again no matter what it was renamed to.
+gui:SetAttribute('AetherV2', true)
 gui.DisplayOrder = 9999999
 gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 gui.IgnoreGuiInset = true
@@ -2738,7 +2941,7 @@ local friendssettings = {
 	Name = 'Friends',
 	Size = UDim2.fromOffset(17, 16),
 	Placeholder = 'Roblox username',
-	Color = Color3.fromRGB(5, 134, 105),
+	Color = Color3.fromRGB(190, 115, 255),
 	Function = function()
 		friends.Update:Fire()
 		friends.ColorUpdate:Fire(friendscolor.Hue, friendscolor.Sat, friendscolor.Value)
@@ -2890,6 +3093,13 @@ mainapi.RainbowUpdateSpeed = mainapi.Categories.Main:CreateSlider({
 	Default = 60,
 	Tooltip = 'Adjusts the update rate of color values',
 	Suffix = 'hz'
+})
+mainapi.Categories.Main:CreateButton({
+	Name = 'Download configs',
+	Function = function()
+		mainapi:DownloadRepoConfigs()
+	end,
+	Tooltip = 'Pulls the configs published in the repo into Profiles'
 })
 mainapi.Categories.Main:CreateButton({
 	Name = 'Reinject',
@@ -3439,5 +3649,188 @@ mainapi:Clean(inputService.InputEnded:Connect(function(inputObj)
 		table.remove(mainapi.HeldKeybinds, ind)
 	end
 end))
+
+--[[
+	First run
+
+	The same card the modern GUIs show, built from nothing but frames so it works on
+	these two skins as well. Written once to profiles/welcome.txt and never shown again -
+	the marker is shared with every GUI, so switching skins does not bring it back.
+]]
+function mainapi:CreateWelcome()
+	local seenpath = 'aetherv2/profiles/welcome.txt'
+	if isfile(seenpath) then return end
+
+	local card = Instance.new('Frame')
+	card.Name = 'Welcome'
+	card.Size = UDim2.fromOffset(430, 250)
+	card.Position = UDim2.new(0.5, -215, 0.5, -125)
+	card.BackgroundColor3 = uipallet.Main
+	card.Visible = false
+	card.Parent = scaledgui
+	addCorner(card)
+	makeDraggable(card)
+	local cardmodal = Instance.new('TextButton')
+	cardmodal.BackgroundTransparency = 1
+	cardmodal.Text = ''
+	cardmodal.Modal = true
+	cardmodal.Parent = card
+	local stroke = Instance.new('UIStroke')
+	stroke.Color = Color3.new(1, 1, 1)
+	stroke.Transparency = 0.9
+	stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	stroke.Parent = card
+
+	local title = Instance.new('TextLabel')
+	title.Name = 'Title'
+	title.Size = UDim2.new(1, -70, 0, 22)
+	title.Position = UDim2.fromOffset(22, 20)
+	title.BackgroundTransparency = 1
+	title.Text = 'Welcome to AetherV2'
+	title.TextXAlignment = Enum.TextXAlignment.Left
+	title.TextColor3 = uipallet.Text
+	title.TextSize = 18
+	title.FontFace = uipallet.FontSemiBold
+	title.Parent = card
+
+	local subtitle = title:Clone()
+	subtitle.Name = 'Subtitle'
+	subtitle.Size = UDim2.new(1, -70, 0, 16)
+	subtitle.Position = UDim2.fromOffset(22, 40)
+	subtitle.Text = 'A few things worth knowing before you start'
+	subtitle.TextColor3 = color.Dark(uipallet.Text, 0.4)
+	subtitle.TextSize = 12
+	subtitle.FontFace = uipallet.Font
+	subtitle.Parent = card
+
+	local rows = Instance.new('Frame')
+	rows.Name = 'Rows'
+	rows.Size = UDim2.new(1, -44, 0, 108)
+	rows.Position = UDim2.fromOffset(22, 68)
+	rows.BackgroundTransparency = 1
+	rows.Parent = card
+	local rowlist = Instance.new('UIListLayout')
+	rowlist.SortOrder = Enum.SortOrder.LayoutOrder
+	rowlist.Padding = UDim.new(0, 6)
+	rowlist.Parent = rows
+
+	for index, entry in {
+		{Heading = 'Open and close the menu', Body = 'Press '..table.concat(mainapi.Keybind, ' + '):upper()..'. Rebind it from the settings window'},
+		{Heading = 'Configs live in the repo', Body = 'Settings has a Download configs button, then pick one in Profiles to load it'},
+		{Heading = 'Anything broken or missing', Body = 'discord.gg/aYu5c9v9zv, copied to your clipboard by the button below'}
+	} do
+		local row = Instance.new('Frame')
+		row.Name = 'Row'..index
+		row.LayoutOrder = index
+		row.Size = UDim2.new(1, 0, 0, 32)
+		row.BackgroundColor3 = color.Light(uipallet.Main, 0.02)
+		row.Parent = rows
+		addCorner(row)
+		local heading = Instance.new('TextLabel')
+		heading.Size = UDim2.new(1, -20, 0, 14)
+		heading.Position = UDim2.fromOffset(10, 3)
+		heading.BackgroundTransparency = 1
+		heading.Text = entry.Heading
+		heading.TextXAlignment = Enum.TextXAlignment.Left
+		heading.TextColor3 = uipallet.Text
+		heading.TextSize = 12
+		heading.FontFace = uipallet.Font
+		heading.Parent = row
+		local body = heading:Clone()
+		body.Position = UDim2.fromOffset(10, 16)
+		body.Text = entry.Body
+		body.TextColor3 = color.Dark(uipallet.Text, 0.36)
+		body.TextSize = 11
+		body.Parent = row
+	end
+
+	local function dismiss()
+		card.Visible = false
+		clickgui.Visible = true
+		pcall(writefile, seenpath, 'true')
+	end
+
+	local buttons = Instance.new('Frame')
+	buttons.Name = 'Buttons'
+	buttons.Size = UDim2.new(1, -44, 0, 30)
+	buttons.Position = UDim2.fromOffset(22, 190)
+	buttons.BackgroundTransparency = 1
+	buttons.Parent = card
+	local buttonlist = Instance.new('UIListLayout')
+	buttonlist.FillDirection = Enum.FillDirection.Horizontal
+	buttonlist.SortOrder = Enum.SortOrder.LayoutOrder
+	buttonlist.Padding = UDim.new(0, 8)
+	buttonlist.Parent = buttons
+
+	for index, entry in {
+		{Text = 'Download configs', Action = function()
+			dismiss()
+			mainapi:DownloadRepoConfigs()
+		end},
+		{Text = 'Copy discord', Action = function()
+			if setclipboard then
+				setclipboard('https://discord.gg/aYu5c9v9zv')
+			end
+			mainapi:CreateNotification('AetherV2', 'Discord invite copied to your clipboard', 5, 'info')
+		end},
+		{Text = 'Start', Primary = true, Action = dismiss}
+	} do
+		local button = Instance.new('TextButton')
+		button.Name = entry.Text
+		button.LayoutOrder = index
+		button.Size = UDim2.fromOffset(126, 30)
+		button.BackgroundColor3 = entry.Primary and Color3.fromHSV(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value) or color.Light(uipallet.Main, 0.04)
+		button.AutoButtonColor = true
+		button.Text = entry.Text
+		button.TextColor3 = entry.Primary and mainapi:TextColor(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value) or uipallet.Text
+		button.TextSize = 13
+		button.FontFace = uipallet.Font
+		button.Parent = buttons
+		addCorner(button, UDim.new(0, 5))
+		button.MouseButton1Click:Connect(entry.Action)
+	end
+
+	local close = Instance.new('TextButton')
+	close.Name = 'Close'
+	close.Size = UDim2.fromOffset(24, 24)
+	close.Position = UDim2.new(1, -32, 0, 16)
+	close.BackgroundTransparency = 1
+	close.Text = 'x'
+	close.TextColor3 = color.Dark(uipallet.Text, 0.3)
+	close.TextSize = 15
+	close.FontFace = uipallet.Font
+	close.Parent = card
+	close.MouseButton1Click:Connect(dismiss)
+
+	local footer = Instance.new('TextLabel')
+	footer.Name = 'Footer'
+	footer.Size = UDim2.new(1, -44, 0, 14)
+	footer.Position = UDim2.fromOffset(22, 226)
+	footer.BackgroundTransparency = 1
+	footer.Text = 'Shown once. Everything here lives in the menu if you need it later'
+	footer.TextXAlignment = Enum.TextXAlignment.Left
+	footer.TextColor3 = color.Dark(uipallet.Text, 0.5)
+	footer.TextSize = 11
+	footer.FontFace = uipallet.Font
+	footer.Parent = card
+
+	table.insert(mainapi.Windows, card)
+	mainapi.WelcomeCard = card
+
+	-- Shown the first time the menu is actually opened rather than on injection, so it
+	-- never lands on top of whatever the user was doing before they asked for the menu.
+	local watcher
+	watcher = clickgui:GetPropertyChangedSignal('Visible'):Connect(function()
+		if not clickgui.Visible then return end
+		watcher:Disconnect()
+		if isfile(seenpath) then return end
+		clickgui.Visible = false
+		card.Visible = true
+		card.Position = UDim2.new(0.5, -215, 0.5, -125)
+	end)
+	mainapi:Clean(watcher)
+end
+
+mainapi:CreateWelcome()
 
 return mainapi

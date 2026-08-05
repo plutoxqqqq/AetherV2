@@ -2,7 +2,7 @@ local compile = loadstring
 local loadstring = function(...)
 	local res, err = compile(...)
 	if err and vape then
-		vape:CreateNotification('Vape', 'Failed to load : ' .. err, 30, 'alert')
+		vape:CreateNotification('AetherV2', 'Failed to load : ' .. err, 30, 'alert')
 	end
 	return res
 end
@@ -94,11 +94,11 @@ if not select(1, ...) and game.PlaceId == 5938036553 then
 					return
 				end
 			end
-			notif('Vape', 'Failed to find actor', 10, 'alert')
+			notif('AetherV2', 'Failed to find actor', 10, 'alert')
 		end)
 	else
 		vape.Load = function()
-			notif('Vape', 'Missing actor functions.', 10, 'alert')
+			notif('AetherV2', 'Missing actor functions.', 10, 'alert')
 		end
 	end
 
@@ -159,7 +159,7 @@ local function hookEvent(id, rfunc)
 	end)
 
 	if not suc then
-		notif('Vape', 'Failed to hook (' .. id .. ')', 10, 'alert')
+		notif('AetherV2', 'Failed to hook (' .. id .. ')', 10, 'alert')
 	end
 
 	return type(res) == 'function' and res or function() end
@@ -1202,7 +1202,6 @@ run(function()
     	Name = 'Target Color',
     	Darker = true,
     	Visible = false,
-    	DefaultHue = 0.6,
     	DefaultOpacity = 0.5,
     })
     BoxAttackColor = Killaura:CreateColorSlider({
