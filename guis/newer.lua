@@ -275,6 +275,85 @@ local isfile = isfile or function(file)
 	return suc and res ~= nil and res ~= ''
 end
 
+--[[
+	Retiring the old accent.
+
+	The default accent moved to rgb(190, 115, 255), but changing a default only ever decided
+	what a *fresh* install starts on. Every existing install already had the old teal
+	rgb(5, 133, 104) written into its config - the GUI accent, and every module colour option
+	that had never been touched - and a saved value always beats a default, so the menu kept
+	opening teal and the change looked like it had never happened.
+
+	So the retired colour is rewritten on load, once. The stamp records which accent an
+	install has been through; while it does not match, a saved colour that is still *exactly*
+	the retired default is replaced, and anything the user actually chose is left alone. Once
+	the pass has run the stamp is written and no saved colour is touched again, so picking
+	teal back off the palette sticks.
+
+	Hung off one table rather than a handful of locals, here and for the preset registry and
+	the profile reset below: the main chunk of a GUI file is a single function, and Luau
+	allows a function 200 locals.
+]]
+local configapi = {}
+configapi.Accents = {
+	Path = 'aetherv2/profiles/accent.txt',
+	Stamp = table.concat({
+		math.round(accent.Hue * 1000),
+		math.round(accent.Sat * 1000),
+		math.round(accent.Value * 1000)
+	}, ','),
+	Retired = {Hue = 0.46, Sat = 0.96, Value = 0.52, Notch = 4}
+}
+configapi.Accents.Done = isfile(configapi.Accents.Path) and (function()
+	local suc, res = pcall(readfile, configapi.Accents.Path)
+	return suc and type(res) == 'string' and res:gsub('%s+', '') == configapi.Accents.Stamp
+end)() or false
+-- Stamped once the first load has settled rather than the moment the first colour is
+-- rewritten: game modules register after the menu is already up and their options are read
+-- in a later pass, so the migration has to stay live for the whole session it runs in.
+configapi.Accents.Stamped = configapi.Accents.Done
+
+function configapi.Accents.Mark()
+	if configapi.Accents.Stamped then return end
+	configapi.Accents.Stamped = true
+	pcall(writefile, configapi.Accents.Path, configapi.Accents.Stamp)
+end
+
+-- Was this saved colour left on the retired default, or did the user choose it? Rainbow and
+-- custom colours are always the user's, and so is any preset notch other than the one the
+-- old default sat on.
+function configapi.Accents.IsRetired(saved)
+	local retired = configapi.Accents.Retired
+	if type(saved) ~= 'table' or saved.Rainbow or saved.CustomColor then return false end
+	if saved.Notch and saved.Notch ~= retired.Notch then return false end
+	if type(saved.Hue) ~= 'number' or type(saved.Sat) ~= 'number' or type(saved.Value) ~= 'number' then
+		return saved.Notch == retired.Notch
+	end
+	return math.abs(saved.Hue - retired.Hue) < 0.02
+		and math.abs(saved.Sat - retired.Sat) < 0.02
+		and math.abs(saved.Value - retired.Value) < 0.02
+end
+
+-- Does this option actually default to the accent? One that ships a default of its own (a
+-- white nametag, a black background) is never migrated; one that names the accent
+-- explicitly, as the GUI colour slider does, still is.
+function configapi.Accents.Defaulted(optionsettings)
+	return (optionsettings.DefaultHue or accent.Hue) == accent.Hue
+		and (optionsettings.DefaultSat or accent.Sat) == accent.Sat
+		and (optionsettings.DefaultValue or accent.Value) == accent.Value
+end
+
+-- `defaulted` says whether the option in question takes its default from the accent at all.
+function configapi.Accents.Apply(saved, defaulted)
+	if configapi.Accents.Done or defaulted == false or not configapi.Accents.IsRetired(saved) then return saved end
+	local migrated = table.clone(saved)
+	migrated.Hue, migrated.Sat, migrated.Value = accent.Hue, accent.Sat, accent.Value
+	if migrated.Notch then
+		migrated.Notch = accent.Notch
+	end
+	return migrated
+end
+
 local getfontsize = function(text, size, font)
 	fontsize.Text = text
 	fontsize.Size = size
@@ -941,6 +1020,115 @@ local function removeSavedConfig(name)
 	refreshConfigProfiles()
 	return true
 end
+
+--[[
+	Resetting the active profile.
+
+	Deleting the config file never actually reset anything, because that is only one of
+	four places a profile is written to:
+
+	  * configs/<profile><place>.json - modules, their settings and binds, Legit, Kits,
+	    the favourites order, and the config's own accent and menu key.
+	  * profiles/<profile><place>.txt - a mirror of exactly the same data, which Load
+	    falls back to when the config is missing. Deleting the config alone therefore
+	    restored the whole profile from here on the very next injection, which is what
+	    "reset doesn't reset" was.
+	  * profiles/<GameId>.gui.txt - every GUI settings pane, each window's position, the
+	    menu keybind and the per-profile binds.
+	  * a handful of loose files - the forced game file, the GUI theme, the loading
+	    screen and mobile button toggles.
+
+	All four go. The list of configs and which one is active are not settings, so they are
+	carried over: a reset lands back on the same profile with nothing else left of it.
+]]
+function configapi.ResetProfile()
+	local profile = mainapi.Profile or 'default'
+
+	-- Nothing may write the in-memory state back out from under the reset. The autosave
+	-- loop runs every ten seconds and Uninject saves on its way out, and either one would
+	-- put the profile straight back.
+	mainapi.Loaded = false
+	mainapi.Save = function() end
+
+	ensureDataFolders()
+
+	for _, path in {getConfigPath(profile), getLegacyProfilePath(profile)} do
+		if isfile(path) and delfile then
+			pcall(delfile, path)
+		end
+	end
+
+	local profiles = {}
+	for _, entry in mainapi.Profiles or {} do
+		if type(entry) == 'table' and entry.Name then
+			-- Profile keybinds are settings, so they do not survive.
+			table.insert(profiles, {Name = entry.Name, Bind = {}})
+		end
+	end
+	if #profiles == 0 then
+		profiles = {{Name = 'default', Bind = {}}}
+	end
+	pcall(writefile, 'aetherv2/profiles/'..game.GameId..'.gui.txt', httpService:JSONEncode({
+		Categories = {},
+		Profile = profile,
+		Profiles = profiles,
+		Keybind = {'RightShift'}
+	}))
+
+	for path, value in {
+		['aetherv2/profiles/forcegame.txt'] = 'false',
+		['aetherv2/profiles/forcegameid.txt'] = tostring(game.PlaceId),
+		['aetherv2/profiles/hide.txt'] = 'false',
+		['aetherv2/profiles/disableloading.txt'] = 'false',
+		['aetherv2/profiles/gui.txt'] = 'new'
+	} do
+		pcall(writefile, path, value)
+	end
+
+	-- Drop the accent stamp as well, so the reload lands on the current default accent
+	-- whatever this install had been carrying.
+	if isfile(configapi.Accents.Path) and delfile then
+		pcall(delfile, configapi.Accents.Path)
+	end
+
+	return profile
+end
+
+--[[
+	Which configs came from the repo.
+
+	The Configs window offers to re-download the config you are on, but only when it came
+	from the published preset list, and nothing about a config on disk says where it came
+	from. So it is written down: loading a preset records which file it came from, and
+	listing the presets tops the record up. It lives beside the configs, so the offer is
+	there on the next injection without the browser having been opened.
+]]
+configapi.Presets = {
+	Path = profileFolder..'/presetconfigs.json'
+}
+configapi.Presets.Registry = (isfile(configapi.Presets.Path) and loadJson(configapi.Presets.Path)) or {}
+
+-- Where the published configs live. Pinned to the commit this install is on, so the list and
+-- the files it names always come from the same tree.
+function configapi.Presets.Base()
+	local commit = isfile('aetherv2/profiles/commit.txt') and readfile('aetherv2/profiles/commit.txt') or 'main'
+	return 'https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..commit..'/configs/'
+end
+
+function configapi.Presets.Remember(configName, preset)
+	if type(configName) ~= 'string' or configName == '' then return end
+	if type(preset) ~= 'table' or type(preset.file) ~= 'string' or preset.file == '' then return end
+	local entry = configapi.Presets.Registry[configName]
+	if entry and entry.file == preset.file and entry.name == preset.name then return end
+	configapi.Presets.Registry[configName] = {file = preset.file, name = preset.name or configName}
+	pcall(writefile, configapi.Presets.Path, httpService:JSONEncode(configapi.Presets.Registry))
+end
+
+function configapi.Presets.Get(configName)
+	local entry = type(configName) == 'string' and configapi.Presets.Registry[configName] or nil
+	return type(entry) == 'table' and type(entry.file) == 'string' and entry or nil
+end
+
 --[[
 	profiles/features.json drives the little pills drawn on the right of each
 	module row. Expected shape:
@@ -1574,6 +1762,10 @@ components = {
 		end
 		
 		function optionapi:Load(tab)
+			-- A colour saved back when the accent was teal and never touched since is
+			-- brought forward to the current accent. Only options that take their default
+			-- from the accent qualify, and only until the migration stamp is written.
+			tab = configapi.Accents.Apply(tab, configapi.Accents.Defaulted(optionsettings))
 			if tab.Rainbow ~= self.Rainbow then
 				self:Toggle()
 			end
@@ -3299,10 +3491,20 @@ function mainapi:SortModules()
 			return a < b
 		end)
 		for i, v in sort do
-			self.Modules[v].Index = i
-			self.Modules[v].Object.LayoutOrder = i
-			if self.Modules[v].Children then
-				self.Modules[v].Children.LayoutOrder = i
+			local module = self.Modules[v]
+			module.Index = i
+			-- Two slots per module: the row, then its settings panel directly under it.
+			-- Sharing one order left the pair tied, and a UIListLayout resolves a tie in
+			-- whatever order it feels like.
+			module.Object.LayoutOrder = i * 2
+			-- OptionsChildren rather than Children: a module that draws a HUD (MP3Player,
+			-- AutoWin and the rest) has Children pointing at its draggable HUD frame
+			-- instead, so its settings panel was never given an order at all and stayed on
+			-- 0 - which sorted it above every module in the category. That is exactly
+			-- where those settings were turning up.
+			local panel = module.OptionsChildren or module.Children
+			if panel then
+				panel.LayoutOrder = (i * 2) + 1
 			end
 		end
 	end
@@ -4236,6 +4438,9 @@ function mainapi:CreateGUI()
 		end
 
 		function optionapi:Load(tab)
+			-- Configs written while the accent was teal carry it here too, which is what
+			-- kept the menu itself opening on the retired colour.
+			tab = configapi.Accents.Apply(tab, true)
 			if tab.Rainbow then
 				self:Toggle()
 			end
@@ -6204,10 +6409,7 @@ function mainapi:CreateCategoryList(categorysettings)
 	-- the config's keybind and accent on the spot. Nothing here asks for a rejoin or a
 	-- reinject, and the menu stays open behind the window.
 	if categorysettings.Profiles then
-		local function repoBase()
-			local commit = isfile('aetherv2/profiles/commit.txt') and readfile('aetherv2/profiles/commit.txt') or 'main'
-			return 'https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..commit..'/configs/'
-		end
+		local repoBase = configapi.Presets.Base
 
 		local downloadbtn = Instance.new('ImageButton')
 		downloadbtn.Name = 'PresetDownload'
@@ -6338,6 +6540,7 @@ function mainapi:CreateCategoryList(categorysettings)
 				downloading[preset.file] = nil
 				dlstatus.Visible = false
 				if suc then
+					configapi.Presets.Remember(tostring(result), preset)
 					refreshConfigProfiles()
 					categoryapi:ChangeValue()
 					refreshRows()
@@ -6364,6 +6567,12 @@ function mainapi:CreateCategoryList(categorysettings)
 		end
 
 		local function makeRow(preset)
+			-- A config already sitting on disk under a preset's name came from that preset,
+			-- because the browser is the only thing that writes one. Record it, so installs
+			-- that pulled a preset before any of this existed still get offered the sync.
+			if isfile(getConfigPath(tostring(preset.name))) then
+				configapi.Presets.Remember(tostring(preset.name), preset)
+			end
 			local row = Instance.new('Frame')
 			row.Name = tostring(preset.name)
 			row:SetAttribute('Tags', preset.tags and table.concat(preset.tags, ' ') or '')
@@ -6474,6 +6683,102 @@ function mainapi:CreateCategoryList(categorysettings)
 		dlclose.MouseButton1Click:Connect(function()
 			dl.Visible = false
 			clickgui.Visible = true
+		end)
+
+		-- Bottom of the Configs window, inside it rather than in a window of its own: one
+		-- button, and only while the config you are on came from the preset list. It pulls
+		-- that preset down again and applies it, so a config that has moved on upstream -
+		-- or been changed locally by accident - can be put back without going hunting for
+		-- it in the browser.
+		local sync = Instance.new('Frame')
+		sync.Name = 'PresetSync'
+		-- Last in the list whatever else is in it; profile rows are rebuilt at order 0.
+		sync.LayoutOrder = 1000
+		sync.Size = UDim2.fromOffset(200, 66)
+		sync.BackgroundTransparency = 1
+		sync.Visible = false
+		sync.Parent = children
+		local syncdivider = Instance.new('Frame')
+		syncdivider.Name = 'Divider'
+		syncdivider.Size = UDim2.new(1, 0, 0, 1)
+		syncdivider.Position = UDim2.fromOffset(0, 6)
+		syncdivider.BackgroundColor3 = Color3.new(1, 1, 1)
+		syncdivider.BackgroundTransparency = 0.9
+		syncdivider.BorderSizePixel = 0
+		syncdivider.Parent = sync
+		local synclabel = Instance.new('TextLabel')
+		synclabel.Name = 'Label'
+		synclabel.Size = UDim2.new(1, 0, 0, 14)
+		synclabel.Position = UDim2.fromOffset(0, 14)
+		synclabel.BackgroundTransparency = 1
+		synclabel.Text = 'Preset config'
+		synclabel.TextXAlignment = Enum.TextXAlignment.Left
+		synclabel.TextColor3 = color.Dark(uipallet.Text, 0.4)
+		synclabel.TextSize = 11
+		synclabel.TextTruncate = Enum.TextTruncate.AtEnd
+		synclabel.FontFace = uipallet.Font
+		synclabel.Parent = sync
+		local syncbutton = Instance.new('TextButton')
+		syncbutton.Name = 'SyncButton'
+		syncbutton.Size = UDim2.new(1, 0, 0, 28)
+		syncbutton.Position = UDim2.fromOffset(0, 32)
+		syncbutton.BackgroundColor3 = Color3.fromHSV(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value)
+		syncbutton.AutoButtonColor = true
+		syncbutton.Text = 'Sync to Config'
+		syncbutton.TextColor3 = uipallet.Text
+		syncbutton.TextSize = 13
+		syncbutton.FontFace = uipallet.Font
+		syncbutton.Parent = sync
+		addCorner(syncbutton, UDim.new(0, 5))
+		addTooltip(syncbutton, 'Re-download this preset and apply it')
+
+		local syncing = false
+		local function refreshSync()
+			local entry = configapi.Presets.Get(mainapi.Profile)
+			sync.Visible = entry ~= nil
+			if not entry then return end
+			synclabel.Text = 'Preset - '..tostring(entry.name or mainapi.Profile)
+			if syncing then return end
+			syncbutton.BackgroundColor3 = Color3.fromHSV(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value)
+			syncbutton.TextColor3 = mainapi:TextColor(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value)
+		end
+		-- Called by ChangeValue, so the section appears and disappears as configs are
+		-- switched, added or removed.
+		categoryapi.RefreshPresetSync = refreshSync
+
+		syncbutton.MouseButton1Click:Connect(function()
+			if syncing then return end
+			local name = mainapi.Profile
+			local entry = configapi.Presets.Get(name)
+			if not entry then
+				refreshSync()
+				return
+			end
+			syncing = true
+			syncbutton.Text = 'Syncing...'
+			task.spawn(function()
+				local ok, res = pcall(function()
+					return game:HttpGet(repoBase()..entry.file, true)
+				end)
+				local suc, result
+				if ok and res and res ~= '404: Not Found' then
+					-- Same path the browser takes: overwrite the config, re-register it and
+					-- hand it to Load, which toggles the modules on the spot.
+					suc, result = importJsonConfig(res, name)
+				end
+				syncing = false
+				syncbutton.Text = 'Sync to Config'
+				if suc then
+					configapi.Presets.Remember(tostring(result), entry)
+					refreshConfigProfiles()
+					categoryapi:ChangeValue()
+					if refreshRows then refreshRows() end
+					mainapi:CreateNotification('Configs', tostring(result)..' is back in sync with the repo', 5, 'info')
+				else
+					refreshSync()
+					mainapi:CreateNotification('Configs', result and tostring(result) or ('Could not re-download '..name..'.'), 7, 'alert')
+				end
+			end)
 		end)
 	end
 
@@ -6853,6 +7158,9 @@ function mainapi:CreateCategoryList(categorysettings)
 				table.insert(self.Objects, object)
 			end
 		end
+		if self.RefreshPresetSync then
+			self.RefreshPresetSync()
+		end
 		mainapi:UpdateGUI(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value)
 	end
 
@@ -6998,10 +7306,15 @@ function mainapi:CreateWelcome()
 	local seenpath = 'aetherv2/profiles/welcome.txt'
 	if isfile(seenpath) then return end
 
+	-- Two heights: the card on its own, and the card with the preset picker open under
+	-- the question. Everything below the question moves with it.
+	local shortHeight, tallHeight = 314, 452
+	local cardHeight = shortHeight
+
 	local card = Instance.new('Frame')
 	card.Name = 'Welcome'
-	card.Size = UDim2.fromOffset(430, 268)
-	card.Position = UDim2.new(0.5, -215, 0.5, -134)
+	card.Size = UDim2.fromOffset(430, cardHeight)
+	card.Position = UDim2.new(0.5, -215, 0.5, -cardHeight / 2)
 	card.BackgroundColor3 = uipallet.Main
 	card.Visible = false
 	card.Parent = scaledgui
@@ -7103,10 +7416,74 @@ function mainapi:CreateWelcome()
 		return button
 	end
 
+	--[[
+		Setup step: do you want a config to start on?
+
+		A fresh install starts with every module off, which is a strange place to be
+		dropped. Answering yes opens the published preset list right here rather than
+		sending the user off to find the browser, and loading one applies it on the spot -
+		by the time the card is dismissed the config is already running.
+	]]
+	local question = Instance.new('Frame')
+	question.Name = 'PresetQuestion'
+	question.Size = UDim2.new(1, -44, 0, 46)
+	question.Position = UDim2.fromOffset(22, 200)
+	question.BackgroundColor3 = color.Light(uipallet.Main, 0.02)
+	question.Parent = card
+	addCorner(question)
+	local questiontitle = Instance.new('TextLabel')
+	questiontitle.Size = UDim2.new(1, -140, 0, 16)
+	questiontitle.Position = UDim2.fromOffset(10, 7)
+	questiontitle.BackgroundTransparency = 1
+	questiontitle.Text = 'Download a preset config?'
+	questiontitle.TextXAlignment = Enum.TextXAlignment.Left
+	questiontitle.TextColor3 = uipallet.Text
+	questiontitle.TextSize = 13
+	questiontitle.FontFace = uipallet.Font
+	questiontitle.Parent = question
+	local questionbody = questiontitle:Clone()
+	questionbody.Size = UDim2.new(1, -140, 0, 14)
+	questionbody.Position = UDim2.fromOffset(10, 24)
+	questionbody.Text = 'Starts you on a ready-made setup instead of nothing'
+	questionbody.TextColor3 = color.Dark(uipallet.Text, 0.36)
+	questionbody.TextSize = 11
+	questionbody.Parent = question
+
+	local picker = Instance.new('ScrollingFrame')
+	picker.Name = 'PresetPicker'
+	picker.Size = UDim2.new(1, -44, 0, 116)
+	picker.Position = UDim2.fromOffset(22, 254)
+	picker.BackgroundTransparency = 1
+	picker.BorderSizePixel = 0
+	picker.ScrollBarThickness = 2
+	picker.ScrollBarImageTransparency = 0.75
+	picker.CanvasSize = UDim2.new()
+	picker.Visible = false
+	picker.Parent = card
+	local pickerlist = Instance.new('UIListLayout')
+	pickerlist.SortOrder = Enum.SortOrder.LayoutOrder
+	pickerlist.Padding = UDim.new(0, 6)
+	pickerlist.Parent = picker
+	pickerlist:GetPropertyChangedSignal('AbsoluteContentSize'):Connect(function()
+		picker.CanvasSize = UDim2.fromOffset(0, pickerlist.AbsoluteContentSize.Y / scale.Scale)
+	end)
+	local pickerstatus = Instance.new('TextLabel')
+	pickerstatus.Name = 'Status'
+	pickerstatus.Size = UDim2.new(1, -44, 0, 16)
+	pickerstatus.Position = UDim2.fromOffset(22, 374)
+	pickerstatus.BackgroundTransparency = 1
+	pickerstatus.Text = ''
+	pickerstatus.TextXAlignment = Enum.TextXAlignment.Left
+	pickerstatus.TextColor3 = color.Dark(uipallet.Text, 0.4)
+	pickerstatus.TextSize = 11
+	pickerstatus.FontFace = uipallet.Font
+	pickerstatus.Visible = false
+	pickerstatus.Parent = card
+
 	local buttons = Instance.new('Frame')
 	buttons.Name = 'Buttons'
 	buttons.Size = UDim2.new(1, -44, 0, 30)
-	buttons.Position = UDim2.fromOffset(22, 206)
+	buttons.Position = UDim2.fromOffset(22, 258)
 	buttons.BackgroundTransparency = 1
 	buttons.Parent = card
 	local buttonlist = Instance.new('UIListLayout')
@@ -7138,7 +7515,7 @@ function mainapi:CreateWelcome()
 	local footer = Instance.new('TextLabel')
 	footer.Name = 'Footer'
 	footer.Size = UDim2.new(1, -44, 0, 14)
-	footer.Position = UDim2.fromOffset(22, 242)
+	footer.Position = UDim2.fromOffset(22, 294)
 	footer.BackgroundTransparency = 1
 	footer.Text = 'Shown once. Everything here lives in the menu if you need it later'
 	footer.TextXAlignment = Enum.TextXAlignment.Left
@@ -7146,6 +7523,156 @@ function mainapi:CreateWelcome()
 	footer.TextSize = 11
 	footer.FontFace = uipallet.Font
 	footer.Parent = card
+
+	-- Yes/No, and the card grows or shrinks around the answer.
+	local picking = false
+	local yesbutton, nobutton
+	local function layout()
+		picker.Visible = picking
+		pickerstatus.Visible = picking and pickerstatus.Text ~= ''
+		buttons.Position = UDim2.fromOffset(22, picking and 396 or 258)
+		footer.Position = UDim2.fromOffset(22, picking and 432 or 294)
+		cardHeight = picking and tallHeight or shortHeight
+		card.Size = UDim2.fromOffset(430, cardHeight)
+		for _, entry in {{Button = yesbutton, On = picking}, {Button = nobutton, On = not picking}} do
+			if entry.Button then
+				entry.Button.BackgroundColor3 = entry.On and Color3.fromHSV(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value) or color.Light(uipallet.Main, 0.05)
+				entry.Button.TextColor3 = entry.On and mainapi:TextColor(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value) or color.Dark(uipallet.Text, 0.3)
+			end
+		end
+	end
+
+	local function makeAnswer(text, xoff)
+		local button = Instance.new('TextButton')
+		button.Name = text
+		button.Size = UDim2.fromOffset(56, 26)
+		button.Position = UDim2.new(1, xoff, 0.5, -13)
+		button.AnchorPoint = Vector2.new(1, 0)
+		button.BackgroundColor3 = color.Light(uipallet.Main, 0.05)
+		button.AutoButtonColor = true
+		button.Text = text
+		button.TextColor3 = color.Dark(uipallet.Text, 0.3)
+		button.TextSize = 12
+		button.FontFace = uipallet.Font
+		button.Parent = question
+		addCorner(button, UDim.new(0, 5))
+		return button
+	end
+	nobutton = makeAnswer('No', -10)
+	yesbutton = makeAnswer('Yes', -72)
+
+	local loading, loaded = false, nil
+	local function makePresetRow(preset, order)
+		local row = Instance.new('Frame')
+		row.Name = tostring(preset.name)
+		row.LayoutOrder = order
+		row.Size = UDim2.new(1, 0, 0, 42)
+		row.BackgroundColor3 = color.Light(uipallet.Main, 0.02)
+		row.Parent = picker
+		addCorner(row)
+		local name = Instance.new('TextLabel')
+		name.Size = UDim2.new(1, -100, 0, 16)
+		name.Position = UDim2.fromOffset(10, 5)
+		name.BackgroundTransparency = 1
+		name.Text = tostring(preset.name)
+		name.TextXAlignment = Enum.TextXAlignment.Left
+		name.TextColor3 = uipallet.Text
+		name.TextSize = 12
+		name.FontFace = uipallet.Font
+		name.Parent = row
+		local body = name:Clone()
+		body.Size = UDim2.new(1, -100, 0, 14)
+		body.Position = UDim2.fromOffset(10, 22)
+		body.Text = preset.description and tostring(preset.description)
+			or ((preset.tags and #preset.tags > 0) and table.concat(preset.tags, ' • ') or '')
+		body.TextColor3 = color.Dark(uipallet.Text, 0.36)
+		body.TextSize = 11
+		body.TextTruncate = Enum.TextTruncate.AtEnd
+		body.Parent = row
+		local get = Instance.new('TextButton')
+		get.Size = UDim2.fromOffset(66, 24)
+		get.Position = UDim2.new(1, -10, 0.5, -12)
+		get.AnchorPoint = Vector2.new(1, 0)
+		get.BackgroundColor3 = Color3.fromHSV(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value)
+		get.AutoButtonColor = true
+		get.Text = 'Download'
+		get.TextColor3 = mainapi:TextColor(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value)
+		get.TextSize = 11
+		get.FontFace = uipallet.Font
+		get.Parent = row
+		addCorner(get, UDim.new(0, 5))
+		get.MouseButton1Click:Connect(function()
+			if loading then return end
+			loading = true
+			get.Text = '...'
+			task.spawn(function()
+				local ok, res = pcall(function()
+					return game:HttpGet(configapi.Presets.Base()..tostring(preset.file), true)
+				end)
+				local suc, result
+				if ok and res and res ~= '404: Not Found' then
+					suc, result = importJsonConfig(res, preset.name)
+				end
+				loading = false
+				get.Text = suc and 'Loaded' or 'Download'
+				if not suc then
+					pickerstatus.Text = 'Could not download '..tostring(preset.name)..'.'
+					pickerstatus.Visible = true
+					return
+				end
+				configapi.Presets.Remember(tostring(result), preset)
+				refreshConfigProfiles()
+				if mainapi.Categories.Profiles then
+					mainapi.Categories.Profiles:ChangeValue()
+				end
+				-- Only one config can be active, so any earlier pick is no longer loaded.
+				if loaded and loaded ~= get then
+					loaded.Text = 'Download'
+				end
+				loaded = get
+				pickerstatus.Text = tostring(result)..' is loaded and active'
+				pickerstatus.Visible = true
+			end)
+		end)
+	end
+
+	local fetched = false
+	local function fetchPresets()
+		if fetched then return end
+		fetched = true
+		pickerstatus.Text = 'Loading configs...'
+		layout()
+		task.spawn(function()
+			local ok, res = pcall(function()
+				return game:HttpGet(configapi.Presets.Base()..'presets.json', true)
+			end)
+			local decoded = ok and res and res ~= '404: Not Found'
+				and select(2, pcall(function() return httpService:JSONDecode(res) end))
+				or nil
+			if type(decoded) ~= 'table' or type(decoded.presets) ~= 'table' or #decoded.presets == 0 then
+				fetched = false
+				pickerstatus.Text = 'No configs available right now'
+				layout()
+				return
+			end
+			pickerstatus.Text = ''
+			for index, preset in decoded.presets do
+				pcall(makePresetRow, preset, index)
+			end
+			layout()
+		end)
+	end
+
+	yesbutton.MouseButton1Click:Connect(function()
+		picking = true
+		layout()
+		fetchPresets()
+	end)
+	nobutton.MouseButton1Click:Connect(function()
+		picking = false
+		layout()
+	end)
+	layout()
 
 	addCloseButton(card).MouseButton1Click:Connect(dismiss)
 	table.insert(mainapi.Windows, card)
@@ -7160,7 +7687,7 @@ function mainapi:CreateWelcome()
 		if isfile(seenpath) then return end
 		clickgui.Visible = false
 		card.Visible = true
-		card.Position = UDim2.new(0.5, -215, 0.5, -134)
+		card.Position = UDim2.new(0.5, -215, 0.5, -cardHeight / 2)
 	end)
 	mainapi:Clean(watcher)
 end
@@ -8137,9 +8664,17 @@ function mainapi:Load(skipgui, profile)
 		if savedata.Keybind then
 			self.Keybind = savedata.Keybind
 		end
-		if savedata.GUIColor and self.GUIColor and self.GUIColor.Load then
+		if self.GUIColor and self.GUIColor.Load then
 			pcall(function()
-				self.GUIColor:Load(savedata.GUIColor)
+				if savedata.GUIColor then
+					self.GUIColor:Load(savedata.GUIColor)
+				else
+					-- A config that carries no accent of its own gets the default one, not
+					-- whatever the config before it happened to leave behind. Without this a
+					-- profile switch (which never touches the shared gui settings) kept the
+					-- previous config's colour and made the default look like it had moved.
+					self.GUIColor:SetValue(nil, nil, nil, accent.Notch)
+				end
 				self:UpdateGUI(self.GUIColor.Hue, self.GUIColor.Sat, self.GUIColor.Value)
 			end)
 		end
@@ -8158,6 +8693,12 @@ function mainapi:Load(skipgui, profile)
 	end
 	self.Loaded = savecheck
 	self.Categories.Main.Options.Bind:SetBind(self.Keybind)
+	-- The colours this pass brought forward are only on disk once the config is written
+	-- back, so record the migration after a save rather than as the values are read.
+	if savecheck and not configapi.Accents.Done then
+		self:Save()
+		configapi.Accents.Mark()
+	end
 
 	if not inputService.KeyboardEnabled or shared.VapeDeveloper then
 		local hide = isfile('aetherv2/profiles/hide.txt') and readfile('aetherv2/profiles/hide.txt') or nil
@@ -9096,13 +9637,10 @@ end
 general:CreateButton({
 	Name = 'Reset current profile',
 	Function = function()
-		mainapi.Save = function() end
-		if isfile(getConfigPath(mainapi.Profile)) and delfile then
-			delfile(getConfigPath(mainapi.Profile))
-		end
+		configapi.ResetProfile()
 		reloadAether()
 	end,
-	Tooltip = 'This will set your profile to the default settings of Vape'
+	Tooltip = 'Wipes everything saved for this config and reloads on defaults'
 })
 -- Metadata for JSON exports. The Export to JSON button below refuses to copy until
 -- credits, at least one tag and a description have all been supplied, so shared

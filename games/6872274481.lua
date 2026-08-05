@@ -9644,6 +9644,37 @@ run(function()
 
 	local oldnamecall
 
+	-- Which remote a projectile is fired down.
+	--
+	-- This is why SilentAim did nothing at all: the hook below matched the call by
+	-- comparing the remote against the literal string 'ProjectileFire', but that is the
+	-- name the game's own code uses, not the name of the instance. Every remote in this
+	-- game is published under a randomised name that the loader dumps out of the
+	-- controllers into remotes.FireProjectile, so tostring(remote) never once equalled
+	-- 'ProjectileFire' and the hook fell through to the original call on every shot.
+	--
+	-- Resolved lazily and re-resolved if it goes away, the same as every other module
+	-- that talks to this remote, and cached because the hook runs on every namecall the
+	-- game makes.
+	local firedRemote
+	local function projectileRemote()
+		if firedRemote and firedRemote.Parent then return firedRemote end
+		local suc, res = pcall(function()
+			return bedwars.Client:Get(remotes.FireProjectile).instance
+		end)
+		firedRemote = suc and typeof(res) == 'Instance' and res or nil
+		return firedRemote
+	end
+
+	-- Identity first, name second: if the remote cannot be resolved (a build that moved
+	-- it, an executor without debug.getconstants) the dumped name is still usually right.
+	local function isProjectileCall(remote)
+		if typeof(remote) ~= 'Instance' then return false end
+		local resolved = projectileRemote()
+		if resolved then return remote == resolved end
+		return remotes.FireProjectile ~= '' and remote.Name == remotes.FireProjectile
+	end
+
 	local function getMousePosition()
 		if inputService.TouchEnabled then
 			return gameCamera.ViewportSize / 2
@@ -9750,7 +9781,7 @@ run(function()
 			-- cleanly, so it stays inert behind the Enabled check instead.
 			if callback and not oldnamecall and hookmetamethod and newcclosure and checkcaller and getnamecallmethod then
 				oldnamecall = hookmetamethod(game, '__namecall', newcclosure(function(...)
-					if SilentAim.Enabled and not checkcaller() and getnamecallmethod() == 'InvokeServer' and tostring(...) == 'ProjectileFire' then
+					if SilentAim.Enabled and not checkcaller() and getnamecallmethod() == 'InvokeServer' and isProjectileCall((...)) then
 						local self = ...
 						-- table.pack keeps the argument count, so a call that ends in a
 						-- nil is passed on with the same arity it arrived with.
@@ -9767,7 +9798,7 @@ run(function()
 				end))
 			end
 		end,
-		Tooltip = 'Redirects the projectile sent to the server so your shot still lands on target'
+		Tooltip = 'Shoot anywhere, the projectile is redirected onto the target'
 	})
 	Targets = SilentAim:CreateTargets({
 		Players = true,
@@ -13945,6 +13976,9 @@ run(function()
     local hudName, hudTime, hudBarFill, hudBackground
     local lastScan = 0
     local scanKey = ''
+    -- When the current track was started, so the watchdog below can tell a song that has
+    -- finished from one that has only just been asked to start.
+    local lastPlay = 0
 
     -- Every filesystem call is optional: some executors ship none of them, and the module has to
     -- degrade to "no songs found" rather than erroring on load.
@@ -14060,12 +14094,32 @@ run(function()
         end
     end
 
+    -- Looping is the engine's job, not ours.
+    --
+    -- Repeating a song used to mean replaying it from the Ended handler, which is two
+    -- problems at once: it leaves an audible gap at every repeat, and Ended is not
+    -- something to depend on - a sound whose asset was still loading when Play ran can
+    -- fire it immediately or never, and then the music just stops. Looped restarts the
+    -- track inside the engine with no gap and no event involved.
+    --
+    -- Called on every play AND from the two toggles, so turning Loop on part way through a
+    -- song loops that song rather than quietly waiting for the next one - which is what
+    -- made the toggle look like it did nothing at all.
+    local function applyLoop()
+        if not (sound and Loop and Shuffle) then return end
+        sound.Looped = Loop.Enabled and not Shuffle.Enabled
+    end
+
     local function play(newIndex)
         if #tracks <= 0 then
             index = 0
             refreshHUD()
             return
         end
+        -- Stamped before the asset is resolved, not after: a track the executor cannot load
+        -- returns below, and leaving the stamp stale would have the watchdog walk the
+        -- playlist several times a second complaining about each one.
+        lastPlay = tick()
         index = ((newIndex - 1) % #tracks) + 1
         local track = tracks[index]
         local asset = track and assetFor(track.Path)
@@ -14078,6 +14132,7 @@ run(function()
         sound.Volume = Volume.Value / 100
         sound.PlaybackSpeed = Speed.Value
         sound.TimePosition = 0
+        applyLoop()
         pcall(function()
             sound:Play()
         end)
@@ -14190,13 +14245,11 @@ run(function()
                 sound.PlaybackSpeed = Speed.Value
                 sound.Parent = vape.gui
                 MP3Player:Clean(sound)
+                -- Only ever advances: a looping track never ends, because Looped keeps it
+                -- going inside the engine.
                 MP3Player:Clean(sound.Ended:Connect(function()
                     if not MP3Player.Enabled then return end
-                    if Loop.Enabled and not Shuffle.Enabled then
-                        play(index)
-                    else
-                        advance(1)
-                    end
+                    advance(1)
                 end))
 
                 -- Toggle() shows the HUD frame for any module with a Size, so put Show HUD back in
@@ -14221,6 +14274,15 @@ run(function()
                             if changed and sound and not sound.IsPlaying and #tracks > 0 then
                                 play(index > 0 and index or 1)
                             end
+                        end
+                        -- Backstop for a track that finished without Ended firing, which is
+                        -- what left the playlist sitting in silence part way through. A
+                        -- looping track is still playing, so this never touches it, and the
+                        -- second since the last start keeps it off a song that is loading.
+                        if sound and #tracks > 0 and sound.SoundId ~= '' and sound.IsLoaded
+                            and not sound.IsPlaying and not sound.IsPaused
+                            and (tick() - lastPlay) > 1 then
+                            advance(1)
                         end
                         refreshHUD()
                         task.wait(0.2)
@@ -14375,10 +14437,12 @@ run(function()
     })
     Shuffle = MP3Player:CreateToggle({
         Name = 'Shuffle',
+        Function = applyLoop,
         Tooltip = 'Pick the next song at random instead of in order'
     })
     Loop = MP3Player:CreateToggle({
         Name = 'Loop song',
+        Function = applyLoop,
         Tooltip = 'Repeat the current song instead of moving on'
     })
     AutoRefresh = MP3Player:CreateToggle({
