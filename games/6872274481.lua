@@ -12293,10 +12293,6 @@ run(function()
         if not source then return end
         local root = entitylib.character and (entitylib.character.RootPart or entitylib.character.HumanoidRootPart)
         if not root then return end
-        -- Straight from the game while it is drawing, so the preview matches the shot exactly.
-        if lastLaunch and (tick() - lastLaunch.Time) < 0.35 and lastLaunch.Velocity.Magnitude > 0.1 then
-            return traceLanding(lastLaunch.Position, lastLaunch.Velocity, lastLaunch.Gravity, {lplr.Character, gameCamera})
-        end
         -- Resolve the projectile this weapon fires. Prefer the loaded ammo, fall back
         -- to a plain arrow for bows and finally the tool itself, all guarded so an
         -- unexpected ammo type can never throw and silently kill the whole preview
@@ -12334,11 +12330,11 @@ run(function()
         local aimRay = lplr:GetMouse().UnitRay
         local rayResult = workspace:Raycast(aimRay.Origin, aimRay.Direction * 5000, rayParams)
         local aimPoint = rayResult and rayResult.Position or (aimRay.Origin + aimRay.Direction * 5000)
-        -- Fallback only (the hook above is the accurate path). Two things the old fallback got
-        -- wrong: it launched from the ROOT PART rather than the muzzle the game fires from, and
-        -- it aimed the arc from the root while starting it at an offset position, so the traced
-        -- line ran parallel to - not along - the real shot and the error grew with distance.
-        -- Ask the controller for its own launch position, then aim from THAT point at the cursor.
+        -- Two things this used to get wrong: it launched from the ROOT PART rather than the
+        -- muzzle the game fires from, and it aimed the arc from the root while starting it at an
+        -- offset position, so the traced line ran parallel to - not along - the real shot and the
+        -- error grew with distance. Ask the controller for its own launch position, then aim from
+        -- THAT point at the cursor.
         local rootPos = root.Position
         local origin = rootPos
         pcall(function()
@@ -12359,6 +12355,18 @@ run(function()
         end)
         local direction = aimPoint - origin
         direction = direction.Magnitude > 1e-3 and direction.Unit or aimRay.Direction
+
+        -- Speed and gravity are worth taking from the game's own last launch calculation - a
+        -- bow's speed is the live draw ratio and re-deriving it is what made the arc wrong - but
+        -- the DIRECTION never is. The snapshot was previously used whole, for up to a third of a
+        -- second, so while the mouse was actually moving the marker stayed on the arc the game
+        -- last calculated instead of the one being aimed. That lag is the drift. The heading and
+        -- the muzzle are always taken fresh; only the scalars come from the snapshot.
+        if lastLaunch and (tick() - lastLaunch.Time) < 0.35 and lastLaunch.Velocity.Magnitude > 0.1 then
+            speed = lastLaunch.Velocity.Magnitude
+            gravity = lastLaunch.Gravity
+        end
+
         return traceLanding(origin, direction * speed, gravity, {lplr.Character, gameCamera})
     end
 
@@ -15552,31 +15560,63 @@ end)
 run(function()
     local AutoPlay
     local Random
+    -- One queue attempt in flight at a time; the death and match-end paths can both fire.
+    local queueing = false
 
     local function isEveryoneDead()
         return #bedwars.Store:getState().Party.members <= 0
     end
 
-    local function joinQueue()
-        if not bedwars.Store:getState().Game.customMatch and bedwars.Store:getState().Party.leader.userId == lplr.UserId and bedwars.Store:getState().Party.queueState == 0 then
-            if Random.Enabled then
-                local listofmodes = {}
-                for i, v in bedwars.QueueMeta do
-                    if not v.disabled and not v.voiceChatOnly and not v.rankCategory then
-                        table.insert(listofmodes, i)
-                    end
+    -- BedWars only accepts a queue request from the party leader, and only while the party is not
+    -- already queued. Playing solo there is no party at all, so reading Party.leader.userId threw
+    -- straight out of the event handler and the queue was never even attempted - which is most of
+    -- "AutoPlay doesn't queue". A missing leader is us.
+    local function canQueue()
+        local ok, res = pcall(function()
+            local state = bedwars.Store:getState()
+            if state.Game.customMatch then return false end
+            local party = state.Party
+            local leader = party and party.leader
+            if leader and leader.userId and leader.userId ~= lplr.UserId then return false end
+            return (party and party.queueState or 0) == 0
+        end)
+        return ok and res == true
+    end
+
+    local function pickMode()
+        if not Random.Enabled then return store.queueType end
+        local listofmodes = {}
+        pcall(function()
+            for i, v in bedwars.QueueMeta do
+                if not v.disabled and not v.voiceChatOnly and not v.rankCategory then
+                    table.insert(listofmodes, i)
                 end
-                bedwars.QueueController:joinQueue(listofmodes[math.random(1, #listofmodes)])
-            else
-                bedwars.QueueController:joinQueue(store.queueType)
             end
-        end
+        end)
+        return #listofmodes > 0 and listofmodes[math.random(1, #listofmodes)] or store.queueType
+    end
+
+    local function joinQueue()
+        if queueing or not AutoPlay.Enabled or not canQueue() then return end
+        queueing = true
+        local mode = pickMode()
+        pcall(function() bedwars.QueueController:joinQueue(mode) end)
+        -- The request sent on the match-end frame is sometimes swallowed while the end screen is
+        -- still animating in. Check back once and send it again if nothing took, rather than
+        -- firing blind and sitting in the lobby.
+        task.delay(6, function()
+            if AutoPlay.Enabled and canQueue() then
+                pcall(function() bedwars.QueueController:joinQueue(mode) end)
+            end
+            queueing = false
+        end)
     end
 
     AutoPlay = vape.Categories.Utility:CreateModule({
         Name = 'AutoPlay',
         Function = function(callback)
             if callback then
+                queueing = false
                 AutoPlay:Clean(vapeEvents.EntityDeathEvent.Event:Connect(function(deathTable)
                     if deathTable.finalKill and deathTable.entityInstance == lplr.Character and isEveryoneDead() and store.matchState ~= 2 then
                         joinQueue()
@@ -16044,6 +16084,50 @@ end)
 run(function()
     local AutoVoidDrop
     local OwlCheck
+    local PearlCheck
+
+    local pearlRay = RaycastParams.new()
+    pearlRay.RespectCanCollide = true
+    pearlRay.FilterType = Enum.RaycastFilterType.Exclude
+
+    -- Where a telepearl we threw is going to put us. The arc is walked forward in short steps
+    -- with a cast between each pair, so the first thing it would hit is the landing. Estimated,
+    -- not exact - it only has to answer "is there ground at the end of this", which is the
+    -- difference between saving the loot and throwing it into the void for nothing.
+    local function pearlLandsOnGround(pearl, lowestpoint)
+        local position = pearl.Position
+        local velocity = pearl.AssemblyLinearVelocity
+        -- A pearl carried by a controller rather than by physics reports no velocity, and there
+        -- is nothing to project from. Unknown counts as "keep the loot".
+        if velocity.Magnitude < 1 then return true end
+
+        local meta = bedwars.ProjectileMeta.telepearl
+        local gravity = (meta and meta.gravitationalAcceleration) or workspace.Gravity
+        pearlRay.FilterDescendantsInstances = {lplr.Character, gameCamera, pearl}
+
+        local step = 0.05
+        for _ = 1, 120 do
+            local nextPosition = position + (velocity * step)
+            local result = workspace:Raycast(position, nextPosition - position, pearlRay)
+            if result then
+                return result.Position.Y > lowestpoint
+            end
+            if nextPosition.Y < lowestpoint then return false end
+            position = nextPosition
+            velocity -= Vector3.new(0, gravity * step, 0)
+        end
+        -- Still airborne after six seconds: no landing found, so it is not saving us.
+        return false
+    end
+
+    local function pearlWillSave(lowestpoint)
+        for _, projectile in store.selfProjectiles do
+            if projectile.Parent and projectile.Name == 'telepearl' and pearlLandsOnGround(projectile, lowestpoint) then
+                return true
+            end
+        end
+        return false
+    end
 
     AutoVoidDrop = vape.Categories.Utility:CreateModule({
         Name = 'AutoVoidDrop',
@@ -16064,7 +16148,9 @@ run(function()
                     if entitylib.isAlive then
                         local root = entitylib.character.RootPart
                         if root.Position.Y < lowestpoint and (lplr.Character:GetAttribute('InflatedBalloons') or 0) <= 0 and not getItem('balloon') then
-                            if not OwlCheck.Enabled or not root:FindFirstChild('OwlLiftForce') then
+                            local saved = OwlCheck.Enabled and root:FindFirstChild('OwlLiftForce')
+                                or (PearlCheck.Enabled and pearlWillSave(lowestpoint))
+                            if not saved then
                                 for _, item in {'iron', 'diamond', 'emerald', 'gold'} do
                                     item = getItem(item)
                                     if item then
@@ -16092,6 +16178,11 @@ run(function()
         Name = 'Owl check',
         Default = true,
         Tooltip = 'Refuses to drop items if being picked up by an owl'
+    })
+    PearlCheck = AutoVoidDrop:CreateToggle({
+        Name = 'Pearl check',
+        Default = true,
+        Tooltip = 'Keeps your loot if a telepearl you threw is still in the air and looks like it lands on ground'
     })
 end)
 
