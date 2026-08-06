@@ -465,6 +465,54 @@ local function resolveAnimation(names)
 	return nil
 end
 
+-- Finds an animation by what its name MEANS rather than by an exact constant. Every constant we
+-- could name is a name this build happens to use today: FP_BOW_SHOOT and BOW_SHOOT are not in it,
+-- which is why the shot fired in silence with nothing to look at. `groups` are word sets tried
+-- best-first - every word in a group has to appear somewhere in the animation's name - and
+-- `reject` throws out the near misses (the charge and draw animations sit right next to the shot
+-- in the same enum). Results are memoised per key because this walks the whole enum.
+local animationMatches = {}
+local function matchAnimation(key, groups, reject)
+	local cached = animationMatches[key]
+	if cached ~= nil then
+		return cached or nil
+	end
+	local types = bedwars.AnimationType
+	if type(types) ~= 'table' then return nil end
+
+	local found
+	for _, words in groups do
+		for name, value in types do
+			-- A TS enum carries its reverse mapping too, so half the pairs are number -> name.
+			if type(name) ~= 'string' then continue end
+			local lowered = name:lower()
+			local hit = true
+			for _, word in words do
+				if not lowered:find(word, 1, true) then
+					hit = false
+					break
+				end
+			end
+			if hit and reject then
+				for _, word in reject do
+					if lowered:find(word, 1, true) then
+						hit = false
+						break
+					end
+				end
+			end
+			if hit then
+				found = value
+				break
+			end
+		end
+		if found ~= nil then break end
+	end
+
+	animationMatches[key] = found == nil and false or found
+	return found
+end
+
 local function removeTags(str)
 	str = str:gsub('<br%s*/>', '\n')
 	return (str:gsub('<[^<>]->', ''))
@@ -1770,8 +1818,15 @@ run(function()
 			setthreadidentity(2)
 
 			bedwars.Shop = require(replicatedStorage.TS.games.bedwars.shop['bedwars-shop']).BedwarsShop
-			bedwars.ShopItems = debug.getupvalue(debug.getupvalue(bedwars.Shop.getShopItem, 1), 2)
-			bedwars.Shop.getShopItem('iron_sword', lplr)
+			-- The catalogue and the warm-up call are both nice-to-haves, and both are read
+			-- through structure the game is free to change - an upvalue index and an item id.
+			-- Left unguarded, either one throwing took the whole block down BEFORE shopLoaded
+			-- was set, which silently switched off everything that waits on the shop, AutoBuy
+			-- included. The shop table itself is what actually matters here.
+			pcall(function()
+				bedwars.ShopItems = debug.getupvalue(debug.getupvalue(bedwars.Shop.getShopItem, 1), 2)
+			end)
+			pcall(bedwars.Shop.getShopItem, 'iron_sword', lplr)
 
 			setthreadidentity(old)
 			store.shopLoaded = true
@@ -1782,7 +1837,9 @@ run(function()
 				until vape.Loaded == nil or bedwars.AppController:isAppOpen('BedwarsItemShopApp')
 
 				bedwars.Shop = require(replicatedStorage.TS.games.bedwars.shop['bedwars-shop']).BedwarsShop
-				bedwars.ShopItems = debug.getupvalue(debug.getupvalue(bedwars.Shop.getShopItem, 1), 2)
+				pcall(function()
+					bedwars.ShopItems = debug.getupvalue(debug.getupvalue(bedwars.Shop.getShopItem, 1), 2)
+				end)
 				store.shopLoaded = true
 			end)
 		end
@@ -3192,14 +3249,24 @@ run(function()
             shoot = shoot and shoot[math.random(1, #shoot)] or nil
             if shoot then pcall(function() bedwars.SoundManager:playSound(shoot) end) end
             -- The manual remote path skips the game's input pipeline, so neither the viewmodel
-            -- nor the character ever animated the shot. The names asked for here have to be
-            -- looked up rather than assumed: FP_BOW_SHOOT and BOW_SHOOT are not in this build's
-            -- AnimationType, so `A or B` fell straight through to the generic use-item swing
-            -- and, on the character, to PUNCH - which is why firing threw a punch. Nothing is
-            -- played on the character unless a real shoot animation is found, because no
-            -- animation reads far better than the wrong one.
-            local fp = resolveAnimation({'FP_BOW_SHOOT', 'FP_CROSSBOW_SHOOT', 'FP_SHOOT', 'FP_THROW', 'FP_USE_ITEM'})
+            -- nor the character animates the shot on its own. Naming constants alone left it
+            -- silent - FP_BOW_SHOOT and BOW_SHOOT are not in this build's AnimationType - so the
+            -- exact names are only the first attempt, and anything the enum calls a bow release
+            -- is matched by meaning after that. Charge and draw animations are rejected: they
+            -- are the shot's neighbours in the enum and holding a bow bent is not a shot.
+            local fp = resolveAnimation({'FP_BOW_SHOOT', 'FP_CROSSBOW_SHOOT', 'FP_SHOOT', 'FP_THROW'})
+                or matchAnimation('fp_projectile', {
+                    {'fp', 'bow', 'shoot'}, {'fp', 'bow', 'release'}, {'fp', 'bow', 'fire'},
+                    {'fp', 'shoot'}, {'fp', 'fire'}, {'fp', 'throw'}, {'fp', 'launch'}, {'fp', 'bow'}
+                }, {'charge', 'draw', 'pull', 'idle', 'equip', 'hold', 'walk', 'run', 'reload'})
+                -- Last resort so the shot is never invisible: the generic item-use motion. Only
+                -- ever on the viewmodel, where it reads as using what is in your hand.
+                or resolveAnimation({'FP_USE_ITEM'})
             local body = resolveAnimation({'BOW_SHOOT', 'CROSSBOW_SHOOT', 'SHOOT', 'THROW'})
+                or matchAnimation('body_projectile', {
+                    {'bow', 'shoot'}, {'bow', 'release'}, {'bow', 'fire'},
+                    {'shoot'}, {'throw'}, {'launch'}
+                }, {'fp', 'charge', 'draw', 'pull', 'idle', 'equip', 'hold', 'walk', 'run', 'reload'})
             if fp then
                 pcall(function()
                     bedwars.ViewmodelController:playAnimation(fp)
@@ -9975,21 +10042,40 @@ run(function()
                                 local moveDirection = AntiFallDirection or entitylib.character.Humanoid.MoveDirection
                                 local destination = (moveDirection * math.max(Value.Value - velo, 0) * dt)
 
-                                if WallCheck.Enabled then
+                                if WallCheck.Enabled and destination.Magnitude > 1e-4 then
                                     rayCheck.FilterDescendantsInstances = {lplr.Character, gameCamera}
                                     rayCheck.CollisionGroup = root.CollisionGroup
-                                    local ray = workspace:Raycast(root.Position, destination, rayCheck)
-                                    if ray then
-                                        -- Drop the part of the step that goes into the wall and keep the
-                                        -- rest, so pressing into a surface slides along it. Replacing the
-                                        -- step with "go to one stud off the hit point" put the root inside
-                                        -- its own collision hull and shoved it back into the wall every
-                                        -- frame; held against a surface like that, wall friction takes over
-                                        -- from gravity, which is the slow slide down instead of a fall.
-                                        local into = destination:Dot(ray.Normal)
-                                        if into < 0 then
-                                            destination -= ray.Normal * into
+                                    -- The probe has to reach past the BODY, not just past the step.
+                                    -- The step itself is only what the CFrame push adds on top of
+                                    -- normal movement - a few hundredths of a stud at 60fps - so a
+                                    -- ray that length, cast from the middle of the root, ended
+                                    -- inside the player and never saw the wall a stud in front of
+                                    -- them. Nothing was ever subtracted, the push went straight
+                                    -- into the block every frame, and pressed against a surface
+                                    -- while falling that is exactly the clip through it.
+                                    local skin = (math.max(root.Size.X, root.Size.Z) / 2) + 0.4
+                                    local half = root.Size.Y / 2
+                                    -- Two passes: the first takes out the component into whatever
+                                    -- we are pressed against, the second catches the corner that
+                                    -- the resulting slide runs into.
+                                    for _ = 1, 2 do
+                                        local step = destination.Magnitude
+                                        if step <= 1e-4 then break end
+                                        local probe = destination.Unit * (step + skin)
+                                        local ray
+                                        -- Waist, then shoulders, then shins: a block edge level
+                                        -- with only one of them still counts as a wall.
+                                        for _, height in {0, half * 0.8, -half * 0.8} do
+                                            ray = workspace:Raycast(root.Position + Vector3.new(0, height, 0), probe, rayCheck)
+                                            if ray then break end
                                         end
+                                        if not ray then break end
+                                        -- Drop the part of the step that goes into the wall and keep
+                                        -- the rest, so pressing into a surface slides along it rather
+                                        -- than through it.
+                                        local into = destination:Dot(ray.Normal)
+                                        if into >= 0 then break end
+                                        destination -= ray.Normal * into
                                     end
                                 end
 
@@ -16262,9 +16348,15 @@ run(function()
     -- surprising, readings taken through bad conditions are thrown away instead of counted, and
     -- nobody is flagged until several independent readings of the same kind have stacked up.
     --
-    -- There is no strike threshold to tune. A number that suits Reach is far too eager for Phase,
-    -- so each check carries its own, set against how much of a reading is signal and how much is
-    -- our own view of the world.
+    -- Nothing here looks at what anybody is RUNNING. There is no module list, no remote name and
+    -- no signature to keep up to date - every check reads position, timing and replicated state,
+    -- which is all a cheat can never hide, because the whole point of a cheat is that the server
+    -- and everyone else can see what it did.
+    --
+    -- One loop does all the polling. Each position-based check is a function fed the same
+    -- once-per-tick snapshot of every player rather than its own thread walking the entity list,
+    -- so the cost of the module is one pass over the players every tenth of a second no matter
+    -- how many checks are ticked on.
     local CheatDetector
     local Toggles = {}
 
@@ -16281,50 +16373,92 @@ run(function()
 
     -- Off by default, and deliberately named so nobody leaves it on by accident. Every check below
     -- is written to read somebody else's replicated state, and the local player is normally exempt
-    -- from all of them; this lifts that exemption so the detector measures us too. It is how you
-    -- see a check actually fire - turn a cheat on yourself and watch whether the thing that is
-    -- meant to catch it does.
+    -- from all of them; this lifts that exemption so the detector measures us too. It changes who
+    -- is looked at and nothing else - the checks still read behaviour, never which of our own
+    -- modules happen to be on, so a flag here means the cheat was actually visible from outside.
     local DETECT_SELF = '[TEST] Detect self'
 
+    -- How often every position-based check gets its sample.
+    local POLL_INTERVAL = 0.1
     -- A strike older than this is forgotten. Long enough that a cheat running all match keeps
     -- stacking up, short enough that unrelated anomalies minutes apart never add together.
     local STRIKE_MEMORY = 45
-    -- Nothing is measured while our own connection is worse than this. Above it, event timings and
-    -- replicated positions are both fiction and every check would be reading noise.
-    local MAX_PING = 0.25
+    -- Nothing is measured through a connection worse than this. Above it, event timings and
+    -- replicated positions are both fiction and every check would be reading noise. Our own
+    -- behaviour is exempt: there is no network between us and our own character.
+    local MAX_PING = 0.3
     -- A position step larger than this is streaming, a respawn or a real teleport, never movement.
     local TELEPORT_STEP = 100
-    -- Comfortably past sprint, every speed potion and every kit's movement ability stacked. Legit
-    -- play does not get here; the point is to catch flight and speed, not to referee sprinting.
-    local SPEED_CEILING = 46
-    -- No human clicks this fast, so an interval under it is machine-driven whatever the CPS cap is.
+
+    -- Speed. Sprint in this game is 20 studs/s and every legitimate way past that - a potion, a
+    -- kit dash, a launch pad - is either a burst that decays within a second or announces itself
+    -- through a status effect. So the limit is only a little over sprint, and what makes it safe
+    -- is that it has to be HELD: the average has to stay over it across a continuous run of
+    -- movement, which a dash, a pounce, a grapple or a knockback cannot do.
+    local SPEED_LIMIT = 22
+    local SPEED_WINDOW = 1.6
+    -- No single sample above this is movement at all - it is a respawn, a streaming pop or a
+    -- teleport that did not set the attribute. Counting one of those into a run is how a player
+    -- who then simply sprints away gets flagged for it, so a sample this size ends the run.
+    local SPEED_SANE = 60
+
+    -- Reach. Every sword in the game swings 14.4 studs or less, so a hit landing past this is
+    -- past the weapon whatever is being held. This is the one number that catches an aura built
+    -- to fake its own position: the fake goes in the packet, but the body everyone else sees
+    -- stays where it really is, and that is what gets measured here.
+    local REACH_LIMIT = 15.5
+
+    -- Killaura. No hand clicks faster than this, whatever the CPS cap says.
     local MIN_HUMAN_INTERVAL = 0.1
-    -- Switching targets needs a mouse movement. Landing on a different player inside this is the
-    -- one killaura signature that cannot be produced by clicking quickly.
-    local SWITCH_WINDOW = 0.25
-    -- Sustained-rate signal. One hit this fast proves nothing - people do click at this pace - so
-    -- it only counts as a run: BURST_HITS of them inside BURST_MEMORY.
-    local BURST_INTERVAL = 0.28
-    local BURST_HITS = 3
-    local BURST_MEMORY = 60
-    -- Reach has to be over by this much before it counts. Under it we are arguing with our own
-    -- interpolation, not with the player.
-    local REACH_SLACK = 1.5
+    -- An aura fires the instant the swing cooldown is up, every time, so the gaps between its
+    -- hits stop varying. A hand saturating the same cooldown still scatters by tens of
+    -- milliseconds, so the window is deliberately tighter than human jitter.
+    local CADENCE_SAMPLES = 6
+    local CADENCE_SPREAD = 0.03
+    -- Sustained rate. A sword is on a cooldown near three tenths of a second, so even a hand
+    -- that never misses and never stops cannot land four a second - which is where this sits,
+    -- deliberately above the fastest legitimate weapon rather than at the pace of a fast mouse.
+    local BURST_HITS, BURST_WINDOW = 10, 2.5
+    -- Aura targeting: hitting this many different players inside the window means the aim moved
+    -- between them instantly, which is the one signature clicking quickly cannot produce.
+    local SWITCH_VICTIMS, SWITCH_WINDOW = 3, 1.2
+
+    -- PlayerAttach. Riding somebody puts you inside arm's length of them and holds you there,
+    -- with the separation barely moving, while the pair of you travel. Getting there is a jump
+    -- no run can make.
+    local ATTACH_RANGE = 3
+    local ATTACH_SAMPLES = 10
+    local ATTACH_TRAVEL = 6
+    local ATTACH_JITTER = 1.2
+    local ATTACH_JUMP = 12
+    local ATTACH_RATE = 100
+
+    -- AntiDeath. Parking the hitbox out of reach and bringing it back is a vertical step no fall
+    -- produces: free fall tops out near 200 studs/s, so anything past this was set, not fallen.
+    local VERTICAL_TELEPORT = 25
+    local VERTICAL_RATE = 320
+    local VERTICAL_REVERSALS, VERTICAL_MEMORY = 2, 3
+
+    -- Crashers are floods, and the bar has to sit well above a player having a busy second -
+    -- jumping while spamming a sword throws out a surprising number of both animations and
+    -- replicated actions. These are per SECOND, not per three.
+    local ANIMATION_FLOOD, ANIMATION_WINDOW = 30, 1
+    local REMOTE_FLOOD, REMOTE_WINDOW = 45, 1
 
     -- How many readings of one kind before a player is flagged. Set per check rather than shared:
     -- a Reach reading is one clean measurement, a Phase reading is a guess about geometry we only
     -- half see, and they cannot sensibly share a threshold.
     local REQUIRED = {
-        Killaura = 4,
+        Killaura = 3,
         SilentAim = 4,
-        HitBoxes = 5,
-        Reach = 5,
-        PlayerAttach = 3,
+        HitBoxes = 4,
+        Reach = 3,
+        PlayerAttach = 2,
         AntiDeath = 2,
         Phase = 6,
         Invisible = 4,
         HighJump = 4,
-        Speed = 4,
+        Speed = 3,
         AutoKit = 4,
         Animation = 3,
         Remote = 3,
@@ -16336,10 +16470,6 @@ run(function()
     -- When each player last took a hit. Knockback throws people faster than they can run, so a
     -- speed sample taken just after one measures the hit, not the player.
     local lastHurt = {}
-
-    local detectRay = RaycastParams.new()
-    detectRay.RespectCanCollide = true
-    detectRay.FilterType = Enum.RaycastFilterType.Exclude
 
     local function enabled(name)
         local toggle = Toggles[name]
@@ -16418,9 +16548,11 @@ run(function()
         return value
     end
 
-    -- Our own connection is the measuring instrument. When it is bad, every reading is wrong in a
-    -- direction that produces false positives, so we take none at all.
-    local function conditionsUsable()
+    -- Our own connection is the measuring instrument. When it is bad, every reading of somebody
+    -- else is wrong in a direction that produces false positives, so we take none at all. Nothing
+    -- sits between us and our own character, so measuring ourselves is always allowed.
+    local function conditionsUsable(plr)
+        if plr == lplr then return true end
         return ping() <= MAX_PING
     end
 
@@ -16428,28 +16560,41 @@ run(function()
         return (workspace:GetServerTimeNow() - (plr:GetAttribute('LastTeleported') or 0)) <= 1
     end
 
-    -- Does this character carry a status effect whose name mentions any of `words`? Read off the
-    -- character's attributes, which is where the game replicates them, so kit abilities, potions
-    -- and launchers disqualify a sample rather than producing one.
-    local function hasEffect(char, words)
-        if not char then return false end
+    ------------------------------------------------------------------------
+    -- Status effects.
+    ------------------------------------------------------------------------
+    -- Kits are the reason speed and jump checks need this. A kit that is MEANT to move you fast -
+    -- a reaper's drift, a dash, a wind push - replicates a status attribute onto the character
+    -- while it is doing it, so the sample is thrown away rather than counted. Matched on what the
+    -- effect is called rather than on a list of kits, so a kit added next update is covered by
+    -- the words it uses, and a kit renamed does not quietly become undetectable.
+    local EFFECT_WORDS = {
+        Movement = {'speed', 'dash', 'sprint', 'haste', 'boost', 'launch', 'grapple', 'balloon', 'wind', 'momentum', 'charge', 'rush', 'swift', 'leap', 'pounce', 'slide', 'drift', 'frenzy'},
+        Vertical = {'jump', 'launch', 'bounce', 'pad', 'grapple', 'balloon', 'levitat', 'fly', 'wind', 'rocket', 'leap', 'pounce'},
+        Invisible = {'invis', 'vanish', 'cloak', 'ghost'},
+        Ability = {'ability', 'kit_', 'kitability', 'cooldown'}
+    }
+
+    -- One pass over a character's attributes per tick, producing every flag the checks want.
+    -- Reading them separately meant walking the same attribute table three times a tick per
+    -- player for answers that all come out of the same read.
+    local function effectsOf(char)
+        local flags = {}
+        if not char then return flags end
         for name, value in char:GetAttributes() do
-            if type(name) == 'string' and value ~= false and value ~= 0 then
-                local lowered = name:lower()
+            if type(name) ~= 'string' or value == false or value == 0 then continue end
+            local lowered = name:lower()
+            for key, words in EFFECT_WORDS do
+                if flags[key] then continue end
                 for _, word in words do
-                    if lowered:find(word, 1, true) then return true end
+                    if lowered:find(word, 1, true) then
+                        flags[key] = true
+                        break
+                    end
                 end
             end
         end
-        return false
-    end
-
-    local function movementBuffed(char)
-        return hasEffect(char, {'speed', 'dash', 'sprint', 'haste', 'boost', 'launch', 'grapple', 'inflatedballoons'})
-    end
-
-    local function verticalBuffed(char)
-        return hasEffect(char, {'jump', 'launch', 'bounce', 'pad', 'grapple', 'balloon', 'levitat', 'fly', 'wind', 'rocket'})
+        return flags
     end
 
     local function weaponReach(plr)
@@ -16465,8 +16610,13 @@ run(function()
     end
 
     -- Lowest solid ground anywhere on the map, minus a margin. Below this is the void, and nothing
-    -- alive belongs there.
+    -- alive belongs there. Recomputed on a timer rather than per sample: it walks every block on
+    -- the map, and the floor of the world does not move between ticks.
+    local voidCached, voidStamp = -300, 0
     local function voidLevel()
+        local now = os.clock()
+        if now - voidStamp < 5 then return voidCached end
+        voidStamp = now
         local lowest = math.huge
         for _, v in store.blocks do
             local point = (v.Position.Y - (v.Size.Y / 2)) - 50
@@ -16474,7 +16624,46 @@ run(function()
                 lowest = point
             end
         end
-        return lowest < math.huge and lowest or -300
+        voidCached = lowest < math.huge and lowest or -300
+        return voidCached
+    end
+
+    -- What the game itself says a kit's movement is worth. Read out of the kit metadata rather
+    -- than from a list of kit names: a kit added, renamed or rebalanced next update is covered by
+    -- whatever its own meta says about itself, and there is nothing here to keep up to date. Any
+    -- move-speed multiplier the meta declares raises that player's ceiling by the same
+    -- proportion, so a kit whose whole point is moving fast is never flagged for moving fast.
+    local kitCeilings = {}
+    local function speedCeiling(plr)
+        local kit = plr:GetAttribute('PlayingAsKits') or plr:GetAttribute('PlayingAsKit')
+        if type(kit) ~= 'string' or kit == '' or kit == 'none' then return SPEED_LIMIT end
+        local cached = kitCeilings[kit]
+        if cached then return cached end
+
+        local multiplier = 1
+        pcall(function()
+            local meta = bedwars.BedwarsKitMeta and bedwars.BedwarsKitMeta[kit]
+            if type(meta) ~= 'table' then return end
+            local function scan(tab, depth)
+                for key, value in tab do
+                    if type(value) == 'number' and type(key) == 'string' then
+                        local lowered = key:lower()
+                        -- Only a movement multiplier, never a raw number and never a speed that
+                        -- belongs to something else the kit throws.
+                        if lowered:find('speed') and (lowered:find('multiplier') or lowered:find('move')) then
+                            multiplier = math.max(multiplier, value)
+                        end
+                    elseif type(value) == 'table' and depth < 3 then
+                        scan(value, depth + 1)
+                    end
+                end
+            end
+            scan(meta, 1)
+        end)
+
+        local ceiling = SPEED_LIMIT * math.clamp(multiplier, 1, 2)
+        kitCeilings[kit] = ceiling
+        return ceiling
     end
 
     -- Rolling counter shared by every rate-based check: record an event, get back how many landed
@@ -16495,620 +16684,36 @@ run(function()
         return #list
     end
 
-    local Checks = {}
-
     ------------------------------------------------------------------------
-    -- Speed.
+    -- Animation watch, shared.
     ------------------------------------------------------------------------
-    Checks.Speed = function()
-        local histories = {}
-        repeat
-            if conditionsUsable() then
-                local now = tick()
-                for _, ent in entities() do
-                    local plr = ent.Player
-                    local root = ent.RootPart
-                    if plr and not selfExcluded(plr) and root and root.Parent and ent.Health > 0 and not CheatersFlagged[plr] then
-                        local flat = root.Position * Vector3.new(1, 0, 1)
-                        local previous = histories[plr]
-                        histories[plr] = {Position = flat, Time = now}
+    -- Two checks want the same fact from different angles: the crasher check wants how OFTEN a
+    -- player starts animations, and killaura's packet signal wants whether they started one at
+    -- all. One hook per character answers both.
+    local animationLast, animationRates, animationHooked = {}, {}, {}
+    -- How many hits anywhere in the match arrived with a swing behind them. Until the game has
+    -- proven to us that it replicates swings at all, "no swing behind that hit" means nothing,
+    -- and the packet signal stays switched off rather than flagging the entire lobby.
+    local animationBacked = 0
 
-                        if previous and now > previous.Time then
-                            local delta = now - previous.Time
-                            local distance = (flat - previous.Position).Magnitude
-                            -- Everything that makes a fast reading legitimate, in one place. A
-                            -- sample failing any of these is discarded, never counted as clean.
-                            local usable = distance <= TELEPORT_STEP
-                                and delta >= 0.15
-                                and not recentlyTeleported(plr)
-                                and not movementBuffed(ent.Character)
-                                and math.abs(root.AssemblyLinearVelocity.Y) < 12
-                                and (now - (lastHurt[plr] or 0)) > 1.5
-
-                            local speed = distance / delta
-                            if usable and speed > SPEED_CEILING then
-                                strike(plr, 'Speed', 'speeding', `{math.floor(speed)} studs/s, ceiling {SPEED_CEILING}`)
-                            end
-                        end
-                    end
-                end
-            end
-            task.wait(0.25)
-        until not CheatDetector.Enabled
-    end
-
-    ------------------------------------------------------------------------
-    -- Killaura.
-    ------------------------------------------------------------------------
-    Checks.Killaura = function()
-        local last = {}
-        -- Sustained-rate signal. A single hit at aura pace is a fast mouse; a stream of them is a
-        -- machine holding a rate no hand keeps up.
-        local bursts = {}
-
-        local function burstCount(plr)
-            local list = bursts[plr]
-            if not list then return 0 end
-            local now, count = os.clock(), 0
-            for i = #list, 1, -1 do
-                if now - list[i] > BURST_MEMORY then
-                    table.remove(list, i)
-                else
-                    count += 1
-                end
-            end
-            return count
-        end
-
-        CheatDetector:Clean(vapeEvents.EntityDamageEvent.Event:Connect(function(damageTable)
-            if damageTable.damageType ~= 0 or not damageTable.fromEntity then return end
-            if not conditionsUsable() then return end
-
-            local from = playersService:GetPlayerFromCharacter(damageTable.fromEntity)
-            local victim = damageTable.entityInstance and playersService:GetPlayerFromCharacter(damageTable.entityInstance)
-            if not from or selfExcluded(from) or CheatersFlagged[from] then return end
-
-            local now = os.clock()
-            local previous = last[from]
-            last[from] = {Time = now, Victim = victim}
-            if not previous then return end
-
-            local interval = now - previous.Time
-            -- Two events delivered in the same frame were batched by the network, not thrown that
-            -- fast. Reading a batch as a zero interval is how a check like this flags people who
-            -- are simply being replicated to us in bursts.
-            if interval <= 0.008 then return end
-
-            if interval < MIN_HUMAN_INTERVAL then
-                strike(from, 'Killaura', 'using killaura', `hits {math.floor(interval * 1000)}ms apart`)
-            elseif victim and previous.Victim and victim ~= previous.Victim and interval < SWITCH_WINDOW then
-                -- Landing on a different player a fifth of a second apart means the aim moved
-                -- between them instantly. This is the signature worth having; hitting one person
-                -- quickly is just a fast mouse.
-                strike(from, 'Killaura', 'using killaura', 'switched target instantly')
-            elseif interval < BURST_INTERVAL then
-                -- Not fast enough to mean anything on its own, so this only ever contributes a
-                -- reading once a run of them has built up.
-                bursts[from] = bursts[from] or {}
-                table.insert(bursts[from], now)
-                if burstCount(from) >= BURST_HITS then
-                    table.clear(bursts[from])
-                    strike(from, 'Killaura', 'using killaura', `{BURST_HITS} hits in a row under {math.floor(BURST_INTERVAL * 1000)}ms`)
-                end
-            end
-        end))
-    end
-
-    ------------------------------------------------------------------------
-    -- Reach.
-    ------------------------------------------------------------------------
-    Checks.Reach = function()
-        CheatDetector:Clean(vapeEvents.EntityDamageEvent.Event:Connect(function(damageTable)
-            if damageTable.damageType ~= 0 or not damageTable.fromEntity or not damageTable.entityInstance then return end
-            if not conditionsUsable() then return end
-
-            local attacker = playersService:GetPlayerFromCharacter(damageTable.fromEntity)
-            if not attacker or selfExcluded(attacker) or CheatersFlagged[attacker] then return end
-
-            local fromRoot = damageTable.fromEntity.PrimaryPart
-            local toRoot = damageTable.entityInstance.PrimaryPart
-            if not fromRoot or not toRoot then return end
-            if recentlyTeleported(attacker) then return end
-
-            -- Root to root, minus the target's body: the server resolves a hit against the whole
-            -- character, so measuring centre to centre and comparing that against a weapon's range
-            -- overstates every single hit by roughly half a torso.
-            local distance = (fromRoot.Position - toRoot.Position).Magnitude - 2
-            -- Ping converted into studs rather than added as seconds. Adding a time to a distance
-            -- makes the allowance about a hundredth of what it should be, and anyone hitting a
-            -- target running away from them reads as reach.
-            local allowance = math.clamp(ping() * 60, 0, 12)
-
-            local limit = weaponReach(attacker) + allowance + REACH_SLACK
-            if distance > limit then
-                strike(attacker, 'Reach', 'using reach', `{math.floor(distance * 10) / 10} studs, limit {math.floor(limit * 10) / 10}`)
-            end
-        end))
-    end
-
-    ------------------------------------------------------------------------
-    -- HitBoxes.
-    ------------------------------------------------------------------------
-    -- An expanded hitbox lives on the attacker's own client, so it is never visible from here
-    -- directly. What it produces that a normal swing cannot is a hit landing while the attacker is
-    -- facing well off the target: the swing resolved against a box far wider than the body. The
-    -- distance has to be inside legitimate reach too, otherwise this is just Reach again and one
-    -- swing would be counted twice.
-    Checks.HitBoxes = function()
-        CheatDetector:Clean(vapeEvents.EntityDamageEvent.Event:Connect(function(damageTable)
-            if damageTable.damageType ~= 0 or not damageTable.fromEntity or not damageTable.entityInstance then return end
-            if not conditionsUsable() then return end
-
-            local attacker = playersService:GetPlayerFromCharacter(damageTable.fromEntity)
-            if not attacker or selfExcluded(attacker) or CheatersFlagged[attacker] then return end
-            if recentlyTeleported(attacker) then return end
-
-            local fromRoot = damageTable.fromEntity.PrimaryPart
-            local toRoot = damageTable.entityInstance.PrimaryPart
-            if not fromRoot or not toRoot then return end
-
-            local delta = (toRoot.Position - fromRoot.Position)
-            local distance = delta.Magnitude
-            -- Point blank the angle means nothing - the bodies overlap and any heading hits.
-            if distance < 6 or distance > weaponReach(attacker) then return end
-
-            local facing = fromRoot.CFrame.LookVector * Vector3.new(1, 0, 1)
-            local toward = delta * Vector3.new(1, 0, 1)
-            if facing.Magnitude < 0.01 or toward.Magnitude < 0.01 then return end
-
-            local angle = math.deg(math.acos(math.clamp(facing.Unit:Dot(toward.Unit), -1, 1)))
-            -- 75 degrees off and still landing means the swing did not resolve against the body
-            -- that is being drawn. Wide enough that our own interpolation of a strafing player
-            -- cannot get there on its own.
-            if angle > 75 then
-                strike(attacker, 'HitBoxes', 'expanded hitboxes', `hit {math.floor(angle)} degrees off target`)
-            end
-        end))
-    end
-
-    ------------------------------------------------------------------------
-    -- SilentAim.
-    ------------------------------------------------------------------------
-    -- The projectile equivalent: a shot that lands on someone the shooter was never pointing at.
-    -- Only long shots are considered, because at close range the angle to a target is wide even
-    -- when aimed honestly, and only non-melee damage, so a sword swing is never counted here.
-    Checks.SilentAim = function()
-        CheatDetector:Clean(vapeEvents.EntityDamageEvent.Event:Connect(function(damageTable)
-            if damageTable.damageType == 0 or not damageTable.fromEntity or not damageTable.entityInstance then return end
-            if not conditionsUsable() then return end
-
-            local attacker = playersService:GetPlayerFromCharacter(damageTable.fromEntity)
-            if not attacker or selfExcluded(attacker) or CheatersFlagged[attacker] then return end
-            if recentlyTeleported(attacker) then return end
-
-            local fromRoot = damageTable.fromEntity.PrimaryPart
-            local toRoot = damageTable.entityInstance.PrimaryPart
-            if not fromRoot or not toRoot then return end
-
-            local delta = (toRoot.Position - fromRoot.Position) * Vector3.new(1, 0, 1)
-            -- A thrown projectile arcs, and a short lob can leave at a heading well off the
-            -- target quite legitimately. Distance is what makes the heading meaningful.
-            if delta.Magnitude < 25 then return end
-
-            local facing = fromRoot.CFrame.LookVector * Vector3.new(1, 0, 1)
-            if facing.Magnitude < 0.01 then return end
-
-            local angle = math.deg(math.acos(math.clamp(facing.Unit:Dot(delta.Unit), -1, 1)))
-            if angle > 60 then
-                strike(attacker, 'SilentAim', 'silent aim', `landed a shot {math.floor(angle)} degrees off their heading`)
-            end
-        end))
-    end
-
-    ------------------------------------------------------------------------
-    -- ProjectileAimbot and Aura.
-    ------------------------------------------------------------------------
-    -- Aimbot is not one impossible shot, it is never missing. Landing projectile after projectile
-    -- on live players at long range, faster than they can be aimed, is the thing no hand does.
-    Checks.ProjectileAim = function()
-        local hits = {}
-        CheatDetector:Clean(vapeEvents.EntityDamageEvent.Event:Connect(function(damageTable)
-            if damageTable.damageType == 0 or not damageTable.fromEntity or not damageTable.entityInstance then return end
-            if not conditionsUsable() then return end
-
-            local attacker = playersService:GetPlayerFromCharacter(damageTable.fromEntity)
-            local victim = playersService:GetPlayerFromCharacter(damageTable.entityInstance)
-            -- Players only. A projectile stream into a mob or a bed is a different thing entirely.
-            if not attacker or not victim or selfExcluded(attacker) or CheatersFlagged[attacker] then return end
-
-            local fromRoot = damageTable.fromEntity.PrimaryPart
-            local toRoot = damageTable.entityInstance.PrimaryPart
-            if not fromRoot or not toRoot then return end
-            if (toRoot.Position - fromRoot.Position).Magnitude < 30 then return end
-
-            -- Four long-range projectile hits on players inside six seconds. Bows are slow to
-            -- draw, so this is well past what the weapon itself allows aimed by hand.
-            if bumpRate(hits, attacker, 6) >= 4 then
-                hits[attacker] = nil
-                strike(attacker, 'ProjectileAim', 'projectile aimbot', '4 long-range projectile hits inside 6s')
-            end
-        end))
-    end
-
-    ------------------------------------------------------------------------
-    -- PlayerAttach.
-    ------------------------------------------------------------------------
-    -- Someone riding another player's position: the two roots stay on top of each other while the
-    -- pair is actually moving. Standing next to a teammate looks nothing like this - the check
-    -- wants near-zero separation held across consecutive samples at speed.
-    Checks.PlayerAttach = function()
-        local held = {}
-        repeat
-            if conditionsUsable() then
-                local seen = {}
-                for _, ent in entities() do
-                    local plr, root = ent.Player, ent.RootPart
-                    if not (plr and not selfExcluded(plr) and root and root.Parent and ent.Health > 0 and not CheatersFlagged[plr]) then continue end
-
-                    for _, other in entities() do
-                        local otherPlr, otherRoot = other.Player, other.RootPart
-                        if not (otherPlr and otherPlr ~= plr and otherRoot and otherRoot.Parent and other.Health > 0) then continue end
-
-                        local separation = (root.Position - otherRoot.Position).Magnitude
-                        local moving = root.AssemblyLinearVelocity.Magnitude > 12
-                        if separation <= 2.5 and moving then
-                            local key = plr
-                            seen[key] = true
-                            held[key] = (held[key] or 0) + 1
-                            -- Two and a half seconds of being welded to somebody while both of
-                            -- you are moving. Collision alone separates two players long before
-                            -- this.
-                            if held[key] >= 5 then
-                                held[key] = 0
-                                strike(plr, 'PlayerAttach', 'player attach', `held inside {math.floor(separation * 10) / 10} studs of {otherPlr.Name}`)
-                            end
-                            break
-                        end
-                    end
-                end
-                for plr in held do
-                    if not seen[plr] then
-                        held[plr] = nil
-                    end
-                end
-            end
-            task.wait(0.5)
-        until not CheatDetector.Enabled
-    end
-
-    ------------------------------------------------------------------------
-    -- AntiDeath.
-    ------------------------------------------------------------------------
-    -- The hitbox parked where nothing can reach it. Alive, with health, sitting below every block
-    -- on the map - which is somewhere a living player is never replicated from.
-    Checks.AntiDeath = function()
-        local void = voidLevel()
-        local sustained = {}
-        repeat
-            void = voidLevel()
-            if conditionsUsable() then
-                for _, ent in entities() do
-                    local plr, root = ent.Player, ent.RootPart
-                    if plr and not selfExcluded(plr) and root and root.Parent and ent.Health > 0 and not CheatersFlagged[plr] then
-                        if root.Position.Y < void and not recentlyTeleported(plr) then
-                            sustained[plr] = (sustained[plr] or 0) + 1
-                            -- Held there rather than passing through: a real fall into the void
-                            -- ends in a death within a second or so.
-                            if sustained[plr] >= 4 then
-                                sustained[plr] = 0
-                                strike(plr, 'AntiDeath', 'anti death', `alive {math.floor(void - root.Position.Y)} studs below the map`)
-                            end
-                        else
-                            sustained[plr] = nil
-                        end
-                    end
-                end
-            end
-            task.wait(0.5)
-        until not CheatDetector.Enabled
-    end
-
-    ------------------------------------------------------------------------
-    -- Phase.
-    ------------------------------------------------------------------------
-    -- Standing inside solid geometry. Every part of this is arguable on its own - a body clips a
-    -- block on a slope, streaming puts a block in late - so the reading needs the root buried in
-    -- something solid across consecutive samples while the player is not being carried by
-    -- anything, and it needs the most readings of any check before it flags.
-    Checks.Phase = function()
-        local buried = {}
-        local overlap = OverlapParams.new()
-        overlap.FilterType = Enum.RaycastFilterType.Exclude
-        repeat
-            if conditionsUsable() then
-                for _, ent in entities() do
-                    local plr, root = ent.Player, ent.RootPart
-                    if not (plr and not selfExcluded(plr) and root and root.Parent and ent.Health > 0 and not CheatersFlagged[plr]) then continue end
-                    if recentlyTeleported(plr) or movementBuffed(ent.Character) then
-                        buried[plr] = nil
-                        continue
-                    end
-
-                    overlap.FilterDescendantsInstances = {ent.Character, lplr.Character, gameCamera}
-                    -- A box well inside the torso, so brushing a wall is not enough - the body has
-                    -- to be in the block.
-                    local parts = workspace:GetPartBoundsInBox(CFrame.new(root.Position), Vector3.new(1, 1, 1), overlap)
-                    local solid = false
-                    for _, part in parts do
-                        if part.CanCollide and part.Anchored then
-                            solid = true
-                            break
-                        end
-                    end
-
-                    if solid then
-                        buried[plr] = (buried[plr] or 0) + 1
-                        if buried[plr] >= 4 then
-                            buried[plr] = 0
-                            strike(plr, 'Phase', 'phasing', 'stood inside a solid block')
-                        end
-                    else
-                        buried[plr] = nil
-                    end
-                end
-            end
-            task.wait(0.4)
-        until not CheatDetector.Enabled
-    end
-
-    ------------------------------------------------------------------------
-    -- Invisible.
-    ------------------------------------------------------------------------
-    -- Every limb fully transparent while the player is alive, moving and carrying no invisibility
-    -- effect of their own. Movement is what separates this from a ragdoll or a death animation,
-    -- and the status-effect check is what keeps the game's own invisibility potion out of it.
-    Checks.Invisible = function()
-        local hidden = {}
-        repeat
-            if conditionsUsable() then
-                for _, ent in entities() do
-                    local plr, root, char = ent.Player, ent.RootPart, ent.Character
-                    if not (plr and not selfExcluded(plr) and root and root.Parent and char and ent.Health > 0 and not CheatersFlagged[plr]) then continue end
-                    if hasEffect(char, {'invis', 'vanish', 'cloak', 'ghost'}) or root.AssemblyLinearVelocity.Magnitude < 4 then
-                        hidden[plr] = nil
-                        continue
-                    end
-
-                    local visible, counted = false, 0
-                    for _, part in char:GetDescendants() do
-                        if part:IsA('BasePart') and part.Name ~= 'HumanoidRootPart' then
-                            counted += 1
-                            if part.Transparency < 0.95 then
-                                visible = true
-                                break
-                            end
-                        end
-                    end
-
-                    -- No limbs found at all means the character has not streamed in, which is not
-                    -- the same thing as being invisible.
-                    if counted >= 4 and not visible then
-                        hidden[plr] = (hidden[plr] or 0) + 1
-                        if hidden[plr] >= 4 then
-                            hidden[plr] = 0
-                            strike(plr, 'Invisible', 'invisibility', 'moving with every limb hidden')
-                        end
-                    else
-                        hidden[plr] = nil
-                    end
-                end
-            end
-            task.wait(0.5)
-        until not CheatDetector.Enabled
-    end
-
-    ------------------------------------------------------------------------
-    -- HighJump.
-    ------------------------------------------------------------------------
-    -- Rising further off one jump than the game's own jump power allows. Measured as a climb from
-    -- a standing start rather than as an instantaneous velocity, because a launch pad or a
-    -- knockback shows up in velocity and both of those are legitimate.
-    Checks.HighJump = function()
-        local tracked = {}
-        repeat
-            if conditionsUsable() then
-                for _, ent in entities() do
-                    local plr, root, char = ent.Player, ent.RootPart, ent.Character
-                    if not (plr and not selfExcluded(plr) and root and root.Parent and ent.Health > 0 and not CheatersFlagged[plr]) then continue end
-                    if recentlyTeleported(plr) or verticalBuffed(char) or (tick() - (lastHurt[plr] or 0)) < 2 then
-                        tracked[plr] = nil
-                        continue
-                    end
-
-                    local y = root.Position.Y
-                    local grounded = ent.Humanoid and ent.Humanoid.FloorMaterial ~= Enum.Material.Air
-                    local entry = tracked[plr]
-                    if grounded then
-                        tracked[plr] = {Base = y, Peak = y}
-                    elseif entry then
-                        entry.Peak = math.max(entry.Peak, y)
-                        -- Roblox's own jump tops out near 7 studs, and BedWars kits that go higher
-                        -- all announce themselves through a status effect, which is excluded
-                        -- above. 18 is far past anything left.
-                        if (entry.Peak - entry.Base) > 18 then
-                            tracked[plr] = nil
-                            strike(plr, 'HighJump', 'high jump', `rose {math.floor(entry.Peak - entry.Base)} studs off one jump`)
-                        end
-                    end
-                end
-            end
-            task.wait(0.15)
-        until not CheatDetector.Enabled
-    end
-
-    ------------------------------------------------------------------------
-    -- Breaker.
-    ------------------------------------------------------------------------
-    -- Blocks coming apart faster than a tool can swing, or coming apart from across the map. Both
-    -- are read off the break event itself, which carries who did it and where.
-    Checks.Breaker = function()
-        local rates = {}
-        CheatDetector:Clean(vapeEvents.BreakBlockEvent.Event:Connect(function(data)
-            if not conditionsUsable() then return end
-            local plr = data.player
-            if not plr or selfExcluded(plr) or CheatersFlagged[plr] then return end
-
-            local blockPosition = data.blockRef and data.blockRef.blockPosition
-            if typeof(blockPosition) == 'Vector3' then
-                local ent
-                for _, candidate in entities() do
-                    if candidate.Player == plr then
-                        ent = candidate
-                        break
-                    end
-                end
-                local root = ent and ent.RootPart
-                if root and root.Parent then
-                    local distance = (root.Position - (blockPosition * 3)).Magnitude
-                    -- Block reach in this game is well under 30 studs even with every modifier.
-                    if distance > 45 and not recentlyTeleported(plr) then
-                        strike(plr, 'Breaker', 'block breaker', `broke a block {math.floor(distance)} studs away`)
-                        return
-                    end
-                end
-            end
-
-            -- Eight blocks inside two seconds. No tool in the game swings anywhere near that, and
-            -- a burst that size cannot be a batch of replicated events either.
-            if bumpRate(rates, plr, 2) >= 8 then
-                rates[plr] = nil
-                strike(plr, 'Breaker', 'block breaker', '8 blocks broken inside 2s')
-            end
-        end))
-    end
-
-    ------------------------------------------------------------------------
-    -- AutoKit.
-    ------------------------------------------------------------------------
-    -- A kit ability is a cooldown, and a script fires it the instant it is up - every time. What
-    -- gives it away is not the speed but the regularity: the gaps between activations stop
-    -- varying. A hand cannot hold an interval to within a tenth of a second five times running.
-    Checks.AutoKit = function()
-        local activations = {}
-        local previous = {}
-        repeat
-            if conditionsUsable() then
-                for _, ent in entities() do
-                    local plr, char = ent.Player, ent.Character
-                    if not (plr and not selfExcluded(plr) and char and ent.Health > 0 and not CheatersFlagged[plr]) then continue end
-
-                    local active = hasEffect(char, {'ability', 'kit_', 'kitability', 'cooldown'})
-                    local was = previous[plr]
-                    previous[plr] = active
-                    if not active or was then continue end
-
-                    -- Rising edge: the ability just went off.
-                    local list = activations[plr]
-                    if not list then
-                        list = {}
-                        activations[plr] = list
-                    end
-                    table.insert(list, os.clock())
-                    if #list > 6 then
-                        table.remove(list, 1)
-                    end
-                    if #list < 6 then continue end
-
-                    local gaps = {}
-                    for i = 2, #list do
-                        table.insert(gaps, list[i] - list[i - 1])
-                    end
-                    local shortest, longest = math.huge, 0
-                    for _, gap in gaps do
-                        shortest = math.min(shortest, gap)
-                        longest = math.max(longest, gap)
-                    end
-                    -- Five gaps that agree to within a tenth of a second, and none of them long
-                    -- enough to be somebody simply playing at a steady pace.
-                    if (longest - shortest) < 0.1 and longest < 30 then
-                        table.clear(list)
-                        strike(plr, 'AutoKit', 'automated kit use', `5 activations {math.floor(longest * 100) / 100}s apart`)
-                    end
-                end
-            end
-            task.wait(0.2)
-        until not CheatDetector.Enabled
-    end
-
-    ------------------------------------------------------------------------
-    -- Crashers: Animation.
-    ------------------------------------------------------------------------
-    -- The animation flavour of a crasher spams emotes or ability animations to bury every client
-    -- in tracks. Animator.AnimationPlayed fires locally for replicated animations, so the rate is
-    -- readable straight off another player's own humanoid.
-    Checks.Animation = function()
-        local rates = {}
-        local hooked = {}
-
-        local function watch(ent)
-            local plr, char = ent.Player, ent.Character
-            if not plr or selfExcluded(plr) or not char or hooked[plr] then return end
-            local humanoid = char:FindFirstChildOfClass('Humanoid')
+    local function watchAnimations(list)
+        for _, rec in list do
+            local plr = rec.Player
+            if animationHooked[plr] == rec.Character then continue end
+            local humanoid = rec.Character:FindFirstChildOfClass('Humanoid')
             local animator = humanoid and humanoid:FindFirstChildOfClass('Animator')
-            if not animator then return end
-            hooked[plr] = true
+            if not animator then continue end
+            animationHooked[plr] = rec.Character
             CheatDetector:Clean(animator.AnimationPlayed:Connect(function()
+                animationLast[plr] = os.clock()
+                if not checkEnabled('Crashers', 'Animation') then return end
                 if CheatersFlagged[plr] then return end
-                -- Twenty five animation starts inside three seconds. Ordinary play - swinging,
-                -- walking, placing - is nowhere near this even with every emote in the game.
-                if bumpRate(rates, plr, 3) >= 25 then
-                    rates[plr] = nil
-                    strike(plr, 'Animation', 'animation spam', '25 animation starts inside 3s')
+                if bumpRate(animationRates, plr, ANIMATION_WINDOW) >= ANIMATION_FLOOD then
+                    animationRates[plr] = nil
+                    strike(plr, 'Animation', 'animation spam', `{ANIMATION_FLOOD} animation starts inside {ANIMATION_WINDOW}s`)
                 end
             end))
-            CheatDetector:Clean(char.Destroying:Once(function()
-                hooked[plr] = nil
-            end))
         end
-
-        repeat
-            for _, ent in entities() do
-                pcall(watch, ent)
-            end
-            task.wait(1)
-        until not CheatDetector.Enabled
-    end
-
-    ------------------------------------------------------------------------
-    -- Crashers: Remote.
-    ------------------------------------------------------------------------
-    -- Another player's remote traffic is not visible from here, but its effect is: a crasher
-    -- pushes replicated actions out at a rate the game itself never produces. Block places and
-    -- breaks and damage events are all counted together, because a crasher does not care which
-    -- remote it is hammering.
-    Checks.Remote = function()
-        local rates = {}
-
-        local function count(plr)
-            if not plr or selfExcluded(plr) or CheatersFlagged[plr] then return end
-            -- Sixty replicated actions from one player inside two seconds. Placing and breaking
-            -- flat out with a full inventory does not reach a third of this.
-            if bumpRate(rates, plr, 2) >= 60 then
-                rates[plr] = nil
-                strike(plr, 'Remote', 'remote spam', '60 replicated actions inside 2s')
-            end
-        end
-
-        CheatDetector:Clean(vapeEvents.BreakBlockEvent.Event:Connect(function(data)
-            count(data.player)
-        end))
-        CheatDetector:Clean(vapeEvents.PlaceBlockEvent.Event:Connect(function(data)
-            count(data and data.player)
-        end))
-        CheatDetector:Clean(vapeEvents.EntityDamageEvent.Event:Connect(function(damageTable)
-            if not damageTable.fromEntity then return end
-            count(playersService:GetPlayerFromCharacter(damageTable.fromEntity))
-        end))
     end
 
     -- Which heading each check belongs to, so a family can be switched off in one place.
@@ -17129,12 +16734,786 @@ run(function()
         Breaker = 'Breaker',
         ProjectileAim = 'ProjectileAimbot and Aura'
     }
-    -- The two checks whose toggle name is the heading itself.
+    -- The checks whose toggle name is the heading itself.
     local CHECK_TOGGLE = {
         AutoKit = 'AutoKit',
         Breaker = 'Breaker',
         ProjectileAim = 'ProjectileAimbot and Aura'
     }
+
+    local function wanted(name)
+        local group = CHECK_GROUP[name]
+        return group ~= nil and checkEnabled(group, CHECK_TOGGLE[name] or name)
+    end
+
+    ------------------------------------------------------------------------
+    -- Polling checks.
+    ------------------------------------------------------------------------
+    -- Each entry is a factory: it is called once when the module starts and hands back the
+    -- function that runs against every snapshot, so all of a check's state is private to one
+    -- run of the module and starts empty on the next.
+    local Pollers = {}
+
+    ------------------------------------------------------------------------
+    -- Speed.
+    ------------------------------------------------------------------------
+    -- Not "how fast was that one step" - a knockback, a dash and a bad interpolation all answer
+    -- that loudly. This measures a continuous run: distance actually covered over the time it
+    -- took, with the run reset the moment anything makes a sample untrustworthy (a buff, a
+    -- teleport, a hit taken, leaving the ground, or simply slowing down). What is left is speed
+    -- that was HELD, which is the difference between a kit ability and a speed hack.
+    Pollers.Speed = function()
+        local tracks = {}
+        return function(now, list)
+            local seen = {}
+            for _, rec in list do
+                local plr = rec.Player
+                seen[plr] = true
+                local track = tracks[plr]
+                -- A respawn is a new character in the same player's name, and the position it
+                -- starts at has nothing to do with the one the last one died at.
+                if not track or track.Character ~= rec.Character then
+                    tracks[plr] = {Character = rec.Character, Ceiling = speedCeiling(plr), Position = rec.Flat, Time = now, Distance = 0, Start = now, Samples = 0, Above = 0}
+                    continue
+                end
+                local ceiling = track.Ceiling or SPEED_LIMIT
+
+                local delta = now - track.Time
+                local step = (rec.Flat - track.Position).Magnitude
+                track.Position, track.Time = rec.Flat, now
+
+                local usable = delta >= 0.05 and delta <= 0.5
+                    and step <= TELEPORT_STEP
+                    and (step / delta) <= SPEED_SANE
+                    and not rec.Teleported
+                    and not rec.Effects.Movement
+                    and not rec.Hurt
+                    and math.abs(rec.Velocity.Y) < 14
+                    -- Sprint pace keeps a run alive, anything below it ends the run. That is
+                    -- deliberately generous: a kit dash decays into a sprint rather than a stop,
+                    -- so the sprinting that follows stays in the window and drags the average
+                    -- back under the limit, while a hack that simply holds one speed does not.
+                    and (step / delta) > (ceiling * 0.85)
+                if not usable then
+                    track.Distance, track.Start, track.Samples, track.Above = 0, now, 0, 0
+                    continue
+                end
+
+                track.Distance += step
+                track.Samples += 1
+                if (step / delta) > ceiling then
+                    track.Above += 1
+                end
+
+                local span = now - track.Start
+                if span >= SPEED_WINDOW and track.Samples >= 8 then
+                    local average = track.Distance / span
+                    local share = track.Above / track.Samples
+                    track.Distance, track.Start, track.Samples, track.Above = 0, now, 0, 0
+                    -- Both, and the second one is what keeps kits out of this. A dash, a pounce or
+                    -- a wind push is a spike that decays: most of the window sits at running pace
+                    -- even when the average of it is dragged over the limit. A hack holds one
+                    -- speed, so nearly every sample in its window is over on its own.
+                    if average > ceiling and share >= 0.7 then
+                        strike(plr, 'Speed', 'speeding', `{math.floor(average)} studs/s held for {math.floor(span * 10) / 10}s, ceiling {math.floor(ceiling)}`)
+                    end
+                end
+            end
+            for plr in tracks do
+                if not seen[plr] then tracks[plr] = nil end
+            end
+        end
+    end
+
+    ------------------------------------------------------------------------
+    -- PlayerAttach.
+    ------------------------------------------------------------------------
+    -- Two halves of the same behaviour, either of which is enough on its own. Getting there: a
+    -- position step no run can make, landing on top of somebody. Staying there: held inside arm's
+    -- length of one player while the pair actually travel, with the separation barely changing -
+    -- two players who merely happen to be close bob around each other by whole studs.
+    Pollers.PlayerAttach = function()
+        local held, previous = {}, {}
+        return function(now, list, delta)
+            local seen = {}
+            for _, rec in list do
+                local plr, position = rec.Player, rec.Position
+                seen[plr] = true
+                local last = previous[plr]
+                -- Same player, different body: the step from where they died to where they
+                -- respawned is not a step they took.
+                local before = last and last.Character == rec.Character and last.Position or nil
+                previous[plr] = {Character = rec.Character, Position = position}
+
+                local nearest, nearestPlr = math.huge, nil
+                for _, other in list do
+                    if other.Player == plr then continue end
+                    local separation = (position - other.Position).Magnitude
+                    if separation < nearest then
+                        nearest, nearestPlr = separation, other.Player
+                    end
+                end
+                if not nearestPlr then
+                    held[plr] = nil
+                    continue
+                end
+
+                local step = before and (position - before).Magnitude or 0
+                -- Rate, not raw distance: a poll stretched by a lag spike covers plenty of ground
+                -- at a run, and calling that a teleport would flag whoever was standing nearby.
+                local rate = delta > 0 and (step / delta) or 0
+                if before and step > ATTACH_JUMP and rate > ATTACH_RATE and step <= TELEPORT_STEP and nearest <= ATTACH_RANGE * 2 and not rec.Teleported then
+                    strike(plr, 'PlayerAttach', 'player attach', `{math.floor(step)} studs onto {nearestPlr.Name} in one step`)
+                end
+
+                if nearest > ATTACH_RANGE then
+                    held[plr] = nil
+                    continue
+                end
+
+                local entry = held[plr]
+                if not entry or entry.Target ~= nearestPlr then
+                    entry = {Target = nearestPlr, Count = 0, Travel = 0, Min = nearest, Max = nearest}
+                    held[plr] = entry
+                end
+                entry.Count += 1
+                entry.Travel += step
+                entry.Min = math.min(entry.Min, nearest)
+                entry.Max = math.max(entry.Max, nearest)
+                if entry.Count >= ATTACH_SAMPLES and entry.Travel > ATTACH_TRAVEL and (entry.Max - entry.Min) < ATTACH_JITTER then
+                    held[plr] = nil
+                    strike(plr, 'PlayerAttach', 'player attach', `rode {nearestPlr.Name} at {math.floor(nearest * 10) / 10} studs`)
+                end
+            end
+            for plr in held do
+                if not seen[plr] then held[plr] = nil end
+            end
+            for plr in previous do
+                if not seen[plr] then previous[plr] = nil end
+            end
+        end
+    end
+
+    ------------------------------------------------------------------------
+    -- AntiDeath.
+    ------------------------------------------------------------------------
+    -- The hitbox taken somewhere nothing can reach it and brought straight back. Both halves are
+    -- read: alive and holding a position below every block on the map, and the vertical step
+    -- itself - dropped and returned faster than gravity can move anything, over and over, which
+    -- is what parking a hitbox out of a fight and putting it back looks like from outside.
+    Pollers.AntiDeath = function()
+        local tracks = {}
+        return function(now, list, delta)
+            local floor = voidLevel()
+            local seen = {}
+            for _, rec in list do
+                local plr, position = rec.Player, rec.Position
+                seen[plr] = true
+                local track = tracks[plr]
+                if not track or track.Character ~= rec.Character then
+                    tracks[plr] = {Character = rec.Character, Y = position.Y, Flat = rec.Flat, Below = 0, Direction = 0, Reversals = {}}
+                    continue
+                end
+
+                local rise = position.Y - track.Y
+                local flatStep = (rec.Flat - track.Flat).Magnitude
+                track.Y, track.Flat = position.Y, rec.Flat
+
+                if position.Y < floor and not rec.Teleported then
+                    track.Below += 1
+                    -- Held there rather than passing through: a real fall into the void ends in a
+                    -- death within a second or so.
+                    if track.Below >= 3 then
+                        track.Below = 0
+                        strike(plr, 'AntiDeath', 'anti death', `alive {math.floor(floor - position.Y)} studs below the map`)
+                    end
+                else
+                    track.Below = 0
+                end
+
+                if rec.Teleported or delta <= 0 then continue end
+                -- Straight up or straight down, faster than free fall, with the body barely
+                -- moving sideways. Nothing physical does this.
+                if math.abs(rise) < VERTICAL_TELEPORT or (math.abs(rise) / delta) < VERTICAL_RATE or flatStep > 15 then continue end
+
+                local direction = rise > 0 and 1 or -1
+                if track.Direction ~= 0 and direction ~= track.Direction then
+                    table.insert(track.Reversals, now)
+                end
+                track.Direction = direction
+                for i = #track.Reversals, 1, -1 do
+                    if now - track.Reversals[i] > VERTICAL_MEMORY then
+                        table.remove(track.Reversals, i)
+                    end
+                end
+                if #track.Reversals >= VERTICAL_REVERSALS then
+                    table.clear(track.Reversals)
+                    track.Direction = 0
+                    strike(plr, 'AntiDeath', 'anti death', `hitbox thrown {math.floor(math.abs(rise))} studs up and down`)
+                end
+            end
+            for plr in tracks do
+                if not seen[plr] then tracks[plr] = nil end
+            end
+        end
+    end
+
+    ------------------------------------------------------------------------
+    -- Phase.
+    ------------------------------------------------------------------------
+    -- Standing inside solid geometry. Every part of this is arguable on its own - a body clips a
+    -- block on a slope, streaming puts a block in late - so the reading needs the root buried in
+    -- something solid across consecutive samples while the player is not being carried by
+    -- anything, and it needs the most readings of any check before it flags. Sampled every third
+    -- tick because it is the only check here that costs a spatial query.
+    Pollers.Phase = function()
+        local buried = {}
+        local overlap = OverlapParams.new()
+        overlap.FilterType = Enum.RaycastFilterType.Exclude
+        local skip = 0
+        return function(now, list)
+            skip += 1
+            if skip % 3 ~= 0 then return end
+            local seen = {}
+            for _, rec in list do
+                local plr = rec.Player
+                seen[plr] = true
+                if rec.Teleported or rec.Effects.Movement then
+                    buried[plr] = nil
+                    continue
+                end
+
+                overlap.FilterDescendantsInstances = {rec.Character, lplr.Character, gameCamera}
+                -- A box well inside the torso, so brushing a wall is not enough - the body has
+                -- to be in the block.
+                local parts = workspace:GetPartBoundsInBox(CFrame.new(rec.Position), Vector3.new(1, 1, 1), overlap)
+                local solid = false
+                for _, part in parts do
+                    if part.CanCollide and part.Anchored then
+                        solid = true
+                        break
+                    end
+                end
+
+                if solid then
+                    buried[plr] = (buried[plr] or 0) + 1
+                    if buried[plr] >= 4 then
+                        buried[plr] = 0
+                        strike(plr, 'Phase', 'phasing', 'stood inside a solid block')
+                    end
+                else
+                    buried[plr] = nil
+                end
+            end
+            for plr in buried do
+                if not seen[plr] then buried[plr] = nil end
+            end
+        end
+    end
+
+    ------------------------------------------------------------------------
+    -- Invisible.
+    ------------------------------------------------------------------------
+    -- Every limb fully transparent while the player is alive, moving and carrying no invisibility
+    -- effect of their own. Movement is what separates this from a ragdoll or a death animation,
+    -- and the status-effect check is what keeps the game's own invisibility potion out of it.
+    Pollers.Invisible = function()
+        local hidden = {}
+        local skip = 0
+        return function(now, list)
+            -- Every fifth tick. Walking a character's whole descendant tree is the most expensive
+            -- read in the module, and nobody turns invisible for a tenth of a second.
+            skip += 1
+            if skip % 5 ~= 0 then return end
+            local seen = {}
+            for _, rec in list do
+                local plr = rec.Player
+                seen[plr] = true
+                if rec.Effects.Invisible or rec.Velocity.Magnitude < 4 then
+                    hidden[plr] = nil
+                    continue
+                end
+
+                local visible, counted = false, 0
+                for _, part in rec.Character:GetDescendants() do
+                    if part:IsA('BasePart') and part.Name ~= 'HumanoidRootPart' then
+                        counted += 1
+                        if part.Transparency < 0.95 then
+                            visible = true
+                            break
+                        end
+                    end
+                end
+
+                -- No limbs found at all means the character has not streamed in, which is not
+                -- the same thing as being invisible.
+                if counted >= 4 and not visible then
+                    hidden[plr] = (hidden[plr] or 0) + 1
+                    if hidden[plr] >= 3 then
+                        hidden[plr] = 0
+                        strike(plr, 'Invisible', 'invisibility', 'moving with every limb hidden')
+                    end
+                else
+                    hidden[plr] = nil
+                end
+            end
+            for plr in hidden do
+                if not seen[plr] then hidden[plr] = nil end
+            end
+        end
+    end
+
+    ------------------------------------------------------------------------
+    -- HighJump.
+    ------------------------------------------------------------------------
+    -- Rising further off one jump than the game's own jump power allows. Measured as a climb from
+    -- a standing start rather than as an instantaneous velocity, because a launch pad or a
+    -- knockback shows up in velocity and both of those are legitimate.
+    Pollers.HighJump = function()
+        local tracked = {}
+        return function(now, list)
+            local seen = {}
+            for _, rec in list do
+                local plr = rec.Player
+                seen[plr] = true
+                if rec.Teleported or rec.Effects.Vertical or rec.Hurt then
+                    tracked[plr] = nil
+                    continue
+                end
+
+                local y = rec.Position.Y
+                local entry = tracked[plr]
+                if rec.Grounded then
+                    tracked[plr] = {Base = y, Peak = y}
+                elseif entry then
+                    entry.Peak = math.max(entry.Peak, y)
+                    -- Roblox's own jump tops out near 7 studs, and BedWars kits that go higher
+                    -- all announce themselves through a status effect, which is excluded above.
+                    -- 18 is far past anything left.
+                    if (entry.Peak - entry.Base) > 18 then
+                        tracked[plr] = nil
+                        strike(plr, 'HighJump', 'high jump', `rose {math.floor(entry.Peak - entry.Base)} studs off one jump`)
+                    end
+                end
+            end
+            for plr in tracked do
+                if not seen[plr] then tracked[plr] = nil end
+            end
+        end
+    end
+
+    ------------------------------------------------------------------------
+    -- AutoKit.
+    ------------------------------------------------------------------------
+    -- A kit ability is a cooldown, and a script fires it the instant it is up - every time. What
+    -- gives it away is not the speed but the regularity: the gaps between activations stop
+    -- varying. A hand cannot hold an interval to within a tenth of a second five times running.
+    Pollers.AutoKit = function()
+        local activations, previous = {}, {}
+        return function(now, list)
+            local seen = {}
+            for _, rec in list do
+                local plr = rec.Player
+                seen[plr] = true
+                local active = rec.Effects.Ability
+                local was = previous[plr]
+                previous[plr] = active
+                if not active or was then continue end
+
+                -- Rising edge: the ability just went off.
+                local times = activations[plr]
+                if not times then
+                    times = {}
+                    activations[plr] = times
+                end
+                table.insert(times, now)
+                if #times > 6 then
+                    table.remove(times, 1)
+                end
+                if #times < 6 then continue end
+
+                local shortest, longest = math.huge, 0
+                for i = 2, #times do
+                    local gap = times[i] - times[i - 1]
+                    shortest = math.min(shortest, gap)
+                    longest = math.max(longest, gap)
+                end
+                -- Five gaps that agree to within a tenth of a second, and none of them long
+                -- enough to be somebody simply playing at a steady pace.
+                if (longest - shortest) < 0.1 and longest < 30 then
+                    table.clear(times)
+                    strike(plr, 'AutoKit', 'automated kit use', `5 activations {math.floor(longest * 100) / 100}s apart`)
+                end
+            end
+            for plr in activations do
+                if not seen[plr] then
+                    activations[plr] = nil
+                    previous[plr] = nil
+                end
+            end
+        end
+    end
+
+    ------------------------------------------------------------------------
+    -- Event-driven checks.
+    ------------------------------------------------------------------------
+    -- Same idea as the pollers: a factory called once at startup which puts its connections in
+    -- place. Everything they need about a player is read at the moment of the event.
+    local Events = {}
+
+    ------------------------------------------------------------------------
+    -- Killaura.
+    ------------------------------------------------------------------------
+    -- Four things an aura does that a hand does not, any one of which is a reading:
+    --
+    --   * hits closer together than anybody can click at all;
+    --   * a cadence that does not vary, because the aura fires the moment the cooldown is up
+    --     rather than whenever a finger happened to come down;
+    --   * a run of hits held at a rate no hand sustains;
+    --   * damage on several different people in the time it takes to turn to face one of them.
+    --
+    -- Plus the packet case: an aura that talks straight to the server does not swing anything,
+    -- so the damage lands with no animation behind it. That one is only trusted once other
+    -- players in the same match have proven that swings do reach us, so a game that simply does
+    -- not replicate them cannot make the check flag everybody.
+    Events.Killaura = function()
+        local last, intervals, victims, hits, quiet = {}, {}, {}, {}, {}
+
+        CheatDetector:Clean(vapeEvents.EntityDamageEvent.Event:Connect(function(damageTable)
+            if not wanted('Killaura') then return end
+            if damageTable.damageType ~= 0 or not damageTable.fromEntity then return end
+
+            local from = playersService:GetPlayerFromCharacter(damageTable.fromEntity)
+            if not from or selfExcluded(from) or CheatersFlagged[from] then return end
+            if not conditionsUsable(from) then return end
+
+            local victim = damageTable.entityInstance and playersService:GetPlayerFromCharacter(damageTable.entityInstance)
+            local now = os.clock()
+
+            -- Was there a swing behind this hit?
+            if (now - (animationLast[from] or 0)) <= 0.4 then
+                animationBacked += 1
+                quiet[from] = 0
+            elseif animationBacked >= 5 then
+                quiet[from] = (quiet[from] or 0) + 1
+                if quiet[from] >= 6 then
+                    quiet[from] = 0
+                    strike(from, 'Killaura', 'using killaura', '6 hits with no swing behind them')
+                end
+            end
+
+            -- Several different people inside the time it takes to turn around.
+            if victim then
+                local seen = victims[from]
+                if not seen then
+                    seen = {}
+                    victims[from] = seen
+                end
+                seen[victim] = now
+                local distinct = 0
+                for plr, stamp in seen do
+                    if now - stamp > SWITCH_WINDOW then
+                        seen[plr] = nil
+                    else
+                        distinct += 1
+                    end
+                end
+                if distinct >= SWITCH_VICTIMS then
+                    table.clear(seen)
+                    strike(from, 'Killaura', 'using killaura', `{distinct} different targets inside {SWITCH_WINDOW}s`)
+                end
+            end
+
+            local previous = last[from]
+            last[from] = now
+            if not previous then return end
+
+            local interval = now - previous
+            -- Two events delivered in the same frame were batched by the network, not thrown that
+            -- fast. Reading a batch as a zero interval is how a check like this flags people who
+            -- are simply being replicated to us in bursts.
+            if interval <= 0.008 then return end
+
+            if interval < MIN_HUMAN_INTERVAL then
+                strike(from, 'Killaura', 'using killaura', `hits {math.floor(interval * 1000)}ms apart`)
+                return
+            end
+
+            -- Held rate. Not one fast hit - a run of them.
+            if bumpRate(hits, from, BURST_WINDOW) >= BURST_HITS then
+                hits[from] = nil
+                strike(from, 'Killaura', 'using killaura', `{BURST_HITS} hits inside {BURST_WINDOW}s`)
+            end
+
+            -- Cadence. Only gaps short enough to be a weapon on cooldown are considered: a run of
+            -- evenly spaced hits seconds apart is somebody trading, not a machine.
+            local run = intervals[from]
+            if not run then
+                run = {}
+                intervals[from] = run
+            end
+            if interval > 0.6 then
+                table.clear(run)
+                return
+            end
+            table.insert(run, interval)
+            if #run > CADENCE_SAMPLES then
+                table.remove(run, 1)
+            end
+            if #run < CADENCE_SAMPLES then return end
+
+            local shortest, longest = math.huge, 0
+            for _, value in run do
+                shortest = math.min(shortest, value)
+                longest = math.max(longest, value)
+            end
+            if (longest - shortest) <= CADENCE_SPREAD then
+                table.clear(run)
+                strike(from, 'Killaura', 'using killaura', `{CADENCE_SAMPLES} hits {math.floor(shortest * 1000)}ms apart to the millisecond`)
+            end
+        end))
+    end
+
+    ------------------------------------------------------------------------
+    -- Reach.
+    ------------------------------------------------------------------------
+    -- The measurement an aura cannot fake. It can put whatever position it likes in the packet it
+    -- sends the server, but the body the rest of us see stays where the player really is, so the
+    -- distance between the two characters at the moment damage lands is the honest one. Every
+    -- sword in the game swings 14.4 studs or less; past 15.5 the hit came from somewhere the
+    -- weapon does not reach.
+    Events.Reach = function()
+        CheatDetector:Clean(vapeEvents.EntityDamageEvent.Event:Connect(function(damageTable)
+            if not wanted('Reach') then return end
+            if damageTable.damageType ~= 0 or not damageTable.fromEntity or not damageTable.entityInstance then return end
+
+            local attacker = playersService:GetPlayerFromCharacter(damageTable.fromEntity)
+            if not attacker or selfExcluded(attacker) or CheatersFlagged[attacker] then return end
+            if not conditionsUsable(attacker) or recentlyTeleported(attacker) then return end
+
+            local fromRoot = damageTable.fromEntity.PrimaryPart
+            local toRoot = damageTable.entityInstance.PrimaryPart
+            if not fromRoot or not toRoot then return end
+
+            local distance = (fromRoot.Position - toRoot.Position).Magnitude
+            -- Ping converted into studs rather than added as seconds, and kept small: this is an
+            -- allowance for our own view of two moving bodies, not for the weapon.
+            local allowance = math.clamp(ping() * 20, 0, 3)
+            local limit = math.max(weaponReach(attacker) + 1.1, REACH_LIMIT) + allowance
+
+            if distance > limit then
+                strike(attacker, 'Reach', 'using reach', `{math.floor(distance * 10) / 10} studs, limit {math.floor(limit * 10) / 10}`)
+            end
+        end))
+    end
+
+    ------------------------------------------------------------------------
+    -- HitBoxes.
+    ------------------------------------------------------------------------
+    -- An expanded hitbox lives on the attacker's own client, so it is never visible from here
+    -- directly. What it produces that a normal swing cannot is a hit landing while the attacker is
+    -- facing well off the target: the swing resolved against a box far wider than the body. The
+    -- distance has to be inside legitimate reach too, otherwise this is just Reach again and one
+    -- swing would be counted twice.
+    Events.HitBoxes = function()
+        CheatDetector:Clean(vapeEvents.EntityDamageEvent.Event:Connect(function(damageTable)
+            if not wanted('HitBoxes') then return end
+            if damageTable.damageType ~= 0 or not damageTable.fromEntity or not damageTable.entityInstance then return end
+
+            local attacker = playersService:GetPlayerFromCharacter(damageTable.fromEntity)
+            if not attacker or selfExcluded(attacker) or CheatersFlagged[attacker] then return end
+            if not conditionsUsable(attacker) or recentlyTeleported(attacker) then return end
+
+            local fromRoot = damageTable.fromEntity.PrimaryPart
+            local toRoot = damageTable.entityInstance.PrimaryPart
+            if not fromRoot or not toRoot then return end
+
+            local delta = (toRoot.Position - fromRoot.Position)
+            local distance = delta.Magnitude
+            -- Point blank the angle means nothing - the bodies overlap and any heading hits - and
+            -- past the weapon's own reach this is Reach's reading, not this one.
+            if distance < 6 or distance > REACH_LIMIT then return end
+
+            local facing = fromRoot.CFrame.LookVector * Vector3.new(1, 0, 1)
+            local toward = delta * Vector3.new(1, 0, 1)
+            if facing.Magnitude < 0.01 or toward.Magnitude < 0.01 then return end
+
+            local angle = math.deg(math.acos(math.clamp(facing.Unit:Dot(toward.Unit), -1, 1)))
+            -- 70 degrees off and still landing means the swing did not resolve against the body
+            -- that is being drawn. Wide enough that our own interpolation of a strafing player
+            -- cannot get there on its own.
+            if angle > 70 then
+                strike(attacker, 'HitBoxes', 'expanded hitboxes', `hit {math.floor(angle)} degrees off target`)
+            end
+        end))
+    end
+
+    ------------------------------------------------------------------------
+    -- SilentAim.
+    ------------------------------------------------------------------------
+    -- The projectile equivalent: a shot that lands on someone the shooter was never pointing at.
+    -- Only long shots are considered, because at close range the angle to a target is wide even
+    -- when aimed honestly, and only non-melee damage, so a sword swing is never counted here.
+    Events.SilentAim = function()
+        CheatDetector:Clean(vapeEvents.EntityDamageEvent.Event:Connect(function(damageTable)
+            if not wanted('SilentAim') then return end
+            if damageTable.damageType == 0 or not damageTable.fromEntity or not damageTable.entityInstance then return end
+
+            local attacker = playersService:GetPlayerFromCharacter(damageTable.fromEntity)
+            if not attacker or selfExcluded(attacker) or CheatersFlagged[attacker] then return end
+            if not conditionsUsable(attacker) or recentlyTeleported(attacker) then return end
+
+            local fromRoot = damageTable.fromEntity.PrimaryPart
+            local toRoot = damageTable.entityInstance.PrimaryPart
+            if not fromRoot or not toRoot then return end
+
+            local delta = (toRoot.Position - fromRoot.Position) * Vector3.new(1, 0, 1)
+            -- A thrown projectile arcs, and a short lob can leave at a heading well off the
+            -- target quite legitimately. Distance is what makes the heading meaningful.
+            if delta.Magnitude < 25 then return end
+
+            local facing = fromRoot.CFrame.LookVector * Vector3.new(1, 0, 1)
+            if facing.Magnitude < 0.01 then return end
+
+            local angle = math.deg(math.acos(math.clamp(facing.Unit:Dot(delta.Unit), -1, 1)))
+            if angle > 50 then
+                strike(attacker, 'SilentAim', 'silent aim', `landed a shot {math.floor(angle)} degrees off their heading`)
+            end
+        end))
+    end
+
+    ------------------------------------------------------------------------
+    -- ProjectileAimbot and Aura.
+    ------------------------------------------------------------------------
+    -- Aimbot is not one impossible shot, it is never missing. Landing projectile after projectile
+    -- on live players at long range, faster than they can be aimed, is the thing no hand does.
+    Events.ProjectileAim = function()
+        local hits = {}
+        CheatDetector:Clean(vapeEvents.EntityDamageEvent.Event:Connect(function(damageTable)
+            if not wanted('ProjectileAim') then return end
+            if damageTable.damageType == 0 or not damageTable.fromEntity or not damageTable.entityInstance then return end
+
+            local attacker = playersService:GetPlayerFromCharacter(damageTable.fromEntity)
+            local victim = playersService:GetPlayerFromCharacter(damageTable.entityInstance)
+            -- Players only. A projectile stream into a mob or a bed is a different thing entirely.
+            if not attacker or not victim or selfExcluded(attacker) or CheatersFlagged[attacker] then return end
+            if not conditionsUsable(attacker) then return end
+
+            local fromRoot = damageTable.fromEntity.PrimaryPart
+            local toRoot = damageTable.entityInstance.PrimaryPart
+            if not fromRoot or not toRoot then return end
+            if (toRoot.Position - fromRoot.Position).Magnitude < 30 then return end
+
+            -- Four long-range projectile hits on players inside six seconds. Bows are slow to
+            -- draw, so this is well past what the weapon itself allows aimed by hand.
+            if bumpRate(hits, attacker, 6) >= 4 then
+                hits[attacker] = nil
+                strike(attacker, 'ProjectileAim', 'projectile aimbot', '4 long-range projectile hits inside 6s')
+            end
+        end))
+    end
+
+    ------------------------------------------------------------------------
+    -- Breaker.
+    ------------------------------------------------------------------------
+    -- Blocks coming apart faster than a tool can swing, or coming apart from across the map. Both
+    -- are read off the break event itself, which carries who did it and where.
+    Events.Breaker = function()
+        local rates = {}
+        CheatDetector:Clean(vapeEvents.BreakBlockEvent.Event:Connect(function(data)
+            if not wanted('Breaker') then return end
+            local plr = data.player
+            if not plr or selfExcluded(plr) or CheatersFlagged[plr] then return end
+            if not conditionsUsable(plr) then return end
+
+            local blockPosition = data.blockRef and data.blockRef.blockPosition
+            if typeof(blockPosition) == 'Vector3' then
+                local root
+                for _, ent in entities() do
+                    if ent.Player == plr then
+                        root = ent.RootPart
+                        break
+                    end
+                end
+                if root and root.Parent then
+                    local distance = (root.Position - (blockPosition * 3)).Magnitude
+                    -- Block reach in this game is well under 30 studs even with every modifier.
+                    if distance > 45 and not recentlyTeleported(plr) then
+                        strike(plr, 'Breaker', 'block breaker', `broke a block {math.floor(distance)} studs away`)
+                        return
+                    end
+                end
+            end
+
+            -- Twelve blocks inside two seconds. Flat out with the fastest tool in the game on the
+            -- softest block is not close to this, and a burst that size cannot be a batch of
+            -- replicated events either.
+            if bumpRate(rates, plr, 2) >= 12 then
+                rates[plr] = nil
+                strike(plr, 'Breaker', 'block breaker', '12 blocks broken inside 2s')
+            end
+        end))
+    end
+
+    ------------------------------------------------------------------------
+    -- Crashers: Remote.
+    ------------------------------------------------------------------------
+    -- Another player's remote traffic is not visible from here, but its effect is: a crasher
+    -- pushes replicated actions out at a rate the game itself never produces. Block places and
+    -- breaks and damage events are all counted together, because a crasher does not care which
+    -- remote it is hammering. The bar is per second and set well past a busy one: jumping around
+    -- spamming a sword while building throws out a lot of events, and none of that is a crash.
+    Events.Remote = function()
+        local rates = {}
+
+        local function count(plr)
+            if not wanted('Remote') then return end
+            if not plr or selfExcluded(plr) or CheatersFlagged[plr] then return end
+            if bumpRate(rates, plr, REMOTE_WINDOW) >= REMOTE_FLOOD then
+                rates[plr] = nil
+                strike(plr, 'Remote', 'remote spam', `{REMOTE_FLOOD} replicated actions inside {REMOTE_WINDOW}s`)
+            end
+        end
+
+        CheatDetector:Clean(vapeEvents.BreakBlockEvent.Event:Connect(function(data)
+            count(data.player)
+        end))
+        CheatDetector:Clean(vapeEvents.PlaceBlockEvent.Event:Connect(function(data)
+            count(data and data.player)
+        end))
+        CheatDetector:Clean(vapeEvents.EntityDamageEvent.Event:Connect(function(damageTable)
+            if not damageTable.fromEntity then return end
+            count(playersService:GetPlayerFromCharacter(damageTable.fromEntity))
+        end))
+    end
+
+    -- One snapshot of everybody worth measuring, taken once per tick and handed to every polling
+    -- check. Attributes, ground state and velocity are read here rather than inside each check,
+    -- so a player is walked over once however many checks are on.
+    local function snapshot(now)
+        local list = {}
+        for _, ent in entities() do
+            local plr, root, char = ent.Player, ent.RootPart, ent.Character
+            if not plr or selfExcluded(plr) or CheatersFlagged[plr] then continue end
+            if not root or not root.Parent or not char then continue end
+            if (ent.Health or 0) <= 0 then continue end
+
+            local position = root.Position
+            table.insert(list, {
+                Player = plr,
+                Character = char,
+                Root = root,
+                Position = position,
+                Flat = position * Vector3.new(1, 0, 1),
+                Velocity = root.AssemblyLinearVelocity,
+                Grounded = (ent.Humanoid and ent.Humanoid.FloorMaterial ~= Enum.Material.Air) or false,
+                Effects = effectsOf(char),
+                Teleported = recentlyTeleported(plr),
+                Hurt = (now - (lastHurt[plr] or 0)) < 1.5
+            })
+        end
+        return list
+    end
 
     CheatDetector = vape.Categories.Utility:CreateModule({
         Name = 'CheatDetector',
@@ -17142,6 +17521,12 @@ run(function()
             if callback then
                 table.clear(strikes)
                 table.clear(lastHurt)
+                table.clear(animationLast)
+                table.clear(animationRates)
+                table.clear(animationHooked)
+                animationBacked = 0
+                voidStamp = 0
+
                 -- Feeds the knockback suppression the speed and jump checks rely on.
                 CheatDetector:Clean(vapeEvents.EntityDamageEvent.Event:Connect(function(damageTable)
                     local victim = damageTable.entityInstance and playersService:GetPlayerFromCharacter(damageTable.entityInstance)
@@ -17150,48 +17535,98 @@ run(function()
                     end
                 end))
 
-                for name, check in Checks do
-                    local group = CHECK_GROUP[name]
-                    if group and checkEnabled(group, CHECK_TOGGLE[name] or name) then
-                        task.spawn(function()
-                            local ok, err = pcall(check)
-                            if not ok then
-                                warn('[AetherV2] CheatDetector '..name..': '..tostring(err))
-                            end
-                        end)
+                -- Every check is put in place, whichever toggles happen to be ticked right now,
+                -- and each one asks whether it is wanted as it runs. Building only the ticked
+                -- ones meant a detection switched on mid-match did nothing at all until the
+                -- module was cycled by hand, which is most of what "half of these do not work"
+                -- was. An unwanted check costs one table lookup a tick.
+                for name, event in Events do
+                    local ok, err = pcall(event)
+                    if not ok then
+                        warn('[AetherV2] CheatDetector '..name..': '..tostring(err))
                     end
                 end
 
-                repeat task.wait(1) until not CheatDetector.Enabled
+                local running = {}
+                for name, poller in Pollers do
+                    local ok, fn = pcall(poller)
+                    if ok and type(fn) == 'function' then
+                        running[name] = fn
+                    else
+                        warn('[AetherV2] CheatDetector '..name..': '..tostring(fn))
+                    end
+                end
+
+                local last = tick()
+                repeat
+                    local now = tick()
+                    local delta = now - last
+                    last = now
+
+                    -- The animation watch is what the crasher check counts and what killaura
+                    -- asks whether a swing happened at all, so it runs for either of them.
+                    local watching = wanted('Animation') or wanted('Killaura')
+                    local polling = false
+                    for name in running do
+                        if wanted(name) then
+                            polling = true
+                            break
+                        end
+                    end
+
+                    if watching or polling then
+                        -- A character coming apart mid-read throws, and an unguarded throw here
+                        -- ends the loop and the whole module with it.
+                        local taken, list = pcall(snapshot, now)
+                        if taken and #list > 0 then
+                            if watching then
+                                pcall(watchAnimations, list)
+                            end
+                            for name, fn in running do
+                                if not wanted(name) then continue end
+                                local ok, err = pcall(fn, now, list, delta)
+                                if not ok then
+                                    warn('[AetherV2] CheatDetector '..name..': '..tostring(err))
+                                end
+                            end
+                        end
+                    end
+
+                    task.wait(POLL_INTERVAL)
+                until not CheatDetector.Enabled
             else
                 table.clear(strikes)
                 table.clear(lastHurt)
+                table.clear(animationLast)
+                table.clear(animationRates)
+                table.clear(animationHooked)
+                animationBacked = 0
             end
         end,
         Tooltip = 'Alerts for likely cheaters. Every detection needs several impossible readings, and ignores ones taken on a poor connection'
     })
 
     local GROUP_TOOLTIPS = {
-        ['Impossible hits'] = 'Hits that cannot have been aimed: killaura, silent aim, expanded hitboxes, reach',
+        ['Impossible hits'] = 'Hits that cannot have been aimed or thrown by hand: killaura, silent aim, expanded hitboxes, reach past any weapon',
         ['Blatant modules'] = 'Movement and state nobody can produce by playing: attach, anti death, phase, invisibility, high jump, speed',
         ['AutoKit'] = 'Kit abilities fired on a fixed interval, the regularity no hand holds',
-        ['Crashers'] = 'Floods meant to bury other clients, by animation or by replicated action',
+        ['Crashers'] = 'Floods meant to bury other clients - animations or replicated actions many times a second',
         ['Breaker'] = 'Blocks broken faster than a tool swings, or from across the map',
         ['ProjectileAimbot and Aura'] = 'Long-range projectiles landing on players faster than a bow can be drawn and aimed'
     }
     local CHILD_TOOLTIPS = {
-        Killaura = 'Hit intervals below any human click rate, and targets switched instantly',
+        Killaura = 'Hit rate, an unvarying cadence, several targets at once, or damage with no swing behind it',
         SilentAim = 'Shots landing on someone the shooter was not pointing at',
         HitBoxes = 'Melee landing while facing well off the body being drawn',
-        Reach = 'Hits beyond the weapon range, after ping is allowed for in studs',
-        PlayerAttach = 'Riding another player, held inside a couple of studs while both are moving',
-        AntiDeath = 'Alive and holding a position below every block on the map',
+        Reach = 'Hits landing past 15.5 studs, further than any sword in the game swings',
+        PlayerAttach = 'Teleporting onto a player, or riding them with the gap between you barely moving',
+        AntiDeath = 'The hitbox thrown up and down faster than gravity, or held below every block on the map',
         Phase = 'The body stood inside solid geometry across consecutive samples',
         Invisible = 'Moving with every limb hidden and no invisibility effect of their own',
         HighJump = 'Rising far past jump power off one jump, with no launch or ability effect',
-        Speed = 'Ground speed past everything the game can stack, with buffs and knockback excluded',
-        Animation = 'Animation starts at a rate ordinary play never reaches',
-        Remote = 'Replicated actions - places, breaks, hits - at a rate the game never produces'
+        Speed = 'Ground speed held past 22 studs/s - or past whatever the kit\'s own metadata says it is worth - with potions, dashes and knockback excluded',
+        Animation = 'Animation starts many times a second, far past anything play produces',
+        Remote = 'Replicated actions - places, breaks, hits - many times a second'
     }
 
     for _, group in GROUPS do
@@ -17223,7 +17658,7 @@ run(function()
     -- as they run rather than reading it once at startup, so there is no need to cycle the module.
     Toggles[DETECT_SELF] = CheatDetector:CreateToggle({
         Name = DETECT_SELF,
-        Tooltip = 'Testing aid. Runs every enabled detection against you as well, and flags you like anyone else if one of them fires',
+        Tooltip = 'Testing aid. Runs every enabled detection against you as well, on your behaviour alone - it never looks at which of your modules are on - and flags you like anyone else if one of them fires',
         Function = function()
             -- Readings taken either side of a change of mind about whether we count are not a
             -- pattern, so whichever way it just moved, our own history starts again from nothing.
@@ -24886,15 +25321,30 @@ run(function()
     local bows = {'wood_bow', 'bow'}
     local crossbows = {'crossbow', 'wood_crossbow', 'ice_crossbow'}
 
+    -- Every shop lookup goes through here. `getShopItem` in this build resolves against the shop
+    -- that is actually being stood at - called without one it hands back nothing for most of the
+    -- catalogue, which is what left AutoBuy silently buying nothing at all: `buyTool` then indexed
+    -- that nil, the callback threw, and the error took the whole buy loop with it.
+    local function shopItem(itemType)
+        if not itemType then return nil end
+        local ok, item = pcall(bedwars.Shop.getShopItem, itemType, lplr, id and {shopId = id} or nil)
+        if ok and item then return item end
+        -- Older builds take the two-argument form; try it rather than give up on the item.
+        ok, item = pcall(bedwars.Shop.getShopItem, itemType, lplr)
+        return ok and item or nil
+    end
+
     local function resolveShopItem(candidates, pattern, exclude)
         for _, name in candidates do
-            local ok, item = pcall(bedwars.Shop.getShopItem, name, lplr)
-            if ok and item then return item, name end
+            local item = shopItem(name)
+            if item then return item, name end
         end
         if not pattern then return nil end
         local found, foundType
         pcall(function()
-            for _, entry in bedwars.Shop.ShopItems do
+            -- The catalogue is cached on the bedwars table as ShopItems; bedwars.Shop has no such
+            -- field, so this whole fallback used to throw into its own pcall and never match.
+            for _, entry in (bedwars.ShopItems or {}) do
                 local itemType = type(entry) == 'table' and entry.itemType or nil
                 if itemType and itemType:find(pattern) and not (exclude and itemType:find(exclude)) then
                     if not found or (entry.price or math.huge) < (found.price or math.huge) then
@@ -25011,7 +25461,11 @@ run(function()
         tool = tool and table.find(tools, tool.itemType) and table.find(tools, tool.itemType) + 1 or math.huge
 
         for i = tool, #tools do
-            local v = bedwars.Shop.getShopItem(tools[i], lplr)
+            local v = shopItem(tools[i])
+            -- A tier this shop does not sell is skipped rather than indexed. `getShopItem` returns
+            -- nothing for plenty of ids (kit swords, queue-specific tools), and reading a price off
+            -- that nil threw out of the buy loop entirely.
+            if not v then continue end
             if canBuy(v, currencytable) then
                 if SmartCheck.Enabled and bedwars.ItemMeta[tools[i]].breakBlock and i > 2 then
                     if Armor.Enabled then
@@ -25087,7 +25541,14 @@ run(function()
                         local waitcheck
                         for _, tab in Callbacks do
                             for _, callback in tab do
-                                if callback(currencytable, shop, upgrades) then
+                                -- One buyer failing (an item this queue does not sell, a shop that
+                                -- has not finished loading) used to throw out of the repeat loop
+                                -- and end AutoBuy for the rest of the match. Contain it here so
+                                -- everything else on the list still gets its turn.
+                                local ok, bought = pcall(callback, currencytable, shop, upgrades)
+                                if not ok then
+                                    warn('[AetherV2] AutoBuy: '..tostring(bought))
+                                elseif bought then
                                     waitcheck = true
                                 end
                             end
@@ -25272,7 +25733,7 @@ run(function()
                     (tab[4] and CustomPost or Custom)[ind] = function(currencytable, shop)
                         if not shop then return end
 
-                        local v = bedwars.Shop.getShopItem(tab[2], lplr)
+                        local v = shopItem(tab[2])
                         if v then
                             local item = getItem(tab[2] == 'wool_white' and bedwars.Shop.getTeamWool(lplr:GetAttribute('Team')) or tab[2])
                             item = (item and tonumber(tab[3]) - item.amount or tonumber(tab[3])) // v.amount

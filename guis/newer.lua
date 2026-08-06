@@ -11462,8 +11462,19 @@ end
 	a live enabled counter, enable glow rings, accent-tinted scrollbars, a
 	breathing window edge, per-category open pops and a collapse-all button).
 	=====================================================================
+
+	Written as a function that is called immediately rather than a plain `do`
+	block. Luau gives every function 200 local registers, and locals in a bare
+	block share the registers of the chunk they sit in - this file already
+	declares over 160 at the top level, so the last few locals down here pushed
+	the main chunk past the limit and the WHOLE FILE failed to compile ("Out of
+	local registers when trying to allocate themeSwatch"), which is what made
+	the GUI throw on load and uninject. Its own function body means this pack
+	gets its own register budget, and adding to it can never take the file down
+	again.
+	=====================================================================
 ]]
-do
+;(function()
 	local function accent()
 		return Color3.fromHSV(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value)
 	end
@@ -11541,8 +11552,11 @@ do
 
 	local spotCard = Instance.new('TextButton')
 	spotCard.Name = 'Card'
-	spotCard.Size = UDim2.fromOffset(520, 470)
-	spotCard.Position = UDim2.fromScale(0.5, 0.42)
+	-- Sized for the whole module list plus an expanded details panel underneath a row, and
+	-- anchored dead centre. The old card was both small enough that details pushed everything
+	-- out of view and hung above the middle of the screen at 0.42.
+	spotCard.Size = UDim2.fromOffset(660, 560)
+	spotCard.Position = UDim2.fromScale(0.5, 0.5)
 	spotCard.AnchorPoint = Vector2.new(0.5, 0.5)
 	spotCard.BackgroundColor3 = uipallet.Main
 	spotCard.BackgroundTransparency = 0.02
@@ -12077,7 +12091,7 @@ do
 			spotIcon.ImageColor3 = accent()
 		end)
 	end
-end
+end)()
 
 -- Simple, reliable open animation. Every visible window pops from 0.94 -> 1 the
 -- instant the menu opens - no stagger and no per-window visibility gating, so
