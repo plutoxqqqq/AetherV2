@@ -451,6 +451,20 @@ end
 
 local function notif(...) return vape:CreateNotification(...) end
 
+-- Picks the first name this build's AnimationType actually defines. Naming a constant directly
+-- and falling through with `or` silently substitutes a completely different animation when the
+-- name is missing, which is how firing a projectile ended up playing a punch.
+local function resolveAnimation(names)
+	local types = bedwars.AnimationType
+	if type(types) ~= 'table' then return nil end
+	for _, name in names do
+		if types[name] ~= nil then
+			return types[name]
+		end
+	end
+	return nil
+end
+
 local function removeTags(str)
 	str = str:gsub('<br%s*/>', '\n')
 	return (str:gsub('<[^<>]->', ''))
@@ -3177,16 +3191,25 @@ run(function()
             local shoot = source.launchSound
             shoot = shoot and shoot[math.random(1, #shoot)] or nil
             if shoot then pcall(function() bedwars.SoundManager:playSound(shoot) end) end
-            -- The manual remote path skips the game's input pipeline, so neither
-            -- the viewmodel nor the character ever animated the shot. Drive the
-            -- launch animations ourselves: prefer the bow-specific types when the
-            -- game defines them and fall back to the generic use-item swing.
-            pcall(function()
-                bedwars.ViewmodelController:playAnimation(bedwars.AnimationType.FP_BOW_SHOOT or bedwars.AnimationType.FP_USE_ITEM)
-            end)
-            pcall(function()
-                bedwars.GameAnimationUtil:playAnimation(lplr.Character, bedwars.AnimationType.BOW_SHOOT or bedwars.AnimationType.PUNCH)
-            end)
+            -- The manual remote path skips the game's input pipeline, so neither the viewmodel
+            -- nor the character ever animated the shot. The names asked for here have to be
+            -- looked up rather than assumed: FP_BOW_SHOOT and BOW_SHOOT are not in this build's
+            -- AnimationType, so `A or B` fell straight through to the generic use-item swing
+            -- and, on the character, to PUNCH - which is why firing threw a punch. Nothing is
+            -- played on the character unless a real shoot animation is found, because no
+            -- animation reads far better than the wrong one.
+            local fp = resolveAnimation({'FP_BOW_SHOOT', 'FP_CROSSBOW_SHOOT', 'FP_SHOOT', 'FP_THROW', 'FP_USE_ITEM'})
+            local body = resolveAnimation({'BOW_SHOOT', 'CROSSBOW_SHOOT', 'SHOOT', 'THROW'})
+            if fp then
+                pcall(function()
+                    bedwars.ViewmodelController:playAnimation(fp)
+                end)
+            end
+            if body then
+                pcall(function()
+                    bedwars.GameAnimationUtil:playAnimation(lplr.Character, body)
+                end)
+            end
         end
         return success
     end
@@ -9936,7 +9959,16 @@ run(function()
                                     rayCheck.CollisionGroup = root.CollisionGroup
                                     local ray = workspace:Raycast(root.Position, destination, rayCheck)
                                     if ray then
-                                        destination = ((ray.Position + ray.Normal) - root.Position)
+                                        -- Drop the part of the step that goes into the wall and keep the
+                                        -- rest, so pressing into a surface slides along it. Replacing the
+                                        -- step with "go to one stud off the hit point" put the root inside
+                                        -- its own collision hull and shoved it back into the wall every
+                                        -- frame; held against a surface like that, wall friction takes over
+                                        -- from gravity, which is the slow slide down instead of a fall.
+                                        local into = destination:Dot(ray.Normal)
+                                        if into < 0 then
+                                            destination -= ray.Normal * into
+                                        end
                                     end
                                 end
 

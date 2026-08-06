@@ -364,7 +364,16 @@ SpeedMethods = {
 			options.rayCheck.CollisionGroup = root.CollisionGroup
 			local ray = workspace:Raycast(root.Position, dest, options.rayCheck)
 			if ray then
-				dest = ((ray.Position + ray.Normal) - root.Position)
+				-- Take the movement into the wall out of the step and keep the rest, so pressing
+				-- into a surface slides along it. The old line replaced the step with "go to one
+				-- stud off the hit point", which is inside the character's own collision hull -
+				-- so every frame shoved the body back into the wall and held it there. Pressed
+				-- against a surface like that, wall friction takes over from gravity, which is
+				-- the slow slide down instead of a fall.
+				local into = dest:Dot(ray.Normal)
+				if into < 0 then
+					dest -= ray.Normal * into
+				end
 			end
 		end
 		root.CFrame += dest
@@ -2436,46 +2445,64 @@ run(function()
     local InfiniteJump
     local Mode
     local TP
-    local Distance
-    local lastTPDown = 0
     local rayCheck = RaycastParams.new()
     rayCheck.RespectCanCollide = true
     local jumps = 0
 
-    -- Drops you toward the ground on each jump instead of hopping.
-    --
-    -- The old version needed LeftShift held and then fought itself: one handler snapped you down
-    -- to the floor and put you straight back where you started 0.08s later, while the other
-    -- subtracted 12 studs on a jump request. The net movement was nothing, which is why the option
-    -- did not appear to do anything. There is no key to hold now - the toggle is the whole
-    -- control.
-    --
-    -- The drop is clamped to whatever is actually beneath you, so it lands you on the floor rather
-    -- than through it, and it refuses outright when there is nothing under you at all. Dropping
-    -- into the void is never what was wanted.
-    local function teleportDown()
-	local character = entitylib.character
-	local root = character.RootPart
-	if not root or not root.Parent then return false end
+    --[[
+        TP Down, ported from Fly.
 
-	rayCheck.FilterDescendantsInstances = {lplr.Character, gameCamera}
-	rayCheck.CollisionGroup = root.CollisionGroup
-	local ground = workspace:Raycast(root.Position, Vector3.new(0, -500, 0), rayCheck)
-	if not ground then return false end
+        It is not a descent, and it never replaces the jump - which is what the old version did.
+        It handed every JumpRequest to a teleport and returned, so with the option on the module
+        stopped jumping altogether and looked completely broken.
 
-	local position = root.Position
-	local floor = ground.Position.Y + (character.HipHeight or 3)
-	local target = math.max(position.Y - Distance.Value, floor)
-	-- Already standing on it: nothing to do, and teleporting a hair downward would only fight
-	-- the floor we are resting on.
-	if target >= position.Y - 0.05 then return false end
+        What Fly actually does, and what happens here: stay airborne long enough and the server
+        starts treating you as falling. So once per stretch of airtime, drop to whatever is under
+        you, hold there just long enough for the touch to register, then go straight back up to
+        the height you left. The server sees a player who keeps landing; you never lose altitude.
 
-	root.CFrame = CFrame.new(position.X, target, position.Z) * root.CFrame.Rotation
-	-- Kill the downward velocity we did not actually earn, so the drop does not carry into a
-	-- fall the server would charge us for.
-	local velocity = root.AssemblyLinearVelocity
-	root.AssemblyLinearVelocity = Vector3.new(velocity.X, 0, velocity.Z)
-	return true
+        universal.lua builds its own entitylib, and AirTime is filled in by the game files rather
+        than the library, so the airborne clock is kept here instead.
+    ]]
+    local groundTick, tpTick, tpToggle, oldy = tick(), tick(), true, nil
+
+    local function tpDownStep()
+        local character = entitylib.character
+        local root = character and character.RootPart
+        if not root or not root.Parent then return end
+        if isnetworkowner and not isnetworkowner(root) then return end
+
+        rayCheck.FilterDescendantsInstances = {lplr.Character, gameCamera}
+        rayCheck.CollisionGroup = root.CollisionGroup
+
+        if tpToggle then
+            -- Standing on something resets the clock, exactly as a real landing would.
+            if workspace:Raycast(root.Position, Vector3.new(0, -4.5, 0), rayCheck) then
+                groundTick = tick()
+            end
+            if oldy or (tick() - groundTick) <= 2 then return end
+            local ray = workspace:Raycast(root.Position, Vector3.new(0, -1000, 0), rayCheck)
+            if not ray then return end
+            tpToggle = false
+            oldy = root.Position.Y
+            tpTick = tick() + 0.11
+            root.CFrame = CFrame.lookAlong(
+                Vector3.new(root.Position.X, ray.Position.Y + (character.HipHeight or 3), root.Position.Z),
+                root.CFrame.LookVector
+            )
+        elseif oldy then
+            if tpTick < tick() then
+                root.CFrame = CFrame.lookAlong(Vector3.new(root.Position.X, oldy, root.Position.Z), root.CFrame.LookVector)
+                tpToggle = true
+                oldy = nil
+                groundTick = tick()
+            else
+                -- Held on the floor for the touch window. Falling away from it mid-hold is what
+                -- would stop the landing registering at all.
+                local velocity = root.AssemblyLinearVelocity
+                root.AssemblyLinearVelocity = Vector3.new(velocity.X, 0, velocity.Z)
+            end
+        end
     end
 
     InfiniteJump = vape.Categories.Blatant:CreateModule({
@@ -2484,25 +2511,16 @@ run(function()
 	Function = function(callback: boolean)
 		if callback then
 			jumps = 0
-			lastTPDown = 0
+			groundTick, tpTick, tpToggle, oldy = tick(), tick(), true, nil
+
+			InfiniteJump:Clean(runService.PreSimulation:Connect(function()
+				if not TP.Enabled or not entitylib.isAlive then return end
+				tpDownStep()
+			end))
 
 			InfiniteJump:Clean(inputService.JumpRequest:Connect(function()
 				if not entitylib.isAlive then return end
 				jumps += 1
-
-				-- TP Down replaces the hop rather than being layered on top of it: jumping up
-				-- and teleporting down in the same frame is what made the old behaviour so
-				-- hard to read.
-				if TP.Enabled then
-					-- JumpRequest repeats for as long as the jump input is held, so without a
-					-- floor on the rate this would fire every frame and read as a teleport
-					-- storm rather than a descent.
-					if tick() >= lastTPDown then
-						lastTPDown = tick() + 0.15
-						teleportDown()
-					end
-					return
-				end
 
 				if jumps > 1 and Mode.Value == 'Velocity' then
 					local power = math.sqrt(2 * workspace.Gravity * entitylib.character.Humanoid.JumpHeight)
@@ -2527,23 +2545,7 @@ run(function()
     })
     TP = InfiniteJump:CreateToggle({
 	Name = 'TP Down',
-	Function = function(callback)
-		if Distance and Distance.Object then
-			Distance.Object.Visible = callback
-		end
-	end,
-	Tooltip = 'Jumping drops you toward the ground instead of hopping. No key to hold - while this is on, every jump is a descent',
-    })
-    Distance = InfiniteJump:CreateSlider({
-	Name = 'Drop distance',
-	Min = 1,
-	Max = 40,
-	Default = 12,
-	Darker = true,
-	Suffix = function(val)
-		return val == 1 and 'stud' or 'studs'
-	end,
-	Tooltip = 'How far each jump drops you. Never further than the ground below, and never at all when there is no ground below',
+	Tooltip = 'Touches the ground and returns once you have been airborne too long, so the server keeps seeing you land. Jumping is unaffected',
     })
 end)
 
