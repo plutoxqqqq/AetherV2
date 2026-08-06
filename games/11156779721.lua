@@ -549,7 +549,13 @@ run(function()
     						rayCheck.CollisionGroup = root.CollisionGroup
     						local ray = workspace:Raycast(root.Position, destination, rayCheck)
     						if ray then
-    							destination = ((ray.Position + ray.Normal) - root.Position)
+    							-- Drop the into-wall part of the step and keep the rest, so pressing into a
+    							-- surface slides along it rather than being shoved back into the wall every
+    							-- frame - which hands the fall to wall friction and reads as a slow slide.
+    							local into = destination:Dot(ray.Normal)
+    							if into < 0 then
+    								destination -= ray.Normal * into
+    							end
     						end
     					end
 

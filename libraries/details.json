@@ -1,0 +1,1882 @@
+{
+ "AbyssalDepths": {
+  "lines": [
+   "Recolours the world into a deep underwater look."
+  ]
+ },
+ "AimAssist": {
+  "lines": [
+   "Nudges your camera toward the closest valid target while you hold a sword, rather than snapping to it.",
+   "Tuned for looking legitimate: the pull is smoothed and bounded by a field of view, so it assists an aim you are already making."
+  ],
+  "requires": [
+   "A sword in hand"
+  ]
+ },
+ "AnimationPlayer": {
+  "lines": [
+   "Plays an animation you pick, at a speed you pick."
+  ]
+ },
+ "Anti-AFK": {
+  "lines": [
+   "Keeps you in the game rather than being kicked for inactivity."
+  ]
+ },
+ "AntiCheatDisabler": {
+  "lines": [
+   "Disables the game's local detection hooks and rejects abrupt position corrections sent by the server."
+  ]
+ },
+ "AntiDeath": {
+  "lines": [
+   "Moves your hitbox away from your body when a hit or projectile is about to land, so the damage misses.",
+   "Blatant by nature - the desync is visible to anyone watching your position."
+  ]
+ },
+ "AntiDeathPlus": {
+  "lines": [
+   "Dodges melee and projectiles like AntiDeath, with control over where the safe hitbox is parked and how long it stays there."
+  ]
+ },
+ "AntiInvisible": {
+  "lines": [
+   "Stops other players hiding themselves from you with invisibility animations."
+  ]
+ },
+ "AntiKillPlane": {
+  "lines": [
+   "Puts a solid part where the kill plane is, so you land on it instead of falling through."
+  ]
+ },
+ "AntiLagback": {
+  "lines": [
+   "Undoes the server rubber-banding you back onto an older position.",
+   "Recognises a rewind from any direction by keeping a short trail of positions you really held, and holds the correction for a window so the whole multi-frame pull is undone."
+  ]
+ },
+ "AntiLasso": {
+  "lines": [
+   "Stops a lasso pulling you, and returns you to where you were when it lets go.",
+   "Recognises the lasso by the constraint the game builds on your character, so it does not depend on a tag the game may rename."
+  ]
+ },
+ "AntiRagdoll": {
+  "lines": [
+   "Stops you being knocked into a ragdoll state."
+  ]
+ },
+ "AntiRiotShield": {
+  "lines": [
+   "Lets your shots pass through riot shields."
+  ]
+ },
+ "AntiSuffocate": {
+  "lines": [
+   "Pushes you out of a block you are stuck inside before it suffocates you."
+  ]
+ },
+ "AntiTaze": {
+  "lines": [
+   "Stops tazers immobilising you."
+  ]
+ },
+ "AntiVoid": {
+  "lines": [
+   "Stops you dying to the void by catching you before you fall past the point of no return.",
+   "Offers several recovery methods, from a solid barrier to a block or pearl clutch."
+  ]
+ },
+ "ArmorHighlight": {
+  "lines": [
+   "Highlights the armour other players are wearing so you can read their tier at a glance."
+  ]
+ },
+ "ArmorSwitch": {
+  "lines": [
+   "Takes your armour off and puts it back on when toggled, for baiting."
+  ]
+ },
+ "ArmorTrims": {
+  "lines": [
+   "Adds trims to your armour."
+  ]
+ },
+ "Arrows": {
+  "lines": [
+   "Draws arrows at the edge of the screen pointing at entities outside your field of view."
+  ]
+ },
+ "Atmosphere": {
+  "lines": [
+   "Adds and configures the world's lighting objects."
+  ]
+ },
+ "Aura": {
+  "lines": [
+   "Draws an aura effect around your character."
+  ]
+ },
+ "AuroraSky": {
+  "lines": [
+   "Draws an aurora across the sky."
+  ]
+ },
+ "AutoAdetunde": {
+  "lines": [
+   "Spends frost crystals on the frosty hammer as soon as the next tier is affordable."
+  ],
+  "requires": [
+   "The Adetunde kit"
+  ]
+ },
+ "AutoArrest": {
+  "lines": [
+   "Handcuffs nearby entities automatically."
+  ],
+  "requires": [
+   "Handcuffs"
+  ]
+ },
+ "AutoBalloon": {
+  "lines": [
+   "Inflates a balloon the moment you fall into the void."
+  ],
+  "requires": [
+   "A balloon in your inventory"
+  ]
+ },
+ "AutoBank": {
+  "lines": [
+   "Banks your resources for you, with a readout of what you are carrying."
+  ]
+ },
+ "AutoBattery": {
+  "lines": [
+   "Drains the batteries you walk over."
+  ],
+  "requires": [
+   "The Cobalt kit"
+  ]
+ },
+ "AutoBeekeeper": {
+  "lines": [
+   "Collects the bees around you and deposits them into your own hives."
+  ],
+  "requires": [
+   "The Beekeeper kit"
+  ]
+ },
+ "AutoBlock": {
+  "lines": [
+   "Unblocks and blocks again just before each of your hits, so you keep the block up between them."
+  ]
+ },
+ "AutoBlockKicker": {
+  "lines": [
+   "Aims the block you kick at whoever it can actually hit."
+  ],
+  "requires": [
+   "The Block Kicker kit"
+  ]
+ },
+ "AutoBuilder": {
+  "lines": [
+   "Fortifies the blocks you place with the builder hammer."
+  ],
+  "requires": [
+   "The Builder kit"
+  ]
+ },
+ "AutoBuildUp": {
+  "lines": [
+   "Towers straight up while you hold jump, filling the block cell beneath your feet as you rise.",
+   "Each cell is only filled once your feet have cleared its top face, so blocks land where you can stand on them."
+  ],
+  "requires": [
+   "Blocks in your inventory"
+  ]
+ },
+ "AutoBuy": {
+  "lines": [
+   "Buys from the shop as you walk up to it - armour, sword, tools, bow and team upgrades.",
+   "Buy Arrows restocks arrows whenever a bow or crossbow is in your inventory and you drop below the Minimum arrows slider."
+  ]
+ },
+ "AutoCaitlyn": {
+  "lines": [
+   "Takes the blood assassin contract on whoever is worth killing."
+  ],
+  "requires": [
+   "The Caitlyn kit"
+  ]
+ },
+ "AutoClicker": {
+  "lines": [
+   "Clicks for you while the attack button is held, at a randomised rate between your two CPS bounds.",
+   "The randomisation is what keeps the click pattern from reading as machine-driven."
+  ]
+ },
+ "AutoCobalt": {
+  "lines": [
+   "Widens the touch region on Cobalt's batteries so you collect them the moment you are near."
+  ],
+  "requires": [
+   "The Cobalt kit"
+  ]
+ },
+ "AutoComputer": {
+  "lines": [
+   "Completes the computer skill check for you."
+  ]
+ },
+ "AutoConsume": {
+  "lines": [
+   "Heals you automatically once health or shield falls below your threshold."
+  ],
+  "requires": [
+   "Healing items"
+  ]
+ },
+ "AutoCounter": {
+  "lines": [
+   "Counters an opponent's placement or break as it happens."
+  ]
+ },
+ "AutoCounterTNT": {
+  "lines": [
+   "Places your own TNT on top of an opponent's the moment theirs appears."
+  ],
+  "requires": [
+   "TNT in your inventory"
+  ]
+ },
+ "AutoCyber": {
+  "lines": [
+   "Uses the Cyber kit's abilities as they become available."
+  ],
+  "requires": [
+   "The Cyber kit"
+  ]
+ },
+ "AutoDavey": {
+  "lines": [
+   "Breaks the cannon, jumps the moment it launches you, or both."
+  ],
+  "requires": [
+   "The Davey kit"
+  ]
+ },
+ "AutoDetonate": {
+  "lines": [
+   "Detonates your explosives for you."
+  ]
+ },
+ "AutoDrill": {
+  "lines": [
+   "Collects what your drills produce and attacks with them."
+  ],
+  "requires": [
+   "The Driller kit"
+  ]
+ },
+ "AutoEat": {
+  "lines": [
+   "Eats healing items for you."
+  ],
+  "requires": [
+   "Food or healing items"
+  ]
+ },
+ "AutoElder": {
+  "lines": [
+   "Collects the eldertree orbs that appear around you."
+  ],
+  "requires": [
+   "The Elder kit"
+  ]
+ },
+ "AutoEmber": {
+  "lines": [
+   "Releases the infernal saber charge whenever somebody is in range."
+  ],
+  "requires": [
+   "The Ember kit"
+  ]
+ },
+ "AutoFarmer": {
+  "lines": [
+   "Harvests Cletus's crops as soon as they are ready."
+  ],
+  "requires": [
+   "The Cletus kit"
+  ]
+ },
+ "AutoFish": {
+  "lines": [
+   "Fishes for you."
+  ],
+  "requires": [
+   "A fishing rod"
+  ]
+ },
+ "AutoFisherman": {
+  "lines": [
+   "Wins the fishing minigame the moment it opens."
+  ],
+  "requires": [
+   "The Fisherman kit"
+  ]
+ },
+ "AutoGamble": {
+  "lines": [
+   "Opens lucky crates for you."
+  ]
+ },
+ "AutoGingerbreadMan": {
+  "lines": [
+   "Breaks the launch pad behind you and jumps off it the moment it fires."
+  ],
+  "requires": [
+   "The Gingerbread Man kit"
+  ]
+ },
+ "AutoGrim": {
+  "lines": [
+   "Collects the souls the Grim Reaper drops around you."
+  ],
+  "requires": [
+   "The Grim Reaper kit"
+  ]
+ },
+ "AutoHannah": {
+  "lines": [
+   "Executes marked players as soon as one comes into range."
+  ],
+  "requires": [
+   "The Hannah kit"
+  ]
+ },
+ "AutoHeal": {
+  "lines": [
+   "Heals damage with consumables automatically."
+  ],
+  "requires": [
+   "Healing consumables"
+  ]
+ },
+ "AutoHephaestus": {
+  "lines": [
+   "Repairs the Tinker machine whenever the self repair ability is up and you are not mid-swing."
+  ],
+  "requires": [
+   "The Hephaestus kit"
+  ]
+ },
+ "AutoHonor": {
+  "lines": [
+   "Honors two players when you are finally killed or when the match ends."
+  ]
+ },
+ "AutoHotbar": {
+  "lines": [
+   "Keeps your hotbar arranged the way you set it as items come and go."
+  ]
+ },
+ "AutoJailor": {
+  "lines": [
+   "Collects the souls the jailor drops."
+  ],
+  "requires": [
+   "The Jailor kit"
+  ]
+ },
+ "AutoKaida": {
+  "lines": [
+   "Uses Kaida's abilities as they come up."
+  ],
+  "requires": [
+   "The Kaida kit"
+  ]
+ },
+ "AutoKaliyah": {
+  "lines": [
+   "Punches the dragon slayer emblems that land around you."
+  ],
+  "requires": [
+   "The Kaliyah kit"
+  ]
+ },
+ "AutoKit": {
+  "lines": [
+   "Uses your kit's abilities for you as they come off cooldown."
+  ],
+  "requires": [
+   "A kit with an ability"
+  ]
+ },
+ "AutoKrystal": {
+  "lines": [
+   "Freezes attackers while you are stood on an enemy bed defence."
+  ],
+  "requires": [
+   "The Krystal kit"
+  ]
+ },
+ "AutoLani": {
+  "lines": [
+   "Puts the scepter of light on the player you picked, every time it comes up."
+  ],
+  "requires": [
+   "The Lani kit"
+  ]
+ },
+ "AutoLasso": {
+  "lines": [
+   "Throws a lasso at players who come into range and angle."
+  ],
+  "requires": [
+   "A lasso in your inventory"
+  ]
+ },
+ "AutoMarina": {
+  "lines": [
+   "Electrifies your jellyfish as soon as somebody walks near one."
+  ],
+  "requires": [
+   "The Marina kit"
+  ]
+ },
+ "AutoMartin": {
+  "lines": [
+   "Fires the cactus wild growth whenever somebody is in range."
+  ],
+  "requires": [
+   "The Martin kit"
+  ]
+ },
+ "AutoMelody": {
+  "lines": [
+   "Plays the guitar at whoever is hurt and nearest."
+  ],
+  "requires": [
+   "The Melody kit"
+  ]
+ },
+ "AutoMetal": {
+  "lines": [
+   "Digs up the buried metal the detector finds."
+  ],
+  "requires": [
+   "The Metal Detector kit"
+  ]
+ },
+ "AutoMiner": {
+  "lines": [
+   "Mines the petrified players the miner leaves behind."
+  ],
+  "requires": [
+   "The Miner kit"
+  ]
+ },
+ "AutoNoelle": {
+  "lines": [
+   "Keeps each of your slimes following the player you picked for it."
+  ],
+  "requires": [
+   "The Noelle kit"
+  ]
+ },
+ "AutoNyx": {
+  "lines": [
+   "Uses midnight the moment you land a melee hit on somebody."
+  ],
+  "requires": [
+   "The Nyx kit"
+  ]
+ },
+ "AutoPearl": {
+  "lines": [
+   "Throws a pearl onto nearby ground once you have fallen a set distance."
+  ],
+  "requires": [
+   "A telepearl in your inventory"
+  ]
+ },
+ "AutoPickpocket": {
+  "lines": [
+   "Pickpockets everybody in range."
+  ],
+  "requires": [
+   "The Milo kit"
+  ]
+ },
+ "AutoPickup": {
+  "lines": [
+   "Picks up items that are close to you."
+  ]
+ },
+ "AutoPinata": {
+  "lines": [
+   "Banks your candy into your pinata whenever you walk past it."
+  ],
+  "requires": [
+   "The Pinata kit"
+  ]
+ },
+ "AutoPlay": {
+  "lines": [
+   "Queues you for another match once the current one ends, or once you are finally killed.",
+   "Only the party leader may queue, so it checks that first, and sends the request again if the one made on the match-end frame was swallowed."
+  ]
+ },
+ "AutoPop": {
+  "lines": [
+   "Pops the tyres of vehicles around you automatically."
+  ]
+ },
+ "AutoPunch": {
+  "lines": [
+   "Punches whoever is in front of you, continuously."
+  ]
+ },
+ "AutoPyro": {
+  "lines": [
+   "Buys the next flamethrower upgrade as soon as it is affordable."
+  ],
+  "requires": [
+   "The Pyro kit"
+  ]
+ },
+ "AutoQueue": {
+  "lines": [
+   "Queues a match from the lobby on its own, which is what lets AutoWin keep playing."
+  ]
+ },
+ "AutoRagnar": {
+  "lines": [
+   "Triggers Berserker Rage the moment you are near an enemy bed."
+  ],
+  "requires": [
+   "The Ragnar kit"
+  ]
+ },
+ "AutoRamil": {
+  "lines": [
+   "Throws the airbender tornado at whoever comes into range."
+  ],
+  "requires": [
+   "The Ramil kit"
+  ]
+ },
+ "AutoRejoin": {
+  "lines": [
+   "Rejoins a fresh server on its own after a disconnect or a kick."
+  ]
+ },
+ "AutoRelease": {
+  "lines": [
+   "Releases a charging projectile once it reaches the draw percentage you set."
+  ],
+  "requires": [
+   "A chargeable projectile source"
+  ]
+ },
+ "AutoReload": {
+  "lines": [
+   "Reloads the moment you run out of bullets."
+  ],
+  "requires": [
+   "A firearm"
+  ]
+ },
+ "AutoReset": {
+  "lines": [
+   "Resets your character automatically once you become a criminal."
+  ]
+ },
+ "AutoRespawn": {
+  "lines": [
+   "Respawns you as soon as you die."
+  ]
+ },
+ "AutoSheepHerder": {
+  "lines": [
+   "Tames the sheep that wander into range."
+  ],
+  "requires": [
+   "The Sheep Herder kit"
+  ]
+ },
+ "AutoShoot": {
+  "lines": [
+   "Fires the projectiles you list between sword swings, switching to them and back.",
+   "With Target check off it shoots along your camera direction; with it on it solves the arc onto a target in front of you."
+  ],
+  "requires": [
+   "Projectiles in your hotbar"
+  ]
+ },
+ "AutoSpiritAssassin": {
+  "lines": [
+   "Uses the spirits Evelynn leaves on the players she kills."
+  ],
+  "requires": [
+   "The Evelynn kit"
+  ]
+ },
+ "AutoStarCollector": {
+  "lines": [
+   "Collects the stars that drop around you."
+  ],
+  "requires": [
+   "The Star Collector kit"
+  ]
+ },
+ "AutoSteal": {
+  "lines": [
+   "Takes items out of a nearby container automatically."
+  ]
+ },
+ "AutoSuffocate": {
+  "lines": [
+   "Places blocks around entities caught in a confined space, to suffocate them."
+  ],
+  "requires": [
+   "Blocks in your inventory"
+  ]
+ },
+ "AutoTaliyah": {
+  "lines": [
+   "Sells the chicken while you are at a shop and it is going for what you asked."
+  ],
+  "requires": [
+   "The Taliyah kit"
+  ]
+ },
+ "AutoTaze": {
+  "lines": [
+   "Tazes entities around you as they come into range."
+  ],
+  "requires": [
+   "A tazer"
+  ]
+ },
+ "AutoTool": {
+  "lines": [
+   "Switches to the right tool for whatever you are about to break."
+  ]
+ },
+ "AutoToxic": {
+  "lines": [
+   "Sends chat messages of your choosing on kills, deaths, bed breaks and wins.",
+   "Troll mode replies to anyone who calls you a cheater in chat."
+  ]
+ },
+ "AutoUma": {
+  "lines": [
+   "Throws summoned spirits at the emeralds and diamonds around you."
+  ],
+  "requires": [
+   "The Uma kit"
+  ]
+ },
+ "AutoVanessa": {
+  "lines": [
+   "Charges the bow fully on the spot and keeps triple shot armed."
+  ],
+  "requires": [
+   "The Vanessa kit"
+  ]
+ },
+ "AutoVoidDragon": {
+  "lines": [
+   "Breathes on whoever is in front of you in dragon form, and doubles your speed off every wing flap."
+  ],
+  "requires": [
+   "The Void Dragon kit"
+  ]
+ },
+ "AutoVoidDrop": {
+  "lines": [
+   "Drops your resources once you fall past the map, so an enemy cannot collect them from your body.",
+   "Owl check and Pearl check both hold the loot: the second walks a telepearl you threw forward and keeps your resources if it would land on ground."
+  ]
+ },
+ "AutoWarlock": {
+  "lines": [
+   "Keeps the warlock staff linked to whoever is nearest."
+  ],
+  "requires": [
+   "The Warlock kit"
+  ]
+ },
+ "AutoWhisper": {
+  "lines": [
+   "Spends the owl's lift and heal on whoever it is following."
+  ],
+  "requires": [
+   "The Whisper kit"
+  ]
+ },
+ "AutoWin": {
+  "lines": [
+   "Plays the match to a win on its own, and keeps going into the next one."
+  ]
+ },
+ "AutoWizard": {
+  "lines": [
+   "Casts whichever wizard spell you are holding at whoever is in range."
+  ],
+  "requires": [
+   "The Wizard kit"
+  ]
+ },
+ "AutoZeno": {
+  "lines": [
+   "Casts the staff's abilities at whoever is nearby."
+  ],
+  "requires": [
+   "The Zeno kit"
+  ]
+ },
+ "BackTrack": {
+  "lines": [
+   "Lags the targets around you at chosen moments, which widens the window in which your hits land."
+  ]
+ },
+ "BalloonDisabler": {
+  "lines": [
+   "Bypasses the anticheat through the balloon controller."
+  ]
+ },
+ "BedAlarm": {
+  "lines": [
+   "Warns you when an enemy comes near your bed."
+  ]
+ },
+ "BedAssist": {
+  "lines": [
+   "Helps you break a bed - selects the tool, lines up the block and keeps swinging."
+  ]
+ },
+ "BedBreakEffect": {
+  "lines": [
+   "Replaces the effect played when a bed is broken."
+  ]
+ },
+ "BedESP": {
+  "lines": [
+   "Draws beds through walls."
+  ]
+ },
+ "BedPlates": {
+  "lines": [
+   "Draws the blocks stacked over a bed so you can see what is protecting it."
+  ]
+ },
+ "BedProtector": {
+  "lines": [
+   "Rebuilds the defence around your own bed as it is broken."
+  ],
+  "requires": [
+   "Blocks in your inventory"
+  ]
+ },
+ "BeehiveESP": {
+  "lines": [
+   "Draws hives through walls, with their state."
+  ]
+ },
+ "Blink": {
+  "lines": [
+   "Holds your outgoing packets until you turn it off, then releases them all at once."
+  ]
+ },
+ "Block-In": {
+  "lines": [
+   "Walls you in with blocks on all sides at a keypress."
+  ],
+  "requires": [
+   "Blocks in your inventory"
+  ]
+ },
+ "BlockSelectorColor": {
+  "lines": [
+   "Recolours the overlay drawn on the block you are pointing at."
+  ]
+ },
+ "Bloom": {
+  "lines": [
+   "Adds soft bloom so bright surfaces glow, and can make generators and ore drops glow too."
+  ]
+ },
+ "BoostAirJump": {
+  "lines": [
+   "Adds upward velocity while jump is held, spread over the climb so no single frame looks like a jump-height violation."
+  ]
+ },
+ "BowAssist": {
+  "lines": [
+   "Smoothly steers your aim onto the trajectory that would land a projectile on the target.",
+   "Solves the arc for the projectile you are actually holding, so drop and travel time are accounted for."
+  ],
+  "requires": [
+   "A bow, crossbow or other projectile source"
+  ]
+ },
+ "Breadcrumbs": {
+  "lines": [
+   "Leaves a visible trail behind your character."
+  ]
+ },
+ "Breaker": {
+  "lines": [
+   "Breaks the blocks around a target automatically."
+  ]
+ },
+ "BulletTracers": {
+  "lines": [
+   "Replaces the tracers drawn behind projectiles."
+  ]
+ },
+ "C4ESP": {
+  "lines": [
+   "Draws every placed C4 through walls."
+  ]
+ },
+ "Cape": {
+  "lines": [
+   "Puts a cape on your character."
+  ]
+ },
+ "Chams": {
+  "lines": [
+   "Renders players through walls in a colour of your choosing."
+  ]
+ },
+ "ChatNameColor": {
+  "lines": [
+   "Changes the colour your name appears in chat."
+  ]
+ },
+ "ChatPosition": {
+  "lines": [
+   "Moves the chat window where you want it. Works with the legacy chat and with TextChatService."
+  ]
+ },
+ "ChatSpammer": {
+  "lines": [
+   "Types in chat repeatedly on its own."
+  ]
+ },
+ "CheatDetector": {
+  "lines": [
+   "Flags likely cheaters, grouped into impossible hits, blatant modules, AutoKit, crashers, breaker, and projectile aimbot.",
+   "Every detection needs several impossible readings before it flags, and discards readings taken on a poor connection or explained by a status effect, teleport or knockback."
+  ]
+ },
+ "ChestSteal": {
+  "lines": [
+   "Takes the contents of chests near you."
+  ]
+ },
+ "ChillLighting": {
+  "lines": [
+   "Retints the world's ambient lighting to a cool teal."
+  ]
+ },
+ "ChinaHat": {
+  "lines": [
+   "Puts a china hat on your character."
+  ]
+ },
+ "CleanKit": {
+  "lines": [
+   "Removes the Zephyr status indicator from your screen."
+  ]
+ },
+ "Clock": {
+  "lines": [
+   "Shows your local time on screen."
+  ]
+ },
+ "ComputerESP": {
+  "lines": [
+   "Shows the computers nearby that have not been completed."
+  ]
+ },
+ "Coords": {
+  "lines": [
+   "Shows your position on screen."
+  ]
+ },
+ "Criticals": {
+  "lines": [
+   "Makes every hit register as a critical."
+  ]
+ },
+ "Crosshair": {
+  "lines": [
+   "Replaces the first person crosshair with an image of your choosing."
+  ]
+ },
+ "CustomCursor": {
+  "lines": [
+   "Replaces your mouse cursor with an image of your choosing."
+  ]
+ },
+ "CustomTags": {
+  "lines": [
+   "Gives you a clan tag in chat. Only you can see it."
+  ]
+ },
+ "DamageBoost": {
+  "lines": [
+   "Gives you a small speed increase for a moment after you take damage."
+  ]
+ },
+ "DamageIndicator": {
+  "lines": [
+   "Changes how damage numbers are drawn."
+  ]
+ },
+ "DaveyAim": {
+  "lines": [
+   "Aims Davey's cannon for you."
+  ],
+  "requires": [
+   "The Davey kit"
+  ]
+ },
+ "Desync": {
+  "lines": [
+   "Stops your real position being replicated to other players, so they see you somewhere you are not."
+  ]
+ },
+ "DeviceSpoofer": {
+  "lines": [
+   "Reports a different device to the server than the one you are on."
+  ]
+ },
+ "Disabler": {
+  "lines": [
+   "Blocks the property-changed detections the game uses to watch your movement."
+  ]
+ },
+ "Disguise": {
+  "lines": [
+   "Changes the name and appearance you show to other players.",
+   "Needs an executor function that not every executor provides."
+  ],
+  "requires": [
+   "An executor with the required function"
+  ]
+ },
+ "EntityAnalyser": {
+  "lines": [
+   "Watches how everybody in the match is playing and rates them, which other modules can then sort targets by."
+  ]
+ },
+ "ESP": {
+  "lines": [
+   "Draws boxes on players, through walls, with the detail you choose."
+  ]
+ },
+ "FakeLag": {
+  "lines": [
+   "Withholds your position from the server in bursts, so other players see you where you were rather than where you are."
+  ]
+ },
+ "FastBreak": {
+  "lines": [
+   "Shortens the cooldown between block hits so blocks come apart faster."
+  ]
+ },
+ "FastConsume": {
+  "lines": [
+   "Shortens how long an item takes to consume."
+  ]
+ },
+ "FastDrop": {
+  "lines": [
+   "Drops the item in your hand repeatedly while you hold Q, H or Backspace."
+  ]
+ },
+ "FastInteraction": {
+  "lines": [
+   "Changes how quickly you interact with things."
+  ]
+ },
+ "FastPlace": {
+  "lines": [
+   "Shortens the delay between block placements."
+  ]
+ },
+ "FFlagEditor": {
+  "lines": [
+   "Edits Roblox fast flags from in game.",
+   "Needs an executor function that not every executor provides."
+  ],
+  "requires": [
+   "An executor with the required function"
+  ]
+ },
+ "FishermanSpy": {
+  "lines": [
+   "Tells you what everybody else pulls out of the water."
+  ],
+  "requires": [
+   "The Fisherman kit"
+  ]
+ },
+ "Fly": {
+  "lines": [
+   "Flies by driving your character's position and velocity every frame.",
+   "Includes a TP Down option that briefly touches the ground so the server keeps seeing you land."
+  ]
+ },
+ "ForceHeadshot": {
+  "lines": [
+   "Marks bullets you fire as headshots so they carry headshot damage."
+  ],
+  "requires": [
+   "A firearm"
+  ]
+ },
+ "FOV": {
+  "lines": [
+   "Adjusts the camera's field of view."
+  ]
+ },
+ "FPS": {
+  "lines": [
+   "Shows your framerate."
+  ]
+ },
+ "FPSBoost": {
+  "lines": [
+   "Raises the framerate by turning off effects you can spare."
+  ]
+ },
+ "Freecam": {
+  "lines": [
+   "A cinematic camera you fly yourself - smoothing, field of view, roll, depth of field, motion blur, shake, orbit, dolly and keyframed moves.",
+   "Hide HUD hides the game interface but leaves the AetherV2 menu up, so you can always get back out of the shot."
+  ]
+ },
+ "Fullbright": {
+  "lines": [
+   "Lights the whole world evenly so nothing is hidden in shadow."
+  ]
+ },
+ "GamingChair": {
+  "lines": [
+   "Cycles the GUI and module colours through the spectrum."
+  ]
+ },
+ "GeneratorESP": {
+  "lines": [
+   "Draws generators through walls, with their tier and countdown."
+  ]
+ },
+ "GodMode": {
+  "lines": [
+   "Moves your hitbox off your body so damage misses it, while your own hits carry on as normal.",
+   "Teleport mode instead cycles you through the air while your health is critical, holding each landing long enough for the fall to resolve."
+  ]
+ },
+ "Gravity": {
+  "lines": [
+   "Changes how fast you fall."
+  ]
+ },
+ "GrenadeESP": {
+  "lines": [
+   "Draws grenades in flight and on the ground."
+  ]
+ },
+ "GrenadeTP": {
+  "lines": [
+   "Teleports the throwables you release to land next to enemy players."
+  ]
+ },
+ "GrimReaperFix": {
+  "lines": [
+   "Corrects the Grim Reaper's height so the character is not left too tall."
+  ],
+  "requires": [
+   "The Grim Reaper kit"
+  ]
+ },
+ "GunModifications": {
+  "lines": [
+   "Alters the firearm you are holding - fire rate, spread, recoil and the rest."
+  ],
+  "requires": [
+   "A firearm"
+  ]
+ },
+ "Headless": {
+  "lines": [
+   "Gives your character the headless look without owning it."
+  ]
+ },
+ "Health": {
+  "lines": [
+   "Shows your health in the middle of the screen."
+  ]
+ },
+ "HighJump": {
+  "lines": [
+   "Raises how high a single jump takes you."
+  ]
+ },
+ "HitBoxes": {
+  "lines": [
+   "Expands the region a sword swing is allowed to resolve against, so hits land on a wider box than the body."
+  ]
+ },
+ "HitColor": {
+  "lines": [
+   "Changes the colour flashed on something you hit."
+  ]
+ },
+ "HitFix": {
+  "lines": [
+   "Points the game at the correct raycast function so hits register where they should."
+  ]
+ },
+ "HitSound": {
+  "lines": [
+   "Plays a sound of your choosing when you land a hit."
+  ]
+ },
+ "InfiniteAbility": {
+  "lines": [
+   "Holds a kit ability open, but only for as long as the character still reports it as active.",
+   "The 'only while active' part is deliberate: re-asserting an ability the game has ended is what locks a character server-side."
+  ]
+ },
+ "InfiniteFly": {
+  "lines": [
+   "Keeps you alive over the void by withholding replication, dropping to real ground long enough for the landing to register, then returning.",
+   "Does not combine with FakeLag - both fight over the same replication window."
+  ]
+ },
+ "InfiniteJump": {
+  "lines": [
+   "Lets you jump again in mid-air, without limit.",
+   "TP Down briefly touches the ground and returns you to your height once you have been airborne too long, so the server keeps seeing you land. It does not affect jumping."
+  ]
+ },
+ "InfiniteKrystal": {
+  "lines": [
+   "Keeps your momentum at maximum permanently."
+  ],
+  "requires": [
+   "The Krystal kit"
+  ]
+ },
+ "InfiniteNitro": {
+  "lines": [
+   "Gives the car you are driving unlimited boost."
+  ],
+  "requires": [
+   "A vehicle with boost"
+  ]
+ },
+ "InfiniteSigrid": {
+  "lines": [
+   "Keeps you riding the elk without it ending."
+  ],
+  "requires": [
+   "The Sigrid kit"
+  ]
+ },
+ "InfiniteStamina": {
+  "lines": [
+   "Stops your stamina draining, so you can sprint indefinitely."
+  ]
+ },
+ "InstantAction": {
+  "lines": [
+   "Completes proximity prompt actions instantly instead of holding them."
+  ]
+ },
+ "InstantKill": {
+  "lines": [
+   "Sends the hits needed to take a target down in as short a window as the server will accept."
+  ]
+ },
+ "InteractExtender": {
+  "lines": [
+   "Lets you interact with things further away than the game allows."
+  ]
+ },
+ "Interface": {
+  "lines": [
+   "Customises the BedWars interface."
+  ]
+ },
+ "InvisibleCursor": {
+  "lines": [
+   "Hides the mouse cursor."
+  ]
+ },
+ "InvMove": {
+  "lines": [
+   "Removes the movement slow applied while using an item."
+  ]
+ },
+ "IRLReplica": {
+  "lines": [
+   "A full visual rewrite - realistic materials, cinematic lighting, weather, ambience and four themed seasons. Changes nothing about gameplay."
+  ]
+ },
+ "ItemESP": {
+  "lines": [
+   "Tags dropped items so you can see what is on the floor and where."
+  ]
+ },
+ "KeepSprint": {
+  "lines": [
+   "Keeps you sprinting while a speed potion is active, which the game would otherwise stop."
+  ]
+ },
+ "KeySpoofer": {
+  "lines": [
+   "Lets you walk through most doors without their key."
+  ]
+ },
+ "Keystrokes": {
+  "lines": [
+   "Draws your movement keys on screen as you press them."
+  ]
+ },
+ "Killaura": {
+  "lines": [
+   "Attacks entities around you automatically, without aiming at them.",
+   "Attack Mode decides who gets the swing: Single stays on one target until they are gone, Switch passes each swing to the next."
+  ],
+  "requires": [
+   "A sword in hand"
+  ]
+ },
+ "KillEffect": {
+  "lines": [
+   "Replaces the effect played on a final kill."
+  ]
+ },
+ "KillfeedSpoofer": {
+  "lines": [
+   "Rewrites killfeed messages locally - names, weapon, wording - without removing them."
+  ]
+ },
+ "KillNotifications": {
+  "lines": [
+   "Tells you who killed you."
+  ]
+ },
+ "KillSound": {
+  "lines": [
+   "Plays a sound of your choosing when you get a kill."
+  ]
+ },
+ "KitDisplay": {
+  "lines": [
+   "Shows which kit every other player picked."
+  ]
+ },
+ "KitESP": {
+  "lines": [
+   "Draws kit-related objects through walls."
+  ]
+ },
+ "KnockbackDelay": {
+  "lines": [
+   "Holds incoming knockback packets back so the push lands later than the hit."
+  ]
+ },
+ "KrystalDisabler": {
+  "lines": [
+   "Removes Krystal lagbacks by keeping momentum maxed and muting the correction listeners."
+  ],
+  "requires": [
+   "The Krystal kit"
+  ]
+ },
+ "LazerGodmode": {
+  "lines": [
+   "Turns off ragdoll handling and fall damage."
+  ]
+ },
+ "LegacyAnimation": {
+  "lines": [
+   "Restores Roblox's older animation blending."
+  ]
+ },
+ "LongJump": {
+  "lines": [
+   "Launches you a long way in your movement direction on jump."
+  ]
+ },
+ "LongJumpBypass": {
+  "lines": [
+   "Gets a long jump past the checks that would otherwise reject it."
+  ]
+ },
+ "LootESP": {
+  "lines": [
+   "Draws iron, emeralds and diamonds through walls."
+  ]
+ },
+ "Memory": {
+  "lines": [
+   "Shows how much memory Roblox is using."
+  ]
+ },
+ "MissileTP": {
+  "lines": [
+   "Spawns a missile and teleports it onto a player near your mouse."
+  ],
+  "requires": [
+   "The a missile-carrying kit kit"
+  ]
+ },
+ "MotionBlur": {
+  "lines": [
+   "Adds motion blur as the camera moves."
+  ]
+ },
+ "MouseTP": {
+  "lines": [
+   "Teleports you to whatever position you have selected with the mouse."
+  ]
+ },
+ "MP3Player": {
+  "lines": [
+   "Plays your own audio in game, with a playlist, looping and an on-screen player you can drag."
+  ]
+ },
+ "Multiplier": {
+  "lines": [
+   "How much further than normal the ability carries you. 1x is the game's own distance."
+  ]
+ },
+ "MurderMystery": {
+  "lines": [
+   "Teams you with the right people automatically, worked out from the Roblox tools everybody has equipped."
+  ]
+ },
+ "NameTags": {
+  "lines": [
+   "Draws nametags on entities through walls."
+  ]
+ },
+ "NameTagSpoofer": {
+  "lines": [
+   "Changes the nametag you display to other players."
+  ]
+ },
+ "NoClickDelay": {
+  "lines": [
+   "Removes the client's cap on how often a sword swing may be sent.",
+   "Only lifts the local rate limit - the server still resolves each hit on its own terms."
+  ]
+ },
+ "NoClip": {
+  "lines": [
+   "Lets you pass through walls. Hold shift to use NoClip in place of Spider."
+  ]
+ },
+ "NoCPSCap": {
+  "lines": [
+   "Sends every sword activation as it happens rather than waiting for the client's swing cooldown."
+  ]
+ },
+ "NoFall": {
+  "lines": [
+   "Prevents fall damage, by clutching a block or by telling the server you landed safely."
+  ]
+ },
+ "NoFallDamage": {
+  "lines": [
+   "Cancels the fall damage the server would apply when you land."
+  ]
+ },
+ "NoHurtCam": {
+  "lines": [
+   "Removes the camera flash when you take damage."
+  ]
+ },
+ "NoJumpCooldown": {
+  "lines": [
+   "Removes the delay the game puts between jumps."
+  ]
+ },
+ "NoSlow": {
+  "lines": [
+   "Removes the movement slow applied while using an item."
+  ]
+ },
+ "NoSlowdown": {
+  "lines": [
+   "Removes the movement slow the game applies while you are using an item."
+  ]
+ },
+ "OG4v4v4v4": {
+  "lines": [
+   "Restores the original 4v4v4v4 presentation."
+  ]
+ },
+ "OGNameTags": {
+  "lines": [
+   "The original nametag, with rank icon and winstreak. Lobby only."
+  ]
+ },
+ "OwlAura": {
+  "lines": [
+   "Sends the owl at whoever comes into range on its own."
+  ],
+  "requires": [
+   "The Whisper kit"
+  ]
+ },
+ "Panic": {
+  "lines": [
+   "Turns off every enabled module at once. Needs a second activation, so it cannot fire by accident."
+  ]
+ },
+ "Parkour": {
+  "lines": [
+   "Jumps for you the moment you reach the edge of what you are standing on."
+  ]
+ },
+ "Phase": {
+  "lines": [
+   "Lets you clip through walls."
+  ]
+ },
+ "PhaseHammer": {
+  "lines": [
+   "Lets your hammer swing through walls to reach what is behind them."
+  ]
+ },
+ "PhaseMine": {
+  "lines": [
+   "Lets your mining raycasts pass through other players so a body cannot block a break."
+  ],
+  "requires": [
+   "The Miner kit"
+  ]
+ },
+ "PickupRange": {
+  "lines": [
+   "Picks items up from further away than the game allows."
+  ]
+ },
+ "Ping": {
+  "lines": [
+   "Shows your connection time to the server."
+  ]
+ },
+ "PlayerAttach": {
+  "lines": [
+   "Locks your position onto the nearest target so you move wherever they move."
+  ]
+ },
+ "PlayerModel": {
+  "lines": [
+   "Replaces player models with a mesh of your choosing."
+  ]
+ },
+ "PlayerOutline": {
+  "lines": [
+   "Outlines every player so they read clearly against the map."
+  ]
+ },
+ "PotatoMode": {
+  "lines": [
+   "Strips the world down to the cheapest possible rendering for framerate."
+  ]
+ },
+ "PotionStatus": {
+  "lines": [
+   "Lists the effects currently on you."
+  ]
+ },
+ "ProjectileAimbot": {
+  "lines": [
+   "Redirects the projectiles you launch onto a target, solving the full arc including their movement.",
+   "Hooks the game's own launch path, so the shot animates and sounds exactly as a normal one does."
+  ],
+  "requires": [
+   "A projectile to fire"
+  ]
+ },
+ "ProjectileAura": {
+  "lines": [
+   "Fires projectiles at entities around you on its own, without you aiming or clicking."
+  ],
+  "requires": [
+   "Projectiles in your inventory"
+  ]
+ },
+ "ProjectileDodger": {
+  "lines": [
+   "Steps your character out of the path of incoming projectiles once one is judged to be aimed at you."
+  ]
+ },
+ "ProjectileLanding": {
+  "lines": [
+   "Marks where a projectile will land - both the ones in the air and the one you are aiming - and highlights anyone the shot would hit.",
+   "The aiming marker takes speed and gravity from the game's own launch calculation but always aims along your current cursor, so it tracks the aim rather than lagging behind it."
+  ]
+ },
+ "ProjectileTracers": {
+  "lines": [
+   "Draws the arc of projectiles in flight."
+  ]
+ },
+ "ProximityPromptDuration": {
+  "lines": [
+   "Changes how long a proximity prompt has to be held."
+  ]
+ },
+ "RavenTP": {
+  "lines": [
+   "Spawns a raven and teleports it onto a player near your mouse."
+  ],
+  "requires": [
+   "The a raven-carrying kit kit"
+  ]
+ },
+ "Reach": {
+  "lines": [
+   "Extends how far you can attack, place and break.",
+   "Distance is applied to the checks the client makes before it sends an action, so every extended action still has to pass the server."
+  ]
+ },
+ "ReachDisplay": {
+  "lines": [
+   "Shows how far away your last hit landed."
+  ]
+ },
+ "Rejoin": {
+  "lines": [
+   "Rejoins the server you are already in."
+  ]
+ },
+ "RemoveNeon": {
+  "lines": [
+   "Replaces neon materials so nothing glows."
+  ]
+ },
+ "RemovePlayerLevelUI": {
+  "lines": [
+   "Removes the level numbers from the player list."
+  ]
+ },
+ "RestrainBeast": {
+  "lines": [
+   "Stops the beast being able to hook onto survivors."
+  ]
+ },
+ "SafeWalk": {
+  "lines": [
+   "Stops you walking off the edge of a part."
+  ]
+ },
+ "Scaffold": {
+  "lines": [
+   "Lays blocks under you as you walk, so you bridge without placing anything yourself.",
+   "Fills the ground actually crossed between passes as well as looking ahead, so nothing is skipped at speed."
+  ],
+  "requires": [
+   "Blocks in your inventory"
+  ]
+ },
+ "Schematica": {
+  "lines": [
+   "Saves a building you have placed and lets you lay it back down elsewhere."
+  ]
+ },
+ "Search": {
+  "lines": [
+   "Boxes any part whose name you add to the Search list."
+  ]
+ },
+ "ServerHop": {
+  "lines": [
+   "Teleports you into a different server."
+  ]
+ },
+ "Shader": {
+  "lines": [
+   "Replaces the world's lighting with a configurable look."
+  ]
+ },
+ "ShadowRemover": {
+  "lines": [
+   "Removes shadows from the world."
+  ]
+ },
+ "ShopClicker": {
+  "lines": [
+   "Buys repeatedly while you hold the mouse on a shop item, instead of one purchase per click."
+  ]
+ },
+ "SilentAim": {
+  "lines": [
+   "Redirects projectiles you fire onto the target, so you can shoot anywhere and still hit.",
+   "Rewrites the shot at the launch remote, so your aim never visibly moves."
+  ],
+  "requires": [
+   "A projectile to fire"
+  ]
+ },
+ "SilentAura": {
+  "lines": [
+   "Attacks entities around you without moving your camera onto them.",
+   "The swing is sent server-side at the target while your view stays where you left it."
+  ]
+ },
+ "SkinChanger": {
+  "lines": [
+   "Reskins the items you hold and the sounds they make. Only you can see it."
+  ]
+ },
+ "SlowBeast": {
+  "lines": [
+   "Forces the beast to move at a reduced speed."
+  ]
+ },
+ "SongBeats": {
+  "lines": [
+   "A built-in music player."
+  ]
+ },
+ "SoundChanger": {
+  "lines": [
+   "Replaces in-game sounds with your own."
+  ]
+ },
+ "SpamBeast": {
+  "lines": [
+   "Forces the beast to use its abilities repeatedly."
+  ]
+ },
+ "Speed": {
+  "lines": [
+   "Moves you faster than the game allows, by several methods.",
+   "CFrame drives your position directly; Bedwars raises the game's own sprint speed. Wall check slides you along surfaces instead of into them."
+  ]
+ },
+ "Speedmeter": {
+  "lines": [
+   "Shows how fast you are moving, in studs per second."
+  ]
+ },
+ "Spider": {
+  "lines": [
+   "Lets you climb straight up walls by holding into them."
+  ]
+ },
+ "SpinBot": {
+  "lines": [
+   "Spins your character on the spot. Has no visible effect in first person."
+  ]
+ },
+ "Sprint": {
+  "lines": [
+   "Holds your sprint on permanently, including in situations the game would normally stop it."
+  ]
+ },
+ "StaffDetector": {
+  "lines": [
+   "Warns you when somebody in the server holds a staff rank."
+  ]
+ },
+ "StateSpoofer": {
+  "lines": [
+   "Reports a humanoid state to the server other than the one you are actually in."
+  ]
+ },
+ "StorageESP": {
+  "lines": [
+   "Shows what is inside chests without opening them."
+  ]
+ },
+ "StormMode": {
+  "lines": [
+   "Turns the weather to a heavy storm - atmosphere, fog, depth and a cold cinematic grade."
+  ]
+ },
+ "StreamRemover": {
+  "lines": [
+   "Reveals players hidden behind streamer or disguise mode, and strips the disguised name locally."
+  ]
+ },
+ "Swim": {
+  "lines": [
+   "Lets you swim through the air as though it were water."
+  ]
+ },
+ "TargetStrafe": {
+  "lines": [
+   "Circles the target automatically while you fight them, holding a set distance."
+  ]
+ },
+ "TerraAimbot": {
+  "lines": [
+   "Steers the blocks Terra throws onto a target, without moving your aim."
+  ],
+  "requires": [
+   "The Terra kit"
+  ]
+ },
+ "TexturePack": {
+  "lines": [
+   "Applies a texture pack to the world."
+  ]
+ },
+ "ThirdPerson": {
+  "lines": [
+   "Moves the camera out to third person."
+  ]
+ },
+ "TimeChanger": {
+  "lines": [
+   "Locks the world clock so the match stays at a time of day you can see in."
+  ]
+ },
+ "Timer": {
+  "lines": [
+   "Changes how fast the game simulates, so everything you do resolves faster or slower."
+  ]
+ },
+ "TPAura": {
+  "lines": [
+   "Teleports to each target in turn to hit them, then returns, so you can attack people out of reach."
+  ]
+ },
+ "Tracers": {
+  "lines": [
+   "Draws a line from you to each player."
+  ]
+ },
+ "TrapDisabler": {
+  "lines": [
+   "Stops snap traps triggering on you."
+  ]
+ },
+ "TrapESP": {
+  "lines": [
+   "Draws traps placed by other teams through walls."
+  ]
+ },
+ "TriggerBot": {
+  "lines": [
+   "Swings the moment your crosshair passes over an entity, instead of you clicking.",
+   "Projectile mode does the same for the projectile in your hand, solving the arc onto whatever you are pointing at."
+  ]
+ },
+ "TritonClutch": {
+  "lines": [
+   "Throws Triton's harpoon onto nearby ground once you have fallen far enough."
+  ],
+  "requires": [
+   "The Triton kit"
+  ]
+ },
+ "UICleanup": {
+  "lines": [
+   "Tidies the kit and main menu interfaces."
+  ]
+ },
+ "VehicleFly": {
+  "lines": [
+   "Flies the vehicle you are driving."
+  ],
+  "requires": [
+   "A vehicle"
+  ]
+ },
+ "VehicleSpeed": {
+  "lines": [
+   "Raises the top speed of the vehicle you are driving."
+  ],
+  "requires": [
+   "A vehicle"
+  ]
+ },
+ "VehicleWallbang": {
+  "lines": [
+   "Lets your shots pass through vehicles."
+  ]
+ },
+ "Velocity": {
+  "lines": [
+   "Reduces the knockback you take from hits, by a configurable proportion on each axis."
+  ]
+ },
+ "VelocityPlus": {
+  "lines": [
+   "Sends the knockback you receive off in a direction you choose rather than only reducing it."
+  ]
+ },
+ "Viewmodel": {
+  "lines": [
+   "Changes the animations played on the item in your hands."
+  ]
+ },
+ "ViewmodelVisuals": {
+  "lines": [
+   "Changes how the item in your hands is drawn - position, scale, rotation and sway."
+  ]
+ },
+ "VulcanAimbot": {
+  "lines": [
+   "Turns your camera onto opponents automatically."
+  ]
+ },
+ "VulcanAssist": {
+  "lines": [
+   "Helps you land Vulcan's abilities on whoever is in range."
+  ],
+  "requires": [
+   "The Vulcan kit"
+  ]
+ },
+ "Water": {
+  "lines": [
+   "Fills the void with water, sitting at the height AntiFall uses for its barrier."
+  ]
+ },
+ "Waypoints": {
+  "lines": [
+   "Marks positions you save with a visible indicator."
+  ]
+ },
+ "WinEffect": {
+  "lines": [
+   "Picks the win effect you see. Client-side only."
+  ]
+ },
+ "WinstreakSpoofer": {
+  "lines": [
+   "Changes the winstreak shown next to your name. Only you can see it."
+  ]
+ },
+ "Xray": {
+  "lines": [
+   "Draws the parts you whitelist through walls and hides the rest."
+  ]
+ },
+ "ZoomUnlocker": {
+  "lines": [
+   "Raises the maximum camera zoom distance."
+  ]
+ }
+}
