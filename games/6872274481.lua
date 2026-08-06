@@ -5654,6 +5654,7 @@ run(function()
     local AutoBuildUp
     local LimitItems
     local lastPlacePos
+    local placeRetry = 0
 
     -- Which block to tower with. 'Limit to items' means exactly that: only the block that is
     -- actually in your hand is used, so the module does nothing at all while you hold a sword,
@@ -5680,7 +5681,7 @@ run(function()
         Name = 'AutoBuildUp',
         Function = function(callback)
             if callback then
-                lastPlacePos = nil
+                lastPlacePos, placeRetry = nil, 0
                 AutoBuildUp:Clean(runService.Heartbeat:Connect(function()
                     if not entitylib.isAlive then return end
                     local character = entitylib.character
@@ -5698,15 +5699,35 @@ run(function()
                     if not block then return end
 
                     -- Fill the cell directly beneath your feet - every cell as you rise, not one
-                    -- per jump/second. getPlacedBlock skips cells that already hold a block (real
-                    -- ground included, so nothing happens while grounded); lastPlacePos stops us
-                    -- re-sending the same cell before the placement round-trips back.
-                    local footY = root.Position.Y - ((character.HipHeight or 3) + 1.5)
-                    local placePosition = bedwars.BlockController:getBlockPosition(Vector3.new(root.Position.X, footY, root.Position.Z)) * 3
-                    if placePosition == lastPlacePos then return end
-                    if getPlacedBlock(placePosition) then return end
+                    -- per jump or per second. getPlacedBlock skips cells that already hold a
+                    -- block, real ground included, so nothing happens while grounded.
+                    local feet = root.Position.Y - (character.HipHeight or 3)
+                    local placePosition = bedwars.BlockController:getBlockPosition(Vector3.new(root.Position.X, feet - 1.5, root.Position.Z)) * 3
+
+                    -- Never fill the cell the body is still inside. Placing the moment the sample
+                    -- crossed into a new cell did exactly that - your feet were still within it -
+                    -- and a block that lands inside you is refused by the server or shoves you
+                    -- back off it. That is the block that looks placed and is not there when you
+                    -- come down on it. Waiting for the feet to clear the cell's top face is what
+                    -- makes each placement a real one.
+                    if feet < placePosition.Y + 1.5 then return end
+
+                    if getPlacedBlock(placePosition) then
+                        -- It is really there, so stop holding the cell against a retry.
+                        if placePosition == lastPlacePos then
+                            lastPlacePos = nil
+                        end
+                        return
+                    end
+
+                    -- A cell whose placement never materialised used to be blacklisted for good,
+                    -- because lastPlacePos was set on send rather than on arrival - so one refused
+                    -- placement left a permanent gap and you had to land to clear it. The cell is
+                    -- only held for as long as a placement could still be in flight.
+                    if placePosition == lastPlacePos and tick() < placeRetry then return end
                     if bedwars.placeBlock(placePosition, block) then
                         lastPlacePos = placePosition
+                        placeRetry = tick() + 0.25
                     end
                 end))
             end
@@ -16793,6 +16814,8 @@ run(function()
     local ClutchMode
     local clutchRay = RaycastParams.new()
     local adjacent, lastpos, label = {}, Vector3.zero
+    -- Where the last pass filled, so the ground actually covered between passes can be worked out.
+    local lastFoot
     local faceAdjacent = {
         Vector3.new(3, 0, 0),
         Vector3.new(-3, 0, 0),
@@ -16900,6 +16923,30 @@ run(function()
         return path
     end
 
+    -- Fill every cell the character actually crossed since the last pass, rather than only the
+    -- cells sampled at this instant. One pass is 0.03s at best and a dropped frame is far longer,
+    -- so above roughly 100 studs/s a single step carries you further than a whole block and the
+    -- cell in between is never looked at at all. That skipped cell is the hole you fall through
+    -- at speed.
+    local function fillPath(fromPos, toPos, wool)
+        if not fromPos then return end
+        local delta = toPos - fromPos
+        local distance = delta.Magnitude
+        if distance <= 1.5 then return end
+        -- One sample per half-cell, capped so a teleport across the map cannot spin here.
+        local steps = math.min(math.ceil(distance / 1.5), 16)
+        for step = 1, steps - 1 do
+            local pos = roundPos(fromPos:Lerp(toPos, step / steps))
+            local block, blockpos = getPlacedBlock(pos)
+            if not block then
+                blockpos = checkAdjacent(blockpos * 3) and blockpos * 3 or blockProximity(pos)
+                if blockpos then
+                    task.spawn(bedwars.placeBlock, blockpos, wool, false)
+                end
+            end
+        end
+    end
+
     local function getScaffoldBlock()
         if store.hand.toolType == 'block' then
             return store.hand.tool.Name, store.hand.amount
@@ -16927,8 +16974,12 @@ run(function()
             end
 
             if callback then
+                lastFoot = nil
                 repeat
-                    if entitylib.isAlive then
+                    if not entitylib.isAlive then
+                        -- A respawn is not ground that was walked over, so never bridge to it.
+                        lastFoot = nil
+                    else
                         local wool, amount = getScaffoldBlock()
 
                         if Mouse.Enabled then
@@ -16949,8 +17000,15 @@ run(function()
                                 root.Velocity = Vector3.new(root.Velocity.X, 38, root.Velocity.Z)
                             end
 
+                            -- Close the ground covered since the last pass before looking ahead,
+                            -- so nothing is skipped no matter how fast the character is moving.
+                            local footOffset = Vector3.new(0, entitylib.character.HipHeight + (Downwards.Enabled and inputService:IsKeyDown(Enum.KeyCode.LeftShift) and 4.5 or 1.5), 0)
+                            local footPos = root.Position - footOffset
+                            fillPath(lastFoot, footPos, wool)
+                            lastFoot = footPos
+
                             for i = Expand.Value, 1, -1 do
-                                local currentpos = roundPos(root.Position - Vector3.new(0, entitylib.character.HipHeight + (Downwards.Enabled and inputService:IsKeyDown(Enum.KeyCode.LeftShift) and 4.5 or 1.5), 0) + entitylib.character.Humanoid.MoveDirection * (i * 3))
+                                local currentpos = roundPos(footPos + entitylib.character.Humanoid.MoveDirection * (i * 3))
                                 if Diagonal.Enabled then
                                     if math.abs(math.round(math.deg(math.atan2(-entitylib.character.Humanoid.MoveDirection.X, -entitylib.character.Humanoid.MoveDirection.Z)) / 45) * 45) % 90 == 45 then
                                         local dt = (lastpos - currentpos)
