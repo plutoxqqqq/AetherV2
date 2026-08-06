@@ -7743,6 +7743,7 @@ run(function()
     local Limit
     local LegitAura
     local TargetSkilled
+    local AttackMode
 	local Particles, Boxes = {}, {}
     local anims, AnimDelay, AnimTween, armC0 = vape.Libraries.auraanims, tick()
 	local AttackRemote = {FireServer = function() end}
@@ -7939,6 +7940,8 @@ run(function()
                 end
 
 				local swingCooldown = tick()
+                -- Attack mode state: who Single is committed to, and how far Switch has rotated.
+                local singleTarget, switchIndex = nil, 0
                 repeat
                     local attacked, sword, meta = {}, getAttackData()
                     Attacking = false
@@ -7959,10 +7962,44 @@ run(function()
                             local selfpos = entitylib.character.RootPart.Position
                             local localfacing = entitylib.character.RootPart.CFrame.LookVector * Vector3.new(1, 0, 1)
 
+                            -- Everything inside the angle cone, and the subset of that which is
+                            -- close enough to actually hit. Boxes and particles draw the first
+                            -- list; Attack mode picks one entry off the second.
+                            local inrange, hittable = {}, {}
 							for _, v in plrs do
                                 local delta = (v.RootPart.Position - selfpos)
                                 local angle = math.acos(localfacing:Dot((delta * Vector3.new(1, 0, 1)).Unit))
 								if angle > (math.rad(AngleSlider.Value) / 2) then continue end
+
+                                local entry = {Entity = v, Delta = delta}
+                                table.insert(inrange, entry)
+                                if delta.Magnitude <= AttackRange.Value then
+                                    table.insert(hittable, entry)
+                                end
+                            end
+
+                            -- Single holds whoever it is already on for as long as they stay
+                            -- hittable, so one player is taken down before the next is started
+                            -- on. Switch hands the swing to the next target each time one lands.
+                            local focus
+                            if AttackMode.Value == 'Single' then
+                                for _, v in hittable do
+                                    if v.Entity == singleTarget then
+                                        focus = v
+                                        break
+                                    end
+                                end
+                                focus = focus or hittable[1]
+                                singleTarget = focus and focus.Entity or nil
+                            else
+                                singleTarget = nil
+                                if #hittable > 0 then
+                                    focus = hittable[(switchIndex % #hittable) + 1]
+                                end
+                            end
+
+							for _, entry in inrange do
+                                local v, delta = entry.Entity, entry.Delta
 
                                 table.insert(attacked, {
                                     Entity = v,
@@ -7972,7 +8009,7 @@ run(function()
 
                                 if not Attacking then
                                     Attacking = true
-                                    store.KillauraTarget = v
+                                    store.KillauraTarget = focus and focus.Entity or v
                                     if not Swing.Enabled and AnimDelay < tick() and not LegitAura.Enabled then
 										AnimDelay = tick() + math.max(SwingTime.Value, 0.11)
                                         bedwars.SwordController:playSwordEffect(meta, false)
@@ -7986,10 +8023,11 @@ run(function()
                                     end
                                 end
 
-                                if delta.Magnitude > AttackRange.Value then continue end
+                                if entry ~= focus then continue end
 
                                 local actualRoot = v.Character.PrimaryPart
 								if actualRoot and (tick() - swingCooldown) >= (Sync.Enabled and SwingTime.Value or 0.292) then
+                                    switchIndex += 1
 									local dir = CFrame.lookAt(selfpos, actualRoot.Position).LookVector
 									local pos = selfpos + dir * math.max(delta.Magnitude - 14.399, 0)
                                     bedwars.SwordController.lastAttack = workspace:GetServerTimeNow()
@@ -8119,6 +8157,12 @@ run(function()
     Sort = Killaura:CreateDropdown({
         Name = 'Target Mode',
         List = methods
+    })
+    AttackMode = Killaura:CreateDropdown({
+        Name = 'Attack Mode',
+        List = {'Single', 'Switch'},
+        Default = 'Single',
+        Tooltip = 'Single - stays on one target until they are gone\nSwitch - passes each swing to the next target'
     })
     TargetSkilled = Killaura:CreateToggle({
         Name = 'Target skilled',
@@ -14542,10 +14586,20 @@ run(function()
         return true
     end
 
+    -- What a lasso looks like on a character. The old check only ever accepted a direct child of
+    -- the character holding a descendant named exactly 'Rope', which misses the constraint itself
+    -- and anything the game renames between updates, so a lasso that carried no 'LassoHooked' tag
+    -- was never seen at all.
+    local function isLassoPart(inst)
+        if inst:IsA('RopeConstraint') then return true end
+        local name = inst.Name:lower()
+        return name:find('lasso', 1, true) ~= nil or name:find('rope', 1, true) ~= nil
+    end
+
     local function getLassoObject(character)
-        for _, child in character:GetChildren() do
-            if child:FindFirstChild('Rope', true) then
-                return child
+        for _, descendant in character:GetDescendants() do
+            if isLassoPart(descendant) then
+                return descendant
             end
         end
     end
@@ -14717,8 +14771,12 @@ run(function()
         if not AntiLasso.Enabled or not character or not character.Parent then return end
         if activeLasso then clearLasso(activeLasso) end
         currentCharacter = character
-        table.insert(currentConnections, character.ChildAdded:Connect(function(child)
-            if child:FindFirstChild('Rope', true) then
+        -- DescendantAdded, not ChildAdded. The rope is built under the object the game parents to
+        -- the character, so at the instant ChildAdded fired that object was still empty and the
+        -- lasso went unnoticed every time - which, on a build that no longer tags the character,
+        -- left the module with nothing to react to at all.
+        table.insert(currentConnections, character.DescendantAdded:Connect(function(descendant)
+            if isLassoPart(descendant) then
                 startLasso(character)
             end
         end))
