@@ -11231,7 +11231,34 @@ end)
 
 run(function()
     local CheatDetector
-    
+
+    -- Off by default, and deliberately named so nobody leaves it on by accident. Every check here
+    -- reads somebody else's replicated state and the local player is exempt from all of them; this
+    -- lifts that exemption so a detection can be tried out on yourself.
+    local DETECT_SELF = '[TEST] Detect self'
+
+    local function detectSelf()
+        local option = CheatDetector and CheatDetector.Options and CheatDetector.Options[DETECT_SELF]
+        return option ~= nil and option.Enabled == true
+    end
+
+    -- The one place the self exemption is decided, so the toggle reaches every check at once.
+    local function selfExcluded(plr)
+        return plr == lplr and not detectSelf()
+    end
+
+    -- entitylib keeps our own entity apart from the rest - entitylib.List is everyone but us - so
+    -- the poll below can never see the local player no matter what its guard says. This hands back
+    -- the same list with our entity on the end while the toggle is on.
+    local function entities()
+        if not detectSelf() or not entitylib.isAlive or not entitylib.character then
+            return entitylib.List
+        end
+        local list = table.clone(entitylib.List)
+        table.insert(list, entitylib.character)
+        return list
+    end
+
     local function Added(player, reason)
         if not CheatersFlagged[player] then
             CheatersFlagged[player] = true
@@ -11262,7 +11289,7 @@ run(function()
                 if damageTable.damageType == 0 and damageTable.fromEntity then
                     local from = playersService:GetPlayerFromCharacter(damageTable.fromEntity)
     
-                    if from and from ~= lplr then
+                    if from and not selfExcluded(from) then
                         local lastHit = (os.clock() - (AttackData[from] or 0))
                         if lastHit <= 0.28 then
                             Strikes[from] = (Strikes[from] or 0) + 1
@@ -11287,7 +11314,7 @@ run(function()
             CheatDetector:Clean(shared.bindable.Event:Connect(function(damageTable)
                 if damageTable.damageType == 0 and damageTable.fromEntity then
                     local player = playersService:GetPlayerFromCharacter(damageTable.fromEntity) 
-                    if player and player ~= lplr then
+                    if player and not selfExcluded(player) then
                         local magnitude = (damageTable.fromEntity.PrimaryPart.Position - damageTable.entityInstance.PrimaryPart.Position).Magnitude
                         local held = (store.inventories[player] or {}).hand
                         local meta = held and bedwars.ItemMeta[held.tool.Name].sword or nil
@@ -11316,8 +11343,8 @@ run(function()
                 end
     
                 repeat
-                    for _, v in entitylib.List do
-                        if v.Player and v.Player ~= lplr and v.Health > 0 and not CheatersFlagged[v.Player] then
+                    for _, v in entities() do
+                        if v.Player and not selfExcluded(v.Player) and v.Health > 0 and not CheatersFlagged[v.Player] then
                             if CheatDetector.Options.Invisible.Enabled and (v.RootPart.Position - v.Head.Position).Magnitude > 5 then
                                 Added(v.Player, 'Invisible')
                             end
@@ -11342,6 +11369,14 @@ run(function()
             Default = true
         })
     end
+
+    -- Last, and under everything else, because it is not a detection - it only changes who the
+    -- detections above are allowed to look at. Read as the checks run rather than at startup, so
+    -- there is no need to cycle the module for it to take effect.
+    CheatDetector:CreateToggle({
+        Name = DETECT_SELF,
+        Tooltip = 'Testing aid. Runs every enabled detection against you as well, and flags you like anyone else if one of them fires'
+    })
 end)
 
 run(function()
