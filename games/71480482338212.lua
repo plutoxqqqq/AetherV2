@@ -4632,44 +4632,11 @@ run(function()
     local Particles, Boxes, Rings = {}, {}, {}
     local anims, AnimDelay, AnimTween, armC0 = vape.Libraries.auraanims, tick()
     local AttackRemote = {FireServer = function(self, ...) end}
-    local projectileRemote = {InvokeServer = function(self, ...) end}
     task.spawn(function()
         AttackRemote = bedwars.Client:Get(remotes.AttackEntity).instance
     end)
-    task.spawn(function()
-    	projectileRemote = bedwars.Client:Get(remotes.FireProjectile).instance
-    end)
     
-    local FastHits
-    local Legit
-    local FireRate
-    local Whitelist
-    local FireRates = {}
     
-    local function getAmmo(check)
-    	for _, item in store.inventory.inventory.items do
-    		if check.ammoItemTypes and table.find(check.ammoItemTypes, item.itemType) then
-    			return item.itemType
-    		end
-    	end
-    	return nil
-    end
-    local function getProjectiles()
-    	local items = {}
-    	for _, item in store.inventory.inventory.items do
-    		local proj = bedwars.ItemMeta[item.itemType].projectileSource
-    		local ammo = proj and getAmmo(proj)
-    		if ammo and (table.find(Whitelist.ListEnabled, ammo) or table.find(Whitelist.ListEnabled, item.itemType)) then
-    			table.insert(items, {
-    				item,
-    				ammo,
-    				proj.projectileType(ammo),
-    				proj,
-    			})
-    		end
-    	end
-    	return items
-    end
     local function getAttackData()
         if Mouse.Enabled then
             if not inputService:IsMouseButtonPressed(0) then return false end
@@ -4769,7 +4736,6 @@ run(function()
                 end
     
                 local swingCooldown, switchCooldown, lastSwing, targetIndex = tick(), tick(), 0, 0
-                local lastShot, projectileIndex = tick(), 0
                 local lastHit = 0
                 repeat
                     local attacked, sword, meta = {}, getAttackData()
@@ -4856,71 +4822,6 @@ run(function()
                                             }
                                         })
     
-                                        if FastHits.Enabled and tick() > lastShot and not entitylib.Wallcheck(entitylib.character.RootPart.Position, actualRoot.Position, {gameCamera, lplr.Character, v.Character}) then
-                                            local projectiles = getProjectiles()
-                                            if #projectiles > 0 then
-                                                projectileIndex += 1
-                                                if not projectiles[projectileIndex] then
-                                                    projectileIndex = 1
-                                                end
-                                                
-                                                local item, ammo, projectile, itemMeta = unpack(projectiles[projectileIndex])
-                                                if tick() > (FireRates[item.itemType] or 0) then
-                                                    local projmeta = bedwars.ProjectileMeta[projectile]
-                                                    local projSpeed, gravity = projmeta.launchVelocity, projmeta.gravitationalAcceleration or 196.2
-                                                    local oldhotbar, oldtool = store.inventory.hotbarSlot, store.hand.tool
-                                                    local hotbar = getHotbar(item.tool)
-                                                    if hotbar then
-                                                        switchItem(item.tool)
-                                                        if Legit.Enabled then
-                                                            hotbarSwitch(hotbar)
-                                                        end
-                                                    end
-                                                    
-                                                    local calc = prediction.SolveTrajectory(selfpos, projSpeed, gravity, v.RootPart.Position, v.RootPart.Velocity, workspace.Gravity, v.HipHeight, v.Jumping and 42.6 or nil, nil, nil, lplr:GetNetworkPing())
-                                                    if calc then
-                                                        local sdir, id = CFrame.lookAt(selfpos, calc).LookVector, httpService:GenerateGUID(true)
-                                                        local shootPosition = (CFrame.new(selfpos, calc) * CFrame.new(Vector3.new(-bedwars.BowConstantsTable.RelX, -bedwars.BowConstantsTable.RelY, -bedwars.BowConstantsTable.RelZ))).Position
-                                                    
-                                                        bedwars.ProjectileController:createLocalProjectile(itemMeta, ammo, projectile, shootPosition, id, sdir * projSpeed, {drawDurationSeconds = 1})
-                                                        local res = projectileRemote:InvokeServer(
-                                                            item.tool,
-                                                            ammo,
-                                                            projectile,
-                                                            shootPosition,
-                                                            pos,
-                                                            sdir * projSpeed,
-                                                            id,
-                                                            { 
-                                                                drawDurationSeconds = 1, 
-                                                                shotId = httpService:GenerateGUID(false) 
-                                                            },
-                                                            workspace:GetServerTimeNow() - 0.045
-                                                        )
-                                                        if res then
-                                                            pcall(function()
-                                                                res.Parent = replicatedStorage
-                                                            end)
-                                                            FireRates[item.itemType] = tick() + itemMeta.fireDelaySec
-                                                            local shoot = itemMeta.launchSound
-                                                            shoot = shoot and shoot[math.random(1, #shoot)] or nil
-                                                            if shoot then
-                                                                bedwars.SoundManager:playSound(shoot)
-                                                            end
-                                                        end
-                                                        lastShot = tick() + (lplr:GetNetworkPing() + FireRate.Value)
-                                                    end
-                                                    if oldtool then
-                                                        switchItem(oldtool)
-                                                    end
-                                                    task.spawn(function()
-                                                        if Legit.Enabled then
-                                                            hotbarSwitch(oldhotbar)
-                                                        end
-                                                    end)
-                                                end
-                                            end
-                                        end
     
                                         if Mode.Value ~= 'Multi' then
                                             break
@@ -5075,40 +4976,6 @@ run(function()
         Max = 120,
         Default = 60,
         Suffix = 'hz'
-    })
-    FastHits = Killaura:CreateToggle({
-    	Name = 'Fast Hits',
-    	Tooltip = 'Deals more damage quicker using projectiles',
-    	Default = false,
-    	Function = function(callback)
-            pcall(function()
-                Legit.Object.Visible = callback
-                FireRate.Object.Visible = callback
-                Whitelist.Object.Visible = callback
-            end)
-    	end
-    })
-    Whitelist = Killaura:CreateTextList({
-        Name = 'Projectiles',
-        Default = {'arrow', 'snowball'},
-        Darker = true,
-        Visible = false,
-        Tooltip = 'Projectiles to use for fasthits'
-    })
-    Legit = Killaura:CreateToggle({
-    	Name = 'Legit Switch',
-    	Darker = true,
-    	Visible = false
-    })
-    FireRate = Killaura:CreateSlider({
-    	Name = 'Fire rate',
-    	Suffix = 'seconds',
-    	Min = 0,
-    	Max = 2,
-    	Decimal = 100,
-    	Darker = true,
-    	Visible = false,
-    	Default = 0.05
     })
     MaxTargets = Killaura:CreateSlider({
         Name = 'Max targets',
@@ -12010,53 +11877,6 @@ run(function()
                 label = nil
             end
         end
-    })
-end)
-
-run(function()
-    local ShopTierBypass
-    local tiered, nexttier = {}, {}
-    local old
-    
-    ShopTierBypass = vape.Categories.Utility:CreateModule({
-        Name = 'ShopTierBypass',
-        Function = function(callback)
-            if callback then
-                repeat task.wait() until store.shopLoaded or not ShopTierBypass.Enabled
-                if ShopTierBypass.Enabled then
-                    for _, v in bedwars.Shop.ShopItems do
-                        tiered[v] = v.tiered
-                        nexttier[v] = v.nextTier
-                        v.nextTier = nil
-                        v.tiered = nil
-                    end
-    
-                    old = bedwars.Shop.getShop
-    				bedwars.Shop.getShop = function(...)
-    					local res = {old(...)}
-    					for i, v in res[1] do
-    						v.nextTier = nil
-    						v.tiered = nil
-    					end
-    					return unpack(res)
-    				end
-                end
-            else
-                if old then
-                    bedwars.Shop.getShop = old
-                    old = nil
-                end
-                for i, v in tiered do
-                    i.tiered = v
-                end
-                for i, v in nexttier do
-                    i.nextTier = v
-                end
-                table.clear(nexttier)
-                table.clear(tiered)
-            end
-        end,
-        Tooltip = 'Lets you buy things like armor early'
     })
 end)
 

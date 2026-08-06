@@ -6874,7 +6874,7 @@ run(function()
     local Orbit, OrbitDirection, OrbitSpeed, OrbitDistance
     local Dolly, DollyDirection, DollySpeed
     local KeyframeTime, KeyframeEase, KeyframeLoop
-    local HideHud, HideMenu
+    local HideHud
 
     local starterGui = cloneref(game:GetService('StarterGui'))
     local bindName = 'AetherV2Freecam'..httpService:GenerateGUID(false)
@@ -7043,34 +7043,33 @@ run(function()
         table.clear(hiddenGuis)
     end
 
+    -- AetherV2's own menu is a LayerCollector sitting in the same PlayerGui as the game's HUD
+    -- whenever the executor has no CoreGui to hang it off, so a blanket sweep of PlayerGui took
+    -- the menu down with the interface - and the menu is how you get back out of the shot.
+    local function isOwnGui(screen)
+        local suc, menu = pcall(function()
+            return vape.gui
+        end)
+        if not suc or typeof(menu) ~= 'Instance' then return false end
+        return screen == menu or screen:IsDescendantOf(menu) or menu:IsDescendantOf(screen)
+    end
+
     local function hideInterface()
-        if HideHud.Enabled then
-            pcall(function()
-                starterGui:SetCoreGuiEnabled(Enum.CoreGuiType.All, false)
-            end)
-            local playerGui = lplr:FindFirstChildOfClass('PlayerGui')
-            if playerGui then
-                for _, screen in playerGui:GetChildren() do
-                    if screen:IsA('LayerCollector') and screen.Enabled then
-                        table.insert(hiddenGuis, screen)
-                        screen.Enabled = false
-                    end
+        if not HideHud.Enabled then return end
+        pcall(function()
+            starterGui:SetCoreGuiEnabled(Enum.CoreGuiType.All, false)
+        end)
+        local playerGui = lplr:FindFirstChildOfClass('PlayerGui')
+        if playerGui then
+            for _, screen in playerGui:GetChildren() do
+                if screen:IsA('LayerCollector') and screen.Enabled and not isOwnGui(screen) then
+                    table.insert(hiddenGuis, screen)
+                    screen.Enabled = false
                 end
-            end
-        end
-        if HideMenu.Enabled then
-            local suc, menu = pcall(function()
-                return vape.gui
-            end)
-            if suc and typeof(menu) == 'Instance' and menu.Enabled then
-                table.insert(hiddenGuis, menu)
-                menu.Enabled = false
             end
         end
     end
 
-    -- Toggling one of the two while filming has to re-run both, or turning the menu back on
-    -- would bring the game's HUD with it.
     local function refreshInterface()
         if not active then return end
         showInterface()
@@ -7811,13 +7810,7 @@ run(function()
     HideHud = Freecam:CreateToggle({
 	Name = 'Hide HUD',
 	Function = refreshInterface,
-	Tooltip = 'Hides the game interface while filming'
-    })
-    HideMenu = Freecam:CreateToggle({
-	Name = 'Hide menu',
-	Darker = true,
-	Function = refreshInterface,
-	Tooltip = 'Hides AetherV2 too, the keybind still works'
+	Tooltip = 'Hides the game interface while filming. The AetherV2 menu stays up'
     })
 end)
 

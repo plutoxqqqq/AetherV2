@@ -4742,7 +4742,7 @@ end
 local settingSubcategories = {
 	Killaura = {
 		{'Targeting', {'Targets', 'Target Mode', 'Attack Mode', 'Max targets', 'Max angle', 'Attackable check', 'GUI check', 'Require mouse down', 'Limit to items'}},
-		{'Range & Timing', {'Swing range', 'Attack range', 'Swing time', 'Update rate', 'Fire rate', 'HitReg', 'Air Hit Chance', 'Continue Swinging', 'Fast Hits'}},
+		{'Range & Timing', {'Swing range', 'Attack range', 'Swing time', 'Update rate', 'Fire rate', 'HitReg', 'Air Hit Chance', 'Continue Swinging'}},
 		{'Visuals', {'Show target', 'Target Color', 'Attack Color', 'Render type', 'Target particles', 'Texture', 'Color Begin', 'Color End', 'Size'}},
 		{'Animation', {'Custom Animation', 'Animation Mode', 'Animation Speed', 'No Swing', 'Swing only', 'Face target', 'No Tween'}},
 		{'Advanced', {'Unpatch', 'Projectiles', 'Legit Switch'}}

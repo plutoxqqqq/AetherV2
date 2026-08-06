@@ -5415,7 +5415,7 @@ run(function()
 
     -- The chat is one of two completely different systems and the old module only ever spoke to
     -- the wrong one. SetCore('ChatWindowPosition') drives the legacy Lua chat; BedWars runs on
-    -- TextChatService (see ChatCrasher), which ignores SetCore entirely - so the module did
+    -- TextChatService, which ignores SetCore entirely - so the module did
     -- nothing. We drive both now: SetCore for the legacy chat, and for TextChatService we find the
     -- window it actually rendered and move that frame ourselves, re-asserting it because the chat
     -- rebuilds its GUI on respawn and channel changes.
@@ -5510,28 +5510,6 @@ run(function()
         Function = function()
             if ChatPosition.Enabled then apply() end
         end
-    })
-end)
-
-run(function()
-    local ChatCrasher
-    ChatCrasher = vape.Categories.Utility:CreateModule({
-        Name = 'ChatCrasher',
-        Function = function(callback)
-            if callback then
-                repeat
-                    pcall(function()
-                        if textChatService.ChatVersion == Enum.ChatVersion.TextChatService then
-                            textChatService.ChatInputBarConfiguration.TargetTextChannel:SendAsync(' ')
-                        else
-                            replicatedStorage.DefaultChatSystemChatEvents.SayMessageRequest:FireServer(' ', 'All')
-                        end
-                    end)
-                    task.wait(1.7)
-                until not ChatCrasher.Enabled
-            end
-        end,
-        Tooltip = 'Spams empty chat messages'
     })
 end)
 
@@ -6090,6 +6068,7 @@ run(function()
     local Notify
     local HealthThreshold
     local TeleportHeight
+    local GroundTime
 
     -- realchar is the character the parked hitbox was taken OUT of, and giveBack refuses to hand it
     -- to any other one. Respawn while it is parked and lplr.Character is a different model; putting
@@ -6101,6 +6080,9 @@ run(function()
     local lastWarn = 0
     local lowestPoint = -9e9
     local teleportCycling = false
+    -- When the current stretch of standing on the ground began, or 0 while airborne. The launch
+    -- waits on this so every cycle spends a real, visible moment on the floor.
+    local groundedSince = 0
     local groundRay = RaycastParams.new()
     groundRay.RespectCanCollide = true
     groundRay.FilterType = Enum.RaycastFilterType.Exclude
@@ -6251,21 +6233,36 @@ run(function()
                         local humanoid, root = entitylib.character.Humanoid, entitylib.character.RootPart
                         if humanoid.Health >= HealthThreshold.Value then
                             teleportCycling = false
+                            groundedSince = 0
                             return
                         end
                         if not isnetworkowner(root) then return end
                         local landed = humanoid.FloorMaterial ~= Enum.Material.Air
                         -- Never launch on enable while airborne: every teleport is armed by a
-                        -- genuine landing, including the first one.
-                        if landed then
-                            teleportCycling = true
-                            root.CFrame = CFrame.new(root.Position.X, TeleportHeight.Value, root.Position.Z) * root.CFrame.Rotation
-                            root.AssemblyLinearVelocity = Vector3.zero
-                            humanoid:ChangeState(Enum.HumanoidStateType.Freefall)
+                        -- genuine landing, including the first one. Relaunching on the very frame
+                        -- the floor was detected meant the landing never actually happened as far
+                        -- as the server was concerned - the body clipped the ground and was gone
+                        -- again. Hold the landing for its full dwell first, so the fall resolves,
+                        -- the fall damage is taken once and health regeneration gets a window.
+                        if not landed then
+                            groundedSince = 0
+                            return
                         end
+                        local now = tick()
+                        if groundedSince == 0 then
+                            groundedSince = now
+                            return
+                        end
+                        if now - groundedSince < GroundTime.Value then return end
+                        groundedSince = 0
+                        teleportCycling = true
+                        root.CFrame = CFrame.new(root.Position.X, TeleportHeight.Value, root.Position.Z) * root.CFrame.Rotation
+                        root.AssemblyLinearVelocity = Vector3.zero
+                        humanoid:ChangeState(Enum.HumanoidStateType.Freefall)
                         return
                     end
                     teleportCycling = false
+                    groundedSince = 0
 
                     -- Somebody else (AntiDeath) owns the hitbox: keep out of its way entirely.
                     if store.rootpart and realroot == nil then return end
@@ -6348,6 +6345,7 @@ run(function()
                 Offset.Object.Visible = val == 'Offset'
                 HealthThreshold.Object.Visible = val == 'Teleport'
                 TeleportHeight.Object.Visible = val == 'Teleport'
+                GroundTime.Object.Visible = val == 'Teleport'
             end)
         end
     })
@@ -6370,6 +6368,17 @@ run(function()
         Darker = true,
         Visible = false,
         Tooltip = 'Absolute Y level used for each launch; kept below the usual excessive-height damage zone'
+    })
+    GroundTime = GodMode:CreateSlider({
+        Name = 'Ground time',
+        Min = 0.1,
+        Max = 3,
+        Default = 0.5,
+        Decimal = 100,
+        Suffix = ' seconds',
+        Darker = true,
+        Visible = false,
+        Tooltip = 'How long each landing is held before the next launch. Too short and the landing never registers'
     })
     Offset = GodMode:CreateSlider({
         Name = 'Offset',
@@ -7734,115 +7743,12 @@ run(function()
     local Limit
     local LegitAura
     local TargetSkilled
-    local FastHits
-    local FastProjectiles
-    local FastLegitSwitch
-    local FastFireRate
 	local Particles, Boxes = {}, {}
     local anims, AnimDelay, AnimTween, armC0 = vape.Libraries.auraanims, tick()
 	local AttackRemote = {FireServer = function() end}
-    local projectileRemote = {InvokeServer = function() end}
     task.spawn(function()
 		AttackRemote = bedwars.Client:Get(remotes.AttackEntity).instance
                 end)
-    task.spawn(function()
-        projectileRemote = bedwars.Client:Get(remotes.FireProjectile).instance
-    end)
-
-    ----------------------------------------------------------------------------
-    -- Fast Hits.
-    ----------------------------------------------------------------------------
-    -- A sword alone is capped by its own swing cooldown. Fast Hits throws whatever you have
-    -- listed - arrows, snowballs - at the same target in between swings, so the target takes
-    -- the sword's damage and the projectile's. Only one shot is ever in flight at a time and
-    -- the sword goes straight back into your hand, so the aura itself is unaffected.
-    local fastHitCooldown = 0
-    local fastHitBusy = false
-
-    -- Ground search for the Fast Hits trajectory solve. Exclude rather than include-the-map,
-    -- for the same reason ProjectileAura does it: targets stand on placed blocks.
-    local fastRayCheck = RaycastParams.new()
-    fastRayCheck.FilterType = Enum.RaycastFilterType.Exclude
-    fastRayCheck.RespectCanCollide = true
-
-    local function fastAmmoFor(projectileSource)
-        for _, item in store.inventory.inventory.items do
-            if projectileSource.ammoItemTypes and table.find(projectileSource.ammoItemTypes, item.itemType) then
-                return item.itemType
-            end
-        end
-        return nil
-    end
-
-    -- Everything in the inventory that can launch something on the Projectiles list. The list
-    -- is matched against the ammo, the launcher and the launcher's display name, so 'arrow'
-    -- and 'Bow' both select a bow.
-    local function fastLaunchers()
-        local launchers = {}
-        for _, item in store.inventory.inventory.items do
-            local meta = bedwars.ItemMeta[item.itemType]
-            local source = meta and meta.projectileSource
-            local ammo = source and fastAmmoFor(source)
-            if ammo then
-                local enabled = FastProjectiles.ListEnabled
-                if table.find(enabled, ammo) or table.find(enabled, item.itemType) or table.find(enabled, meta.displayName) then
-                    table.insert(launchers, {item, ammo, source.projectileType(ammo), source})
-                end
-            end
-        end
-        return launchers
-    end
-
-    local function fireFastHit(ent, sword)
-        if fastHitBusy or tick() < fastHitCooldown then return end
-        local launchers = fastLaunchers()
-        if #launchers == 0 then return end
-
-        fastHitBusy = true
-        task.spawn(function()
-            pcall(function()
-                local origin = entitylib.character.RootPart.Position
-                local item, ammo, projectile = unpack(launchers[1])
-                local meta = bedwars.ProjectileMeta[projectile]
-                if not meta then return end
-
-                local speed = meta.launchVelocity
-                local gravity = meta.gravitationalAcceleration or 196.2
-                fastRayCheck.FilterDescendantsInstances = {lplr.Character, gameCamera}
-                local aim = prediction.SolveTrajectory(origin, speed, gravity, ent.RootPart.Position, ent.RootPart.Velocity, workspace.Gravity, ent.HipHeight, ent.Jumping and 42.6 or nil, fastRayCheck, nil, lplr:GetNetworkPing())
-                if not aim then return end
-
-                -- Tell the rest of the file a shot is in flight so nothing swaps the launcher
-                -- out from under it, the same signal ProjectileAura publishes.
-                store.lastProjectileFire = workspace:GetServerTimeNow()
-                -- Legit switch goes through the hotbar the way a player would; without it the
-                -- item is swapped straight into the hand. Either way the switch is given a
-                -- moment to land - firing before the server has seen the equip is how a shot
-                -- gets thrown away.
-                if FastLegitSwitch.Enabled then
-                    local slot = getHotbar(item.tool)
-                    if slot then hotbarSwitch(slot) end
-                else
-                    switchItem(item.tool)
-                end
-                if not Killaura.Enabled or not FastHits.Enabled then return end
-
-                local id = httpService:GenerateGUID(true)
-                local direction = CFrame.lookAt(origin, aim).LookVector
-                local shootPosition = (CFrame.new(origin, aim) * CFrame.new(Vector3.new(-bedwars.BowConstantsTable.RelX, -bedwars.BowConstantsTable.RelY, -bedwars.BowConstantsTable.RelZ))).Position
-                bedwars.ProjectileController:createLocalProjectile(meta, ammo, projectile, shootPosition, id, direction * speed, {drawDurationSeconds = 1})
-                projectileRemote:InvokeServer(item.tool, ammo, projectile, shootPosition, origin, direction * speed, id, {drawDurationSeconds = 1, shotId = httpService:GenerateGUID(false)}, workspace:GetServerTimeNow() - 0.045)
-
-                -- Straight back to the sword, or the next pass of the aura loop has nothing to
-                -- swing with.
-                if sword and sword.tool then
-                    switchItem(sword.tool, 0)
-                end
-            end)
-            fastHitCooldown = tick() + FastFireRate.Value
-            fastHitBusy = false
-        end)
-    end
 
     ----------------------------------------------------------------------------
     -- Skill-first targeting.
@@ -8049,11 +7955,7 @@ run(function()
                         })
 
                         if #plrs > 0 then
-                            -- Fast Hits owns the hand while a shot is going out; switching back
-                            -- here would undo the equip before the server has seen it.
-                            if not fastHitBusy then
-                                switchItem(sword.tool, 0)
-                            end
+                            switchItem(sword.tool, 0)
                             local selfpos = entitylib.character.RootPart.Position
                             local localfacing = entitylib.character.RootPart.CFrame.LookVector * Vector3.new(1, 0, 1)
 
@@ -8129,13 +8031,6 @@ run(function()
                     if Face.Enabled and attacked[1] then
                         local vec = attacked[1].Entity.RootPart.Position * Vector3.new(1, 0, 1)
                         entitylib.character.RootPart.CFrame = CFrame.lookAt(entitylib.character.RootPart.Position, Vector3.new(vec.X, entitylib.character.RootPart.Position.Y + 0.001, vec.Z))
-                    end
-
-                    -- Extra damage between swings. Only ever aimed at the target the aura is
-                    -- already committed to, and only while there actually is a sword to go back
-                    -- to afterwards.
-                    if FastHits.Enabled and sword and attacked[1] then
-                        fireFastHit(attacked[1].Entity, sword)
                     end
 
                     task.wait()
@@ -8224,40 +8119,6 @@ run(function()
     Sort = Killaura:CreateDropdown({
         Name = 'Target Mode',
         List = methods
-    })
-    FastHits = Killaura:CreateToggle({
-        Name = 'Fast Hits',
-        Function = function(callback)
-            pcall(function()
-                FastProjectiles.Object.Visible = callback
-                FastLegitSwitch.Object.Visible = callback
-                FastFireRate.Object.Visible = callback
-            end)
-        end,
-        Tooltip = 'Deals extra damage between swings by throwing listed projectiles at the same target'
-    })
-    FastProjectiles = Killaura:CreateTextList({
-        Name = 'Projectiles',
-        Default = {'arrow', 'snowball'},
-        Darker = true,
-        Visible = false,
-        Tooltip = 'Which projectiles Fast Hits is allowed to use'
-    })
-    FastLegitSwitch = Killaura:CreateToggle({
-        Name = 'Legit Switch',
-        Darker = true,
-        Visible = false,
-        Tooltip = 'Switch to the projectile through the hotbar instead of straight into the hand'
-    })
-    FastFireRate = Killaura:CreateSlider({
-        Name = 'Fire rate',
-        Min = 0,
-        Max = 2,
-        Decimal = 100,
-        Default = 0.05,
-        Darker = true,
-        Visible = false,
-        Suffix = 'seconds'
     })
     TargetSkilled = Killaura:CreateToggle({
         Name = 'Target skilled',
@@ -15770,10 +15631,18 @@ run(function()
 							local item, ammo, projectile, itemMeta = unpack(data)
 							if (FireDelays[item.itemType] or 0) < tick() then
 								local ent = getEntity()
-								if (not Check.Enabled or ent) and hotbarSwitch(getHotbar(item.tool)) then
-									bedwars.Client:Get('TridentUnanchor'):SendToServer()
+								local slot = getHotbar(item.tool)
+								-- hotbarSwitch reports whether it had to move, not whether the
+								-- projectile is now in hand, so a projectile that was already the
+								-- selected slot read as a failure and the shot was dropped. Gate on
+								-- the slot existing instead, and switch only when it is not current.
+								if (not Check.Enabled or ent) and slot then
+									hotbarSwitch(slot)
+									pcall(function()
+										bedwars.Client:Get('TridentUnanchor'):SendToServer()
+									end)
 									local meta = bedwars.ProjectileMeta[projectile]
-									local projSpeed, gravity = meta.launchVelocity, meta.gravitationalAcceleration or 196.2
+									local projSpeed, gravity = meta.launchVelocity or 100, meta.gravitationalAcceleration or 196.2
 									-- SolveTrajectory takes (origin, speed, projectileGravity,
 									-- targetPosition, targetVelocity, playerGravity, playerHeight,
 									-- playerJump, params, iterations, ping). This used to pass
@@ -15798,6 +15667,15 @@ run(function()
 										nil,
 										lplr:GetNetworkPing()
 									) or nil
+									-- With Target check off there is no entity to solve against, and
+									-- a solve can fail even with one, so `calc` was nil and the shot
+									-- was silently dropped every time - the module switched to the
+									-- projectile, fired nothing and switched back. Fall back to the
+									-- direction the camera is pointing so there is always a shot.
+									if not calc then
+										local origin = entitylib.character.RootPart.Position
+										calc = origin + (gameCamera.CFrame.LookVector * 100)
+									end
 									if calc then
 										local shootPosition = (CFrame.new(entitylib.character.RootPart.Position, calc) * CFrame.new(Vector3.new(-bedwars.BowConstantsTable.RelX, -bedwars.BowConstantsTable.RelY, -bedwars.BowConstantsTable.RelZ))).Position
 										local dir, id = CFrame.lookAt(shootPosition, calc).LookVector, httpService:GenerateGUID(true)
@@ -17054,53 +16932,6 @@ run(function()
         end
     })
 
-end)
-
-run(function()
-    local ShopTierBypass
-    local tiered, nexttier = {}, {}
-    local old
-
-    ShopTierBypass = vape.Categories.Utility:CreateModule({
-        Name = 'ShopTierBypass',
-        Function = function(callback)
-            if callback then
-                repeat task.wait() until store.shopLoaded or not ShopTierBypass.Enabled
-                if ShopTierBypass.Enabled then
-                    for _, v in bedwars.Shop.ShopItems do
-                        tiered[v] = v.tiered
-                        nexttier[v] = v.nextTier
-                        v.nextTier = nil
-                        v.tiered = nil
-                    end
-
-                    old = bedwars.Shop.getShop
-				bedwars.Shop.getShop = function(...)
-					local res = {old(...)}
-					for i, v in res[1] do
-						v.nextTier = nil
-						v.tiered = nil
-					end
-					return unpack(res)
-				end
-                end
-            else
-                if old then
-                    bedwars.Shop.getShop = old
-                    old = nil
-                end
-                for i, v in tiered do
-                    i.tiered = v
-                end
-                for i, v in nexttier do
-                    i.nextTier = v
-                end
-                table.clear(nexttier)
-                table.clear(tiered)
-            end
-        end,
-        Tooltip = 'Lets you buy things like armor early'
-    })
 end)
 
 run(function()
@@ -24108,6 +23939,8 @@ run(function()
     local AutoBuy
     local Sword
     local Armor
+    local Arrows
+    local ArrowAmount
     local Upgrades
     local TierCheck
     local BedwarsCheck
@@ -24210,7 +24043,25 @@ run(function()
         return currencytable[item.currency] >= (item.price * amount)
     end
 
-    local function buyItem(item, currencytable)
+    -- Clears the client-side "already bought this" flag for a consumable. The shop greys an item
+    -- out purely off this map plus the purchased list in the store, so anything left flagged reads
+    -- as Purchased and refuses further buys until the next match - AutoBuy being off included.
+    local function clearPurchased(itemType)
+        pcall(function()
+            bedwars.BedwarsShopController.alreadyPurchasedMap[itemType] = nil
+        end)
+        pcall(function()
+            local purchased = bedwars.Store:getState().Bedwars.itemsPurchased
+            if type(purchased) ~= 'table' then return end
+            for i = #purchased, 1, -1 do
+                if purchased[i] == itemType then
+                    table.remove(purchased, i)
+                end
+            end
+        end)
+    end
+
+    local function buyItem(item, currencytable, repeatable)
         if not id then return end
         notif('AutoBuy', 'Bought '..bedwars.ItemMeta[item.itemType].displayName, 3)
         bedwars.Client:Get('BedwarsPurchaseItem'):CallServerAsync({
@@ -24219,6 +24070,13 @@ run(function()
         }):andThen(function(suc)
             if suc then
                 bedwars.SoundManager:playSound(bedwars.SoundList.BEDWARS_PURCHASE_ITEM)
+                -- Consumables are bought over and over, so they must never be flagged. Flagging
+                -- arrows once locked them out of the shop for the rest of the match - the flag is
+                -- what draws "Purchased" and blocks the buy, and nothing ever cleared it again.
+                if repeatable then
+                    clearPurchased(item.itemType)
+                    return
+                end
                 bedwars.Store:dispatch({
                     type = 'BedwarsAddItemPurchased',
                     itemType = item.itemType
@@ -24299,7 +24157,7 @@ run(function()
         if not item then return false end
         if not repeatable and itemType and getItem(itemType) then return false end
         if not canBuy(item, currencytable) then return false end
-        buyItem(item, currencytable)
+        buyItem(item, currencytable, repeatable)
         return true
     end
 
@@ -24430,22 +24288,37 @@ run(function()
             end or nil
         end
     })
-    AutoBuy:CreateToggle({
+    Arrows = AutoBuy:CreateToggle({
         Name = 'Buy Arrows',
         Default = true,
         Darker = true,
-        Tooltip = 'Also keep a stack of arrows in for whichever of the two you bought',
+        Tooltip = 'Tops arrows back up to the minimum below whenever a bow or crossbow is in your inventory',
         Function = function(callback)
             npctick = tick()
+            if ArrowAmount then
+                ArrowAmount.Object.Visible = callback
+            end
+            -- Turning the toggle off hands arrows straight back to the shop, rather than leaving
+            -- whatever state the last automatic purchase put them in.
+            clearPurchased('arrow')
             Functions[42] = callback and function(currencytable, shop)
                 if not shop then return end
                 -- Only worth arrows once something that fires them is actually in the inventory.
                 if not getBow() then return end
+                clearPurchased('arrow')
                 local arrows = getItem('arrow')
-                if arrows and (arrows.amount or 0) >= 8 then return end
+                if arrows and (arrows.amount or 0) >= ArrowAmount.Value then return end
                 return buyWeapon({'arrow'}, currencytable, true)
             end or nil
         end
+    })
+    ArrowAmount = AutoBuy:CreateSlider({
+        Name = 'Minimum arrows',
+        Min = 1,
+        Max = 64,
+        Default = 8,
+        Darker = true,
+        Tooltip = 'Arrows are restocked once your inventory drops below this many'
     })
     Upgrades = AutoBuy:CreateToggle({
         Name = 'Buy Upgrades',
