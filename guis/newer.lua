@@ -3784,17 +3784,58 @@ function mainapi:CreateGUI()
 		optionapi.Icon = icon
 		optionapi.Object = button
 
-		function optionapi:Toggle()
-			self.Enabled = not self.Enabled
+		-- Opening a category has to actually show you the window. A saved layout can put one
+		-- off the side of a smaller screen, or exactly on top of another window, and either way
+		-- the tab reads as "nothing happened" - the button lit up and the panel was nowhere on
+		-- screen. Anything that cannot be seen goes back to the slot this category was built
+		-- with.
+		local function revealWindow(window)
+			local screen = mainapi.gui and mainapi.gui.AbsoluteSize / scale.Scale or Vector2.new(1920, 1080)
+			local pos = window.Position
+			local offscreen = pos.X.Offset < -40 or pos.Y.Offset < -40
+				or pos.X.Offset > screen.X - 60 or pos.Y.Offset > screen.Y - 40
+			local stacked = false
+			for _, v in mainapi.Categories do
+				local other = v.Object
+				if typeof(other) == 'Instance' and other ~= window and other.Visible
+					and other.Position == pos
+				then
+					stacked = true
+					break
+				end
+			end
+			if not (offscreen or stacked) then return end
+			local default
+			for _, v in mainapi.Categories do
+				if v.Object == window then
+					default = v.DefaultPosition
+					break
+				end
+			end
+			window.Position = default or UDim2.fromOffset(6, 60)
+		end
+
+		function optionapi:Toggle(state)
+			if state ~= nil then
+				if state == self.Enabled then return end
+				self.Enabled = state
+			else
+				self.Enabled = not self.Enabled
+			end
 			tween:Tween(arrow, uipallet.Tween, {
 				Position = UDim2.new(1, self.Enabled and -14 or -20, 0, 16)
 			})
-			button.TextColor3 = self.Enabled and Color3.fromHSV(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value) or uipallet.Text
+			button.TextColor3 = self.Enabled and Color3.fromHSV(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value) or color.Dark(uipallet.Text, 0.16)
 			if icon then
 				icon.ImageColor3 = button.TextColor3
 			end
-			button.BackgroundColor3 = color.Light(uipallet.Main, 0.02)
-			categorysettings.Window.Visible = self.Enabled
+			button.BackgroundColor3 = self.Enabled and color.Light(uipallet.Main, 0.02) or uipallet.Main
+			local window = categorysettings.Window
+			if typeof(window) ~= 'Instance' or not window.Parent then return end
+			if self.Enabled then
+				revealWindow(window)
+			end
+			window.Visible = self.Enabled
 		end
 
 		button.MouseEnter:Connect(function()
@@ -3811,11 +3852,19 @@ function mainapi:CreateGUI()
 				button.BackgroundColor3 = uipallet.Main
 			end
 		end)
-		-- Activated covers mouse, touch and gamepad. MouseButton1Click is not
-		-- consistently emitted by executor-hosted ScreenGuis on mobile.
-		button.Activated:Connect(function()
+		-- Both signals, because neither one is reliable everywhere: Activated is what carries
+		-- touch and gamepad, and it is also the one that goes quiet on some executor-hosted
+		-- ScreenGuis, which is what left these tabs dead to a plain mouse click. A normal click
+		-- fires both, so the second one inside the same moment is dropped.
+		local lastClick = 0
+		local function clicked()
+			local now = os.clock()
+			if now - lastClick < 0.05 then return end
+			lastClick = now
 			optionapi:Toggle()
-		end)
+		end
+		button.Activated:Connect(clicked)
+		button.MouseButton1Click:Connect(clicked)
 
 		categoryapi.Buttons[categorysettings.Name] = optionapi
 
@@ -4955,7 +5004,7 @@ function mainapi:CreateCategory(categorysettings)
 	windowlist.Parent = children
 
 	function categoryapi:CreateModule(modulesettings)
-		mainapi:Remove(modulesettings.Name)
+		mainapi:Remove(modulesettings.Name, true)
 		local moduleapi = {
 			Enabled = false,
 			Favourited = false,
@@ -8041,7 +8090,7 @@ function mainapi:CreateLegit()
 	end
 
 	function legitapi:CreateModule(modulesettings)
-		mainapi:Remove(modulesettings.Name)
+		mainapi:Remove(modulesettings.Name, true)
 		local moduleapi = {
 			Enabled = false,
 			ApiCategory = modulesettings.Category or 'Game',
@@ -8764,8 +8813,14 @@ function mainapi:LoadOptions(object, savedoptions)
 	end
 end
 
-function mainapi:Remove(obj)
-	local tab = (self.Modules[obj] and self.Modules or self.Legit.Modules[obj] and self.Legit.Modules or self.Categories)
+-- `modulesonly` is passed by the two CreateModule paths, which open by clearing anything already
+-- registered under the new module's name. Without it the lookup fell through to the category
+-- table, so a module that happened to share a tab's name tore that whole tab down - window,
+-- sidebar button and all - the moment it registered.
+function mainapi:Remove(obj, modulesonly)
+	local tab = self.Modules[obj] and self.Modules
+		or self.Legit.Modules[obj] and self.Legit.Modules
+		or (not modulesonly and self.Categories)
 	if tab and tab[obj] then
 		local newobj = tab[obj]
 		if self.ThreadFix then
@@ -11486,7 +11541,7 @@ do
 
 	local spotCard = Instance.new('TextButton')
 	spotCard.Name = 'Card'
-	spotCard.Size = UDim2.fromOffset(400, 380)
+	spotCard.Size = UDim2.fromOffset(520, 470)
 	spotCard.Position = UDim2.fromScale(0.5, 0.42)
 	spotCard.AnchorPoint = Vector2.new(0.5, 0.5)
 	spotCard.BackgroundColor3 = uipallet.Main
@@ -11511,7 +11566,7 @@ do
 	spotIcon.ImageColor3 = accent()
 	spotIcon.Parent = spotCard
 	local spotSearch = Instance.new('TextBox')
-	spotSearch.Size = UDim2.new(1, -50, 0, 50)
+	spotSearch.Size = UDim2.new(1, -270, 0, 50)
 	spotSearch.Position = UDim2.fromOffset(42, 0)
 	spotSearch.BackgroundTransparency = 1
 	spotSearch.Text = ''
@@ -11524,10 +11579,10 @@ do
 	spotSearch.ClearTextOnFocus = false
 	spotSearch.Parent = spotCard
 	local spotHint = Instance.new('TextLabel')
-	spotHint.Size = UDim2.fromOffset(120, 16)
-	spotHint.Position = UDim2.new(1, -128, 0, 17)
+	spotHint.Size = UDim2.fromOffset(210, 16)
+	spotHint.Position = UDim2.new(1, -218, 0, 17)
 	spotHint.BackgroundTransparency = 1
-	spotHint.Text = 'Enter toggles top'
+	spotHint.Text = 'Enter toggles • right-click for details'
 	spotHint.TextXAlignment = Enum.TextXAlignment.Right
 	spotHint.TextColor3 = color.Dark(uipallet.Text, 0.5)
 	spotHint.TextSize = 10
@@ -11557,21 +11612,115 @@ do
 	spotList.Padding = UDim.new(0, 2)
 	spotList.Parent = spotResults
 
+	--[[
+		Module details, read once from libraries/details.json.
+
+		Shape: {"ModuleName": {"lines": ["..."], "requires": ["..."]}}. A plain array of strings
+		is accepted as shorthand for `lines`. Missing entries just mean the panel says so, so a
+		module added after the file was written degrades to a note rather than an error.
+	]]
+	local detailsData, detailsLoaded = {}, false
+	local function moduleDetails(name)
+		if not detailsLoaded then
+			detailsLoaded = true
+			-- Pulled from the repo on first use and cached like every other asset, so no loader
+			-- manifest has to know about it.
+			pcall(function()
+				local parsed = httpService:JSONDecode(downloadFile('aetherv2/libraries/details.json'))
+				if type(parsed) == 'table' then detailsData = parsed end
+			end)
+		end
+		local entry = detailsData[name]
+		if type(entry) == 'table' and entry[1] ~= nil and entry.lines == nil then
+			entry = {lines = entry}
+		end
+		return type(entry) == 'table' and entry or nil
+	end
+
+	-- One expandable panel per row, built the first time that row is right-clicked.
+	local function buildDetailsPanel(name, order)
+		local entry = moduleDetails(name)
+		local panel = Instance.new('Frame')
+		panel.Name = 'Details'
+		panel.Size = UDim2.new(1, -16, 0, 0)
+		panel.AutomaticSize = Enum.AutomaticSize.Y
+		panel.BackgroundColor3 = color.Light(uipallet.Main, 0.03)
+		panel.BorderSizePixel = 0
+		panel.LayoutOrder = order
+		panel.Parent = spotResults
+		addCorner(panel, UDim.new(0, 6))
+		local pad = Instance.new('UIPadding')
+		pad.PaddingTop = UDim.new(0, 8)
+		pad.PaddingBottom = UDim.new(0, 8)
+		pad.PaddingLeft = UDim.new(0, 12)
+		pad.PaddingRight = UDim.new(0, 12)
+		pad.Parent = panel
+		local list = Instance.new('UIListLayout')
+		list.SortOrder = Enum.SortOrder.LayoutOrder
+		list.Padding = UDim.new(0, 4)
+		list.Parent = panel
+
+		local function line(text, colour, size, layout)
+			local label = Instance.new('TextLabel')
+			label.Size = UDim2.new(1, 0, 0, 0)
+			label.AutomaticSize = Enum.AutomaticSize.Y
+			label.BackgroundTransparency = 1
+			label.Text = text
+			label.TextWrapped = true
+			label.TextXAlignment = Enum.TextXAlignment.Left
+			label.TextYAlignment = Enum.TextYAlignment.Top
+			label.TextColor3 = colour
+			label.TextSize = size
+			label.FontFace = uipallet.Font
+			label.LayoutOrder = layout
+			label.Parent = panel
+			return label
+		end
+
+		local order2 = 0
+		if entry then
+			for _, text in (entry.lines or {}) do
+				order2 += 1
+				line(tostring(text), color.Dark(uipallet.Text, 0.12), 12, order2)
+			end
+			if entry.requires and #entry.requires > 0 then
+				order2 += 1
+				local heading = line('REQUIRES', accent(), 10, order2)
+				heading.FontFace = uipallet.FontSemiBold
+				for _, text in entry.requires do
+					order2 += 1
+					line('• '..tostring(text), color.Dark(uipallet.Text, 0.4), 12, order2)
+				end
+			end
+		end
+		if order2 == 0 then
+			line('No details recorded for this module yet.', color.Dark(uipallet.Text, 0.5), 12, 1)
+		end
+		return panel
+	end
+
 	local function refreshSpot(query)
 		for _, r in spotRows do r:Destroy() end
 		table.clear(spotRows)
 		firstMatch = nil
 		query = (query or ''):lower()
 		local matches = {}
-		for name, m in mainapi.Modules do
-			if query == '' or name:lower():find(query, 1, true) then
-				table.insert(matches, m)
+		local function collect(source, fallbackCategory)
+			for name, m in source do
+				if query == '' or name:lower():find(query, 1, true) then
+					table.insert(matches, {Module = m, Name = name, Category = m.Category or m.ApiCategory or fallbackCategory})
+				end
 			end
 		end
+		collect(mainapi.Modules)
+		-- Legit modules live in their own table, so half the menu never showed up here.
+		collect(mainapi.Legit and mainapi.Legit.Modules or {}, 'Legit')
 		table.sort(matches, function(a, b) return a.Name < b.Name end)
-		firstMatch = matches[1]
-		for i, m in matches do
-			if i > 80 then break end
+		firstMatch = matches[1] and matches[1].Module or nil
+		-- Every match is listed. The old build stopped at eighty, which with an empty query cut
+		-- the list off well before the end of the menu.
+		for i, match in matches do
+			local m = match.Module
 			local row = Instance.new('TextButton')
 			row.Name = m.Name
 			row.Size = UDim2.new(1, 0, 0, 30)
@@ -11579,7 +11728,8 @@ do
 			row.BackgroundTransparency = 1
 			row.AutoButtonColor = false
 			row.Text = ''
-			row.LayoutOrder = i
+			-- Two slots per match, so a details panel can sit directly under its own row.
+			row.LayoutOrder = i * 2
 			row.Parent = spotResults
 			addCorner(row, UDim.new(0, 6))
 			local dot = Instance.new('Frame')
@@ -11604,7 +11754,7 @@ do
 			cat.Size = UDim2.new(0, 96, 1, 0)
 			cat.Position = UDim2.new(1, -104, 0, 0)
 			cat.BackgroundTransparency = 1
-			cat.Text = m.Category or ''
+			cat.Text = match.Category or ''
 			cat.TextXAlignment = Enum.TextXAlignment.Right
 			cat.TextColor3 = color.Dark(uipallet.Text, 0.5)
 			cat.TextSize = 11
@@ -11622,6 +11772,20 @@ do
 				task.defer(function()
 					if spotOpen then spotSearch:CaptureFocus() end
 				end)
+			end)
+			-- Right click opens what the module actually does, straight under its row.
+			local panel
+			row.MouseButton2Click:Connect(function()
+				if panel then
+					panel:Destroy()
+					panel = nil
+					return
+				end
+				panel = buildDetailsPanel(match.Name, (i * 2) + 1)
+				table.insert(spotRows, panel)
+				if spotOpen then
+					raiseZ(panel, 41)
+				end
 			end)
 			table.insert(spotRows, row)
 		end
@@ -11661,8 +11825,17 @@ do
 	mainapi.OpenSpotlight = openSpot
 
 	spotBackdrop.MouseButton1Click:Connect(closeSpot)
+	-- Coalesced: the list is every module in the menu now, so rebuilding it on each keystroke
+	-- of a fast query is real work to throw away.
+	local spotQueryToken = 0
 	spotSearch:GetPropertyChangedSignal('Text'):Connect(function()
-		refreshSpot(spotSearch.Text)
+		spotQueryToken += 1
+		local token = spotQueryToken
+		task.delay(0.05, function()
+			if token == spotQueryToken then
+				refreshSpot(spotSearch.Text)
+			end
+		end)
 	end)
 	spotSearch.FocusLost:Connect(function(enter)
 		if enter and firstMatch then
