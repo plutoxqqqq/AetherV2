@@ -16279,6 +16279,13 @@ run(function()
         {Name = 'ProjectileAimbot and Aura'}
     }
 
+    -- Off by default, and deliberately named so nobody leaves it on by accident. Every check below
+    -- is written to read somebody else's replicated state, and the local player is normally exempt
+    -- from all of them; this lifts that exemption so the detector measures us too. It is how you
+    -- see a check actually fire - turn a cheat on yourself and watch whether the thing that is
+    -- meant to catch it does.
+    local DETECT_SELF = '[TEST] Detect self'
+
     -- A strike older than this is forgotten. Long enough that a cheat running all match keeps
     -- stacking up, short enough that unrelated anomalies minutes apart never add together.
     local STRIKE_MEMORY = 45
@@ -16346,6 +16353,25 @@ run(function()
         return group == name or enabled(name)
     end
 
+    -- The one place the self exemption is decided. Checks ask this instead of comparing against
+    -- lplr themselves, so the toggle reaches all of them at once and nothing is left half exempt.
+    local function selfExcluded(plr)
+        return plr == lplr and not enabled(DETECT_SELF)
+    end
+
+    -- entitylib keeps our own entity apart from the rest - entitylib.List is everyone but us - so a
+    -- check that walks the list can never see the local player no matter what the guards say. This
+    -- hands back that same list with our entity on the end while the toggle is on, which is what
+    -- lets the polling checks read us without each of them knowing where our entity is kept.
+    local function entities()
+        if not enabled(DETECT_SELF) or not entitylib.isAlive or not entitylib.character then
+            return entitylib.List
+        end
+        local list = table.clone(entitylib.List)
+        table.insert(list, entitylib.character)
+        return list
+    end
+
     local function strikeCount(plr, reason)
         local perPlayer = strikes[plr]
         if not perPlayer then return 0 end
@@ -16375,7 +16401,7 @@ run(function()
     -- One reading is an oddity, several is a pattern. Nothing reaches Added until the pattern is
     -- there, at whatever count this particular check needs to be worth trusting.
     local function strike(plr, reason, label, detail)
-        if not plr or plr == lplr or CheatersFlagged[plr] then return end
+        if not plr or selfExcluded(plr) or CheatersFlagged[plr] then return end
         strikes[plr] = strikes[plr] or {}
         strikes[plr][reason] = strikes[plr][reason] or {}
         table.insert(strikes[plr][reason], tick())
@@ -16479,10 +16505,10 @@ run(function()
         repeat
             if conditionsUsable() then
                 local now = tick()
-                for _, ent in entitylib.List do
+                for _, ent in entities() do
                     local plr = ent.Player
                     local root = ent.RootPart
-                    if plr and plr ~= lplr and root and root.Parent and ent.Health > 0 and not CheatersFlagged[plr] then
+                    if plr and not selfExcluded(plr) and root and root.Parent and ent.Health > 0 and not CheatersFlagged[plr] then
                         local flat = root.Position * Vector3.new(1, 0, 1)
                         local previous = histories[plr]
                         histories[plr] = {Position = flat, Time = now}
@@ -16540,7 +16566,7 @@ run(function()
 
             local from = playersService:GetPlayerFromCharacter(damageTable.fromEntity)
             local victim = damageTable.entityInstance and playersService:GetPlayerFromCharacter(damageTable.entityInstance)
-            if not from or from == lplr or CheatersFlagged[from] then return end
+            if not from or selfExcluded(from) or CheatersFlagged[from] then return end
 
             local now = os.clock()
             local previous = last[from]
@@ -16582,7 +16608,7 @@ run(function()
             if not conditionsUsable() then return end
 
             local attacker = playersService:GetPlayerFromCharacter(damageTable.fromEntity)
-            if not attacker or attacker == lplr or CheatersFlagged[attacker] then return end
+            if not attacker or selfExcluded(attacker) or CheatersFlagged[attacker] then return end
 
             local fromRoot = damageTable.fromEntity.PrimaryPart
             local toRoot = damageTable.entityInstance.PrimaryPart
@@ -16619,7 +16645,7 @@ run(function()
             if not conditionsUsable() then return end
 
             local attacker = playersService:GetPlayerFromCharacter(damageTable.fromEntity)
-            if not attacker or attacker == lplr or CheatersFlagged[attacker] then return end
+            if not attacker or selfExcluded(attacker) or CheatersFlagged[attacker] then return end
             if recentlyTeleported(attacker) then return end
 
             local fromRoot = damageTable.fromEntity.PrimaryPart
@@ -16657,7 +16683,7 @@ run(function()
             if not conditionsUsable() then return end
 
             local attacker = playersService:GetPlayerFromCharacter(damageTable.fromEntity)
-            if not attacker or attacker == lplr or CheatersFlagged[attacker] then return end
+            if not attacker or selfExcluded(attacker) or CheatersFlagged[attacker] then return end
             if recentlyTeleported(attacker) then return end
 
             local fromRoot = damageTable.fromEntity.PrimaryPart
@@ -16693,7 +16719,7 @@ run(function()
             local attacker = playersService:GetPlayerFromCharacter(damageTable.fromEntity)
             local victim = playersService:GetPlayerFromCharacter(damageTable.entityInstance)
             -- Players only. A projectile stream into a mob or a bed is a different thing entirely.
-            if not attacker or not victim or attacker == lplr or CheatersFlagged[attacker] then return end
+            if not attacker or not victim or selfExcluded(attacker) or CheatersFlagged[attacker] then return end
 
             local fromRoot = damageTable.fromEntity.PrimaryPart
             local toRoot = damageTable.entityInstance.PrimaryPart
@@ -16720,11 +16746,11 @@ run(function()
         repeat
             if conditionsUsable() then
                 local seen = {}
-                for _, ent in entitylib.List do
+                for _, ent in entities() do
                     local plr, root = ent.Player, ent.RootPart
-                    if not (plr and plr ~= lplr and root and root.Parent and ent.Health > 0 and not CheatersFlagged[plr]) then continue end
+                    if not (plr and not selfExcluded(plr) and root and root.Parent and ent.Health > 0 and not CheatersFlagged[plr]) then continue end
 
-                    for _, other in entitylib.List do
+                    for _, other in entities() do
                         local otherPlr, otherRoot = other.Player, other.RootPart
                         if not (otherPlr and otherPlr ~= plr and otherRoot and otherRoot.Parent and other.Health > 0) then continue end
 
@@ -16766,9 +16792,9 @@ run(function()
         repeat
             void = voidLevel()
             if conditionsUsable() then
-                for _, ent in entitylib.List do
+                for _, ent in entities() do
                     local plr, root = ent.Player, ent.RootPart
-                    if plr and plr ~= lplr and root and root.Parent and ent.Health > 0 and not CheatersFlagged[plr] then
+                    if plr and not selfExcluded(plr) and root and root.Parent and ent.Health > 0 and not CheatersFlagged[plr] then
                         if root.Position.Y < void and not recentlyTeleported(plr) then
                             sustained[plr] = (sustained[plr] or 0) + 1
                             -- Held there rather than passing through: a real fall into the void
@@ -16800,9 +16826,9 @@ run(function()
         overlap.FilterType = Enum.RaycastFilterType.Exclude
         repeat
             if conditionsUsable() then
-                for _, ent in entitylib.List do
+                for _, ent in entities() do
                     local plr, root = ent.Player, ent.RootPart
-                    if not (plr and plr ~= lplr and root and root.Parent and ent.Health > 0 and not CheatersFlagged[plr]) then continue end
+                    if not (plr and not selfExcluded(plr) and root and root.Parent and ent.Health > 0 and not CheatersFlagged[plr]) then continue end
                     if recentlyTeleported(plr) or movementBuffed(ent.Character) then
                         buried[plr] = nil
                         continue
@@ -16845,9 +16871,9 @@ run(function()
         local hidden = {}
         repeat
             if conditionsUsable() then
-                for _, ent in entitylib.List do
+                for _, ent in entities() do
                     local plr, root, char = ent.Player, ent.RootPart, ent.Character
-                    if not (plr and plr ~= lplr and root and root.Parent and char and ent.Health > 0 and not CheatersFlagged[plr]) then continue end
+                    if not (plr and not selfExcluded(plr) and root and root.Parent and char and ent.Health > 0 and not CheatersFlagged[plr]) then continue end
                     if hasEffect(char, {'invis', 'vanish', 'cloak', 'ghost'}) or root.AssemblyLinearVelocity.Magnitude < 4 then
                         hidden[plr] = nil
                         continue
@@ -16891,9 +16917,9 @@ run(function()
         local tracked = {}
         repeat
             if conditionsUsable() then
-                for _, ent in entitylib.List do
+                for _, ent in entities() do
                     local plr, root, char = ent.Player, ent.RootPart, ent.Character
-                    if not (plr and plr ~= lplr and root and root.Parent and ent.Health > 0 and not CheatersFlagged[plr]) then continue end
+                    if not (plr and not selfExcluded(plr) and root and root.Parent and ent.Health > 0 and not CheatersFlagged[plr]) then continue end
                     if recentlyTeleported(plr) or verticalBuffed(char) or (tick() - (lastHurt[plr] or 0)) < 2 then
                         tracked[plr] = nil
                         continue
@@ -16930,12 +16956,12 @@ run(function()
         CheatDetector:Clean(vapeEvents.BreakBlockEvent.Event:Connect(function(data)
             if not conditionsUsable() then return end
             local plr = data.player
-            if not plr or plr == lplr or CheatersFlagged[plr] then return end
+            if not plr or selfExcluded(plr) or CheatersFlagged[plr] then return end
 
             local blockPosition = data.blockRef and data.blockRef.blockPosition
             if typeof(blockPosition) == 'Vector3' then
                 local ent
-                for _, candidate in entitylib.List do
+                for _, candidate in entities() do
                     if candidate.Player == plr then
                         ent = candidate
                         break
@@ -16972,9 +16998,9 @@ run(function()
         local previous = {}
         repeat
             if conditionsUsable() then
-                for _, ent in entitylib.List do
+                for _, ent in entities() do
                     local plr, char = ent.Player, ent.Character
-                    if not (plr and plr ~= lplr and char and ent.Health > 0 and not CheatersFlagged[plr]) then continue end
+                    if not (plr and not selfExcluded(plr) and char and ent.Health > 0 and not CheatersFlagged[plr]) then continue end
 
                     local active = hasEffect(char, {'ability', 'kit_', 'kitability', 'cooldown'})
                     local was = previous[plr]
@@ -17026,7 +17052,7 @@ run(function()
 
         local function watch(ent)
             local plr, char = ent.Player, ent.Character
-            if not plr or plr == lplr or not char or hooked[plr] then return end
+            if not plr or selfExcluded(plr) or not char or hooked[plr] then return end
             local humanoid = char:FindFirstChildOfClass('Humanoid')
             local animator = humanoid and humanoid:FindFirstChildOfClass('Animator')
             if not animator then return end
@@ -17046,7 +17072,7 @@ run(function()
         end
 
         repeat
-            for _, ent in entitylib.List do
+            for _, ent in entities() do
                 pcall(watch, ent)
             end
             task.wait(1)
@@ -17064,7 +17090,7 @@ run(function()
         local rates = {}
 
         local function count(plr)
-            if not plr or plr == lplr or CheatersFlagged[plr] then return end
+            if not plr or selfExcluded(plr) or CheatersFlagged[plr] then return end
             -- Sixty replicated actions from one player inside two seconds. Placing and breaking
             -- flat out with a full inventory does not reach a third of this.
             if bumpRate(rates, plr, 2) >= 60 then
@@ -17191,6 +17217,19 @@ run(function()
             })
         end
     end
+
+    -- Last, and under everything else, because it is not a detection - it only changes who the
+    -- detections above are allowed to look at. Takes effect immediately: the checks ask about it
+    -- as they run rather than reading it once at startup, so there is no need to cycle the module.
+    Toggles[DETECT_SELF] = CheatDetector:CreateToggle({
+        Name = DETECT_SELF,
+        Tooltip = 'Testing aid. Runs every enabled detection against you as well, and flags you like anyone else if one of them fires',
+        Function = function()
+            -- Readings taken either side of a change of mind about whether we count are not a
+            -- pattern, so whichever way it just moved, our own history starts again from nothing.
+            strikes[lplr] = nil
+        end
+    })
 end)
 
 run(function()
