@@ -421,6 +421,54 @@ local function resolveAnimation(names)
 	return nil
 end
 
+-- Finds an animation by what its name MEANS rather than by an exact constant. Every constant we
+-- could name is a name this build happens to use today: FP_BOW_SHOOT and BOW_SHOOT are not in it,
+-- which is why the shot fired in silence with nothing to look at. `groups` are word sets tried
+-- best-first - every word in a group has to appear somewhere in the animation's name - and
+-- `reject` throws out the near misses (the charge and draw animations sit right next to the shot
+-- in the same enum). Results are memoised per key because this walks the whole enum.
+local animationMatches = {}
+local function matchAnimation(key, groups, reject)
+	local cached = animationMatches[key]
+	if cached ~= nil then
+		return cached or nil
+	end
+	local types = bedwars.AnimationType
+	if type(types) ~= 'table' then return nil end
+
+	local found
+	for _, words in groups do
+		for name, value in types do
+			-- A TS enum carries its reverse mapping too, so half the pairs are number -> name.
+			if type(name) ~= 'string' then continue end
+			local lowered = name:lower()
+			local hit = true
+			for _, word in words do
+				if not lowered:find(word, 1, true) then
+					hit = false
+					break
+				end
+			end
+			if hit and reject then
+				for _, word in reject do
+					if lowered:find(word, 1, true) then
+						hit = false
+						break
+					end
+				end
+			end
+			if hit then
+				found = value
+				break
+			end
+		end
+		if found ~= nil then break end
+	end
+
+	animationMatches[key] = found == nil and false or found
+	return found
+end
+
 local function removeTags(str)
 	str = str:gsub('<br%s*/>', '\n')
 	return (str:gsub('<[^<>]->', ''))
@@ -2731,8 +2779,19 @@ run(function()
             -- AnimationType, so `A or B` fell through to the generic use-item swing and, on the
             -- character, to PUNCH - which is why firing threw a punch. Nothing plays on the
             -- character unless a real shoot animation is found.
-            local fp = resolveAnimation({'FP_BOW_SHOOT', 'FP_CROSSBOW_SHOOT', 'FP_SHOOT', 'FP_THROW', 'FP_USE_ITEM'})
+            local fp = resolveAnimation({'FP_BOW_SHOOT', 'FP_CROSSBOW_SHOOT', 'FP_SHOOT', 'FP_THROW'})
+                or matchAnimation('fp_projectile', {
+                    {'fp', 'bow', 'shoot'}, {'fp', 'bow', 'release'}, {'fp', 'bow', 'fire'},
+                    {'fp', 'shoot'}, {'fp', 'fire'}, {'fp', 'throw'}, {'fp', 'launch'}, {'fp', 'bow'}
+                }, {'charge', 'draw', 'pull', 'idle', 'equip', 'hold', 'walk', 'run', 'reload'})
+                -- Last resort so the shot is never invisible: the generic item-use motion. Only
+                -- ever on the viewmodel, where it reads as using what is in your hand.
+                or resolveAnimation({'FP_USE_ITEM'})
             local body = resolveAnimation({'BOW_SHOOT', 'CROSSBOW_SHOOT', 'SHOOT', 'THROW'})
+                or matchAnimation('body_projectile', {
+                    {'bow', 'shoot'}, {'bow', 'release'}, {'bow', 'fire'},
+                    {'shoot'}, {'throw'}, {'launch'}
+                }, {'fp', 'charge', 'draw', 'pull', 'idle', 'equip', 'hold', 'walk', 'run', 'reload'})
             if fp then
                 pcall(function()
                     bedwars.ViewmodelController:playAnimation(fp)

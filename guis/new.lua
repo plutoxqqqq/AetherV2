@@ -10057,7 +10057,13 @@ end))
 
 -- Spotlight Search: press ` from anywhere to find and toggle a module without
 -- opening or arranging category windows. This intentionally mirrors newer.lua.
-do
+--
+-- Written as a function that is called immediately rather than a plain `do` block: Luau gives
+-- every function 200 local registers, and locals in a bare block share the registers of the chunk
+-- around them. This file already declares over 150 at the top level, so a block this size sitting
+-- in the main chunk is one addition away from failing to COMPILE - which takes the whole GUI with
+-- it. Its own function body means the palette gets its own budget.
+;(function()
 	local function accent()
 		return Color3.fromHSV(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value)
 	end
@@ -10082,8 +10088,11 @@ do
 
 	local spotCard = Instance.new('TextButton')
 	spotCard.Name = 'Card'
-	spotCard.Size = UDim2.fromOffset(400, 380)
-	spotCard.Position = UDim2.fromScale(0.5, 0.42)
+	-- Sized for the whole module list plus an expanded details panel underneath a row, and
+	-- anchored dead centre. The old card was both small enough that details pushed everything
+	-- out of view and hung above the middle of the screen at 0.42.
+	spotCard.Size = UDim2.fromOffset(660, 560)
+	spotCard.Position = UDim2.fromScale(0.5, 0.5)
 	spotCard.AnchorPoint = Vector2.new(0.5, 0.5)
 	spotCard.BackgroundColor3 = uipallet.Main
 	spotCard.BackgroundTransparency = 0.02
@@ -10107,7 +10116,7 @@ do
 	spotIcon.ImageColor3 = accent()
 	spotIcon.Parent = spotCard
 	local spotSearch = Instance.new('TextBox')
-	spotSearch.Size = UDim2.new(1, -50, 0, 50)
+	spotSearch.Size = UDim2.new(1, -270, 0, 50)
 	spotSearch.Position = UDim2.fromOffset(42, 0)
 	spotSearch.BackgroundTransparency = 1
 	spotSearch.Text = ''
@@ -10120,10 +10129,10 @@ do
 	spotSearch.ClearTextOnFocus = false
 	spotSearch.Parent = spotCard
 	local spotHint = Instance.new('TextLabel')
-	spotHint.Size = UDim2.fromOffset(120, 16)
-	spotHint.Position = UDim2.new(1, -128, 0, 17)
+	spotHint.Size = UDim2.fromOffset(210, 16)
+	spotHint.Position = UDim2.new(1, -218, 0, 17)
 	spotHint.BackgroundTransparency = 1
-	spotHint.Text = 'Enter toggles top'
+	spotHint.Text = 'Enter toggles • right-click for details'
 	spotHint.TextXAlignment = Enum.TextXAlignment.Right
 	spotHint.TextColor3 = color.Dark(uipallet.Text, 0.5)
 	spotHint.TextSize = 10
@@ -10153,21 +10162,114 @@ do
 	spotList.Padding = UDim.new(0, 2)
 	spotList.Parent = spotResults
 
+	--[[
+		Module details, read once from libraries/details.json.
+
+		Shape: {"ModuleName": {"lines": ["..."], "requires": ["..."]}}. A plain array of strings
+		is accepted as shorthand for `lines`. Missing entries just mean the panel says so, so a
+		module added after the file was written degrades to a note rather than an error.
+	]]
+	local detailsData, detailsLoaded = {}, false
+	local function moduleDetails(name)
+		if not detailsLoaded then
+			detailsLoaded = true
+			-- Pulled from the repo on first use and cached like every other asset, so no loader
+			-- manifest has to know about it.
+			pcall(function()
+				local parsed = httpService:JSONDecode(downloadFile('aetherv2/libraries/details.json'))
+				if type(parsed) == 'table' then detailsData = parsed end
+			end)
+		end
+		local entry = detailsData[name]
+		if type(entry) == 'table' and entry[1] ~= nil and entry.lines == nil then
+			entry = {lines = entry}
+		end
+		return type(entry) == 'table' and entry or nil
+	end
+
+	-- One expandable panel per row, built the first time that row is right-clicked.
+	local function buildDetailsPanel(name, order)
+		local entry = moduleDetails(name)
+		local panel = Instance.new('Frame')
+		panel.Name = 'Details'
+		panel.Size = UDim2.new(1, -16, 0, 0)
+		panel.AutomaticSize = Enum.AutomaticSize.Y
+		panel.BackgroundColor3 = color.Light(uipallet.Main, 0.03)
+		panel.BorderSizePixel = 0
+		panel.LayoutOrder = order
+		panel.Parent = spotResults
+		addCorner(panel, UDim.new(0, 6))
+		local pad = Instance.new('UIPadding')
+		pad.PaddingTop = UDim.new(0, 8)
+		pad.PaddingBottom = UDim.new(0, 8)
+		pad.PaddingLeft = UDim.new(0, 12)
+		pad.PaddingRight = UDim.new(0, 12)
+		pad.Parent = panel
+		local list = Instance.new('UIListLayout')
+		list.SortOrder = Enum.SortOrder.LayoutOrder
+		list.Padding = UDim.new(0, 4)
+		list.Parent = panel
+
+		local function line(text, colour, size, layout)
+			local label = Instance.new('TextLabel')
+			label.Size = UDim2.new(1, 0, 0, 0)
+			label.AutomaticSize = Enum.AutomaticSize.Y
+			label.BackgroundTransparency = 1
+			label.Text = text
+			label.TextWrapped = true
+			label.TextXAlignment = Enum.TextXAlignment.Left
+			label.TextYAlignment = Enum.TextYAlignment.Top
+			label.TextColor3 = colour
+			label.TextSize = size
+			label.FontFace = uipallet.Font
+			label.LayoutOrder = layout
+			label.Parent = panel
+			return label
+		end
+
+		local written = 0
+		if entry then
+			for _, text in (entry.lines or {}) do
+				written += 1
+				line(tostring(text), color.Dark(uipallet.Text, 0.12), 12, written)
+			end
+			if entry.requires and #entry.requires > 0 then
+				written += 1
+				local heading = line('REQUIRES', accent(), 10, written)
+				heading.FontFace = uipallet.FontSemiBold
+				for _, text in entry.requires do
+					written += 1
+					line('• '..tostring(text), color.Dark(uipallet.Text, 0.4), 12, written)
+				end
+			end
+		end
+		if written == 0 then
+			line('No details recorded for this module yet.', color.Dark(uipallet.Text, 0.5), 12, 1)
+		end
+		return panel
+	end
+
 	local function refreshSpot(query)
 		for _, r in spotRows do r:Destroy() end
 		table.clear(spotRows)
 		firstMatch = nil
 		query = (query or ''):lower()
 		local matches = {}
-		for name, m in mainapi.Modules do
-			if query == '' or name:lower():find(query, 1, true) then
-				table.insert(matches, m)
+		local function collect(source)
+			for name, m in source do
+				if query == '' or name:lower():find(query, 1, true) then
+					table.insert(matches, m)
+				end
 			end
 		end
+		collect(mainapi.Modules)
+		-- Legit modules live in their own table, so half the menu never showed up here.
+		collect(mainapi.Legit and mainapi.Legit.Modules or {})
 		table.sort(matches, function(a, b) return a.Name < b.Name end)
 		firstMatch = matches[1]
+		-- Every match is listed. The old build stopped at eighty, which with an empty query cut
+		-- the list off well before the end of the menu.
 		for i, m in matches do
-			if i > 80 then break end
 			local row = Instance.new('TextButton')
 			row.Name = m.Name
 			row.Size = UDim2.new(1, 0, 0, 30)
@@ -10175,7 +10277,8 @@ do
 			row.BackgroundTransparency = 1
 			row.AutoButtonColor = false
 			row.Text = ''
-			row.LayoutOrder = i
+			-- Two slots per match, so a details panel can sit directly under its own row.
+			row.LayoutOrder = i * 2
 			row.Parent = spotResults
 			addCorner(row, UDim.new(0, 6))
 			local dot = Instance.new('Frame')
@@ -10219,6 +10322,20 @@ do
 					if spotOpen then spotSearch:CaptureFocus() end
 				end)
 			end)
+			-- Right click opens what the module actually does, straight under its row.
+			local panel
+			row.MouseButton2Click:Connect(function()
+				if panel then
+					panel:Destroy()
+					panel = nil
+					return
+				end
+				panel = buildDetailsPanel(m.Name, (i * 2) + 1)
+				table.insert(spotRows, panel)
+				if spotOpen then
+					raiseZ(panel, 41)
+				end
+			end)
 			table.insert(spotRows, row)
 		end
 		spotHint.Visible = firstMatch ~= nil
@@ -10257,8 +10374,17 @@ do
 	mainapi.OpenSpotlight = openSpot
 
 	spotBackdrop.MouseButton1Click:Connect(closeSpot)
+	-- Coalesced: the list is every module in the menu now, so rebuilding it on each keystroke
+	-- of a fast query is real work to throw away.
+	local spotQueryToken = 0
 	spotSearch:GetPropertyChangedSignal('Text'):Connect(function()
-		refreshSpot(spotSearch.Text)
+		spotQueryToken += 1
+		local token = spotQueryToken
+		task.delay(0.05, function()
+			if token == spotQueryToken then
+				refreshSpot(spotSearch.Text)
+			end
+		end)
 	end)
 	spotSearch.FocusLost:Connect(function(enter)
 		if enter and firstMatch then
@@ -10282,6 +10408,6 @@ do
 	mainapi:Clean(clickgui:GetPropertyChangedSignal('Visible'):Connect(function()
 		if not clickgui.Visible and spotOpen then closeSpot() end
 	end))
-end
+end)()
 
 return mainapi

@@ -873,7 +873,10 @@
  "CheatDetector": {
   "lines": [
    "Flags likely cheaters, grouped into impossible hits, blatant modules, AutoKit, crashers, breaker, and projectile aimbot.",
-   "Every detection needs several impossible readings before it flags, and discards readings taken on a poor connection or explained by a status effect, teleport or knockback."
+   "Reads behaviour only - position, timing and replicated state. It never looks at what anybody is running, so there is no module name or signature for a cheat to change.",
+   "Every detection needs several impossible readings before it flags, and discards readings taken on a poor connection or explained by a status effect, teleport or knockback.",
+   "Every toggle takes effect while the module is running, and all of the position checks share one pass over the players every tenth of a second.",
+   "[TEST] Detect self runs the same checks against you, on your behaviour alone, so you can turn a cheat on and watch whether the check meant to catch it fires."
   ]
  },
  "ChestSteal": {
