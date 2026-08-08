@@ -763,11 +763,14 @@ configapi.Presets = {
 }
 configapi.Presets.Registry = (isfile(configapi.Presets.Path) and loadJson(configapi.Presets.Path)) or {}
 
--- Where the published configs live. Pinned to the commit this install is on, so the list and
--- the files it names always come from the same tree.
+-- Public configs always use the live publishing branch. Aether's commit pin is only for
+-- application code and must not prevent newly moderated configs from appearing.
 function configapi.Presets.Base()
-	local commit = isfile('aetherv2/profiles/commit.txt') and readfile('aetherv2/profiles/commit.txt') or 'main'
-	return 'https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..commit..'/configs/'
+	return 'https://raw.githubusercontent.com/plutoxqqqq/AetherV2/main/configs/'
+end
+
+function configapi.Presets.URL(file)
+	return configapi.Presets.Base()..file..'?aether='..tostring(os.time())..'-'..tostring(math.random(100000, 999999))
 end
 
 function configapi.Presets.Remember(configName, preset)
@@ -5251,6 +5254,7 @@ function mainapi:CreateCategoryList(categorysettings)
 	-- reinject, and the menu stays open behind the window.
 	if categorysettings.Profiles then
 		local repoBase = configapi.Presets.Base
+		local repoURL = configapi.Presets.URL
 
 		local downloadbtn = Instance.new('ImageButton')
 		downloadbtn.Name = 'PresetDownload'
@@ -5384,7 +5388,8 @@ function mainapi:CreateCategoryList(categorysettings)
 			if not ok or type(response) ~= 'table' then return false, 'The config backend could not be reached.' end
 			local status = tonumber(response.StatusCode or response.Status) or 0
 			local decoded = response.Body and select(2, pcall(httpService.JSONDecode, httpService, response.Body))
-			return status >= 200 and status < 300, decoded or response.Body or ('HTTP '..status)
+			local successful = status >= 200 and status < 300 and not (type(decoded) == 'table' and decoded.success == false)
+			return successful, decoded or response.Body or ('HTTP '..status)
 		end
 
 		-- Submit/Review live in a footer strip so they never overlap the preset list.
@@ -5402,7 +5407,8 @@ function mainapi:CreateCategoryList(categorysettings)
 			return button
 		end
 		local submitConfig = submissionButton('Submit', 'Submit config', UDim2.fromOffset(0, 2), 110)
-		local review = submissionButton('Review', 'Review queue', UDim2.fromOffset(118, 2), 110)
+		local refreshButton = submissionButton('Refresh', 'Refresh', UDim2.fromOffset(118, 2), 72)
+		local review = submissionButton('Review', 'Review queue', UDim2.fromOffset(198, 2), 110)
 		-- The queue button is part of the existing repo-config window, but only the
 		-- repository owner should see it. The backend key remains the actual security
 		-- boundary; this check merely avoids presenting a dead admin control to users.
@@ -5410,6 +5416,11 @@ function mainapi:CreateCategoryList(categorysettings)
 		review.Visible = localPlayer.Name:lower() == 'plutoxqqqqq'
 		addTooltip(submitConfig, 'Submits the active config for in-game review')
 		addTooltip(review, 'Lists the configs waiting on a maintainer decision')
+		local function responseMessage(response, fallback)
+			if type(response) == 'table' then return tostring(response.details or response.error or fallback) end
+			return type(response) == 'string' and response or fallback
+		end
+		local refresh
 		local function submitActiveConfig(details)
 			local path = mainapi.Profile and getConfigPath(mainapi.Profile)
 			if not path or not isfile(path) then
@@ -5433,7 +5444,7 @@ function mainapi:CreateCategoryList(categorysettings)
 				config = config,
 				gui = guiData
 			})
-			mainapi:CreateNotification('Configs', ok and 'Config submitted for review.' or tostring(response), 8, ok and 'info' or 'alert')
+			mainapi:CreateNotification('Configs', ok and 'Config submitted for review.' or responseMessage(response, 'Config submission failed.'), 8, ok and 'info' or 'alert')
 			if ok and type(response) == 'table' and response.id then
 				local receiptPath = profileFolder..'/configsubmissions.json'
 				local receipts = isfile(receiptPath) and loadJson(receiptPath) or {}
@@ -5517,7 +5528,7 @@ function mainapi:CreateCategoryList(categorysettings)
 		local function refreshReviews()
 			for _, child in reviewList:GetChildren() do if child:IsA('Frame') then child:Destroy() end end
 			local ok, response = backendRequest('GET', '/submissions?status=pending', nil, true)
-			if not ok then mainapi:CreateNotification('Configs', tostring(response), 8, 'alert'); return end
+			if not ok then mainapi:CreateNotification('Configs', responseMessage(response, 'Could not load the review queue.'), 8, 'alert'); return end
 			local submissions = type(response) == 'table' and (response.submissions or response) or {}
 			for _, submission in submissions do
 				local row = Instance.new('Frame')
@@ -5527,20 +5538,21 @@ function mainapi:CreateCategoryList(categorysettings)
 				label.Size, label.Position, label.BackgroundTransparency = UDim2.new(1, -150, 1, 0), UDim2.fromOffset(10, 0), 1
 				label.Text, label.TextColor3, label.TextSize, label.FontFace = tostring(submission.name or 'Config')..' — '..tostring(submission.submitter or '?'), uipallet.Text, 12, uipallet.Font
 				label.TextXAlignment, label.Parent = Enum.TextXAlignment.Left, row
-				local download = submissionButton('Download', 'JSON', UDim2.new(1, -146, 0.5, -14), 48, row)
+				local download = submissionButton('Download', 'Download', UDim2.new(1, -146, 0.5, -14), 58, row)
 				download.AnchorPoint = Vector2.new(1, 0)
 				download.MouseButton1Click:Connect(function()
-					local filename = tostring(submission.name or submission.id or 'submission'):gsub('[\\/:*?"<>|]', '-')..'.review.json'
-					local success = pcall(writefile, configFolder..'/'..filename, httpService:JSONEncode(submission))
-					mainapi:CreateNotification('Configs', success and ('Downloaded '..filename) or 'Could not download submission JSON.', 6, success and 'info' or 'alert')
+					local success, result = importJsonConfig(httpService:JSONEncode(submission), tostring(submission.name or submission.id or 'submission'))
+					if success then refreshConfigProfiles(); categoryapi:ChangeValue() end
+					mainapi:CreateNotification('Configs', success and ('Installed '..tostring(result)..' for local review.') or tostring(result), 7, success and 'info' or 'alert')
 				end)
 				local function decide(action, x, text)
 					local button = submissionButton(action, text, UDim2.new(1, x, 0.5, -14), 62, row)
 					button.AnchorPoint = Vector2.new(1, 0)
 					button.MouseButton1Click:Connect(function()
 						local success, result = backendRequest('PATCH', '/submissions/'..httpService:UrlEncode(tostring(submission.id)), {action = action}, true)
-						mainapi:CreateNotification('Configs', success and ('Submission '..action..'ed.') or tostring(result), 7, success and 'info' or 'alert')
-						if success then refreshReviews() end
+						local successText = action == 'accept' and 'Config accepted successfully.' or 'Config rejected successfully.'
+						mainapi:CreateNotification('Configs', success and successText or responseMessage(result, 'Moderation action failed.'), 7, success and 'info' or 'alert')
+						if success then refreshReviews(); if action == 'accept' and refresh then refresh() end end
 					end)
 				end
 				decide('accept', -76, 'Accept'); decide('reject', -8, 'Reject')
@@ -5561,7 +5573,7 @@ function mainapi:CreateCategoryList(categorysettings)
 			dlstatus.Visible = true
 			task.spawn(function()
 				local ok, res = pcall(function()
-					return game:HttpGet(repoBase()..preset.file, true)
+					return game:HttpGet(repoURL(preset.file), true)
 				end)
 				if not ok or not res or res == '404: Not Found' then
 					downloading[preset.file] = nil
@@ -5594,10 +5606,10 @@ function mainapi:CreateCategoryList(categorysettings)
 		local rowbuttons = {}
 		function refreshRows()
 			for name, button in rowbuttons do
-				local active = mainapi.Profile == name
-				button.Text = active and 'Active' or 'Load'
-				button.BackgroundColor3 = active and color.Light(uipallet.Main, 0.05) or Color3.fromHSV(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value)
-				button.TextColor3 = active and color.Dark(uipallet.Text, 0.4) or mainapi:TextColor(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value)
+				local installed = isfile(getConfigPath(name))
+				button.Text = installed and 'Redownload' or 'Download'
+				button.BackgroundColor3 = Color3.fromHSV(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value)
+				button.TextColor3 = mainapi:TextColor(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value)
 			end
 		end
 
@@ -5637,7 +5649,7 @@ function mainapi:CreateCategoryList(categorysettings)
 			tagline.Parent = row
 			local function mkbtn(text, xoff, colour, fn)
 				local b = Instance.new('TextButton')
-				b.Size = UDim2.fromOffset(58, 26)
+				b.Size = UDim2.fromOffset(text == 'Redownload' and 82 or 68, 26)
 				b.Position = UDim2.new(1, xoff, 0.5, -13)
 				b.AnchorPoint = Vector2.new(1, 0)
 				b.BackgroundColor3 = colour
@@ -5651,8 +5663,15 @@ function mainapi:CreateCategoryList(categorysettings)
 				b.MouseButton1Click:Connect(fn)
 				return b
 			end
-			mkbtn('Info', -74, color.Light(uipallet.Main, 0.05), function() info(preset) end)
-			rowbuttons[tostring(preset.name)] = mkbtn('Load', -10, Color3.fromHSV(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value), function() download(preset) end)
+			mkbtn('Info', localPlayer.Name:lower() == 'plutoxqqqqq' and -156 or -86, color.Light(uipallet.Main, 0.05), function() info(preset) end)
+			if localPlayer.Name:lower() == 'plutoxqqqqq' then
+				mkbtn('Delete', -86, color.Light(uipallet.Main, 0.05), function()
+					local success, result = backendRequest('DELETE', '/public-configs', {file = preset.file}, true)
+					mainapi:CreateNotification('Configs', success and 'Config deleted successfully.' or responseMessage(result, 'Config deletion failed.'), 8, success and 'info' or 'alert')
+					if success and refresh then refresh() end
+				end)
+			end
+			rowbuttons[tostring(preset.name)] = mkbtn(isfile(getConfigPath(tostring(preset.name))) and 'Redownload' or 'Download', -10, Color3.fromHSV(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value), function() download(preset) end)
 		end
 
 		-- Live search: match against the preset name and its tags.
@@ -5668,7 +5687,7 @@ function mainapi:CreateCategoryList(categorysettings)
 		dlsearch:GetPropertyChangedSignal('Text'):Connect(applyFilter)
 
 		local refreshing = false
-		local function refresh()
+		function refresh()
 			if refreshing then return end
 			refreshing = true
 			for _, v in dllist:GetChildren() do
@@ -5679,7 +5698,7 @@ function mainapi:CreateCategoryList(categorysettings)
 			dlstatus.Visible = true
 			task.spawn(function()
 				local ok, res = pcall(function()
-					return game:HttpGet(repoBase()..'presets.json', true)
+					return game:HttpGet(repoURL('presets.json'), true)
 				end)
 				refreshing = false
 				if not ok or not res or res == '404: Not Found' then
@@ -5704,6 +5723,9 @@ function mainapi:CreateCategoryList(categorysettings)
 				applyFilter()
 			end)
 		end
+
+		refreshButton.MouseButton1Click:Connect(refresh)
+		addTooltip(refreshButton, 'Fetch the latest Public Config catalogue')
 
 		-- Opening it is also offered by the first-run welcome popup, so the opener lives
 		-- on mainapi rather than only on this button.
@@ -5793,7 +5815,7 @@ function mainapi:CreateCategoryList(categorysettings)
 			syncbutton.Text = 'Syncing...'
 			task.spawn(function()
 				local ok, res = pcall(function()
-					return game:HttpGet(repoBase()..entry.file, true)
+					return game:HttpGet(repoURL(entry.file), true)
 				end)
 				local suc, result
 				if ok and res and res ~= '404: Not Found' then
@@ -8703,24 +8725,6 @@ local profiles = mainapi:CreateCategoryList({
 	Placeholder = 'Type name',
 	Profiles = true
 })
-
-local publicWindow = Instance.new('Frame')
-publicWindow.Name, publicWindow.Size, publicWindow.Position = 'PublicConfigsGUI', UDim2.fromOffset(700, 389), UDim2.new(0.5, -350, 0.5, -194)
-publicWindow.BackgroundColor3, publicWindow.Visible, publicWindow.Parent = uipallet.Main, false, scaledgui
-addBlur(publicWindow); addCorner(publicWindow); makeDraggable(publicWindow)
-local publicTitle = Instance.new('TextLabel')
-publicTitle.Size, publicTitle.Position, publicTitle.BackgroundTransparency = UDim2.new(1, -50, 0, 40), UDim2.fromOffset(14, 0), 1
-publicTitle.Text, publicTitle.TextColor3, publicTitle.TextSize, publicTitle.FontFace = 'Public Configs', uipallet.Text, 14, uipallet.Font
-publicTitle.TextXAlignment, publicTitle.Parent = Enum.TextXAlignment.Left, publicWindow
-local publicClose = addCloseButton(publicWindow)
-publicClose.MouseButton1Click:Connect(function() publicWindow.Visible = false end)
-local publicEmpty = Instance.new('TextLabel')
-publicEmpty.Size, publicEmpty.Position, publicEmpty.BackgroundTransparency = UDim2.new(1, -30, 1, -60), UDim2.fromOffset(15, 48), 1
-publicEmpty.Text, publicEmpty.TextColor3, publicEmpty.TextSize, publicEmpty.FontFace = 'Public configs will appear here when available.', color.Dark(uipallet.Text, 0.35), 13, uipallet.Font
-publicEmpty.Parent = publicWindow
-mainapi.PublicConfigs = {Window = publicWindow, Accents = {}}
-profiles:CreateButton({Name = 'Public', LayoutOrder = 5, Function = function() publicWindow.Position = UDim2.new(0.5, -350, 0.5, -194); publicWindow.Visible = true end, Tooltip = 'Browse public configs'})
-
 
 local importNameBox
 local importJsonBox = profiles:CreateTextBox({

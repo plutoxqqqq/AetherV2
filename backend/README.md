@@ -52,5 +52,10 @@ Only the maintainer should create `aetherv2/profiles/configadminkey.txt`, contai
 * `GET /submissions?status=pending` requires `Authorization: Bearer <ADMIN_KEY>` and powers the review queue.
 * `GET /submissions/:id?token=<receipt>` lets an uploader retrieve only their outcome.
 * `PATCH /submissions/:id`, also admin-authenticated, accepts `{"action":"accept"}` or `{"action":"reject","reason":"..."}`. Acceptance publishes to GitHub before recording success.
+* `DELETE /public-configs`, also admin-authenticated, accepts `{"file":"known-preset.json"}`. The service verifies the file against the live catalogue, unlists it, and deletes its config file before returning success. A Roblox username is never accepted as authorization.
+
+Every response is JSON and includes a `success` boolean. Failed operations also include
+an `error` message (and `details` when the upstream service supplies useful context), so
+clients do not have to infer success from response text.
 
 For production, monitor disk space and HTTP 5xx responses, back up `DATA_FILE`, keep Node patched, rate-limit POST requests at the reverse proxy, and allow request bodies no larger than 2 MB (the application also enforces this). Restore by redeploying with the same environment secrets and restored data file. Test acceptance on a non-protected staging branch before enabling the live maintainer key.
