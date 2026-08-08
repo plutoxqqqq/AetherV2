@@ -5666,7 +5666,7 @@ function mainapi:CreateCategoryList(categorysettings)
 			mkbtn('Info', localPlayer.Name:lower() == 'plutoxqqqqq' and -156 or -86, color.Light(uipallet.Main, 0.05), function() info(preset) end)
 			if localPlayer.Name:lower() == 'plutoxqqqqq' then
 				mkbtn('Delete', -86, color.Light(uipallet.Main, 0.05), function()
-					local success, result = backendRequest('DELETE', '/public-configs', {file = preset.file}, true)
+					local success, result = backendRequest('DELETE', '/public-configs/'..tostring(preset.file), nil, true)
 					mainapi:CreateNotification('Configs', success and 'Config deleted successfully.' or responseMessage(result, 'Config deletion failed.'), 8, success and 'info' or 'alert')
 					if success and refresh then refresh() end
 				end)
