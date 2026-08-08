@@ -1108,11 +1108,13 @@ configapi.Presets = {
 }
 configapi.Presets.Registry = (isfile(configapi.Presets.Path) and loadJson(configapi.Presets.Path)) or {}
 
--- Where the published configs live. Pinned to the commit this install is on, so the list and
--- the files it names always come from the same tree.
+-- Public configs follow the live publishing branch rather than Aether's code revision.
 function configapi.Presets.Base()
-	local commit = isfile('aetherv2/profiles/commit.txt') and readfile('aetherv2/profiles/commit.txt') or 'main'
-	return 'https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..commit..'/configs/'
+	return 'https://raw.githubusercontent.com/plutoxqqqq/AetherV2/main/configs/'
+end
+
+function configapi.Presets.URL(file)
+	return configapi.Presets.Base()..file..'?aether='..tostring(os.time())..'-'..tostring(math.random(100000, 999999))
 end
 
 function configapi.Presets.Remember(configName, preset)
@@ -6459,6 +6461,7 @@ function mainapi:CreateCategoryList(categorysettings)
 	-- reinject, and the menu stays open behind the window.
 	if categorysettings.Profiles then
 		local repoBase = configapi.Presets.Base
+		local repoURL = configapi.Presets.URL
 
 		local downloadbtn = Instance.new('ImageButton')
 		downloadbtn.Name = 'PresetDownload'
@@ -6575,7 +6578,7 @@ function mainapi:CreateCategoryList(categorysettings)
 			dlstatus.Visible = true
 			task.spawn(function()
 				local ok, res = pcall(function()
-					return game:HttpGet(repoBase()..preset.file, true)
+					return game:HttpGet(repoURL(preset.file), true)
 				end)
 				if not ok or not res or res == '404: Not Found' then
 					downloading[preset.file] = nil
@@ -6608,10 +6611,9 @@ function mainapi:CreateCategoryList(categorysettings)
 		local rowbuttons = {}
 		function refreshRows()
 			for name, button in rowbuttons do
-				local active = mainapi.Profile == name
-				button.Text = active and 'Active' or 'Load'
-				button.BackgroundColor3 = active and color.Light(uipallet.Main, 0.05) or Color3.fromHSV(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value)
-				button.TextColor3 = active and color.Dark(uipallet.Text, 0.4) or mainapi:TextColor(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value)
+				button.Text = isfile(getConfigPath(name)) and 'Redownload' or 'Download'
+				button.BackgroundColor3 = Color3.fromHSV(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value)
+				button.TextColor3 = mainapi:TextColor(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value)
 			end
 		end
 
@@ -6666,7 +6668,7 @@ function mainapi:CreateCategoryList(categorysettings)
 				return b
 			end
 			mkbtn('Info', -74, color.Light(uipallet.Main, 0.05), function() info(preset) end)
-			rowbuttons[tostring(preset.name)] = mkbtn('Load', -10, Color3.fromHSV(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value), function() download(preset) end)
+			rowbuttons[tostring(preset.name)] = mkbtn(isfile(getConfigPath(tostring(preset.name))) and 'Redownload' or 'Download', -10, Color3.fromHSV(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value), function() download(preset) end)
 		end
 
 		-- Live search: match against the preset name and its tags.
@@ -6693,7 +6695,7 @@ function mainapi:CreateCategoryList(categorysettings)
 			dlstatus.Visible = true
 			task.spawn(function()
 				local ok, res = pcall(function()
-					return game:HttpGet(repoBase()..'presets.json', true)
+					return game:HttpGet(repoURL('presets.json'), true)
 				end)
 				refreshing = false
 				if not ok or not res or res == '404: Not Found' then
@@ -6807,7 +6809,7 @@ function mainapi:CreateCategoryList(categorysettings)
 			syncbutton.Text = 'Syncing...'
 			task.spawn(function()
 				local ok, res = pcall(function()
-					return game:HttpGet(repoBase()..entry.file, true)
+					return game:HttpGet(repoURL(entry.file), true)
 				end)
 				local suc, result
 				if ok and res and res ~= '404: Not Found' then
