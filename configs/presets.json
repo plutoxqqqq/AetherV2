@@ -10,13 +10,6 @@
         "Combat"
       ],
       "description": "Balanced closet-combat config tuned to look legit."
-    },
-    {
-      "name": "backendtest",
-      "file": "backendtest.json",
-      "credits": "plutoxqqqqq",
-      "tags": [],
-      "description": "Community config submitted by plutoxqqqqq."
     }
   ]
 }
