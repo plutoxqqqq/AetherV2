@@ -1,0 +1,1 @@
+Trigger the one-time Public Config refresh hotfix workflow.
