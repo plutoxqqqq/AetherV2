@@ -10,6 +10,13 @@
         "Combat"
       ],
       "description": "Balanced closet-combat config tuned to look legit."
+    },
+    {
+      "name": "Rage",
+      "file": "rage.json",
+      "credits": "plutoxqqqqq",
+      "tags": [],
+      "description": "Community config submitted by plutoxqqqqq."
     }
   ]
 }
