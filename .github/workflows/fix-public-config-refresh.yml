@@ -1,10 +1,10 @@
 name: Fix Public Config Refresh
 
 on:
-  pull_request:
+  pull_request_target:
     branches:
       - main
-  workflow_dispatch:
+    types: [opened, reopened, synchronize]
 
 permissions:
   contents: write
@@ -66,8 +66,8 @@ jobs:
 
           new = r'''\t\tlocal refreshing = false
 \t\tlocal function fetchLatestPresetCatalogue()
-\t\t\t-- Refresh the live repository state. GitHub's Contents API resolves main
-\t\t\t-- on every request instead of depending on raw.githubusercontent.com cache.
+\t\t\t-- Refresh means the current repository state on main, not a cached raw
+\t\t\t-- response. Prefer GitHub's Contents API in raw-media mode every click.
 \t\t\tlocal cacheBust = tostring(os.time())..'-'..tostring(math.random(100000, 999999))
 \t\t\tif requestFunction then
 \t\t\t\tlocal ok, response = pcall(requestFunction, {
