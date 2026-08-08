@@ -5147,118 +5147,6 @@ function mainapi:CreateOverlay(categorysettings)
 	return categoryapi
 end
 
-function mainapi:CreateConfigSubmissions(dl)
--- Submission writes require a backend: Roblox clients cannot safely hold repository
--- credentials. Set getgenv().AetherConfigBackend or configbackend.txt to the service URL.
--- The backend contract is POST /submissions, GET /submissions?status=pending, and
--- PATCH /submissions/:id. Maintainer PATCH/GET calls include the locally stored admin key.
-local submissionMaintainers = {plutoxqqqqq = true}
-local requestFunction = request or http_request or (syn and syn.request)
-local function backendURL()
-	local configured = getgenv and getgenv().AetherConfigBackend
-	if (not configured or configured == '') and isfile('aetherv2/profiles/configbackend.txt') then
-		configured = readfile('aetherv2/profiles/configbackend.txt')
-	end
-	return type(configured) == 'string' and configured:gsub('/+$', '') or ''
-end
-local function backendRequest(method, route, body, admin)
-	local base = backendURL()
-	if base == '' or not requestFunction then return false, 'A config backend has not been configured.' end
-	local headers = {['Content-Type'] = 'application/json'}
-	if admin then
-		local key = isfile('aetherv2/profiles/configadminkey.txt') and readfile('aetherv2/profiles/configadminkey.txt') or ''
-		if key == '' then return false, 'The maintainer key is missing.' end
-		headers.Authorization = 'Bearer '..key
-	end
-	local ok, response = pcall(requestFunction, {
-		Url = base..route,
-		Method = method,
-		Headers = headers,
-		Body = body and httpService:JSONEncode(body) or nil
-	})
-	if not ok or type(response) ~= 'table' then return false, 'The config backend could not be reached.' end
-	local status = tonumber(response.StatusCode or response.Status) or 0
-	local decoded = response.Body and select(2, pcall(httpService.JSONDecode, httpService, response.Body))
-	return status >= 200 and status < 300, decoded or response.Body or ('HTTP '..status)
-end
-
-local footer = Instance.new('Frame')
-footer.Name = 'SubmissionActions'
-footer.Size, footer.Position, footer.BackgroundTransparency, footer.Parent = UDim2.new(1, -20, 0, 32), UDim2.new(0, 10, 1, -38), 1, dl
-local function submissionButton(name, text, position, width, parent)
-	local button = Instance.new('TextButton')
-	button.Name, button.Size, button.Position = name, UDim2.fromOffset(width, 28), position
-	button.BackgroundColor3 = color.Light(uipallet.Main, 0.05)
-	button.Text, button.TextColor3, button.TextSize, button.FontFace = text, uipallet.Text, 12, uipallet.Font
-	button.Parent = parent or footer
-	addCorner(button, UDim.new(0, 5))
-	return button
-end
-local submitConfig = submissionButton('SubmitConfig', 'Submit current', UDim2.new(1, -118, 0, 0), 118)
-addTooltip(submitConfig, 'Submits the active config for in-game review')
-submitConfig.MouseButton1Click:Connect(function()
-	mainapi:Save(mainapi.Profile)
-	local path = getConfigPath(mainapi.Profile)
-	if not isfile(path) then return end
-	local player = game:GetService('Players').LocalPlayer
-	local ok, response = backendRequest('POST', '/submissions', {
-		name = mainapi.Profile,
-		submitter = player.Name,
-		userId = player.UserId,
-		config = select(2, pcall(httpService.JSONDecode, httpService, readfile(path)))
-	})
-	mainapi:CreateNotification('Configs', ok and 'Config submitted for review.' or tostring(response), 8, ok and 'info' or 'alert')
-end)
-
-local username = game:GetService('Players').LocalPlayer.Name
-if submissionMaintainers[username] then
-	local reviewWindow = Instance.new('Frame')
-	reviewWindow.Name, reviewWindow.Size, reviewWindow.Position = 'ConfigReview', UDim2.fromOffset(440, 350), UDim2.new(0.5, -220, 0.5, -175)
-	reviewWindow.BackgroundColor3, reviewWindow.Visible, reviewWindow.Parent = uipallet.Main, false, scaledgui
-	addBlur(reviewWindow); addCorner(reviewWindow); addWindowStroke(reviewWindow); makeDraggable(reviewWindow)
-	local reviewTitle = Instance.new('TextLabel')
-	reviewTitle.Size, reviewTitle.Position, reviewTitle.BackgroundTransparency = UDim2.new(1, -50, 0, 40), UDim2.fromOffset(14, 0), 1
-	reviewTitle.Text, reviewTitle.TextColor3, reviewTitle.TextSize, reviewTitle.FontFace = 'Pending Configs', uipallet.Text, 14, uipallet.FontSemiBold
-	reviewTitle.TextXAlignment, reviewTitle.Parent = Enum.TextXAlignment.Left, reviewWindow
-	local reviewClose = addCloseButton(reviewWindow)
-	reviewClose.MouseButton1Click:Connect(function() reviewWindow.Visible = false end)
-	local reviewList = Instance.new('ScrollingFrame')
-	reviewList.Size, reviewList.Position = UDim2.new(1, -20, 1, -52), UDim2.fromOffset(10, 44)
-	reviewList.BackgroundTransparency, reviewList.ScrollBarThickness, reviewList.CanvasSize, reviewList.Parent = 1, 2, UDim2.new(), reviewWindow
-	local reviewLayout = Instance.new('UIListLayout')
-	reviewLayout.Padding, reviewLayout.Parent = UDim.new(0, 6), reviewList
-	reviewLayout:GetPropertyChangedSignal('AbsoluteContentSize'):Connect(function() reviewList.CanvasSize = UDim2.fromOffset(0, reviewLayout.AbsoluteContentSize.Y / scale.Scale) end)
-	table.insert(mainapi.Windows, reviewWindow)
-	local function refreshReviews()
-		for _, child in reviewList:GetChildren() do if child:IsA('Frame') then child:Destroy() end end
-		local ok, response = backendRequest('GET', '/submissions?status=pending', nil, true)
-		if not ok then mainapi:CreateNotification('Configs', tostring(response), 8, 'alert'); return end
-		local submissions = type(response) == 'table' and (response.submissions or response) or {}
-		for _, submission in submissions do
-			local row = Instance.new('Frame')
-			row.Size, row.BackgroundColor3, row.Parent = UDim2.new(1, 0, 0, 48), color.Light(uipallet.Main, 0.02), reviewList
-			addCorner(row)
-			local label = Instance.new('TextLabel')
-			label.Size, label.Position, label.BackgroundTransparency = UDim2.new(1, -150, 1, 0), UDim2.fromOffset(10, 0), 1
-			label.Text, label.TextColor3, label.TextSize, label.FontFace = tostring(submission.name or 'Config')..' — '..tostring(submission.submitter or '?'), uipallet.Text, 12, uipallet.Font
-			label.TextXAlignment, label.Parent = Enum.TextXAlignment.Left, row
-			local function decide(action, x, text)
-				local button = submissionButton(action, text, UDim2.new(1, x, 0.5, -14), 62, row)
-				button.AnchorPoint = Vector2.new(1, 0)
-				button.MouseButton1Click:Connect(function()
-					local success, result = backendRequest('PATCH', '/submissions/'..httpService:UrlEncode(tostring(submission.id)), {action = action}, true)
-					mainapi:CreateNotification('Configs', success and ('Submission '..action..'ed.') or tostring(result), 7, success and 'info' or 'alert')
-					if success then refreshReviews() end
-				end)
-			end
-			decide('accept', -76, 'Accept'); decide('reject', -8, 'Reject')
-		end
-	end
-	local review = submissionButton('ReviewConfigs', 'Review', UDim2.fromOffset(0, 0), 72)
-	review.MouseButton1Click:Connect(function() reviewWindow.Visible = true; refreshReviews() end)
-end
-end
-
 function mainapi:CreateCategoryList(categorysettings)
 	local displayName = categorysettings.DisplayName or categorysettings.Name
 	local categoryapi = {
@@ -5373,7 +5261,7 @@ function mainapi:CreateCategoryList(categorysettings)
 		downloadbtn.Image = getcustomasset('aetherv2/assets/new/worldicon.png')
 		downloadbtn.ImageColor3 = color.Dark(uipallet.Text, 0.43)
 		downloadbtn.Parent = window
-		addTooltip(downloadbtn, 'Browse public configs')
+		addTooltip(downloadbtn, 'Browse the configs in the repo')
 		downloadbtn.MouseEnter:Connect(function() downloadbtn.ImageColor3 = uipallet.Text end)
 		downloadbtn.MouseLeave:Connect(function() downloadbtn.ImageColor3 = color.Dark(uipallet.Text, 0.43) end)
 
@@ -5397,7 +5285,7 @@ function mainapi:CreateCategoryList(categorysettings)
 		dltitle.Size = UDim2.new(1, -20, 0, 20)
 		dltitle.Position = UDim2.fromOffset(16, 12)
 		dltitle.BackgroundTransparency = 1
-		dltitle.Text = 'Public Configs'
+		dltitle.Text = 'Repo Configs'
 		dltitle.TextXAlignment = Enum.TextXAlignment.Left
 		dltitle.TextColor3 = uipallet.Text
 		dltitle.TextSize = 14
@@ -5449,44 +5337,93 @@ function mainapi:CreateCategoryList(categorysettings)
 		dlstatus.Parent = dl
 		local dllist = Instance.new('ScrollingFrame')
 		dllist.Name = 'List'
-		dllist.Size = UDim2.new(1, -20, 1, -138)
-		dllist.Position = UDim2.fromOffset(10, 88)
-		dllist.BackgroundTransparency = 1
-		dllist.BorderSizePixel = 0
-		dllist.ScrollBarThickness = 2
-		dllist.ScrollBarImageTransparency = 0.75
-		dllist.CanvasSize = UDim2.new()
-		dllist.Parent = dl
-		local dllayout = Instance.new('UIListLayout')
-		dllayout.SortOrder = Enum.SortOrder.LayoutOrder
-		dllayout.Padding = UDim.new(0, 6)
-		dllayout.Parent = dllist
-		dllayout:GetPropertyChangedSignal('AbsoluteContentSize'):Connect(function()
-			dllist.CanvasSize = UDim2.fromOffset(0, dllayout.AbsoluteContentSize.Y / scale.Scale)
-		end)
-		table.insert(mainapi.Windows, dl)
+		-- Submission writes require a backend: Roblox clients cannot safely hold repository
+		-- credentials. Set getgenv().AetherConfigBackend or configbackend.txt to the service URL.
+		-- The backend contract is POST /submissions, GET /submissions?status=pending, and
+		-- PATCH /submissions/:id. Maintainer PATCH/GET calls include the locally stored admin key.
+		local requestFunction = request or http_request or (syn and syn.request)
+		local function backendURL()
+			local configured = getgenv and getgenv().AetherConfigBackend
+			if (not configured or configured == '') and isfile('aetherv2/profiles/configbackend.txt') then
+				configured = readfile('aetherv2/profiles/configbackend.txt')
+			end
+			return type(configured) == 'string' and configured:gsub('/+$', '') or ''
+		end
+		local function backendRequest(method, route, body, admin)
+			local base = backendURL()
+			if base == '' or not requestFunction then return false, 'A config backend has not been configured.' end
+			local headers = {['Content-Type'] = 'application/json'}
+			if admin then
+				local key = isfile('aetherv2/profiles/configadminkey.txt') and readfile('aetherv2/profiles/configadminkey.txt') or ''
+				if key == '' then return false, 'The maintainer key is missing.' end
+				headers.Authorization = 'Bearer '..key
+			end
+			local ok, response = pcall(requestFunction, {
+				Url = base..route,
+				Method = method,
+				Headers = headers,
+				Body = body and httpService:JSONEncode(body) or nil
+			})
+			if not ok or type(response) ~= 'table' then return false, 'The config backend could not be reached.' end
+			local status = tonumber(response.StatusCode or response.Status) or 0
+			local decoded = response.Body and select(2, pcall(httpService.JSONDecode, httpService, response.Body))
+			return status >= 200 and status < 300, decoded or response.Body or ('HTTP '..status)
+		end
 
-		self:CreateConfigSubmissions(dl)
-		-- Repaints the Load button of every row so exactly one of them reads Active.
-		local refreshRows
-		local downloading = {}
-
-		local function download(preset)
-			-- One request per preset at a time; double-clicking the button used
-			-- to fire duplicate imports.
-			if downloading[preset.file] then return end
-			downloading[preset.file] = true
-			dlstatus.Text = 'Fetching '..tostring(preset.name)..'...'
-			dlstatus.Visible = true
-			task.spawn(function()
-				local ok, res = pcall(function()
-					return game:HttpGet(repoBase()..preset.file, true)
-				end)
-				if not ok or not res or res == '404: Not Found' then
-					downloading[preset.file] = nil
-					dlstatus.Visible = false
-					mainapi:CreateNotification('Configs', 'Could not download '..tostring(preset.name)..'.', 7, 'alert')
-					return
+		footer.Size, footer.Position, footer.BackgroundTransparency, footer.Parent = UDim2.new(1, -20, 0, 32), UDim2.new(0, 10, 1, -38), 1, dl
+		local function submissionButton(name, text, position, width, parent)
+			button.Name, button.Size, button.Position = name, UDim2.fromOffset(width, 28), position
+			button.Parent = parent or footer
+		addTooltip(submitConfig, 'Submits the active config for in-game review')
+			if not isfile(path) then return end
+			local player = game:GetService('Players').LocalPlayer
+			local ok, response = backendRequest('POST', '/submissions', {
+				name = mainapi.Profile,
+				submitter = player.Name,
+				userId = player.UserId,
+				config = select(2, pcall(httpService.JSONDecode, httpService, readfile(path)))
+			})
+			mainapi:CreateNotification('Configs', ok and 'Config submitted for review.' or tostring(response), 8, ok and 'info' or 'alert')
+			local reviewWindow = Instance.new('Frame')
+			reviewWindow.Name, reviewWindow.Size, reviewWindow.Position = 'ConfigReview', UDim2.fromOffset(440, 350), UDim2.new(0.5, -220, 0.5, -175)
+			reviewWindow.BackgroundColor3, reviewWindow.Visible, reviewWindow.Parent = uipallet.Main, false, scaledgui
+			addBlur(reviewWindow); addCorner(reviewWindow); addWindowStroke(reviewWindow); makeDraggable(reviewWindow)
+			local reviewTitle = Instance.new('TextLabel')
+			reviewTitle.Size, reviewTitle.Position, reviewTitle.BackgroundTransparency = UDim2.new(1, -50, 0, 40), UDim2.fromOffset(14, 0), 1
+			reviewTitle.Text, reviewTitle.TextColor3, reviewTitle.TextSize, reviewTitle.FontFace = 'Pending Configs', uipallet.Text, 14, uipallet.FontSemiBold
+			reviewTitle.TextXAlignment, reviewTitle.Parent = Enum.TextXAlignment.Left, reviewWindow
+			local reviewClose = addCloseButton(reviewWindow)
+			reviewClose.MouseButton1Click:Connect(function() reviewWindow.Visible = false end)
+			local reviewList = Instance.new('ScrollingFrame')
+			reviewList.Size, reviewList.Position = UDim2.new(1, -20, 1, -52), UDim2.fromOffset(10, 44)
+			reviewList.BackgroundTransparency, reviewList.ScrollBarThickness, reviewList.CanvasSize, reviewList.Parent = 1, 2, UDim2.new(), reviewWindow
+			local reviewLayout = Instance.new('UIListLayout')
+			reviewLayout.Padding, reviewLayout.Parent = UDim.new(0, 6), reviewList
+			reviewLayout:GetPropertyChangedSignal('AbsoluteContentSize'):Connect(function() reviewList.CanvasSize = UDim2.fromOffset(0, reviewLayout.AbsoluteContentSize.Y / scale.Scale) end)
+			table.insert(mainapi.Windows, reviewWindow)
+			local function refreshReviews()
+				for _, child in reviewList:GetChildren() do if child:IsA('Frame') then child:Destroy() end end
+				local ok, response = backendRequest('GET', '/submissions?status=pending', nil, true)
+				if not ok then mainapi:CreateNotification('Configs', tostring(response), 8, 'alert'); return end
+				local submissions = type(response) == 'table' and (response.submissions or response) or {}
+				for _, submission in submissions do
+					local row = Instance.new('Frame')
+					row.Size, row.BackgroundColor3, row.Parent = UDim2.new(1, 0, 0, 48), color.Light(uipallet.Main, 0.02), reviewList
+					addCorner(row)
+					local label = Instance.new('TextLabel')
+					label.Size, label.Position, label.BackgroundTransparency = UDim2.new(1, -150, 1, 0), UDim2.fromOffset(10, 0), 1
+					label.Text, label.TextColor3, label.TextSize, label.FontFace = tostring(submission.name or 'Config')..' — '..tostring(submission.submitter or '?'), uipallet.Text, 12, uipallet.Font
+					label.TextXAlignment, label.Parent = Enum.TextXAlignment.Left, row
+					local function decide(action, x, text)
+						local button = submissionButton(action, text, UDim2.new(1, x, 0.5, -14), 62, row)
+						button.AnchorPoint = Vector2.new(1, 0)
+						button.MouseButton1Click:Connect(function()
+							local success, result = backendRequest('PATCH', '/submissions/'..httpService:UrlEncode(tostring(submission.id)), {action = action}, true)
+							mainapi:CreateNotification('Configs', success and ('Submission '..action..'ed.') or tostring(result), 7, success and 'info' or 'alert')
+							if success then refreshReviews() end
+						end)
+					end
+					decide('accept', -76, 'Accept'); decide('reject', -8, 'Reject')
 				end
 			end
 			review.MouseButton1Click:Connect(function() reviewWindow.Visible = true; refreshReviews() end)
@@ -9649,26 +9586,26 @@ local targetinfofollow = targetinfoobj:CreateToggle({
 })
 
 local function updateTargetInfoPosition(target)
+	if not targetinfofollow.Enabled or not target or not target.RootPart then
+		if targetinfofollow.Enabled then targetinfobkg.Position = UDim2.new() end
+		return
+	end
+
+	local camera = workspace.CurrentCamera
+	if not camera then return end
+	local targetPoint, visible = camera:WorldToViewportPoint(target.RootPart.Position + Vector3.new(0, 2.5, 0))
+	if not visible or targetPoint.Z <= 0 then
+		targetinfobkg.Position = UDim2.new()
+		return
+	end
+
+	local viewport = camera.ViewportSize
 	if not targetinfofollow.Enabled then return true end
 	if not target or not target.RootPart then
 		targetinfobkg.Position = UDim2.new()
 		return mainapi.gui.ScaledGui.ClickGui.Visible
-	end
-
-	local camera = workspace.CurrentCamera
 	if not camera then return false end
-	local targetPoint, visible = camera:WorldToViewportPoint(target.RootPart.Position + Vector3.new(0, 2.5, 0))
 	if not visible or targetPoint.Z <= 0 then return false end
-
-	local viewport = camera.ViewportSize
-	local localPoint = Vector2.new(viewport.X / 2, viewport.Y * 0.72)
-	local entitylib = mainapi.Libraries.entity
-	if entitylib and entitylib.character and entitylib.character.RootPart then
-		local projected, onScreen = camera:WorldToViewportPoint(entitylib.character.RootPart.Position + Vector3.new(0, 2.5, 0))
-		if onScreen and projected.Z > 0 then localPoint = Vector2.new(projected.X, projected.Y) end
-	end
-
-	local target2d = Vector2.new(targetPoint.X, targetPoint.Y)
 	local margin, half = 18, Vector2.new(120, 44.5)
 	local offsets = {
 		Vector2.new(half.X + 42, 0), Vector2.new(-half.X - 42, 0),
