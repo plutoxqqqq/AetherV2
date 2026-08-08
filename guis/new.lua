@@ -773,6 +773,41 @@ function configapi.Presets.URL(file)
 	return configapi.Presets.Base()..file..'?aether='..tostring(os.time())..'-'..tostring(math.random(100000, 999999))
 end
 
+-- The raw GitHub CDN can serve an older catalogue even with a query string. Refresh the
+-- catalogue through the Contents API instead, whose response carries the current main-branch
+-- blob inline as base64.
+function configapi.Presets.FetchList()
+	local response = game:HttpGet(
+		'https://api.github.com/repos/plutoxqqqq/AetherV2/contents/configs/presets.json?ref=main',
+		true
+	)
+	local payload = httpService:JSONDecode(response)
+	if type(payload) ~= 'table' or type(payload.content) ~= 'string' or payload.encoding ~= 'base64' then
+		error('Invalid GitHub Contents API response')
+	end
+
+	local alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+	local bytes = {}
+	local content = payload.content:gsub('[^%w%+%/%=]', '')
+	for i = 1, #content, 4 do
+		local chars = content:sub(i, i + 3)
+		local a = alphabet:find(chars:sub(1, 1), 1, true)
+		local b = alphabet:find(chars:sub(2, 2), 1, true)
+		local c = alphabet:find(chars:sub(3, 3), 1, true)
+		local d = alphabet:find(chars:sub(4, 4), 1, true)
+		if not a or not b then error('Invalid base64 content') end
+		a, b, c, d = a - 1, b - 1, (c or 1) - 1, (d or 1) - 1
+		bytes[#bytes + 1] = string.char((a * 4) + math.floor(b / 16))
+		if chars:sub(3, 3) ~= '=' then
+			bytes[#bytes + 1] = string.char(((b % 16) * 16) + math.floor(c / 4))
+		end
+		if chars:sub(4, 4) ~= '=' then
+			bytes[#bytes + 1] = string.char(((c % 4) * 64) + d)
+		end
+	end
+	return table.concat(bytes)
+end
+
 function configapi.Presets.Remember(configName, preset)
 	if type(configName) ~= 'string' or configName == '' then return end
 	if type(preset) ~= 'table' or type(preset.file) ~= 'string' or preset.file == '' then return end
@@ -5698,7 +5733,7 @@ function mainapi:CreateCategoryList(categorysettings)
 			dlstatus.Visible = true
 			task.spawn(function()
 				local ok, res = pcall(function()
-					return game:HttpGet(repoURL('presets.json'), true)
+					return configapi.Presets.FetchList()
 				end)
 				refreshing = false
 				if not ok or not res or res == '404: Not Found' then
