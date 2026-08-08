@@ -5403,22 +5403,98 @@ function mainapi:CreateCategoryList(categorysettings)
 		end
 		local submitConfig = submissionButton('Submit', 'Submit config', UDim2.fromOffset(0, 2), 110)
 		local review = submissionButton('Review', 'Review queue', UDim2.fromOffset(118, 2), 110)
+		-- The queue button is part of the existing repo-config window, but only the
+		-- repository owner should see it. The backend key remains the actual security
+		-- boundary; this check merely avoids presenting a dead admin control to users.
+		local localPlayer = cloneref(game:GetService('Players')).LocalPlayer
+		review.Visible = localPlayer.Name:lower() == 'plutoxqqqqq'
 		addTooltip(submitConfig, 'Submits the active config for in-game review')
 		addTooltip(review, 'Lists the configs waiting on a maintainer decision')
-		submitConfig.MouseButton1Click:Connect(function()
+		local function submitActiveConfig(details)
 			local path = mainapi.Profile and getConfigPath(mainapi.Profile)
 			if not path or not isfile(path) then
 				mainapi:CreateNotification('Configs', 'Save a config before submitting it.', 7, 'alert')
-				return
+				return false
 			end
-			local player = cloneref(game:GetService('Players')).LocalPlayer
+			local player = localPlayer
+			local config = select(2, pcall(httpService.JSONDecode, httpService, readfile(path)))
+			local guiData
+			local guiPath = 'aetherv2/profiles/'..game.GameId..'.gui.txt'
+			if isfile(guiPath) then guiData = select(2, pcall(httpService.JSONDecode, httpService, readfile(guiPath))) end
 			local ok, response = backendRequest('POST', '/submissions', {
 				name = mainapi.Profile,
 				submitter = player.Name,
 				userId = player.UserId,
-				config = select(2, pcall(httpService.JSONDecode, httpService, readfile(path)))
+				creator = details.creator,
+				category = details.category,
+				description = details.description,
+				tags = details.tags,
+				game = tostring(mainapi.Place),
+				config = config,
+				gui = guiData
 			})
 			mainapi:CreateNotification('Configs', ok and 'Config submitted for review.' or tostring(response), 8, ok and 'info' or 'alert')
+			if ok and type(response) == 'table' and response.id then
+				local receiptPath = profileFolder..'/configsubmissions.json'
+				local receipts = isfile(receiptPath) and loadJson(receiptPath) or {}
+				table.insert(receipts, {id = response.id, token = response.token})
+				pcall(writefile, receiptPath, httpService:JSONEncode(receipts))
+			end
+			return ok
+		end
+
+		-- Collect the same attribution/context required by Export JSON, without making
+		-- submitters leave the Configs tab.  Category is deliberately constrained so
+		-- repository cards remain consistent.
+		local submitWindow = Instance.new('Frame')
+		submitWindow.Name, submitWindow.Size, submitWindow.Position = 'SubmitConfig', UDim2.fromOffset(390, 286), UDim2.new(0.5, -195, 0.5, -143)
+		submitWindow.BackgroundColor3, submitWindow.Visible, submitWindow.Parent = uipallet.Main, false, scaledgui
+		addBlur(submitWindow); addCorner(submitWindow); addWindowStroke(submitWindow); makeDraggable(submitWindow)
+		local submitTitle = Instance.new('TextLabel')
+		submitTitle.Size, submitTitle.Position, submitTitle.BackgroundTransparency = UDim2.new(1, -50, 0, 38), UDim2.fromOffset(14, 0), 1
+		submitTitle.Text, submitTitle.TextColor3, submitTitle.TextSize, submitTitle.FontFace = 'Submit current config', uipallet.Text, 14, uipallet.FontSemiBold
+		submitTitle.TextXAlignment, submitTitle.Parent = Enum.TextXAlignment.Left, submitWindow
+		addCloseButton(submitWindow).MouseButton1Click:Connect(function() submitWindow.Visible = false end)
+		local fields = {}
+		local function submitField(key, placeholder, y, multiline)
+			local box = Instance.new('TextBox')
+			box.Name, box.Size, box.Position = key, UDim2.new(1, -28, 0, multiline and 58 or 34), UDim2.fromOffset(14, y)
+			box.BackgroundColor3, box.TextColor3, box.PlaceholderColor3 = color.Light(uipallet.Main, 0.04), uipallet.Text, color.Dark(uipallet.Text, 0.35)
+			box.PlaceholderText, box.Text, box.TextSize, box.FontFace = placeholder, '', 12, uipallet.Font
+			box.ClearTextOnFocus, box.MultiLine, box.TextWrapped, box.Parent = false, multiline or false, multiline or false, submitWindow
+			addCorner(box); fields[key] = box
+		end
+		submitField('creator', 'Creator / credit', 44); submitField('tags', 'Tags, separated by commas', 84); submitField('description', 'What is this config for?', 124, true)
+		local categories, categoryIndex = {'Closet', 'Semi-closet', 'Blatant'}, 1
+		local categoryButton = submissionButton('Category', categories[categoryIndex], UDim2.fromOffset(14, 190), 130, submitWindow)
+		categoryButton.MouseButton1Click:Connect(function() categoryIndex = categoryIndex % #categories + 1; categoryButton.Text = categories[categoryIndex] end)
+		local confirmSubmit = submissionButton('Confirm', 'Send for review', UDim2.new(1, -144, 0, 190), 130, submitWindow)
+		confirmSubmit.MouseButton1Click:Connect(function()
+			local tags = {}
+			for tag in fields.tags.Text:gmatch('[^,]+') do tag = tag:match('^%s*(.-)%s*$'); if tag ~= '' then table.insert(tags, tag) end end
+			local creator, description = fields.creator.Text:match('^%s*(.-)%s*$'), fields.description.Text:match('^%s*(.-)%s*$')
+			if creator == '' or description == '' or #tags == 0 then mainapi:CreateNotification('Configs', 'Creator, description, and at least one tag are required.', 7, 'alert'); return end
+			if submitActiveConfig({creator = creator, description = description, tags = tags, category = categories[categoryIndex]}) then submitWindow.Visible = false end
+		end)
+		table.insert(mainapi.Windows, submitWindow)
+		submitConfig.MouseButton1Click:Connect(function()
+			fields.creator.Text = localPlayer.Name
+			submitWindow.Visible = true
+		end)
+		-- Receipt tokens are scoped to one submission. Check them whenever the Configs
+		-- UI is created and remove completed receipts after showing the uploader once.
+		task.spawn(function()
+			local receiptPath = profileFolder..'/configsubmissions.json'
+			if not isfile(receiptPath) then return end
+			local receipts, pending = loadJson(receiptPath) or {}, {}
+			for _, receipt in receipts do
+				local ok, result = backendRequest('GET', '/submissions/'..httpService:UrlEncode(tostring(receipt.id))..'?token='..httpService:UrlEncode(tostring(receipt.token)))
+				if ok and type(result) == 'table' and result.status ~= 'pending' then
+					local reason = result.reason and result.reason ~= '' and (' Reason: '..result.reason) or ''
+					mainapi:CreateNotification('Config review', tostring(result.name)..' was '..tostring(result.status)..'.'..reason, 12, result.status == 'accepted' and 'info' or 'alert')
+				else table.insert(pending, receipt) end
+			end
+			pcall(writefile, receiptPath, httpService:JSONEncode(pending))
 		end)
 
 		local reviewWindow = Instance.new('Frame')
@@ -5451,6 +5527,13 @@ function mainapi:CreateCategoryList(categorysettings)
 				label.Size, label.Position, label.BackgroundTransparency = UDim2.new(1, -150, 1, 0), UDim2.fromOffset(10, 0), 1
 				label.Text, label.TextColor3, label.TextSize, label.FontFace = tostring(submission.name or 'Config')..' — '..tostring(submission.submitter or '?'), uipallet.Text, 12, uipallet.Font
 				label.TextXAlignment, label.Parent = Enum.TextXAlignment.Left, row
+				local download = submissionButton('Download', 'JSON', UDim2.new(1, -146, 0.5, -14), 48, row)
+				download.AnchorPoint = Vector2.new(1, 0)
+				download.MouseButton1Click:Connect(function()
+					local filename = tostring(submission.name or submission.id or 'submission'):gsub('[\\/:*?"<>|]', '-')..'.review.json'
+					local success = pcall(writefile, configFolder..'/'..filename, httpService:JSONEncode(submission))
+					mainapi:CreateNotification('Configs', success and ('Downloaded '..filename) or 'Could not download submission JSON.', 6, success and 'info' or 'alert')
+				end)
 				local function decide(action, x, text)
 					local button = submissionButton(action, text, UDim2.new(1, x, 0.5, -14), 62, row)
 					button.AnchorPoint = Vector2.new(1, 0)
@@ -9644,10 +9727,12 @@ local targetinfofollow = targetinfoobj:CreateToggle({
 	end
 })
 
+local followCenter, followTarget, followSide
 local function updateTargetInfoPosition(target)
 	-- Returns whether the HUD should be shown: the caller ands this into Visible, so
 	-- every exit has to hand back a boolean rather than nil.
 	if not targetinfofollow.Enabled or not target or not target.RootPart then
+		followCenter, followTarget, followSide = nil, nil, nil
 		if targetinfofollow.Enabled then targetinfobkg.Position = UDim2.new() end
 		return true
 	end
@@ -9683,8 +9768,8 @@ local function updateTargetInfoPosition(target)
 	local function covers(center, point)
 		return math.abs(center.X - point.X) <= half.X + margin and math.abs(center.Y - point.Y) <= half.Y + margin
 	end
-	local best, bestScore
-	for _, offset in offsets do
+	local best, bestScore, bestSide
+	for side, offset in offsets do
 		local desired = target2d + offset
 		local center = Vector2.new(
 			math.clamp(desired.X, half.X + margin, viewport.X - half.X - margin),
@@ -9695,10 +9780,22 @@ local function updateTargetInfoPosition(target)
 		-- hides instead of covering the fight.
 		if not covers(center, target2d) and not covers(center, localPoint) then
 			local score = math.min((center - target2d).Magnitude, (center - localPoint).Magnitude) - ((center - desired).Magnitude * 2)
-			if not bestScore or score > bestScore then best, bestScore = center, score end
+			if not bestScore or score > bestScore then best, bestScore, bestSide = center, score, side end
 		end
 	end
 	if not best then return false end
+
+	-- Do not reselect a different side every frame as the projected players move by a
+	-- pixel. Keep the current side while it remains safe, and ease normal camera motion.
+	if followTarget == target and followSide then
+		local desired = target2d + offsets[followSide]
+		local held = Vector2.new(math.clamp(desired.X, half.X + margin, viewport.X - half.X - margin), math.clamp(desired.Y, half.Y + margin, viewport.Y - half.Y - margin))
+		if not covers(held, target2d) and not covers(held, localPoint) then best, bestSide = held, followSide end
+	end
+	if followTarget ~= target then followCenter = best end
+	followTarget, followSide = target, bestSide
+	followCenter = followCenter and followCenter:Lerp(best, 0.18) or best
+	best = followCenter
 
 	local parentPosition = targetinfoobj.Children.AbsolutePosition
 	local guiScale = scale and scale.Scale or 1
