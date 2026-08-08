@@ -5488,6 +5488,8 @@ function mainapi:CreateCategoryList(categorysettings)
 					mainapi:CreateNotification('Configs', 'Could not download '..tostring(preset.name)..'.', 7, 'alert')
 					return
 				end
+			end
+			review.MouseButton1Click:Connect(function() reviewWindow.Visible = true; refreshReviews() end)
 				-- Writes the config, registers it as a profile, equips it and applies it
 				-- to the running menu. By the time this returns the modules are already on.
 				local suc, result = importJsonConfig(res, preset.name)
@@ -8622,6 +8624,24 @@ local profiles = mainapi:CreateCategoryList({
 	Placeholder = 'Type name',
 	Profiles = true
 })
+
+local publicWindow = Instance.new('Frame')
+publicWindow.Name, publicWindow.Size, publicWindow.Position = 'PublicConfigsGUI', UDim2.fromOffset(700, 389), UDim2.new(0.5, -350, 0.5, -194)
+publicWindow.BackgroundColor3, publicWindow.Visible, publicWindow.Parent = uipallet.Main, false, scaledgui
+addBlur(publicWindow); addCorner(publicWindow); makeDraggable(publicWindow)
+local publicTitle = Instance.new('TextLabel')
+publicTitle.Size, publicTitle.Position, publicTitle.BackgroundTransparency = UDim2.new(1, -50, 0, 40), UDim2.fromOffset(14, 0), 1
+publicTitle.Text, publicTitle.TextColor3, publicTitle.TextSize, publicTitle.FontFace = 'Public Configs', uipallet.Text, 14, uipallet.Font
+publicTitle.TextXAlignment, publicTitle.Parent = Enum.TextXAlignment.Left, publicWindow
+local publicClose = addCloseButton(publicWindow)
+publicClose.MouseButton1Click:Connect(function() publicWindow.Visible = false end)
+local publicEmpty = Instance.new('TextLabel')
+publicEmpty.Size, publicEmpty.Position, publicEmpty.BackgroundTransparency = UDim2.new(1, -30, 1, -60), UDim2.fromOffset(15, 48), 1
+publicEmpty.Text, publicEmpty.TextColor3, publicEmpty.TextSize, publicEmpty.FontFace = 'Public configs will appear here when available.', color.Dark(uipallet.Text, 0.35), 13, uipallet.Font
+publicEmpty.Parent = publicWindow
+mainapi.PublicConfigs = {Window = publicWindow, Accents = {}}
+profiles:CreateButton({Name = 'Public', LayoutOrder = 5, Function = function() publicWindow.Position = UDim2.new(0.5, -350, 0.5, -194); publicWindow.Visible = true end, Tooltip = 'Browse public configs'})
+
 
 local importNameBox
 local importJsonBox = profiles:CreateTextBox({
