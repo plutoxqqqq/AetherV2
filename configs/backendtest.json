@@ -1,0 +1,5921 @@
+{
+  "Categories": {
+    "Radar": {
+      "Pinned": false,
+      "Options": {
+        "Show Background": {
+          "Enabled": true
+        },
+        "Bar Color": {
+          "Hue": 0.44,
+          "Sat": 1,
+          "Value": 1,
+          "Opacity": 1,
+          "Rainbow": false
+        },
+        "Clamp Radar": {
+          "Enabled": true
+        },
+        "Player Color": {
+          "Hue": 0.44,
+          "Sat": 1,
+          "Value": 1,
+          "Opacity": 1,
+          "Rainbow": false
+        },
+        "Dot Style": {
+          "Value": "Circles"
+        },
+        "Targets": {
+          "Players": true,
+          "NPCs": false,
+          "Invisible": false,
+          "Walls": false
+        },
+        "Show Cross": {
+          "Enabled": true
+        }
+      },
+      "Position": {
+        "Y": 46,
+        "X": 240
+      }
+    },
+    "Text GUI": {
+      "Pinned": false,
+      "Options": {
+        "Shadow": {
+          "Enabled": false
+        },
+        "Tint": {
+          "Enabled": false
+        },
+        "Animations": {
+          "Enabled": false
+        },
+        "Watermark": {
+          "Enabled": false
+        },
+        "Add custom text": {
+          "Enabled": false
+        },
+        "Color of custom text": {
+          "Hue": 0.44,
+          "Sat": 1,
+          "Value": 1,
+          "Opacity": 1,
+          "Rainbow": false
+        },
+        "Set custom text color": {
+          "Enabled": false
+        },
+        "Custom Font": {
+          "Value": "Arial"
+        },
+        "Sort": {
+          "Value": "Alphabetical"
+        },
+        "Font Asset": {
+          "Value": ""
+        },
+        "Render background": {
+          "Enabled": false
+        },
+        "Color Mode": {
+          "Value": "Match GUI color"
+        },
+        "Hide modules": {
+          "Enabled": false
+        },
+        "Blacklist": {
+          "ListEnabled": [],
+          "List": []
+        },
+        "V4 Gradient": {
+          "Enabled": false
+        },
+        "Custom Font Asset": {
+          "Value": ""
+        },
+        "Transparency": {
+          "Value": 0.5,
+          "Max": 1
+        },
+        "Custom text": {
+          "Value": ""
+        },
+        "Text GUI color": {
+          "Hue": 0.44,
+          "Sat": 1,
+          "Value": 1,
+          "Opacity": 1,
+          "Rainbow": false
+        },
+        "Scale": {
+          "Value": 1,
+          "Max": 2
+        },
+        "Gradient": {
+          "Enabled": false
+        },
+        "Font": {
+          "Value": "Arial"
+        },
+        "Hide render": {
+          "Enabled": false
+        }
+      },
+      "Position": {
+        "Y": 46,
+        "X": 240
+      }
+    },
+    "Session Info": {
+      "Pinned": false,
+      "Options": {
+        "Offset": {
+          "Enabled": true
+        },
+        "Background Color": {
+          "Hue": 0.44,
+          "Sat": 1,
+          "Value": 0,
+          "Opacity": 0.5,
+          "Rainbow": false
+        },
+        "Blacklist": {
+          "ListEnabled": [],
+          "List": []
+        },
+        "Add custom text": {
+          "Enabled": false
+        },
+        "Font": {
+          "Value": "Arial"
+        },
+        "Title": {
+          "Enabled": true
+        },
+        "Border": {
+          "Enabled": false
+        },
+        "Custom text": {
+          "Value": ""
+        },
+        "Font Asset": {
+          "Value": ""
+        },
+        "Text Size": {
+          "Value": 16,
+          "Max": 30
+        },
+        "Border Color": {
+          "Hue": 0.44,
+          "Sat": 1,
+          "Value": 1,
+          "Opacity": 1,
+          "Rainbow": false
+        }
+      },
+      "Position": {
+        "Y": 46,
+        "X": 240
+      }
+    },
+    "Target Info": {
+      "Pinned": false,
+      "Options": {
+        "Border Color": {
+          "Hue": 0.44,
+          "Sat": 1,
+          "Value": 1,
+          "Opacity": 1,
+          "Rainbow": false
+        },
+        "Color": {
+          "Hue": 0.44,
+          "Sat": 1,
+          "Value": 1,
+          "Opacity": 1,
+          "Rainbow": false
+        },
+        "Render Background": {
+          "Enabled": true
+        },
+        "Border": {
+          "Enabled": false
+        },
+        "Use Displayname": {
+          "Enabled": true
+        },
+        "Transparency": {
+          "Value": 0.5,
+          "Max": 1
+        },
+        "Follow player": {
+          "Enabled": true
+        },
+        "Font Asset": {
+          "Value": ""
+        },
+        "Font": {
+          "Value": "Arial"
+        },
+        "Custom Color": {
+          "Enabled": false
+        }
+      },
+      "Position": {
+        "Y": 46,
+        "X": 240
+      }
+    },
+    "Friends": {
+      "List": [],
+      "ListEnabled": [],
+      "Options": {
+        "Use friends": {
+          "Enabled": true
+        },
+        "Friends color": {
+          "Hue": 0.44,
+          "Sat": 1,
+          "Value": 1,
+          "Opacity": 1,
+          "Rainbow": false
+        },
+        "Recolor visuals": {
+          "Enabled": true
+        }
+      },
+      "Position": {
+        "Y": 420,
+        "X": 696
+      }
+    },
+    "Targets": {
+      "List": [],
+      "ListEnabled": [],
+      "Options": [],
+      "Position": {
+        "Y": 420,
+        "X": 1156
+      }
+    },
+    "Profiles": {
+      "Enabled": true,
+      "Options": {
+        "Import JSON": {
+          "Value": ""
+        },
+        "Import Name": {
+          "Value": ""
+        }
+      },
+      "Position": {
+        "Y": 336,
+        "X": 700
+      },
+      "List": [],
+      "ListEnabled": [],
+      "Expanded": true
+    }
+  },
+  "Legit": {
+    "Coords": {
+      "Enabled": false,
+      "Bind": [],
+      "Options": {
+        "Render Background": {
+          "Enabled": true
+        }
+      },
+      "Position": {
+        "Y": 0,
+        "X": 0
+      }
+    },
+    "AbyssalDepths": {
+      "Enabled": false,
+      "Options": [],
+      "Bind": []
+    },
+    "FPSBoost": {
+      "Enabled": false,
+      "Options": {
+        "Visualizer": {
+          "Enabled": true
+        },
+        "Kill Effects": {
+          "Enabled": true
+        }
+      },
+      "Bind": []
+    },
+    "TimeChanger": {
+      "Enabled": false,
+      "Options": {
+        "Clock Time": {
+          "Value": 18,
+          "Max": 24
+        }
+      },
+      "Bind": []
+    },
+    "HitColor": {
+      "Enabled": false,
+      "Options": {
+        "Color": {
+          "Hue": 0.44,
+          "Sat": 1,
+          "Value": 1,
+          "Opacity": 0.4,
+          "Rainbow": false
+        }
+      },
+      "Bind": []
+    },
+    "UICleanup": {
+      "Enabled": false,
+      "Bind": [],
+      "Options": {
+        "Fix Queue Card": {
+          "Enabled": true
+        },
+        "Resize Health": {
+          "Enabled": true
+        },
+        "No Hotbar Numbers": {
+          "Enabled": true
+        },
+        "No Inventory Button": {
+          "Enabled": true
+        },
+        "No Kill Feed": {
+          "Enabled": true
+        },
+        "Old Player List": {
+          "Enabled": true
+        }
+      },
+      "Position": {
+        "Y": 0,
+        "X": 0
+      }
+    },
+    "BedBreakEffect": {
+      "Enabled": false,
+      "Options": {
+        "Effect": {
+          "Value": "Bat-Splode"
+        }
+      },
+      "Bind": []
+    },
+    "ArmorTrims": {
+      "Enabled": false,
+      "Options": {
+        "Trim color": {
+          "Hue": 0.44,
+          "Sat": 1,
+          "Value": 1,
+          "Opacity": 1,
+          "Rainbow": false
+        },
+        "Trim type": {
+          "Value": "trim_1"
+        }
+      },
+      "Bind": []
+    },
+    "FFlagEditor": {
+      "Enabled": false,
+      "Options": {
+        "FFlags": {
+          "Value": ""
+        }
+      },
+      "Bind": []
+    },
+    "CleanKit": {
+      "Enabled": false,
+      "Bind": [],
+      "Options": [],
+      "Position": {
+        "Y": 0,
+        "X": 0
+      }
+    },
+    "Keystrokes": {
+      "Enabled": false,
+      "Bind": [],
+      "Options": {
+        "Color": {
+          "Hue": 0.44,
+          "Sat": 1,
+          "Value": 0,
+          "Opacity": 0.5,
+          "Rainbow": false
+        },
+        "Show Spacebar": {
+          "Enabled": true
+        },
+        "Key Style": {
+          "Value": "Keyboard"
+        }
+      },
+      "Position": {
+        "Y": 0,
+        "X": 0
+      }
+    },
+    "Viewmodel": {
+      "Enabled": false,
+      "Options": {
+        "Rotation Z": {
+          "Value": 0,
+          "Max": 360
+        },
+        "Vertical": {
+          "Value": -0.2,
+          "Max": 2
+        },
+        "Horizontal": {
+          "Value": 0.8,
+          "Max": 2
+        },
+        "No Bobbing": {
+          "Enabled": true
+        },
+        "Depth": {
+          "Value": 0.8,
+          "Max": 2
+        },
+        "Rotation Y": {
+          "Value": 0,
+          "Max": 360
+        },
+        "Rotation X": {
+          "Value": 0,
+          "Max": 360
+        }
+      },
+      "Bind": []
+    },
+    "StormMode": {
+      "Enabled": false,
+      "Options": [],
+      "Bind": []
+    },
+    "Bloom": {
+      "Enabled": false,
+      "Options": {
+        "Threshold": {
+          "Value": 135,
+          "Max": 220
+        },
+        "Glow valuables": {
+          "Enabled": true
+        },
+        "Intensity": {
+          "Value": 55,
+          "Max": 100
+        },
+        "Size": {
+          "Value": 24,
+          "Max": 56
+        }
+      },
+      "Bind": []
+    },
+    "ChinaHat": {
+      "Enabled": false,
+      "Options": {
+        "Hat Color": {
+          "Hue": 0.44,
+          "Sat": 1,
+          "Value": 1,
+          "Opacity": 0.7,
+          "Rainbow": false
+        },
+        "Material": {
+          "Value": "ForceField"
+        }
+      },
+      "Bind": []
+    },
+    "SoundChanger": {
+      "Enabled": false,
+      "Options": {
+        "Sounds": {
+          "ListEnabled": [],
+          "List": []
+        }
+      },
+      "Bind": []
+    },
+    "DamageIndicator": {
+      "Enabled": false,
+      "Options": {
+        "Font": {
+          "Value": "GothamBlack"
+        },
+        "Color": {
+          "Hue": 0,
+          "Sat": 1,
+          "Value": 1,
+          "Opacity": 1,
+          "Rainbow": false
+        },
+        "Stroke": {
+          "Enabled": false
+        },
+        "Anchor": {
+          "Value": 0,
+          "Max": 1
+        },
+        "Size": {
+          "Value": 32,
+          "Max": 32
+        }
+      },
+      "Bind": []
+    },
+    "TexturePack": {
+      "Enabled": false,
+      "Options": {
+        "Pack": {
+          "Value": "Acidic"
+        }
+      },
+      "Bind": []
+    },
+    "Cape": {
+      "Enabled": false,
+      "Options": {
+        "Texture": {
+          "Value": ""
+        }
+      },
+      "Bind": []
+    },
+    "Disguise": {
+      "Enabled": false,
+      "Options": {
+        "Disguise": {
+          "Value": ""
+        },
+        "Mode": {
+          "Value": "Character"
+        }
+      },
+      "Bind": []
+    },
+    "KillfeedSpoofer": {
+      "Enabled": false,
+      "Options": {
+        "Victim": {
+          "Value": "Enemy"
+        },
+        "Killer": {
+          "Value": "plutoxqqqqq"
+        },
+        "Message": {
+          "Value": "{killer} eliminated {victim} with {weapon}"
+        },
+        "Weapon": {
+          "Value": "Sword"
+        }
+      },
+      "Bind": []
+    },
+    "Shader": {
+      "Enabled": false,
+      "Options": [],
+      "Bind": []
+    },
+    "Water": {
+      "Enabled": false,
+      "Options": {
+        "Waves": {
+          "Enabled": true
+        },
+        "Color": {
+          "Hue": 0.55,
+          "Sat": 1,
+          "Value": 1,
+          "Opacity": 0.7,
+          "Rainbow": false
+        },
+        "Mode": {
+          "Value": "Terrain"
+        },
+        "Depth": {
+          "Value": 12,
+          "Max": 60
+        },
+        "Area": {
+          "Value": 768,
+          "Max": 2048
+        }
+      },
+      "Bind": []
+    },
+    "MotionBlur": {
+      "Enabled": false,
+      "Options": {
+        "Strength": {
+          "Value": 3,
+          "Max": 10
+        }
+      },
+      "Bind": []
+    },
+    "Ping": {
+      "Enabled": false,
+      "Bind": [],
+      "Options": {
+        "Color": {
+          "Hue": 0.44,
+          "Sat": 1,
+          "Value": 0,
+          "Opacity": 0.5,
+          "Rainbow": false
+        },
+        "Font": {
+          "Value": "Gotham"
+        },
+        "Font Asset": {
+          "Value": ""
+        }
+      },
+      "Position": {
+        "Y": 0,
+        "X": 0
+      }
+    },
+    "ReachDisplay": {
+      "Enabled": false,
+      "Bind": [],
+      "Options": {
+        "Color": {
+          "Hue": 0.44,
+          "Sat": 1,
+          "Value": 0,
+          "Opacity": 0.5,
+          "Rainbow": false
+        },
+        "Font": {
+          "Value": "Gotham"
+        },
+        "Font Asset": {
+          "Value": ""
+        }
+      },
+      "Position": {
+        "Y": 0,
+        "X": 0
+      }
+    },
+    "Clock": {
+      "Enabled": false,
+      "Bind": [],
+      "Options": {
+        "Color": {
+          "Hue": 0.44,
+          "Sat": 1,
+          "Value": 0,
+          "Opacity": 0.5,
+          "Rainbow": false
+        },
+        "Font": {
+          "Value": "Gotham"
+        },
+        "24 Hour Clock": {
+          "Enabled": false
+        },
+        "Font Asset": {
+          "Value": ""
+        }
+      },
+      "Position": {
+        "Y": 0,
+        "X": 0
+      }
+    },
+    "AuroraSky": {
+      "Enabled": false,
+      "Options": [],
+      "Bind": []
+    },
+    "Speedmeter": {
+      "Enabled": false,
+      "Bind": [],
+      "Options": {
+        "Color": {
+          "Hue": 0.44,
+          "Sat": 1,
+          "Value": 0,
+          "Opacity": 0.5,
+          "Rainbow": false
+        },
+        "Font": {
+          "Value": "Gotham"
+        },
+        "Font Asset": {
+          "Value": ""
+        }
+      },
+      "Position": {
+        "Y": 0,
+        "X": 0
+      }
+    },
+    "WinEffect": {
+      "Enabled": false,
+      "Options": {
+        "Effects": {
+          "Value": "Angel Wings"
+        }
+      },
+      "Bind": []
+    },
+    "BedAlarm": {
+      "Enabled": false,
+      "Options": {
+        "Highlight intruders": {
+          "Enabled": true
+        },
+        "Range": {
+          "Value": 70,
+          "Max": 100
+        },
+        "Volume multiplier": {
+          "Value": 1.4,
+          "Max": 2
+        }
+      },
+      "Bind": []
+    },
+    "SongBeats": {
+      "Enabled": false,
+      "Options": {
+        "Adjustment": {
+          "Value": 5,
+          "Max": 30
+        },
+        "Beat FOV": {
+          "Enabled": true
+        },
+        "Volume": {
+          "Value": 100,
+          "Max": 100
+        },
+        "Songs": {
+          "ListEnabled": [],
+          "List": []
+        }
+      },
+      "Bind": []
+    },
+    "IRLReplica": {
+      "Enabled": false,
+      "Options": {
+        "Decorative Details": {
+          "Enabled": true
+        },
+        "Generator Glow": {
+          "Enabled": true
+        },
+        "Season": {
+          "Value": "Spring"
+        },
+        "Time Preset": {
+          "Value": "Morning"
+        },
+        "Weather": {
+          "Value": "Auto"
+        },
+        "Particles": {
+          "Enabled": true
+        },
+        "Material Style": {
+          "Value": "Cinematic"
+        },
+        "Material Overhaul": {
+          "Enabled": true
+        },
+        "Cinematic Lighting": {
+          "Enabled": true
+        },
+        "Particle Density": {
+          "Value": 55,
+          "Max": 100
+        },
+        "Ultra Realism": {
+          "Enabled": true
+        },
+        "Decoration Density": {
+          "Value": 35,
+          "Max": 100
+        },
+        "Preserve Visibility": {
+          "Enabled": true
+        },
+        "Weather Intensity": {
+          "Value": 70,
+          "Max": 100
+        },
+        "Day/Night Cycle": {
+          "Enabled": false
+        },
+        "Ambient Sounds": {
+          "Enabled": true
+        },
+        "Weather Range": {
+          "Value": 900,
+          "Max": 2000
+        }
+      },
+      "Bind": []
+    },
+    "Memory": {
+      "Enabled": false,
+      "Bind": [],
+      "Options": {
+        "Color": {
+          "Hue": 0.44,
+          "Sat": 1,
+          "Value": 0,
+          "Opacity": 0.5,
+          "Rainbow": false
+        },
+        "Font": {
+          "Value": "Gotham"
+        },
+        "Font Asset": {
+          "Value": ""
+        }
+      },
+      "Position": {
+        "Y": 0,
+        "X": 0
+      }
+    },
+    "HitFix": {
+      "Enabled": false,
+      "Options": [],
+      "Bind": []
+    },
+    "FPS": {
+      "Enabled": false,
+      "Bind": [],
+      "Options": {
+        "Color": {
+          "Hue": 0.44,
+          "Sat": 1,
+          "Value": 0,
+          "Opacity": 0.5,
+          "Rainbow": false
+        },
+        "Font": {
+          "Value": "Gotham"
+        },
+        "Font Asset": {
+          "Value": ""
+        }
+      },
+      "Position": {
+        "Y": 0,
+        "X": 0
+      }
+    },
+    "KillEffect": {
+      "Enabled": false,
+      "Options": {
+        "Bedwars": {
+          "Value": "Abduction"
+        },
+        "Mode": {
+          "Value": "Bedwars"
+        }
+      },
+      "Bind": []
+    },
+    "Interface": {
+      "Enabled": false,
+      "Bind": [],
+      "Options": {
+        "Health Color": {
+          "Hue": 0.44,
+          "Sat": 1,
+          "Value": 1,
+          "Opacity": 1,
+          "Rainbow": false
+        },
+        "Health Font": {
+          "Value": "LuckiestGuy"
+        },
+        "Hotbar Color": {
+          "Hue": 0.44,
+          "Sat": 1,
+          "Value": 1,
+          "Opacity": 0.8,
+          "Rainbow": false
+        }
+      },
+      "Position": {
+        "Y": 0,
+        "X": 0
+      }
+    },
+    "ChillLighting": {
+      "Enabled": false,
+      "Options": [],
+      "Bind": []
+    },
+    "FOV": {
+      "Enabled": false,
+      "Options": {
+        "FOV": {
+          "Value": 70,
+          "Max": 360
+        }
+      },
+      "Bind": []
+    },
+    "PotionStatus": {
+      "Enabled": false,
+      "Bind": [],
+      "Options": {
+        "Render background": {
+          "Enabled": true
+        }
+      },
+      "Position": {
+        "Y": 0,
+        "X": 0
+      }
+    },
+    "DeviceSpoofer": {
+      "Enabled": false,
+      "Options": {
+        "Device": {
+          "Value": "Mobile"
+        }
+      },
+      "Bind": []
+    },
+    "Atmosphere": {
+      "Enabled": false,
+      "Options": {
+        "StarCount": {
+          "Value": "0"
+        },
+        "Saturation": {
+          "Value": "0"
+        },
+        "BloomEffect": {
+          "Enabled": false
+        },
+        "Spread": {
+          "Value": "0"
+        },
+        "NearIntensity": {
+          "Value": "0"
+        },
+        "FocusDistance": {
+          "Value": "0"
+        },
+        "InFocusRadius": {
+          "Value": "0"
+        },
+        "Density": {
+          "Value": "0"
+        },
+        "DepthOfFieldEffect": {
+          "Enabled": false
+        },
+        "SunAngularSize": {
+          "Value": "0"
+        },
+        "MoonAngularSize": {
+          "Value": "0"
+        },
+        "MoonTextureId": {
+          "Value": ""
+        },
+        "Decay": {
+          "Hue": 0.44,
+          "Sat": 1,
+          "Value": 1,
+          "Opacity": 1,
+          "Rainbow": false
+        },
+        "SunRaysEffect": {
+          "Enabled": false
+        },
+        "SunTextureId": {
+          "Value": ""
+        },
+        "TintColor": {
+          "Hue": 0.44,
+          "Sat": 1,
+          "Value": 1,
+          "Opacity": 1,
+          "Rainbow": false
+        },
+        "Glare": {
+          "Value": "0"
+        },
+        "Intensity": {
+          "Value": "0"
+        },
+        "Size": {
+          "Value": "0"
+        },
+        "Haze": {
+          "Value": "0"
+        },
+        "SkyboxLf": {
+          "Value": ""
+        },
+        "SkyboxUp": {
+          "Value": ""
+        },
+        "Contrast": {
+          "Value": "0"
+        },
+        "Offset": {
+          "Value": "0"
+        },
+        "SkyboxBk": {
+          "Value": ""
+        },
+        "SkyboxDn": {
+          "Value": ""
+        },
+        "Color": {
+          "Hue": 0.44,
+          "Sat": 1,
+          "Value": 1,
+          "Opacity": 1,
+          "Rainbow": false
+        },
+        "Threshold": {
+          "Value": "0"
+        },
+        "FarIntensity": {
+          "Value": "0"
+        },
+        "ColorCorrectionEffect": {
+          "Enabled": false
+        },
+        "Sky": {
+          "Enabled": false
+        },
+        "Atmosphere": {
+          "Enabled": false
+        },
+        "Brightness": {
+          "Value": "0"
+        },
+        "SkyboxRt": {
+          "Value": ""
+        },
+        "SkyboxFt": {
+          "Value": ""
+        }
+      },
+      "Bind": []
+    },
+    "WhiteHits": {
+      "Enabled": false,
+      "Options": [],
+      "Bind": []
+    },
+    "Breadcrumbs": {
+      "Enabled": false,
+      "Options": {
+        "Thickness": {
+          "Value": 0.1,
+          "Max": 2
+        },
+        "Lifetime": {
+          "Value": 3,
+          "Max": 5
+        },
+        "Fade Out": {
+          "Hue": 0.44,
+          "Sat": 1,
+          "Value": 1,
+          "Opacity": 1,
+          "Rainbow": false
+        },
+        "Fade In": {
+          "Hue": 0.44,
+          "Sat": 1,
+          "Value": 1,
+          "Opacity": 1,
+          "Rainbow": false
+        },
+        "Texture": {
+          "Value": ""
+        }
+      },
+      "Bind": []
+    },
+    "Crosshair": {
+      "Enabled": false,
+      "Options": {
+        "Image": {
+          "Value": ""
+        }
+      },
+      "Bind": []
+    }
+  },
+  "Keybind": [
+    "RightShift"
+  ],
+  "Kits": {
+    "JadeExtender": {
+      "Enabled": false,
+      "Options": {
+        "Multiplier": {
+          "Value": 2,
+          "Max": 5
+        }
+      },
+      "Bind": []
+    },
+    "CatExtender": {
+      "Enabled": false,
+      "Options": {
+        "Multiplier": {
+          "Value": 2,
+          "Max": 5
+        }
+      },
+      "Bind": []
+    },
+    "MissileTP": {
+      "Enabled": false,
+      "Options": [],
+      "Bind": []
+    },
+    "KrystalDisabler": {
+      "Enabled": false,
+      "Options": {
+        "Suppress corrections": {
+          "Enabled": true
+        },
+        "Momentum": {
+          "Value": 1000,
+          "Max": 10000
+        }
+      },
+      "Bind": []
+    },
+    "AutoAdetunde": {
+      "Enabled": false,
+      "Options": {
+        "GUI Check": {
+          "Enabled": false
+        },
+        "Buy speed": {
+          "Enabled": true
+        },
+        "Buy shield": {
+          "Enabled": true
+        },
+        "Buy strength": {
+          "Enabled": true
+        }
+      },
+      "Bind": []
+    },
+    "KitESP": {
+      "Enabled": false,
+      "Options": {
+        "Background Color": {
+          "Hue": 0.44,
+          "Sat": 1,
+          "Value": 0,
+          "Opacity": 0.5,
+          "Rainbow": false
+        },
+        "Background": {
+          "Enabled": true
+        }
+      },
+      "Bind": []
+    },
+    "AutoMetal": {
+      "Enabled": false,
+      "Options": {
+        "Limit to item": {
+          "Enabled": false
+        },
+        "Streamer mode": {
+          "Enabled": false
+        },
+        "Range": {
+          "Value": 8,
+          "Max": 20
+        },
+        "Delay": {
+          "Value": 0.2,
+          "Max": 1
+        },
+        "Animation": {
+          "Enabled": true
+        }
+      },
+      "Bind": []
+    },
+    "AutoTaliyah": {
+      "Enabled": false,
+      "Options": {
+        "Amount": {
+          "Value": 2,
+          "Max": 1000
+        },
+        "Emerald": {
+          "Enabled": true
+        },
+        "Diamond": {
+          "Enabled": true
+        },
+        "Iron": {
+          "Enabled": true
+        }
+      },
+      "Bind": []
+    },
+    "AutoVanessa": {
+      "Enabled": false,
+      "Options": [],
+      "Bind": []
+    },
+    "AutoPinata": {
+      "Enabled": false,
+      "Options": {
+        "Range": {
+          "Value": 6,
+          "Max": 30
+        },
+        "Delay": {
+          "Value": 0.2,
+          "Max": 2
+        }
+      },
+      "Bind": []
+    },
+    "RavenTP": {
+      "Enabled": false,
+      "Options": [],
+      "Bind": []
+    },
+    "AutoCaitlyn": {
+      "Enabled": false,
+      "Options": {
+        "Target Priorities": {
+          "Enabled": false
+        },
+        "Minimum Health": {
+          "Value": 30,
+          "Max": 100
+        },
+        "Range": {
+          "Value": 50,
+          "Max": 50
+        },
+        "Contract mode": {
+          "Value": "On Hit"
+        }
+      },
+      "Bind": []
+    },
+    "AutoMartin": {
+      "Enabled": false,
+      "Options": {
+        "Targets": {
+          "Players": true,
+          "NPCs": false,
+          "Invisible": false,
+          "Walls": true
+        },
+        "Range": {
+          "Value": 22,
+          "Max": 22
+        }
+      },
+      "Bind": []
+    },
+    "AutoKrystal": {
+      "Enabled": false,
+      "Options": {
+        "Bed range": {
+          "Value": 22,
+          "Max": 60
+        }
+      },
+      "Bind": []
+    },
+    "YuziExtender": {
+      "Enabled": false,
+      "Options": {
+        "Multiplier": {
+          "Value": 2,
+          "Max": 5
+        }
+      },
+      "Bind": []
+    },
+    "VulcanAssist": {
+      "Enabled": false,
+      "Options": {
+        "Range": {
+          "Value": 500,
+          "Max": 1000
+        },
+        "Targets": {
+          "Players": true,
+          "NPCs": false,
+          "Invisible": false,
+          "Walls": true
+        },
+        "Target mode": {
+          "Value": "Distance"
+        }
+      },
+      "Bind": []
+    },
+    "TritonClutch": {
+      "Enabled": false,
+      "Options": {
+        "Prevent Camera Movement": {
+          "Enabled": true
+        },
+        "Switch Back Delay": {
+          "ValueMin": 0.1,
+          "ValueMax": 0.2
+        },
+        "Limit to items": {
+          "Enabled": false
+        },
+        "Legit Switch": {
+          "Enabled": true
+        },
+        "Switch back": {
+          "Enabled": true
+        },
+        "Recall": {
+          "Enabled": false
+        },
+        "Only after clutch": {
+          "Enabled": false
+        }
+      },
+      "Bind": []
+    },
+    "AutoRagnar": {
+      "Enabled": false,
+      "Options": {
+        "Bed range": {
+          "Value": 22,
+          "Max": 60
+        }
+      },
+      "Bind": []
+    },
+    "AutoWhisper": {
+      "Enabled": false,
+      "Options": {
+        "Fly": {
+          "Enabled": true
+        },
+        "Heal": {
+          "Enabled": true
+        },
+        "Health": {
+          "Value": 99,
+          "Max": 100
+        },
+        "Level": {
+          "Value": 50,
+          "Max": 100
+        }
+      },
+      "Bind": []
+    },
+    "AutoBattery": {
+      "Enabled": false,
+      "Options": {
+        "Range": {
+          "Value": 10,
+          "Max": 30
+        },
+        "Delay": {
+          "Value": 0.1,
+          "Max": 2
+        }
+      },
+      "Bind": []
+    },
+    "AutoPyro": {
+      "Enabled": false,
+      "Options": {
+        "Buy Heat": {
+          "Enabled": true
+        },
+        "Buy Range": {
+          "Enabled": true
+        },
+        "Buy Power": {
+          "Enabled": true
+        }
+      },
+      "Bind": []
+    },
+    "AutoLani": {
+      "Enabled": false,
+      "Options": {
+        "Delay": {
+          "Value": 5,
+          "Max": 20
+        },
+        "Use enemy": {
+          "Enabled": false
+        },
+        "Selected Enemy": {
+          "Value": "None"
+        },
+        "Selected Player": {
+          "Value": "None"
+        }
+      },
+      "Bind": []
+    },
+    "AutoNoelle": {
+      "Enabled": false,
+      "Options": {
+        "Heal Slime Target": {
+          "Value": "None"
+        },
+        "Frosty Slime Target": {
+          "Value": "None"
+        },
+        "Notify on direct": {
+          "Enabled": false
+        },
+        "Sticky Slime Target": {
+          "Value": "None"
+        },
+        "Void Slime Target": {
+          "Value": "None"
+        },
+        "Limit to item": {
+          "Enabled": false
+        }
+      },
+      "Bind": []
+    },
+    "AutoElder": {
+      "Enabled": false,
+      "Options": {
+        "Animation": {
+          "Enabled": true
+        },
+        "Delay": {
+          "Value": 0.2,
+          "Max": 1
+        },
+        "Range": {
+          "Value": 12,
+          "Max": 20
+        },
+        "Streamer mode": {
+          "Enabled": false
+        }
+      },
+      "Bind": []
+    },
+    "AutoBlockKicker": {
+      "Enabled": false,
+      "Options": {
+        "Targets": {
+          "Players": true,
+          "NPCs": false,
+          "Invisible": false,
+          "Walls": true
+        },
+        "Range": {
+          "Value": 1000,
+          "Max": 1000
+        }
+      },
+      "Bind": []
+    },
+    "AutoHephaestus": {
+      "Enabled": false,
+      "Options": [],
+      "Bind": []
+    },
+    "AutoCyber": {
+      "Enabled": false,
+      "Options": {
+        "Target check": {
+          "Enabled": false
+        },
+        "Limit to item": {
+          "Enabled": false
+        },
+        "Generator only": {
+          "Enabled": false
+        },
+        "Drop mode": {
+          "Value": "Player"
+        },
+        "Steal split": {
+          "Enabled": false
+        },
+        "Whitelist": {
+          "ListEnabled": [
+            "emerald",
+            "diamond"
+          ],
+          "List": [
+            "emerald",
+            "diamond"
+          ]
+        },
+        "Visualize": {
+          "Enabled": false
+        }
+      },
+      "Bind": []
+    },
+    "AutoPickpocket": {
+      "Enabled": false,
+      "Options": {
+        "Delay": {
+          "Value": 0.1,
+          "Max": 2
+        },
+        "Targets": {
+          "Players": true,
+          "NPCs": false,
+          "Invisible": false,
+          "Walls": true
+        },
+        "Range": {
+          "Value": 25,
+          "Max": 30
+        }
+      },
+      "Bind": []
+    },
+    "PhaseMine": {
+      "Enabled": false,
+      "Options": [],
+      "Bind": []
+    },
+    "AutoHannah": {
+      "Enabled": false,
+      "Options": {
+        "Range": {
+          "Value": 30,
+          "Max": 30
+        },
+        "Only killaura target": {
+          "Enabled": false
+        }
+      },
+      "Bind": []
+    },
+    "AutoEmber": {
+      "Enabled": false,
+      "Options": {
+        "Limit to item": {
+          "Enabled": false
+        },
+        "Range": {
+          "Value": 22,
+          "Max": 22
+        },
+        "Targets": {
+          "Players": true,
+          "NPCs": false,
+          "Invisible": false,
+          "Walls": false
+        },
+        "Delay": {
+          "Value": 0.1,
+          "Max": 1
+        }
+      },
+      "Bind": []
+    },
+    "AutoMiner": {
+      "Enabled": false,
+      "Options": {
+        "Delay": {
+          "Value": 0.1,
+          "Max": 2
+        },
+        "Range": {
+          "Value": 12,
+          "Max": 30
+        },
+        "Animation": {
+          "Enabled": true
+        }
+      },
+      "Bind": []
+    },
+    "GrimReaperFix": {
+      "Enabled": false,
+      "Options": [],
+      "Bind": []
+    },
+    "AutoWarlock": {
+      "Enabled": false,
+      "Options": {
+        "Limit to item": {
+          "Enabled": true
+        },
+        "Targets": {
+          "Players": true,
+          "NPCs": true,
+          "Invisible": false,
+          "Walls": false
+        },
+        "Range": {
+          "Value": 30,
+          "Max": 60
+        }
+      },
+      "Bind": []
+    },
+    "AutoWizard": {
+      "Enabled": false,
+      "Options": {
+        "Target Mode": {
+          "Value": "Damage"
+        },
+        "Targets": {
+          "Players": true,
+          "NPCs": false,
+          "Invisible": false,
+          "Walls": false
+        },
+        "Range": {
+          "Value": 50,
+          "Max": 80
+        }
+      },
+      "Bind": []
+    },
+    "VoidRegentExtender": {
+      "Enabled": false,
+      "Options": {
+        "Multiplier": {
+          "Value": 2,
+          "Max": 5
+        }
+      },
+      "Bind": []
+    },
+    "AutoStarCollector": {
+      "Enabled": false,
+      "Options": {
+        "Animation": {
+          "Enabled": true
+        },
+        "Delay": {
+          "Value": 0.2,
+          "Max": 1
+        },
+        "Range": {
+          "Value": 12,
+          "Max": 20
+        },
+        "Streamer mode": {
+          "Enabled": false
+        }
+      },
+      "Bind": []
+    },
+    "TerraAimbot": {
+      "Enabled": false,
+      "Options": {
+        "Range": {
+          "Value": 1000,
+          "Max": 1000
+        },
+        "Mode": {
+          "Value": "Position"
+        }
+      },
+      "Bind": []
+    },
+    "AutoDrill": {
+      "Enabled": false,
+      "Options": {
+        "Collect delay": {
+          "Value": 0.5,
+          "Max": 3
+        },
+        "Legit Range": {
+          "Enabled": false
+        },
+        "Attack delay": {
+          "Value": 0.3,
+          "Max": 1
+        },
+        "Sort": {
+          "Value": "Distance"
+        },
+        "Targets": {
+          "Players": true,
+          "NPCs": true,
+          "Invisible": false,
+          "Walls": false
+        },
+        "Auto attack": {
+          "Enabled": false
+        },
+        "Notify on collect": {
+          "Enabled": false
+        },
+        "Range": {
+          "Value": 10,
+          "Max": 10
+        },
+        "Auto collect": {
+          "Enabled": true
+        }
+      },
+      "Bind": []
+    },
+    "AutoZeno": {
+      "Enabled": false,
+      "Options": {
+        "Shockwave Range": {
+          "Value": 12,
+          "Max": 12
+        },
+        "Limit to item": {
+          "Enabled": false
+        },
+        "Auto Shockwave": {
+          "Enabled": false
+        },
+        "Target Mode": {
+          "Value": "Damage"
+        },
+        "Targets": {
+          "Players": true,
+          "NPCs": true,
+          "Invisible": false,
+          "Walls": false
+        },
+        "Use Lightning Storm": {
+          "Enabled": true
+        },
+        "Use Lightning Strike": {
+          "Enabled": true
+        },
+        "Delay": {
+          "Value": 0.5,
+          "Max": 10
+        },
+        "Range": {
+          "Value": 35,
+          "Max": 60
+        }
+      },
+      "Bind": []
+    },
+    "AutoVoidDragon": {
+      "Enabled": false,
+      "Options": {
+        "Flap speed": {
+          "Enabled": true
+        },
+        "Targets": {
+          "Players": true,
+          "NPCs": false,
+          "Invisible": false,
+          "Walls": false
+        },
+        "Range": {
+          "Value": 30,
+          "Max": 60
+        },
+        "Dragon breath": {
+          "Enabled": true
+        }
+      },
+      "Bind": []
+    },
+    "DaveyAim": {
+      "Enabled": false,
+      "Options": {
+        "Aim Mode": {
+          "Value": "Fast"
+        },
+        "Position Mode": {
+          "Value": "Mouse"
+        },
+        "Launch Cannon": {
+          "Enabled": false
+        },
+        "Search Range": {
+          "Value": 10,
+          "Max": 30
+        }
+      },
+      "Bind": []
+    },
+    "AutoGrim": {
+      "Enabled": false,
+      "Options": {
+        "Range": {
+          "Value": 12,
+          "Max": 120
+        },
+        "Delay": {
+          "Value": 0.1,
+          "Max": 2
+        }
+      },
+      "Bind": []
+    },
+    "AutoMarina": {
+      "Enabled": false,
+      "Options": {
+        "Range": {
+          "Value": 50,
+          "Max": 65
+        }
+      },
+      "Bind": []
+    },
+    "AutoUma": {
+      "Enabled": false,
+      "Options": {
+        "Diamond": {
+          "Enabled": true
+        },
+        "Limit to item": {
+          "Enabled": true
+        },
+        "Animation": {
+          "Enabled": true
+        },
+        "Range": {
+          "Value": 50,
+          "Max": 80
+        },
+        "Use attack spirit": {
+          "Enabled": true
+        },
+        "Target item drops": {
+          "Enabled": true
+        },
+        "Use heal spirit": {
+          "Enabled": true
+        },
+        "Auto Summon": {
+          "Enabled": false
+        },
+        "Emerald": {
+          "Enabled": true
+        }
+      },
+      "Bind": []
+    },
+    "OwlAura": {
+      "Enabled": false,
+      "Options": {
+        "Targets": {
+          "Players": true,
+          "NPCs": false,
+          "Invisible": false,
+          "Walls": false
+        },
+        "Range": {
+          "Value": 50,
+          "Max": 50
+        }
+      },
+      "Bind": []
+    },
+    "AutoFisherman": {
+      "Enabled": false,
+      "Options": [],
+      "Bind": []
+    },
+    "AutoMelody": {
+      "Enabled": false,
+      "Options": {
+        "Teammate Heal": {
+          "Enabled": true
+        },
+        "Self Heal": {
+          "Enabled": true
+        },
+        "Range": {
+          "Value": 30,
+          "Max": 30
+        }
+      },
+      "Bind": []
+    },
+    "AutoBeekeeper": {
+      "Enabled": false,
+      "Options": {
+        "Collect bees": {
+          "Enabled": true
+        },
+        "Limit to item": {
+          "Enabled": false
+        },
+        "Collect Range": {
+          "Value": 20,
+          "Max": 22
+        },
+        "Deposit Delay": {
+          "Value": 0.1,
+          "Max": 2
+        },
+        "Deposit Range": {
+          "Value": 14,
+          "Max": 14
+        },
+        "Collect delay": {
+          "Value": 0.1,
+          "Max": 2
+        },
+        "Deposit bees": {
+          "Enabled": true
+        }
+      },
+      "Bind": []
+    },
+    "AutoKaliyah": {
+      "Enabled": false,
+      "Options": {
+        "Range": {
+          "Value": 18,
+          "Max": 20
+        },
+        "Delay": {
+          "Value": 0.1,
+          "Max": 1
+        },
+        "No Slow": {
+          "Enabled": true
+        }
+      },
+      "Bind": []
+    },
+    "AutoGingerbreadMan": {
+      "Enabled": false,
+      "Options": {
+        "Break launch pad": {
+          "Enabled": true
+        },
+        "Own pads only": {
+          "Enabled": true
+        },
+        "Jump after launch": {
+          "Enabled": false
+        },
+        "Break delay": {
+          "Value": 0.05,
+          "Max": 1
+        },
+        "Legit switch": {
+          "Enabled": false
+        },
+        "Range": {
+          "Value": 30,
+          "Max": 30
+        },
+        "Successful launch only": {
+          "Enabled": true
+        }
+      },
+      "Bind": []
+    },
+    "AutoFarmer": {
+      "Enabled": false,
+      "Options": {
+        "Delay": {
+          "Value": 0.5,
+          "Max": 2
+        },
+        "Range": {
+          "Value": 10,
+          "Max": 30
+        },
+        "Animation": {
+          "Enabled": true
+        }
+      },
+      "Bind": []
+    },
+    "ReaperBypass": {
+      "Enabled": false,
+      "Options": {
+        "Speed": {
+          "Value": 67,
+          "Max": 80
+        }
+      },
+      "Bind": []
+    },
+    "AutoKaida": {
+      "Enabled": false,
+      "Options": {
+        "Perfect ability": {
+          "Enabled": false
+        },
+        "Swing Range": {
+          "Value": 32,
+          "Max": 32
+        },
+        "Distance": {
+          "Value": 6,
+          "Max": 15
+        },
+        "Targets": {
+          "Players": true,
+          "NPCs": false,
+          "Invisible": false,
+          "Walls": false
+        },
+        "GUI check": {
+          "Enabled": false
+        },
+        "Swing during ability": {
+          "Enabled": true
+        },
+        "Attack Range": {
+          "Value": 32,
+          "Max": 32
+        },
+        "Limit to items": {
+          "Enabled": false
+        },
+        "Target mode": {
+          "Value": "Damage"
+        },
+        "Require mouse down": {
+          "Enabled": false
+        }
+      },
+      "Bind": []
+    },
+    "AutoNyx": {
+      "Enabled": false,
+      "Options": {
+        "Targets": {
+          "Players": true,
+          "NPCs": false,
+          "Invisible": false,
+          "Walls": false
+        },
+        "Range": {
+          "Value": 14.4,
+          "Max": 30
+        }
+      },
+      "Bind": []
+    },
+    "FishermanSpy": {
+      "Enabled": false,
+      "Options": {
+        "Ignore teammate": {
+          "Enabled": true
+        }
+      },
+      "Bind": []
+    },
+    "AutoBuilder": {
+      "Enabled": false,
+      "Options": {
+        "Bed Check": {
+          "Enabled": false
+        },
+        "Limit to items": {
+          "Enabled": true
+        },
+        "Blacklists": {
+          "ListEnabled": [
+            "cannon",
+            "wool"
+          ],
+          "List": [
+            "cannon",
+            "wool"
+          ]
+        },
+        "Animation": {
+          "Enabled": true
+        }
+      },
+      "Bind": []
+    },
+    "KitDisplay": {
+      "Enabled": false,
+      "Options": [],
+      "Bind": []
+    },
+    "AutoSheepHerder": {
+      "Enabled": false,
+      "Options": {
+        "Infinite range": {
+          "Enabled": false
+        },
+        "Range": {
+          "Value": 20,
+          "Max": 200
+        },
+        "Delay": {
+          "Value": 0.1,
+          "Max": 1
+        }
+      },
+      "Bind": []
+    },
+    "AutoDavey": {
+      "Enabled": false,
+      "Options": {
+        "Break on impact": {
+          "Enabled": true
+        },
+        "Jump on impact": {
+          "Enabled": false
+        }
+      },
+      "Bind": []
+    },
+    "AutoSpiritAssassin": {
+      "Enabled": false,
+      "Options": {
+        "Range": {
+          "Value": 120,
+          "Max": 200
+        },
+        "Delay": {
+          "Value": 0.1,
+          "Max": 2
+        }
+      },
+      "Bind": []
+    },
+    "AutoRamil": {
+      "Enabled": false,
+      "Options": {
+        "Tornado Range": {
+          "Value": 25,
+          "Max": 35
+        },
+        "Use Moving Tornado": {
+          "Enabled": false
+        },
+        "Target Mode": {
+          "Value": "Damage"
+        },
+        "Range": {
+          "Value": 25,
+          "Max": 25
+        },
+        "Targets": {
+          "Players": true,
+          "NPCs": false,
+          "Invisible": false,
+          "Walls": false
+        }
+      },
+      "Bind": []
+    },
+    "AutoJailor": {
+      "Enabled": false,
+      "Options": {
+        "Range": {
+          "Value": 20,
+          "Max": 60
+        },
+        "Delay": {
+          "Value": 0.1,
+          "Max": 2
+        }
+      },
+      "Bind": []
+    }
+  },
+  "Modules": {
+    "Desync": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": [],
+      "Bind": []
+    },
+    "NoFallDamage": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Ground Check": {
+          "Value": 30,
+          "Max": 80
+        },
+        "Dao": {
+          "Enabled": true
+        },
+        "Void Axe": {
+          "Enabled": true
+        },
+        "Health check": {
+          "Enabled": false
+        },
+        "Minimum Velocity": {
+          "Value": 60,
+          "Max": 120
+        },
+        "Reported state": {
+          "Value": "Running"
+        },
+        "Blocks": {
+          "Enabled": true
+        },
+        "Zephyr": {
+          "Enabled": false
+        },
+        "Mode": {
+          "Value": "Blatant"
+        },
+        "Fall threshold": {
+          "Value": 85,
+          "Max": 120
+        },
+        "Jade Hammer": {
+          "Enabled": true
+        },
+        "Telepearl": {
+          "Enabled": true
+        },
+        "Attempts per second": {
+          "Value": 5,
+          "Max": 12
+        }
+      },
+      "Bind": []
+    },
+    "BedAssist": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Aim Mode": {
+          "Value": "Camera"
+        },
+        "Max angle": {
+          "Value": 200,
+          "Max": 360
+        },
+        "Limit to item": {
+          "Enabled": true
+        },
+        "Target Mode": {
+          "Value": "Distance"
+        },
+        "Shake": {
+          "Value": 3,
+          "Max": 100
+        },
+        "Aim Speed": {
+          "Value": 7,
+          "Max": 20
+        },
+        "Assist Range": {
+          "Value": 20,
+          "Max": 30
+        },
+        "Mode": {
+          "Value": "Simple"
+        }
+      },
+      "Bind": []
+    },
+    "Headless": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Remove Accessories": {
+          "Enabled": false
+        }
+      },
+      "Bind": []
+    },
+    "TPAura": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Dodge attacks": {
+          "Enabled": false
+        },
+        "Teleport Range": {
+          "Value": 6,
+          "Max": 10
+        },
+        "Switch Delay": {
+          "Value": 1.25,
+          "Max": 4
+        },
+        "Target Range": {
+          "Value": 22,
+          "Max": 40
+        },
+        "Targets": {
+          "Players": true,
+          "NPCs": true,
+          "Invisible": false,
+          "Walls": false
+        },
+        "Structure Check": {
+          "Enabled": true
+        },
+        "Single Hold Time": {
+          "Value": 3,
+          "Max": 8
+        },
+        "Mode": {
+          "Value": "Single"
+        },
+        "Teleport Delay": {
+          "Value": 0.35,
+          "Max": 1
+        }
+      },
+      "Bind": []
+    },
+    "TrapDisabler": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": [],
+      "Bind": []
+    },
+    "ESP": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Priority Only": {
+          "Enabled": true
+        },
+        "Player Color": {
+          "Hue": 0.44,
+          "Sat": 1,
+          "Value": 1,
+          "Opacity": 1,
+          "Rainbow": false
+        },
+        "Targets": {
+          "Players": true,
+          "NPCs": false,
+          "Invisible": false,
+          "Walls": false
+        },
+        "Filled": {
+          "Enabled": false
+        },
+        "Use Displayname": {
+          "Enabled": true
+        },
+        "Health Bar": {
+          "Enabled": false
+        },
+        "Name": {
+          "Enabled": false
+        },
+        "Show Background": {
+          "Enabled": false
+        },
+        "Distance Check": {
+          "Enabled": false
+        },
+        "Mode": {
+          "Value": "2D"
+        },
+        "Bounding Box": {
+          "Enabled": true
+        },
+        "Player Distance": {
+          "ValueMin": 0,
+          "ValueMax": 64
+        }
+      },
+      "Bind": []
+    },
+    "CustomCursor": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Custom Mouse Icon": {
+          "Value": ""
+        },
+        "Custom Icon": {
+          "Enabled": false
+        },
+        "Mouse Icon": {
+          "Value": "CS:GO"
+        }
+      },
+      "Bind": []
+    },
+    "AutoBalloon": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": [],
+      "Bind": []
+    },
+    "LootESP": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Diamond": {
+          "Enabled": true
+        },
+        "Emerald": {
+          "Enabled": true
+        },
+        "Iron": {
+          "Enabled": true
+        }
+      },
+      "Bind": []
+    },
+    "TriggerBot": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "CPS": {
+          "ValueMin": 7,
+          "ValueMax": 7
+        },
+        "Projectile Blacklist": {
+          "ListEnabled": [
+            "telepearl",
+            "fireball"
+          ],
+          "List": [
+            "telepearl",
+            "fireball"
+          ]
+        },
+        "Projectile Range": {
+          "Value": 60,
+          "Max": 120
+        },
+        "Targets": {
+          "Players": true,
+          "NPCs": true,
+          "Invisible": false,
+          "Walls": false
+        },
+        "Projectiles": {
+          "Enabled": false
+        }
+      },
+      "Bind": []
+    },
+    "AntiLasso": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Chance": {
+          "Value": 100,
+          "Max": 100
+        },
+        "Only when targeting": {
+          "Enabled": false
+        }
+      },
+      "Bind": []
+    },
+    "PotatoMode": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": [],
+      "Bind": []
+    },
+    "StateSpoofer": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Humanoid State": {
+          "Value": "FallingDown"
+        }
+      },
+      "Bind": []
+    },
+    "ZoomUnlocker": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Distance": {
+          "Value": 14,
+          "Max": 300
+        }
+      },
+      "Bind": []
+    },
+    "Tracers": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Priority Only": {
+          "Enabled": true
+        },
+        "Player Color": {
+          "Hue": 0.44,
+          "Sat": 1,
+          "Value": 1,
+          "Opacity": 1,
+          "Rainbow": false
+        },
+        "Targets": {
+          "Players": true,
+          "NPCs": false,
+          "Invisible": false,
+          "Walls": false
+        },
+        "Transparency": {
+          "Value": 0,
+          "Max": 1
+        },
+        "End Position": {
+          "Value": "Head"
+        },
+        "Color by distance": {
+          "Enabled": false
+        },
+        "Behind": {
+          "Enabled": true
+        },
+        "Distance Check": {
+          "Enabled": false
+        },
+        "Start Position": {
+          "Value": "Middle"
+        },
+        "Player Distance": {
+          "ValueMin": 0,
+          "ValueMax": 64
+        }
+      },
+      "Bind": []
+    },
+    "BowAssist": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Aim speed": {
+          "Value": 7,
+          "Max": 20
+        },
+        "Require mouse down": {
+          "Enabled": true
+        },
+        "Blacklisted": {
+          "ListEnabled": [
+            "fireball",
+            "telepearl",
+            "gloop"
+          ],
+          "List": [
+            "fireball",
+            "telepearl",
+            "gloop"
+          ]
+        },
+        "Targets": {
+          "Players": true,
+          "NPCs": false,
+          "Invisible": false,
+          "Walls": true
+        },
+        "Max angle": {
+          "Value": 120,
+          "Max": 360
+        },
+        "FOV": {
+          "Value": 200,
+          "Max": 1000
+        },
+        "Shake": {
+          "Value": 5,
+          "Max": 100
+        },
+        "Use blacklist": {
+          "Enabled": true
+        },
+        "Use mouse aim": {
+          "Enabled": true
+        },
+        "Target mode": {
+          "Value": "Damage"
+        }
+      },
+      "Bind": []
+    },
+    "SafeWalk": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": [],
+      "Bind": []
+    },
+    "RemoveNeon": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": [],
+      "Bind": []
+    },
+    "BlockSelectorColor": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Color": {
+          "Hue": 0.44,
+          "Sat": 1,
+          "Value": 1,
+          "Opacity": 1,
+          "Rainbow": false
+        }
+      },
+      "Bind": []
+    },
+    "LongJump": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Camera Direction": {
+          "Enabled": false
+        },
+        "Limit to items": {
+          "Enabled": false
+        },
+        "Change direction mid-air": {
+          "Enabled": true
+        },
+        "Speed": {
+          "Value": 37,
+          "Max": 37
+        }
+      },
+      "Bind": []
+    },
+    "HighJump": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Mode": {
+          "Value": "Impulse"
+        },
+        "Auto Disable": {
+          "Enabled": true
+        },
+        "Velocity": {
+          "Value": 50,
+          "Max": 150
+        }
+      },
+      "Bind": []
+    },
+    "Gravity": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Gravity": {
+          "Value": 192,
+          "Max": 192
+        },
+        "Mode": {
+          "Value": "Workspace"
+        }
+      },
+      "Bind": []
+    },
+    "NightmareEmote": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": [],
+      "Bind": []
+    },
+    "Freecam": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Dolly direction": {
+          "Value": "Forward"
+        },
+        "Strafe tilt": {
+          "Value": 6,
+          "Max": 30
+        },
+        "Hide HUD": {
+          "Enabled": false
+        },
+        "FOV transition": {
+          "Value": 35,
+          "Max": 100
+        },
+        "Orbit direction": {
+          "Value": "Clockwise"
+        },
+        "Shake amount": {
+          "Value": 25,
+          "Max": 100
+        },
+        "Dolly": {
+          "Enabled": false
+        },
+        "Zoom": {
+          "Enabled": false
+        },
+        "Zoom key": {
+          "Value": "X"
+        },
+        "Sensitivity": {
+          "Value": 0.9,
+          "Max": 3
+        },
+        "Ease keyframes": {
+          "Enabled": true
+        },
+        "Smoothing": {
+          "Enabled": true
+        },
+        "Slow motion": {
+          "Value": 100,
+          "Max": 100
+        },
+        "Auto focus": {
+          "Enabled": true
+        },
+        "Dolly speed": {
+          "Value": 4,
+          "Max": 60
+        },
+        "Orbit distance": {
+          "Value": 25,
+          "Max": 200
+        },
+        "Roll speed": {
+          "Value": 45,
+          "Max": 180
+        },
+        "Field of view": {
+          "Value": 70,
+          "Max": 120
+        },
+        "Keyframe time": {
+          "Value": 4,
+          "Max": 30
+        },
+        "Zoom FOV": {
+          "Value": 25,
+          "Max": 90
+        },
+        "Speed": {
+          "Value": 50,
+          "Max": 400
+        },
+        "Depth of field": {
+          "Enabled": false
+        },
+        "Acceleration": {
+          "Value": 10,
+          "Max": 40
+        },
+        "Roll and tilt": {
+          "Enabled": false
+        },
+        "Motion blur": {
+          "Enabled": false
+        },
+        "Motion blur amount": {
+          "Value": 35,
+          "Max": 100
+        },
+        "Deceleration": {
+          "Value": 6,
+          "Max": 40
+        },
+        "Camera shake": {
+          "Enabled": false
+        },
+        "Orbit speed": {
+          "Value": 15,
+          "Max": 120
+        },
+        "Focus distance": {
+          "Value": 25,
+          "Max": 500
+        },
+        "Orbit": {
+          "Enabled": false
+        },
+        "Smooth amount": {
+          "Value": 70,
+          "Max": 100
+        },
+        "Loop keyframes": {
+          "Enabled": false
+        },
+        "Blur strength": {
+          "Value": 70,
+          "Max": 100
+        },
+        "In focus range": {
+          "Value": 20,
+          "Max": 200
+        },
+        "Shake speed": {
+          "Value": 1.5,
+          "Max": 10
+        }
+      },
+      "Bind": []
+    },
+    "ProjectileTracers": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Thickness": {
+          "Value": 0.1,
+          "Max": 1
+        },
+        "Curveness": {
+          "Value": 40,
+          "Max": 100
+        },
+        "Lifetime": {
+          "Value": 2,
+          "Max": 5
+        },
+        "Material": {
+          "Value": "SmoothPlastic"
+        },
+        "Tracer Color": {
+          "Hue": 0.44,
+          "Sat": 1,
+          "Value": 1,
+          "Opacity": 0.5,
+          "Rainbow": false
+        },
+        "Opacity": {
+          "Value": 0,
+          "Max": 1
+        },
+        "Fade": {
+          "Enabled": true
+        }
+      },
+      "Bind": []
+    },
+    "Speed": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Always Jump": {
+          "Enabled": false
+        },
+        "Method": {
+          "Value": "Bedwars"
+        },
+        "AutoJump": {
+          "Enabled": false
+        },
+        "Wall Check": {
+          "Enabled": true
+        },
+        "Speed": {
+          "Value": 23,
+          "Max": 23
+        }
+      },
+      "Bind": []
+    },
+    "AutoHotbar": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Clear Hotbar": {
+          "Enabled": false
+        },
+        "HotbarList": {
+          "Hotbars": [],
+          "Selected": 1
+        },
+        "Activation": {
+          "Value": "Toggle"
+        }
+      },
+      "Bind": []
+    },
+    "KillauraV2": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "No Tween": {
+          "Enabled": false
+        },
+        "Attack range": {
+          "Value": 20,
+          "Max": 20
+        },
+        "Target skilled": {
+          "Enabled": false
+        },
+        "Target Mode": {
+          "Value": "Damage"
+        },
+        "Max targets": {
+          "Value": 5,
+          "Max": 5
+        },
+        "Attackable check": {
+          "Enabled": false
+        },
+        "Max angle": {
+          "Value": 360,
+          "Max": 360
+        },
+        "Custom Animation": {
+          "Enabled": false
+        },
+        "Swing range": {
+          "Value": 28,
+          "Max": 28
+        },
+        "Attack Color": {
+          "Hue": 0.7559524,
+          "Sat": 0.5490196,
+          "Value": 1,
+          "Opacity": 0.5,
+          "Rainbow": false
+        },
+        "Size": {
+          "Value": 0.2,
+          "Max": 1
+        },
+        "Limit to items": {
+          "Enabled": false
+        },
+        "Animation Mode": {
+          "Value": "Normal"
+        },
+        "Texture": {
+          "Value": "rbxassetid://14736249347"
+        },
+        "Animation Speed": {
+          "Value": 1,
+          "Max": 2
+        },
+        "Face target": {
+          "Enabled": false
+        },
+        "Swing time": {
+          "Value": 0.11,
+          "Max": 2
+        },
+        "Require mouse down": {
+          "Enabled": false
+        },
+        "Show target": {
+          "Enabled": false
+        },
+        "Air hit chance": {
+          "Value": 100,
+          "Max": 100
+        },
+        "Target particles": {
+          "Enabled": false
+        },
+        "GUI check": {
+          "Enabled": false
+        },
+        "Color Begin": {
+          "Hue": 0.7559524,
+          "Sat": 0.5490196,
+          "Value": 1,
+          "Opacity": 1,
+          "Rainbow": false
+        },
+        "No Swing": {
+          "Enabled": false
+        },
+        "Targets": {
+          "Players": true,
+          "NPCs": true,
+          "Invisible": false,
+          "Walls": false
+        },
+        "Color End": {
+          "Hue": 0.7559524,
+          "Sat": 0.5490196,
+          "Value": 1,
+          "Opacity": 1,
+          "Rainbow": false
+        },
+        "Attack Mode": {
+          "Value": "Single"
+        },
+        "Target Color": {
+          "Hue": 0.7559524,
+          "Sat": 0.5490196,
+          "Value": 1,
+          "Opacity": 0.5,
+          "Rainbow": false
+        },
+        "Sync with hitreg": {
+          "Enabled": false
+        },
+        "Swing only": {
+          "Enabled": false
+        }
+      },
+      "Bind": []
+    },
+    "AntiDeath": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Melee": {
+          "Enabled": true
+        },
+        "Projectile Stretch Time": {
+          "Value": 0.55,
+          "Max": 1.5
+        },
+        "Targets": {
+          "Players": true,
+          "NPCs": true,
+          "Invisible": false,
+          "Walls": false
+        },
+        "Melee Range": {
+          "Value": 30,
+          "Max": 30
+        },
+        "Projectiles": {
+          "Enabled": true
+        }
+      },
+      "Bind": []
+    },
+    "ArmorHighlight": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "FillColor": {
+          "Hue": 0.44,
+          "Sat": 1,
+          "Value": 1,
+          "Opacity": 1,
+          "Rainbow": false
+        },
+        "Chestplate": {
+          "Enabled": false
+        },
+        "OutlineTransparency": {
+          "Value": 0,
+          "Max": 1
+        },
+        "Use Parts": {
+          "Enabled": true
+        },
+        "Helmet": {
+          "Enabled": false
+        },
+        "Boots": {
+          "Enabled": true
+        },
+        "FillTransparency": {
+          "Value": 0,
+          "Max": 1
+        },
+        "OutlineColor": {
+          "Hue": 0.44,
+          "Sat": 1,
+          "Value": 1,
+          "Opacity": 1,
+          "Rainbow": false
+        }
+      },
+      "Bind": []
+    },
+    "SilentAura": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Perfect Swing": {
+          "Enabled": true
+        },
+        "Aim speed": {
+          "Value": 6,
+          "Max": 10
+        },
+        "Targets": {
+          "Players": true,
+          "NPCs": true,
+          "Invisible": false,
+          "Walls": false
+        },
+        "Max angle": {
+          "Value": 180,
+          "Max": 360
+        },
+        "Limit to items": {
+          "Enabled": false
+        },
+        "Target mode": {
+          "Value": "Damage"
+        },
+        "Attack color": {
+          "Hue": 0.44,
+          "Sat": 1,
+          "Value": 1,
+          "Opacity": 0.5,
+          "Rainbow": false
+        },
+        "Require mouse down": {
+          "Enabled": false
+        },
+        "Show target": {
+          "Enabled": true
+        },
+        "Swing time": {
+          "Value": 0.42,
+          "Max": 0.5
+        },
+        "Silent Aim": {
+          "Enabled": true
+        },
+        "Target color": {
+          "Hue": 1,
+          "Sat": 1,
+          "Value": 1,
+          "Opacity": 0.5,
+          "Rainbow": false
+        },
+        "Face target": {
+          "Enabled": true
+        },
+        "Target area": {
+          "Value": "Center"
+        },
+        "Extra swing distance": {
+          "Value": 3,
+          "Max": 6
+        },
+        "Dynamic hits": {
+          "Enabled": false
+        },
+        "Swing only": {
+          "Enabled": false
+        }
+      },
+      "Bind": []
+    },
+    "NoClickDelay": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": [],
+      "Bind": []
+    },
+    "PlayerModel": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Rotation X": {
+          "Value": 0,
+          "Max": 360
+        },
+        "Rotation Z": {
+          "Value": 0,
+          "Max": 360
+        },
+        "Local": {
+          "Enabled": false
+        },
+        "Scale": {
+          "Value": 1,
+          "Max": 2
+        },
+        "Mesh": {
+          "Value": ""
+        },
+        "Rotation Y": {
+          "Value": 0,
+          "Max": 360
+        },
+        "Texture": {
+          "Value": ""
+        }
+      },
+      "Bind": []
+    },
+    "MP3Player": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Shuffle": {
+          "Enabled": false
+        },
+        "Show time": {
+          "Enabled": true
+        },
+        "Spotify link": {
+          "Value": ""
+        },
+        "Progress bar": {
+          "Enabled": true
+        },
+        "Play song": {
+          "Value": ""
+        },
+        "Playlist": {
+          "ListEnabled": [],
+          "List": []
+        },
+        "Spotify mode": {
+          "Enabled": false
+        },
+        "HUD color": {
+          "Hue": 0.35,
+          "Sat": 1,
+          "Value": 1,
+          "Opacity": 0.55,
+          "Rainbow": false
+        },
+        "Volume": {
+          "Value": 40,
+          "Max": 100
+        },
+        "Speed": {
+          "Value": 1,
+          "Max": 2
+        },
+        "Loop song": {
+          "Enabled": false
+        },
+        "Show HUD": {
+          "Enabled": true
+        },
+        "Auto refresh": {
+          "Enabled": true
+        }
+      },
+      "Bind": []
+    },
+    "Panic": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": [],
+      "Bind": []
+    },
+    "ShopClicker": {
+      "Enabled": true,
+      "Favourited": false,
+      "Options": {
+        "Hold Delay": {
+          "Value": 0.15,
+          "Max": 1
+        },
+        "CPS": {
+          "Value": 20,
+          "Max": 20
+        }
+      },
+      "Bind": []
+    },
+    "AutoConsume": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Shield Potions": {
+          "Enabled": true
+        },
+        "Speed Potions": {
+          "Enabled": true
+        },
+        "Apple": {
+          "Enabled": true
+        },
+        "Health Percent": {
+          "Value": 70,
+          "Max": 99
+        }
+      },
+      "Bind": []
+    },
+    "HitBoxes": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Expand amount": {
+          "Value": 14.4,
+          "Max": 14.4
+        },
+        "Mode": {
+          "Value": "Sword"
+        }
+      },
+      "Bind": []
+    },
+    "AutoShoot": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Target check": {
+          "Enabled": true
+        },
+        "Use sophia": {
+          "Enabled": false
+        },
+        "Fire Rate": {
+          "ValueMin": 0.05,
+          "ValueMax": 0.12
+        },
+        "Switch Delay": {
+          "Value": 0.02,
+          "Max": 1
+        },
+        "Use whim": {
+          "Enabled": false
+        },
+        "Targets": {
+          "Players": false,
+          "NPCs": false,
+          "Invisible": false,
+          "Walls": true
+        },
+        "Projectiles": {
+          "ListEnabled": [
+            "arrow"
+          ],
+          "List": [
+            "arrow"
+          ]
+        }
+      },
+      "Bind": []
+    },
+    "RemovePlayerLevelUI": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": [],
+      "Bind": []
+    },
+    "NameTagSpoofer": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Custom Name": {
+          "Value": "Me"
+        }
+      },
+      "Bind": []
+    },
+    "SpinBot": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Spin X": {
+          "Enabled": false
+        },
+        "Speed": {
+          "Value": 40,
+          "Max": 100
+        },
+        "Mode": {
+          "Value": "CFrame"
+        },
+        "Spin Z": {
+          "Enabled": false
+        },
+        "Spin Y": {
+          "Enabled": true
+        }
+      },
+      "Bind": []
+    },
+    "Fullbright": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Mode": {
+          "Value": "Lighting"
+        }
+      },
+      "Bind": []
+    },
+    "StaffDetector": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Profile": {
+          "Value": "default"
+        },
+        "Users": {
+          "ListEnabled": [],
+          "List": []
+        },
+        "Blacklist clans": {
+          "Enabled": true
+        },
+        "Leave party": {
+          "Enabled": false
+        },
+        "Mode": {
+          "Value": "Uninject"
+        },
+        "Notify on leave": {
+          "Enabled": true
+        }
+      },
+      "Bind": []
+    },
+    "AutoToxic": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Kill ": {
+          "Enabled": false
+        },
+        "Win ": {
+          "Enabled": false
+        },
+        "Win": {
+          "ListEnabled": [],
+          "List": []
+        },
+        "BedDestroyed ": {
+          "Enabled": false
+        },
+        "Bed": {
+          "ListEnabled": [],
+          "List": []
+        },
+        "Troll Triggers": {
+          "ListEnabled": [
+            "hacker",
+            "hacks",
+            "hacking",
+            "hax",
+            "cheater",
+            "cheating",
+            "cheat",
+            "exploiter",
+            "exploiting",
+            "aimbot"
+          ],
+          "List": [
+            "hacker",
+            "hacks",
+            "hacking",
+            "hax",
+            "cheater",
+            "cheating",
+            "cheat",
+            "exploiter",
+            "exploiting",
+            "aimbot"
+          ]
+        },
+        "Troll ": {
+          "Enabled": false
+        },
+        "Troll Replies": {
+          "ListEnabled": [
+            "mad cause bad | <obj>",
+            "skill issue <obj>",
+            "cry about it <obj>",
+            "not my fault youre bad",
+            "imagine losing to a \"hacker\" lol"
+          ],
+          "List": [
+            "mad cause bad | <obj>",
+            "skill issue <obj>",
+            "cry about it <obj>",
+            "not my fault youre bad",
+            "imagine losing to a \"hacker\" lol"
+          ]
+        },
+        "BedDestroyed": {
+          "ListEnabled": [],
+          "List": []
+        },
+        "Bed ": {
+          "Enabled": false
+        },
+        "Death": {
+          "ListEnabled": [],
+          "List": []
+        },
+        "Kill": {
+          "ListEnabled": [],
+          "List": []
+        },
+        "AutoGG": {
+          "Enabled": true
+        },
+        "Delay": {
+          "Value": 0,
+          "Max": 10
+        },
+        "Death ": {
+          "Enabled": false
+        }
+      },
+      "Bind": []
+    },
+    "Health": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": [],
+      "Bind": []
+    },
+    "Waypoints": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Transparency": {
+          "Value": 0.5,
+          "Max": 1
+        },
+        "Font": {
+          "Value": "Arial"
+        },
+        "Color": {
+          "Hue": 0.44,
+          "Sat": 1,
+          "Value": 1,
+          "Opacity": 1,
+          "Rainbow": false
+        },
+        "Points": {
+          "ListEnabled": [],
+          "List": []
+        },
+        "Scale": {
+          "Value": 1,
+          "Max": 1.5
+        },
+        "Font Asset": {
+          "Value": ""
+        }
+      },
+      "Bind": []
+    },
+    "AntiLagback": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Force position": {
+          "Enabled": true
+        },
+        "Max Correction": {
+          "Value": 80,
+          "Max": 150
+        },
+        "Sensitivity": {
+          "Value": 5,
+          "Max": 30
+        },
+        "Notifications": {
+          "Enabled": false
+        },
+        "Mode": {
+          "Value": "Restore"
+        },
+        "Hold time": {
+          "Value": 0.3,
+          "Max": 1
+        },
+        "Vertical pulls": {
+          "Enabled": true
+        }
+      },
+      "Bind": []
+    },
+    "Sprint": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": [],
+      "Bind": []
+    },
+    "Parkour": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": [],
+      "Bind": []
+    },
+    "TargetStrafe": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Search Range": {
+          "Value": 24,
+          "Max": 30
+        },
+        "Y Factor": {
+          "Value": 100,
+          "Max": 100
+        },
+        "Targets": {
+          "Players": true,
+          "NPCs": false,
+          "Invisible": false,
+          "Walls": true
+        },
+        "Strafe Range": {
+          "Value": 18,
+          "Max": 30
+        }
+      },
+      "Bind": []
+    },
+    "PlayerOutline": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Targets": {
+          "Players": true,
+          "NPCs": true,
+          "Invisible": false,
+          "Walls": false
+        },
+        "Outline Color": {
+          "Hue": 0.44,
+          "Sat": 1,
+          "Value": 1,
+          "Opacity": 1,
+          "Rainbow": false
+        }
+      },
+      "Bind": []
+    },
+    "InfiniteFly": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Notifications": {
+          "Enabled": false
+        },
+        "Interval": {
+          "Value": 2,
+          "Max": 10
+        },
+        "Ground search": {
+          "Value": 12,
+          "Max": 24
+        }
+      },
+      "Bind": [
+        "V"
+      ]
+    },
+    "AutoHonor": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Delay": {
+          "Value": 0.1,
+          "Max": 2
+        }
+      },
+      "Bind": []
+    },
+    "BreakerV2": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Break Lucky Block": {
+          "Enabled": true
+        },
+        "Legit mode": {
+          "Enabled": true
+        },
+        "Break Tesla": {
+          "Enabled": true
+        },
+        "Limit to items": {
+          "Enabled": false
+        },
+        "Break Hive": {
+          "Enabled": true
+        },
+        "Auto Tool": {
+          "Enabled": false
+        },
+        "Animation": {
+          "Enabled": false
+        },
+        "Break Bed": {
+          "Enabled": true
+        },
+        "Break range": {
+          "Value": 30,
+          "Max": 30
+        },
+        "Break Iron Ore": {
+          "Enabled": true
+        },
+        "Instant Break": {
+          "Enabled": false
+        },
+        "Break mode": {
+          "Value": "Health"
+        },
+        "Custom": {
+          "ListEnabled": [],
+          "List": []
+        },
+        "Custom Healthbar": {
+          "Enabled": true
+        },
+        "Self Break": {
+          "Enabled": false
+        },
+        "Break speed": {
+          "Value": 0.25,
+          "Max": 0.3
+        },
+        "Show Healthbar & Effects": {
+          "Enabled": true
+        },
+        "Update rate": {
+          "Value": 60,
+          "Max": 120
+        }
+      },
+      "Bind": []
+    },
+    "NoSlowdown": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": [],
+      "Bind": []
+    },
+    "AutoBank": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Chest range": {
+          "Value": 20,
+          "Max": 30
+        },
+        "Withdraw at shop": {
+          "Enabled": true
+        },
+        "Mode": {
+          "Value": "Skybox"
+        },
+        "Whitelist": {
+          "ListEnabled": [
+            "emerald",
+            "diamond",
+            "iron"
+          ],
+          "List": [
+            "emerald",
+            "diamond",
+            "iron"
+          ]
+        },
+        "Display resources": {
+          "Enabled": true
+        }
+      },
+      "Bind": []
+    },
+    "Anti-AFK": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": [],
+      "Bind": []
+    },
+    "AutoClicker": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Block CPS": {
+          "ValueMin": 12,
+          "ValueMax": 12
+        },
+        "CPS": {
+          "ValueMin": 7,
+          "ValueMax": 7
+        },
+        "Place Blocks": {
+          "Enabled": true
+        }
+      },
+      "Bind": []
+    },
+    "ProjectileAura": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Fire Rate": {
+          "ValueMin": 0.05,
+          "ValueMax": 0.12
+        },
+        "Range": {
+          "Value": 50,
+          "Max": 50
+        },
+        "Use sophia": {
+          "Enabled": false
+        },
+        "Use whim": {
+          "Enabled": false
+        },
+        "Targets": {
+          "Players": true,
+          "NPCs": false,
+          "Invisible": false,
+          "Walls": true
+        },
+        "Projectiles": {
+          "ListEnabled": [
+            "arrow",
+            "snowball"
+          ],
+          "List": [
+            "arrow",
+            "snowball"
+          ]
+        }
+      },
+      "Bind": []
+    },
+    "CustomTags": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Color": {
+          "Hue": 0.44,
+          "Sat": 1,
+          "Value": 1,
+          "Opacity": 1,
+          "Rainbow": false
+        },
+        "Tag": {
+          "Value": "gg"
+        }
+      },
+      "Bind": []
+    },
+    "ProjectileDodger": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Teleport Distance": {
+          "Value": 2,
+          "Max": 2
+        },
+        "Edge Check": {
+          "Enabled": true
+        },
+        "Dodge Strength": {
+          "Value": 38,
+          "Max": 80
+        },
+        "Mode": {
+          "Value": "Teleport"
+        },
+        "Range": {
+          "Value": 45,
+          "Max": 80
+        }
+      },
+      "Bind": []
+    },
+    "DamageBoost": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": [],
+      "Bind": []
+    },
+    "GeneratorESP": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Scale": {
+          "Value": 1,
+          "Max": 1.5
+        },
+        "Transparency": {
+          "Value": 0.5,
+          "Max": 1
+        },
+        "Generators": {
+          "ListEnabled": [
+            "diamond",
+            "iron"
+          ],
+          "List": [
+            "diamond",
+            "iron"
+          ]
+        },
+        "Use whitelist": {
+          "Enabled": true
+        }
+      },
+      "Bind": []
+    },
+    "AntiSuffocate": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Mode": {
+          "Value": "Push"
+        }
+      },
+      "Bind": []
+    },
+    "Velocity": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Direction": {
+          "Value": "Default"
+        },
+        "Chance": {
+          "Value": 100,
+          "Max": 100
+        },
+        "Horizontal": {
+          "Value": 0,
+          "Max": 100
+        },
+        "Vertical": {
+          "Value": 0,
+          "Max": 100
+        },
+        "Only when targeting": {
+          "Enabled": false
+        }
+      },
+      "Bind": []
+    },
+    "ChatPosition": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Horizontal": {
+          "Value": 0,
+          "Max": 700
+        },
+        "Vertical": {
+          "Value": 410,
+          "Max": 700
+        }
+      },
+      "Bind": []
+    },
+    "ACMODView": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Remove Disguises": {
+          "Enabled": true
+        }
+      },
+      "Bind": []
+    },
+    "AutoVoidDrop": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Pearl check": {
+          "Enabled": true
+        },
+        "Owl check": {
+          "Enabled": true
+        }
+      },
+      "Bind": []
+    },
+    "InvisibleCursor": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Show on GUI": {
+          "Enabled": false
+        },
+        "View Mode": {
+          "Value": "First Person"
+        },
+        "Limit to Bow": {
+          "Enabled": false
+        }
+      },
+      "Bind": []
+    },
+    "FastDrop": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": [],
+      "Bind": []
+    },
+    "GodMode": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Offset": {
+          "Value": 6,
+          "Max": 14
+        },
+        "Sync on attack": {
+          "Enabled": true
+        },
+        "Ground time": {
+          "Value": 0.5,
+          "Max": 3
+        },
+        "Sync while airborne": {
+          "Enabled": true
+        },
+        "Health threshold": {
+          "Value": 35,
+          "Max": 99
+        },
+        "Hide time": {
+          "Value": 0.55,
+          "Max": 1.5
+        },
+        "Sync time": {
+          "Value": 0.25,
+          "Max": 1
+        },
+        "Safe height": {
+          "Value": 180,
+          "Max": 300
+        },
+        "Notifications": {
+          "Enabled": true
+        },
+        "Void guard": {
+          "Enabled": true
+        },
+        "Mode": {
+          "Value": "Offset"
+        },
+        "Recover": {
+          "Value": 3,
+          "Max": 10
+        }
+      },
+      "Bind": []
+    },
+    "AutoSuffocate": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Range": {
+          "Value": 20,
+          "Max": 20
+        },
+        "Limit to Items": {
+          "Enabled": true
+        }
+      },
+      "Bind": []
+    },
+    "Blink": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Send threshold": {
+          "Value": 0,
+          "Max": 1
+        },
+        "Type": {
+          "Value": "Movement Only"
+        },
+        "Auto send": {
+          "Enabled": false
+        }
+      },
+      "Bind": []
+    },
+    "Search": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Color": {
+          "Hue": 0.44,
+          "Sat": 1,
+          "Value": 1,
+          "Opacity": 1,
+          "Rainbow": false
+        },
+        "Transparency": {
+          "Value": 0,
+          "Max": 1
+        },
+        "Parts": {
+          "ListEnabled": [],
+          "List": []
+        }
+      },
+      "Bind": []
+    },
+    "PickupRange": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Feet Check": {
+          "Enabled": false
+        },
+        "Network TP": {
+          "Enabled": true
+        },
+        "Range": {
+          "Value": 10,
+          "Max": 10
+        }
+      },
+      "Bind": []
+    },
+    "LongJumpBypass": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Boost": {
+          "Value": 60,
+          "Max": 42
+        }
+      },
+      "Bind": []
+    },
+    "LegacyAnimation": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Camera Mode": {
+          "Value": "Both"
+        }
+      },
+      "Bind": []
+    },
+    "StorageESP": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Background": {
+          "Enabled": true
+        },
+        "Item": {
+          "ListEnabled": [],
+          "List": []
+        },
+        "Background Color": {
+          "Hue": 0.44,
+          "Sat": 1,
+          "Value": 0,
+          "Opacity": 0.5,
+          "Rainbow": false
+        }
+      },
+      "Bind": []
+    },
+    "ShadowRemover": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": [],
+      "Bind": []
+    },
+    "BoostAirJump": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Boost": {
+          "Value": 35,
+          "Max": 60
+        }
+      },
+      "Bind": []
+    },
+    "AutoFish": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Blacklisted loot": {
+          "ListEnabled": [
+            "iron"
+          ],
+          "List": [
+            "iron"
+          ]
+        },
+        "Auto Minigame": {
+          "Enabled": true
+        },
+        "Auto Cast": {
+          "Enabled": false
+        },
+        "Cast delay": {
+          "ValueMin": 0.3,
+          "ValueMax": 1.2
+        },
+        "Show loot drops": {
+          "Enabled": false
+        },
+        "Complete delay": {
+          "ValueMin": 0.1,
+          "ValueMax": 0.9
+        }
+      },
+      "Bind": []
+    },
+    "InstantKill": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Mode": {
+          "Value": "Toggle"
+        },
+        "Range": {
+          "Value": 50,
+          "Max": 100
+        },
+        "Auto place": {
+          "Enabled": true
+        }
+      },
+      "Bind": []
+    },
+    "AnimationPlayer": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Speed": {
+          "Value": 0.1,
+          "Max": 2
+        },
+        "Priority": {
+          "Value": "Action4"
+        },
+        "Animation": {
+          "Value": ""
+        }
+      },
+      "Bind": []
+    },
+    "NameTags": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Enchant": {
+          "Enabled": true
+        },
+        "Player Distance": {
+          "ValueMin": 0,
+          "ValueMax": 64
+        },
+        "Priority Only": {
+          "Enabled": true
+        },
+        "Player Color": {
+          "Hue": 0.44,
+          "Sat": 1,
+          "Value": 1,
+          "Opacity": 1,
+          "Rainbow": false
+        },
+        "Scale": {
+          "Value": 1,
+          "Max": 1.5
+        },
+        "Distance": {
+          "Enabled": false
+        },
+        "Targets": {
+          "Players": true,
+          "NPCs": false,
+          "Invisible": false,
+          "Walls": false
+        },
+        "Drawing": {
+          "Enabled": false
+        },
+        "Equipment": {
+          "Enabled": false
+        },
+        "Font": {
+          "Value": "Arial"
+        },
+        "Health": {
+          "Enabled": false
+        },
+        "Distance Check": {
+          "Enabled": false
+        },
+        "Use Displayname": {
+          "Enabled": true
+        },
+        "Font Asset": {
+          "Value": ""
+        },
+        "Transparency": {
+          "Value": 0.5,
+          "Max": 1
+        },
+        "Rank": {
+          "Enabled": false
+        }
+      },
+      "Bind": []
+    },
+    "AutoWin": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Bank loot": {
+          "Enabled": true
+        },
+        "Respawn after bed": {
+          "Enabled": true
+        },
+        "Block amount": {
+          "Value": 32,
+          "Max": 128
+        },
+        "Player reach": {
+          "Value": 8,
+          "Max": 14
+        },
+        "Dao priority": {
+          "Enabled": true
+        },
+        "Keep awake": {
+          "Enabled": true
+        },
+        "Auto equip Yuzi": {
+          "Enabled": true
+        },
+        "Show HUD": {
+          "Enabled": true
+        },
+        "Iron amount": {
+          "Value": 16,
+          "Max": 64
+        },
+        "Bed reach": {
+          "Value": 8,
+          "Max": 14
+        },
+        "Auto rejoin": {
+          "Enabled": true
+        },
+        "Take over modules": {
+          "Enabled": true
+        },
+        "Auto queue": {
+          "Enabled": true
+        },
+        "Aggression": {
+          "Value": "Balanced"
+        },
+        "Start delay": {
+          "Value": 2,
+          "Max": 10
+        },
+        "Gamemode": {
+          "Value": "Current"
+        },
+        "Kill players": {
+          "Enabled": true
+        },
+        "Notifications": {
+          "Enabled": false
+        },
+        "Watchdog": {
+          "Value": 4,
+          "Max": 10
+        },
+        "Resume in lobby": {
+          "Enabled": true
+        },
+        "Yuzi dash": {
+          "Enabled": true
+        }
+      },
+      "Bind": []
+    },
+    "Xray": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Part": {
+          "ListEnabled": [],
+          "List": []
+        }
+      },
+      "Bind": []
+    },
+    "TrapESP": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Background Color": {
+          "Hue": 0.44,
+          "Sat": 1,
+          "Value": 0,
+          "Opacity": 0.5,
+          "Rainbow": false
+        },
+        "Background": {
+          "Enabled": true
+        }
+      },
+      "Bind": []
+    },
+    "ProjectileLanding": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Marker Color": {
+          "Hue": 0.44,
+          "Sat": 1,
+          "Value": 1,
+          "Opacity": 0,
+          "Rainbow": false
+        }
+      },
+      "Bind": []
+    },
+    "BlockInV2": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Return to last slot": {
+          "Enabled": true
+        },
+        "Wool only": {
+          "Enabled": false
+        },
+        "Block priority": {
+          "Value": "Lowest cost"
+        },
+        "Place delay": {
+          "ValueMin": 30,
+          "ValueMax": 50
+        },
+        "Blacklist": {
+          "ListEnabled": [
+            "cannon",
+            "siege_tnt",
+            "tnt"
+          ],
+          "List": [
+            "cannon",
+            "siege_tnt",
+            "tnt"
+          ]
+        }
+      },
+      "Bind": [
+        "B"
+      ]
+    },
+    "StreamRemover": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": [],
+      "Bind": []
+    },
+    "ChatSpammer": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Mode": {
+          "Value": "Random"
+        },
+        "Lines": {
+          "ListEnabled": [],
+          "List": []
+        },
+        "Delay": {
+          "Value": 1,
+          "Max": 10
+        },
+        "Hide Flood Message": {
+          "Enabled": true
+        }
+      },
+      "Bind": []
+    },
+    "FastBreak": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Bed Check": {
+          "Enabled": false
+        },
+        "Blocks": {
+          "ListEnabled": [],
+          "List": []
+        },
+        "Use blacklist": {
+          "Enabled": false
+        },
+        "Break speed": {
+          "Value": 0.25,
+          "Max": 0.3
+        }
+      },
+      "Bind": []
+    },
+    "GamingChair": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Color": {
+          "Hue": 0.44,
+          "Sat": 1,
+          "Value": 1,
+          "Opacity": 1,
+          "Rainbow": false
+        }
+      },
+      "Bind": []
+    },
+    "AutoTool": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": [],
+      "Bind": []
+    },
+    "BalloonDisabler": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "AutoDisable": {
+          "Enabled": false
+        }
+      },
+      "Bind": []
+    },
+    "FakeLag": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Mode": {
+          "Value": "Dynamic"
+        },
+        "Delay": {
+          "Value": 100,
+          "Max": 500
+        },
+        "Transmission Offset": {
+          "Value": 3,
+          "Max": 10
+        }
+      },
+      "Bind": []
+    },
+    "MouseTP": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Movement": {
+          "Value": "All"
+        },
+        "Mode": {
+          "Value": "Mouse"
+        }
+      },
+      "Bind": []
+    },
+    "BedESP": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": [],
+      "Bind": []
+    },
+    "ChatNameColor": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Color": {
+          "Hue": 0.44,
+          "Sat": 1,
+          "Value": 1,
+          "Opacity": 1,
+          "Rainbow": false
+        }
+      },
+      "Bind": []
+    },
+    "SilentAim": {
+      "Enabled": true,
+      "Favourited": false,
+      "Options": {
+        "Prediction": {
+          "Value": 1,
+          "Max": 2
+        },
+        "FOV": {
+          "Value": 1000,
+          "Max": 1000
+        },
+        "Other Projectiles": {
+          "Enabled": true
+        },
+        "Part": {
+          "Value": "RootPart"
+        },
+        "Target Mode": {
+          "Value": "Mouse"
+        },
+        "Targets": {
+          "Players": true,
+          "NPCs": true,
+          "Invisible": false,
+          "Walls": true
+        },
+        "Blacklist": {
+          "ListEnabled": [
+            "gloop",
+            "telepearl"
+          ],
+          "List": [
+            "gloop",
+            "telepearl"
+          ]
+        }
+      },
+      "Bind": []
+    },
+    "ProximityExtender": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Max Distance": {
+          "Value": 20,
+          "Max": 20
+        }
+      },
+      "Bind": []
+    },
+    "AimAssist": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Strafe increase": {
+          "Enabled": false
+        },
+        "Use killaura target": {
+          "Enabled": false
+        },
+        "Require mouse down": {
+          "Enabled": false
+        },
+        "Check block break": {
+          "Enabled": false
+        },
+        "Aim perspective": {
+          "Value": "First person"
+        },
+        "Targets": {
+          "Players": true,
+          "NPCs": false,
+          "Invisible": false,
+          "Walls": true
+        },
+        "Aim speed": {
+          "Value": 6,
+          "Max": 20
+        },
+        "Max angle": {
+          "Value": 70,
+          "Max": 360
+        },
+        "Limit to items": {
+          "Enabled": false
+        },
+        "Target area": {
+          "Value": "Center"
+        },
+        "Distance": {
+          "Value": 30,
+          "Max": 30
+        },
+        "Shake": {
+          "Value": 0,
+          "Max": 100
+        },
+        "Mode": {
+          "Value": "Simple"
+        },
+        "Target mode": {
+          "Value": "Damage"
+        },
+        "Click aim": {
+          "Enabled": true
+        }
+      },
+      "Bind": []
+    },
+    "AutoCounter": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "TNT Count": {
+          "Value": 3,
+          "Max": 5
+        },
+        "Auto Place": {
+          "Enabled": true
+        },
+        "Highlight": {
+          "Enabled": true
+        },
+        "Limit to TNT": {
+          "Enabled": true
+        }
+      },
+      "Bind": []
+    },
+    "Arrows": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Priority Only": {
+          "Enabled": true
+        },
+        "Player Color": {
+          "Hue": 0.44,
+          "Sat": 1,
+          "Value": 1,
+          "Opacity": 1,
+          "Rainbow": false
+        },
+        "Distance Check": {
+          "Enabled": false
+        },
+        "Targets": {
+          "Players": true,
+          "NPCs": false,
+          "Invisible": false,
+          "Walls": false
+        },
+        "Player Distance": {
+          "ValueMin": 0,
+          "ValueMax": 64
+        }
+      },
+      "Bind": []
+    },
+    "FastConsume": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Multiplier": {
+          "Value": 0,
+          "Max": 100
+        }
+      },
+      "Bind": []
+    },
+    "BedProtector": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Wool only": {
+          "Enabled": false
+        },
+        "Layers": {
+          "Value": 1,
+          "Max": 5
+        },
+        "Limit to item": {
+          "Enabled": false
+        },
+        "Auto Switch": {
+          "Enabled": false
+        },
+        "Smart": {
+          "Enabled": true
+        },
+        "Place Range": {
+          "Value": 15,
+          "Max": 30
+        },
+        "Mode": {
+          "Value": "Toggle"
+        },
+        "Blacklist": {
+          "ListEnabled": [
+            "siege_tnt",
+            "tnt"
+          ],
+          "List": [
+            "siege_tnt",
+            "tnt"
+          ]
+        }
+      },
+      "Bind": []
+    },
+    "BeehiveESP": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Text Color": {
+          "Hue": 0.44,
+          "Sat": 1,
+          "Value": 1,
+          "Opacity": 1,
+          "Rainbow": false
+        },
+        "Transparency": {
+          "Value": 0.5,
+          "Max": 1
+        },
+        "Scale": {
+          "Value": 1,
+          "Max": 1.5
+        }
+      },
+      "Bind": []
+    },
+    "InteractExtender": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Extra activation range": {
+          "Value": 5,
+          "Max": 10
+        }
+      },
+      "Bind": []
+    },
+    "AntiVoid": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Clutch reach": {
+          "Value": 6,
+          "Max": 10
+        },
+        "Color": {
+          "Hue": 0.4622395932674408,
+          "Sat": 0.9624060392379761,
+          "Value": 0.5215686559677124,
+          "Opacity": 0.5,
+          "Rainbow": false
+        },
+        "Material": {
+          "Value": "ForceField"
+        },
+        "Move Mode": {
+          "Value": "Collide"
+        },
+        "Release height": {
+          "Value": 12,
+          "Max": 60
+        }
+      },
+      "Bind": []
+    },
+    "PlayerAttach": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Targets": {
+          "Players": true,
+          "NPCs": true,
+          "Invisible": false,
+          "Walls": false
+        },
+        "Range": {
+          "Value": 23,
+          "Max": 35
+        }
+      },
+      "Bind": []
+    },
+    "Block-In": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Bed finder": {
+          "Enabled": false
+        },
+        "Placement Mode": {
+          "Value": "Normal"
+        },
+        "Break speed": {
+          "Value": 0.25,
+          "Max": 0.3
+        },
+        "Place Delay": {
+          "ValueMin": 0.07,
+          "ValueMax": 0.1
+        },
+        "Limit to items": {
+          "Enabled": false
+        },
+        "Use blacklist": {
+          "Enabled": true
+        },
+        "Blacklists": {
+          "ListEnabled": [
+            "cannon",
+            "tnt",
+            "siege_tnt"
+          ],
+          "List": [
+            "cannon",
+            "tnt",
+            "siege_tnt"
+          ]
+        }
+      },
+      "Bind": []
+    },
+    "ProjectileAimbot": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Aim change": {
+          "Enabled": true
+        },
+        "FOV": {
+          "Value": 1000,
+          "Max": 1000
+        },
+        "Target mode": {
+          "Value": "Distance"
+        },
+        "Other Projectiles": {
+          "Enabled": true
+        },
+        "Part": {
+          "Value": "RootPart"
+        },
+        "Auto Charge": {
+          "Enabled": true
+        },
+        "Targets": {
+          "Players": true,
+          "NPCs": false,
+          "Invisible": false,
+          "Walls": true
+        },
+        "Blacklist": {
+          "ListEnabled": [
+            "gloop",
+            "telepearl"
+          ],
+          "List": [
+            "gloop",
+            "telepearl"
+          ]
+        }
+      },
+      "Bind": []
+    },
+    "ProximityPromptDuration": {
+      "Enabled": true,
+      "Favourited": false,
+      "Options": {
+        "Duration": {
+          "Value": 0,
+          "Max": 10
+        }
+      },
+      "Bind": []
+    },
+    "Schematica": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "File": {
+          "Value": ""
+        },
+        "Transparency": {
+          "Value": 0.7,
+          "Max": 1
+        },
+        "Mode": {
+          "Value": "Load"
+        }
+      },
+      "Bind": []
+    },
+    "Reach": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Placement Reach": {
+          "Enabled": false
+        },
+        "Placement Range": {
+          "Value": 18,
+          "Max": 60
+        },
+        "Sword Reach": {
+          "Enabled": true
+        },
+        "Sword Range": {
+          "Value": 18,
+          "Max": 18
+        },
+        "Break Range": {
+          "Value": 30,
+          "Max": 30
+        },
+        "Break Reach": {
+          "Enabled": false
+        }
+      },
+      "Bind": []
+    },
+    "AutoSteal": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "GUI Check": {
+          "Enabled": false
+        },
+        "Bank loot": {
+          "Enabled": true
+        },
+        "Nearby chests": {
+          "Enabled": true
+        },
+        "Range": {
+          "Value": 18,
+          "Max": 18
+        },
+        "Delay": {
+          "Value": 0,
+          "Max": 1
+        },
+        "Only Skywars": {
+          "Enabled": false
+        }
+      },
+      "Bind": []
+    },
+    "EntityAnalyser": {
+      "Enabled": true,
+      "Favourited": false,
+      "Options": {
+        "Sample range": {
+          "Value": 90,
+          "Max": 250
+        },
+        "Show role": {
+          "Enabled": true
+        },
+        "Beginner below": {
+          "Value": 38,
+          "Max": 50
+        },
+        "Label above average": {
+          "Enabled": true
+        },
+        "Sweat at": {
+          "Value": 84,
+          "Max": 99
+        },
+        "Label teammates": {
+          "Enabled": false
+        },
+        "Label unrated": {
+          "Enabled": false
+        },
+        "Above average at": {
+          "Value": 58,
+          "Max": 85
+        },
+        "Skilled at": {
+          "Value": 68,
+          "Max": 95
+        },
+        "Minimum confidence": {
+          "Value": 15,
+          "Max": 90
+        },
+        "Label sweat": {
+          "Enabled": true
+        },
+        "New below": {
+          "Value": 22,
+          "Max": 40
+        },
+        "Label skilled": {
+          "Enabled": true
+        },
+        "Label average": {
+          "Enabled": true
+        },
+        "Show score": {
+          "Enabled": true
+        },
+        "Label new": {
+          "Enabled": true
+        },
+        "Notifications": {
+          "Enabled": false
+        },
+        "Label beginner": {
+          "Enabled": true
+        },
+        "Show confidence": {
+          "Enabled": false
+        },
+        "Labels": {
+          "Enabled": true
+        }
+      },
+      "Bind": []
+    },
+    "AutoPlay": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Random": {
+          "Enabled": false
+        }
+      },
+      "Bind": []
+    },
+    "AutoPearl": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Pearl check": {
+          "Enabled": true
+        },
+        "Only after landed": {
+          "Enabled": false
+        },
+        "Legit Switch": {
+          "Enabled": true
+        },
+        "Switch back": {
+          "Enabled": true
+        },
+        "Limit to item": {
+          "Enabled": false
+        },
+        "Switch Back Delay": {
+          "ValueMin": 0.1,
+          "ValueMax": 0.2
+        }
+      },
+      "Bind": []
+    },
+    "Swim": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": [],
+      "Bind": []
+    },
+    "AutoBuildUp": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Limit to items": {
+          "Enabled": true
+        }
+      },
+      "Bind": []
+    },
+    "KeepSprint": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": [],
+      "Bind": []
+    },
+    "Aura": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Color": {
+          "Hue": 0.44,
+          "Sat": 1,
+          "Value": 1,
+          "Opacity": 1,
+          "Rainbow": false
+        },
+        "Style": {
+          "Value": "randomshi"
+        },
+        "Orb Count": {
+          "Value": 8,
+          "Max": 20
+        },
+        "Speed": {
+          "Value": 1.5,
+          "Max": 5
+        }
+      },
+      "Bind": []
+    },
+    "Killaura": {
+      "Enabled": true,
+      "Favourited": false,
+      "Options": {
+        "No Tween": {
+          "Enabled": false
+        },
+        "Attack range": {
+          "Value": 20,
+          "Max": 20
+        },
+        "Target skilled": {
+          "Enabled": true
+        },
+        "Target Mode": {
+          "Value": "Damage"
+        },
+        "Max targets": {
+          "Value": 5,
+          "Max": 5
+        },
+        "Attackable check": {
+          "Enabled": false
+        },
+        "Max angle": {
+          "Value": 360,
+          "Max": 360
+        },
+        "Custom Animation": {
+          "Enabled": false
+        },
+        "Swing range": {
+          "Value": 22,
+          "Max": 28
+        },
+        "Attack Color": {
+          "Hue": 0.44,
+          "Sat": 1,
+          "Value": 1,
+          "Opacity": 0.5,
+          "Rainbow": false
+        },
+        "Size": {
+          "Value": 0.2,
+          "Max": 1
+        },
+        "Limit to items": {
+          "Enabled": false
+        },
+        "Animation Mode": {
+          "Value": "Normal"
+        },
+        "Texture": {
+          "Value": "rbxassetid://14736249347"
+        },
+        "Animation Speed": {
+          "Value": 1,
+          "Max": 2
+        },
+        "Face target": {
+          "Enabled": false
+        },
+        "Swing time": {
+          "Value": 0.299,
+          "Max": 2
+        },
+        "Require mouse down": {
+          "Enabled": false
+        },
+        "Show target": {
+          "Enabled": false
+        },
+        "Air hit chance": {
+          "Value": 100,
+          "Max": 100
+        },
+        "Target particles": {
+          "Enabled": false
+        },
+        "GUI check": {
+          "Enabled": false
+        },
+        "Color Begin": {
+          "Hue": 0.44,
+          "Sat": 1,
+          "Value": 1,
+          "Opacity": 1,
+          "Rainbow": false
+        },
+        "No Swing": {
+          "Enabled": false
+        },
+        "Targets": {
+          "Players": true,
+          "NPCs": true,
+          "Invisible": false,
+          "Walls": false
+        },
+        "Color End": {
+          "Hue": 0.44,
+          "Sat": 1,
+          "Value": 1,
+          "Opacity": 1,
+          "Rainbow": false
+        },
+        "Attack Mode": {
+          "Value": "Single"
+        },
+        "Target Color": {
+          "Hue": 0.6,
+          "Sat": 1,
+          "Value": 1,
+          "Opacity": 0.5,
+          "Rainbow": false
+        },
+        "Sync with hitreg": {
+          "Enabled": false
+        },
+        "Swing only": {
+          "Enabled": false
+        }
+      },
+      "Bind": []
+    },
+    "AutoEmote": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": [],
+      "Bind": []
+    },
+    "Chams": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Color": {
+          "Hue": 0.44,
+          "Sat": 1,
+          "Value": 1,
+          "Opacity": 1,
+          "Rainbow": false
+        },
+        "Transparency": {
+          "Value": 0.5,
+          "Max": 1
+        },
+        "Priority Only": {
+          "Enabled": true
+        },
+        "Outline Transparency": {
+          "Value": 0.5,
+          "Max": 1
+        },
+        "Render Walls": {
+          "Enabled": true
+        },
+        "Mode": {
+          "Value": "Highlight"
+        },
+        "Targets": {
+          "Players": true,
+          "NPCs": false,
+          "Invisible": false,
+          "Walls": false
+        },
+        "Outline Color": {
+          "Hue": 0.44,
+          "Sat": 0,
+          "Value": 1,
+          "Opacity": 1,
+          "Rainbow": false
+        }
+      },
+      "Bind": []
+    },
+    "AutoRelease": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Release delay": {
+          "Value": 0.5,
+          "Max": 5
+        },
+        "Percentage": {
+          "Value": 100,
+          "Max": 100
+        }
+      },
+      "Bind": []
+    },
+    "ViewmodelVisuals": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Color": {
+          "Hue": 0.44,
+          "Sat": 1,
+          "Value": 1,
+          "Opacity": 1,
+          "Rainbow": false
+        },
+        "Stroke Color": {
+          "Hue": 0.44,
+          "Sat": 1,
+          "Value": 1,
+          "Opacity": 1,
+          "Rainbow": false
+        }
+      },
+      "Bind": []
+    },
+    "InfiniteJump": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "TP Down": {
+          "Enabled": false
+        },
+        "Mode": {
+          "Value": "Jump"
+        }
+      },
+      "Bind": []
+    },
+    "Spider": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Speed": {
+          "Value": 30,
+          "Max": 100
+        },
+        "Mode": {
+          "Value": "Velocity"
+        },
+        "Use bedwars climbing": {
+          "Enabled": false
+        }
+      },
+      "Bind": []
+    },
+    "BedPlates": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Layer Counter": {
+          "Enabled": true
+        },
+        "Background": {
+          "Enabled": true
+        },
+        "Background Color": {
+          "Hue": 0.44,
+          "Sat": 1,
+          "Value": 0,
+          "Opacity": 0.5,
+          "Rainbow": false
+        },
+        "Counter Text Color": {
+          "Hue": 0.44,
+          "Sat": 0,
+          "Value": 1,
+          "Opacity": 1,
+          "Rainbow": false
+        }
+      },
+      "Bind": []
+    },
+    "AutoBuy": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Only Bedwars": {
+          "Enabled": true
+        },
+        "Buy Sword Sharpness": {
+          "Enabled": true
+        },
+        "GUI check": {
+          "Enabled": false
+        },
+        "Buy Axe": {
+          "Enabled": false
+        },
+        "Item": {
+          "ListEnabled": [],
+          "List": []
+        },
+        "Buy Upgrades": {
+          "Enabled": true
+        },
+        "Buy Break Speed": {
+          "Enabled": false
+        },
+        "Smart check": {
+          "Enabled": true
+        },
+        "Buy Sword": {
+          "Enabled": false
+        },
+        "Tier Check": {
+          "Enabled": false
+        },
+        "Buy Team Generator": {
+          "Enabled": false
+        },
+        "Buy Pickaxe": {
+          "Enabled": false
+        },
+        "Buy Armor": {
+          "Enabled": true
+        },
+        "Buy Armor Protection": {
+          "Enabled": true
+        }
+      },
+      "Bind": []
+    },
+    "AutoClickerV2": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Wool only": {
+          "Enabled": false
+        },
+        "Block CPS": {
+          "ValueMin": 12,
+          "ValueMax": 12
+        },
+        "CPS": {
+          "ValueMin": 7,
+          "ValueMax": 7
+        },
+        "Place Blocks": {
+          "Enabled": true
+        }
+      },
+      "Bind": []
+    },
+    "CheatDetector": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Invisible": {
+          "Enabled": true
+        },
+        "Reach": {
+          "Enabled": true
+        },
+        "HighJump": {
+          "Enabled": true
+        },
+        "Impossible hits": {
+          "Enabled": true
+        },
+        "HitBoxes": {
+          "Enabled": true
+        },
+        "Killaura": {
+          "Enabled": true
+        },
+        "ProjectileAimbot and Aura": {
+          "Enabled": true
+        },
+        "Breaker": {
+          "Enabled": true
+        },
+        "AutoKit": {
+          "Enabled": true
+        },
+        "Phase": {
+          "Enabled": true
+        },
+        "Crashers": {
+          "Enabled": true
+        },
+        "Remote": {
+          "Enabled": true
+        },
+        "AntiDeath": {
+          "Enabled": true
+        },
+        "Blatant modules": {
+          "Enabled": true
+        },
+        "PlayerAttach": {
+          "Enabled": true
+        },
+        "[TEST] Detect self": {
+          "Enabled": true
+        },
+        "Animation": {
+          "Enabled": true
+        },
+        "SilentAim": {
+          "Enabled": true
+        },
+        "Speed": {
+          "Enabled": true
+        }
+      },
+      "Bind": []
+    },
+    "Fly": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Vertical Speed": {
+          "Value": 50,
+          "Max": 150
+        },
+        "Speed": {
+          "Value": 23,
+          "Max": 23
+        },
+        "Pop Balloons": {
+          "Enabled": true
+        },
+        "Wall Check": {
+          "Enabled": true
+        },
+        "TP Down": {
+          "Enabled": true
+        }
+      },
+      "Bind": [
+        "C"
+      ]
+    },
+    "KnockbackDelay": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Air delay": {
+          "ValueMin": 50,
+          "ValueMax": 200
+        },
+        "Ground delay": {
+          "ValueMin": 50,
+          "ValueMax": 200
+        },
+        "Target check": {
+          "Enabled": false
+        },
+        "Chance": {
+          "Value": 40,
+          "Max": 100
+        }
+      },
+      "Bind": []
+    },
+    "ItemESP": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Transparency": {
+          "Value": 0.5,
+          "Max": 1
+        },
+        "Whitelist Only": {
+          "Enabled": false
+        },
+        "Scale": {
+          "Value": 1,
+          "Max": 1.5
+        },
+        "Distance": {
+          "Enabled": false
+        },
+        "Group items": {
+          "Enabled": false
+        },
+        "Allowed items": {
+          "ListEnabled": [],
+          "List": []
+        }
+      },
+      "Bind": []
+    },
+    "ArmorSwitch": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Mode": {
+          "Value": "Toggle"
+        },
+        "Targets": {
+          "Players": true,
+          "NPCs": true,
+          "Invisible": false,
+          "Walls": false
+        },
+        "Range": {
+          "Value": 30,
+          "Max": 30
+        }
+      },
+      "Bind": []
+    },
+    "Breaker": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Break Lucky Block": {
+          "Enabled": true
+        },
+        "Max angle": {
+          "Value": 120,
+          "Max": 360
+        },
+        "Break Tesla": {
+          "Enabled": true
+        },
+        "Limit to items": {
+          "Enabled": false
+        },
+        "Break Hive": {
+          "Enabled": true
+        },
+        "Auto Tool": {
+          "Enabled": false
+        },
+        "Break Iron Ore": {
+          "Enabled": true
+        },
+        "Animation": {
+          "Enabled": false
+        },
+        "Instant Break": {
+          "Enabled": false
+        },
+        "Break Bed": {
+          "Enabled": true
+        },
+        "Break range": {
+          "Value": 30,
+          "Max": 30
+        },
+        "Breaker Type": {
+          "Value": "Blatant"
+        },
+        "Closest break": {
+          "Enabled": false
+        },
+        "Show Healthbar & Effects": {
+          "Enabled": true
+        },
+        "Custom": {
+          "ListEnabled": [],
+          "List": []
+        },
+        "Custom Healthbar": {
+          "Enabled": true
+        },
+        "Break speed": {
+          "Value": 0.25,
+          "Max": 0.3
+        },
+        "Self Break": {
+          "Enabled": false
+        },
+        "Break mode": {
+          "Value": "Health"
+        },
+        "Update rate": {
+          "Value": 60,
+          "Max": 120
+        }
+      },
+      "Bind": []
+    },
+    "Scaffold": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Visual": {
+          "Enabled": false
+        },
+        "Require mouse down": {
+          "Enabled": false
+        },
+        "Expand": {
+          "Value": 1,
+          "Max": 6
+        },
+        "Tower": {
+          "Enabled": true
+        },
+        "Downwards": {
+          "Enabled": true
+        },
+        "Diagonal": {
+          "Enabled": true
+        },
+        "Limit to items": {
+          "Enabled": false
+        },
+        "Block Count": {
+          "Enabled": false
+        },
+        "Fill Color": {
+          "Hue": 0.7559524,
+          "Sat": 0,
+          "Value": 1,
+          "Opacity": 0.4,
+          "Rainbow": false
+        },
+        "Outline Color": {
+          "Hue": 0.7559524,
+          "Sat": 0.5490196,
+          "Value": 0,
+          "Opacity": 1,
+          "Rainbow": false
+        }
+      },
+      "Bind": []
+    },
+    "BackTrack": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Ticks": {
+          "Value": 5,
+          "Max": 20
+        },
+        "Mode": {
+          "Value": "Manual"
+        },
+        "Latency": {
+          "ValueMin": 50,
+          "ValueMax": 120
+        }
+      },
+      "Bind": []
+    },
+    "NoClip": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Wall Size": {
+          "Value": 5,
+          "Max": 20
+        },
+        "Mode": {
+          "Value": "Part"
+        }
+      },
+      "Bind": []
+    },
+    "AutoLasso": {
+      "Enabled": false,
+      "Favourited": false,
+      "Options": {
+        "Max angle": {
+          "Value": 120,
+          "Max": 360
+        },
+        "Range": {
+          "Value": 60,
+          "Max": 60
+        },
+        "Targets": {
+          "Players": true,
+          "NPCs": false,
+          "Invisible": false,
+          "Walls": false
+        }
+      },
+      "Bind": []
+    }
+  },
+  "GUIColor": {
+    "Hue": 0.7559523582458496,
+    "Sat": 0.5490195751190186,
+    "Value": 1,
+    "Rainbow": false,
+    "Notch": 6,
+    "CustomColor": false
+  },
+  "FavouritesOrder": []
+}
