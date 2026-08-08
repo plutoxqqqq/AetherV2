@@ -1028,7 +1028,7 @@ components = {
 		label.Parent = bkg
 		addCorner(label, UDim.new(0, 4))
 		optionsettings.Function = optionsettings.Function or function() end
-		
+
 		button.MouseEnter:Connect(function()
 			tween:Tween(bkg, uipallet.Tween, {
 				BackgroundColor3 = color.Light(uipallet.Main, 0.0875)
@@ -1058,7 +1058,7 @@ components = {
 			Rainbow = false,
 			Index = 0
 		}
-		
+
 		local function createSlider(name, gradientColor)
 			local slider = Instance.new('TextButton')
 			slider.Name = optionsettings.Name..'Slider'..name
@@ -1112,7 +1112,7 @@ components = {
 			knob.BackgroundColor3 = uipallet.Text
 			knob.Parent = knobholder
 			addCorner(knob, UDim.new(1, 0))
-		
+
 			slider.InputBegan:Connect(function(inputObj)
 				if
 					(inputObj.UserInputType == Enum.UserInputType.MouseButton1 or inputObj.UserInputType == Enum.UserInputType.Touch)
@@ -1123,7 +1123,7 @@ components = {
 							optionapi:SetValue(nil, name == 'Saturation' and math.clamp((input.Position.X - bkg.AbsolutePosition.X) / bkg.AbsoluteSize.X, 0, 1) or nil, name == 'Vibrance' and math.clamp((input.Position.X - bkg.AbsolutePosition.X) / bkg.AbsoluteSize.X, 0, 1) or nil, name == 'Opacity' and math.clamp((input.Position.X - bkg.AbsolutePosition.X) / bkg.AbsoluteSize.X, 0, 1) or nil)
 						end
 					end)
-		
+
 					local ended
 					ended = inputObj.Changed:Connect(function()
 						if inputObj.UserInputState == Enum.UserInputState.End then
@@ -1143,10 +1143,10 @@ components = {
 					Size = UDim2.fromOffset(14, 14)
 				})
 			end)
-		
+
 			return slider
 		end
-		
+
 		local slider = Instance.new('TextButton')
 		slider.Name = optionsettings.Name..'Slider'
 		slider.Size = UDim2.new(1, 0, 0, 50)
@@ -1276,7 +1276,7 @@ components = {
 			ColorSequenceKeypoint.new(0, color.Dark(uipallet.Main, 0.02)),
 			ColorSequenceKeypoint.new(1, Color3.fromHSV(optionapi.Hue, optionapi.Sat, optionapi.Value))
 		}))
-		
+
 		function optionapi:Save(tab)
 			tab[optionsettings.Name] = {
 				Hue = self.Hue,
@@ -1286,7 +1286,7 @@ components = {
 				Rainbow = self.Rainbow
 			}
 		end
-		
+
 		function optionapi:Load(tab)
 			-- A colour saved back when the accent was teal and never touched since is
 			-- brought forward to the current accent. Only options that take their default
@@ -1319,7 +1319,7 @@ components = {
 				ColorSequenceKeypoint.new(0, color.Dark(uipallet.Main, 0.02)),
 				ColorSequenceKeypoint.new(1, Color3.fromHSV(self.Hue, self.Sat, self.Value))
 			})
-		
+
 			if self.Rainbow then
 				fill.Size = UDim2.fromScale(math.clamp(self.Hue, 0.04, 0.96), 1)
 			else
@@ -1327,7 +1327,7 @@ components = {
 					Size = UDim2.fromScale(math.clamp(self.Hue, 0.04, 0.96), 1)
 				})
 			end
-		
+
 			if s then
 				tween:Tween(satSlider.Slider.Fill, uipallet.Tween, {
 					Size = UDim2.fromScale(math.clamp(self.Sat, 0.04, 0.96), 1)
@@ -1343,10 +1343,10 @@ components = {
 					Size = UDim2.fromScale(math.clamp(self.Opacity, 0.04, 0.96), 1)
 				})
 			end
-		
+
 			optionsettings.Function(self.Hue, self.Sat, self.Value, self.Opacity)
 		end
-		
+
 		function optionapi:Toggle()
 			self.Rainbow = not self.Rainbow
 			if self.Rainbow then
@@ -1376,7 +1376,7 @@ components = {
 				end)
 			end
 		end
-		
+
 		local doubleClick = tick()
 		preview.MouseButton1Click:Connect(function()
 			preview.Visible = false
@@ -1399,7 +1399,7 @@ components = {
 						optionapi:SetValue(math.clamp((input.Position.X - bkg.AbsolutePosition.X) / bkg.AbsoluteSize.X, 0, 1))
 					end
 				end)
-		
+
 				local ended
 				ended = inputObj.Changed:Connect(function()
 					if inputObj.UserInputState == Enum.UserInputState.End then
@@ -1459,10 +1459,10 @@ components = {
 				end
 			end
 		end)
-		
+
 		optionapi.Object = slider
 		api.Options[optionsettings.Name] = optionapi
-		
+
 		return optionapi
 	end,
 	Dropdown = function(optionsettings, children, api)
@@ -1471,7 +1471,7 @@ components = {
 			Value = optionsettings.List[1] or 'None',
 			Index = 0
 		}
-		
+
 		local dropdown = Instance.new('TextButton')
 		dropdown.Name = optionsettings.Name..'Dropdown'
 		dropdown.Size = UDim2.new(1, 0, 0, 40)
@@ -1520,24 +1520,24 @@ components = {
 		arrow.Parent = button
 		optionsettings.Function = optionsettings.Function or function() end
 		local dropdownchildren
-		
+
 		function optionapi:Save(tab)
 			tab[optionsettings.Name] = {Value = self.Value}
 		end
-		
+
 		function optionapi:Load(tab)
 			if self.Value ~= tab.Value then
 				self:SetValue(tab.Value)
 			end
 		end
-		
+
 		function optionapi:Change(list)
 			optionsettings.List = list or {}
 			if not table.find(optionsettings.List, self.Value) then
 				self:SetValue(self.Value)
 			end
 		end
-		
+
 		function optionapi:SetValue(val, mouse)
 			self.Value = table.find(optionsettings.List, val) and val or optionsettings.List[1] or 'None'
 			title.Text = '         '..optionsettings.Name..' - '..self.Value
@@ -1549,7 +1549,7 @@ components = {
 			end
 			optionsettings.Function(self.Value, mouse)
 		end
-		
+
 		button.MouseButton1Click:Connect(function()
 			if not dropdownchildren then
 				arrow.Rotation = 270
@@ -1606,10 +1606,10 @@ components = {
 				BackgroundColor3 = color.Light(uipallet.Main, 0.034)
 			})
 		end)
-		
+
 		optionapi.Object = dropdown
 		api.Options[optionsettings.Name] = optionapi
-		
+
 		return optionapi
 	end,
 	Font = function(optionsettings, children, api)
@@ -1622,12 +1622,12 @@ components = {
 				table.insert(fonts, v.Name)
 			end
 		end
-		
+
 		local optionapi = {Value = Font.fromEnum(Enum.Font[fonts[1]])}
 		local fontdropdown
 		local fontbox
 		optionsettings.Function = optionsettings.Function or function() end
-		
+
 		fontdropdown = components.Dropdown({
 			Name = optionsettings.Name,
 			List = fonts,
@@ -1661,11 +1661,11 @@ components = {
 			Visible = false,
 			Darker = true
 		}, children, api)
-		
+
 		fontdropdown.Object:GetPropertyChangedSignal('Visible'):Connect(function()
 			fontbox.Object.Visible = fontdropdown.Object.Visible and fontdropdown.Value == 'Custom'
 		end)
-		
+
 		return optionapi
 	end,
 	Slider = function(optionsettings, children, api)
@@ -1675,7 +1675,7 @@ components = {
 			Max = optionsettings.Max,
 			Index = getTableSize(api.Options)
 		}
-		
+
 		local slider = Instance.new('TextButton')
 		slider.Name = optionsettings.Name..'Slider'
 		slider.Size = UDim2.new(1, 0, 0, 50)
@@ -1752,26 +1752,26 @@ components = {
 		addCorner(knob, UDim.new(1, 0))
 		optionsettings.Function = optionsettings.Function or function() end
 		optionsettings.Decimal = optionsettings.Decimal or 1
-		
+
 		function optionapi:Save(tab)
 			tab[optionsettings.Name] = {
 				Value = self.Value,
 				Max = self.Max
 			}
 		end
-		
+
 		function optionapi:Load(tab)
 			local newval = tab.Value == tab.Max and tab.Max ~= self.Max and self.Max or tab.Value
 			if self.Value ~= newval then
 				self:SetValue(newval, nil, true)
 			end
 		end
-		
+
 		function optionapi:Color(hue, sat, val, rainbowcheck)
 			fill.BackgroundColor3 = rainbowcheck and Color3.fromHSV(mainapi:Color((hue - (self.Index * 0.075)) % 1)) or Color3.fromHSV(hue, sat, val)
 			knob.BackgroundColor3 = fill.BackgroundColor3
 		end
-		
+
 		function optionapi:SetValue(value, pos, final)
 			if tonumber(value) == math.huge or value ~= value then return end
 			local check = self.Value ~= value
@@ -1784,7 +1784,7 @@ components = {
 				optionsettings.Function(value, final)
 			end
 		end
-		
+
 		slider.InputBegan:Connect(function(inputObj)
 			if
 				(inputObj.UserInputType == Enum.UserInputType.MouseButton1 or inputObj.UserInputType == Enum.UserInputType.Touch)
@@ -1794,7 +1794,7 @@ components = {
 				optionapi:SetValue(math.floor((optionsettings.Min + (optionsettings.Max - optionsettings.Min) * newPosition) * optionsettings.Decimal) / optionsettings.Decimal, newPosition)
 				local lastValue = optionapi.Value
 				local lastPosition = newPosition
-		
+
 				local changed = inputService.InputChanged:Connect(function(input)
 					if input.UserInputType == (inputObj.UserInputType == Enum.UserInputType.MouseButton1 and Enum.UserInputType.MouseMovement or Enum.UserInputType.Touch) then
 						local newPosition = math.clamp((input.Position.X - bkg.AbsolutePosition.X) / bkg.AbsoluteSize.X, 0, 1)
@@ -1803,7 +1803,7 @@ components = {
 						lastPosition = newPosition
 					end
 				end)
-		
+
 				local ended
 				ended = inputObj.Changed:Connect(function()
 					if inputObj.UserInputState == Enum.UserInputState.End then
@@ -1816,7 +1816,7 @@ components = {
 						optionapi:SetValue(lastValue, lastPosition, true)
 					end
 				end)
-		
+
 			end
 		end)
 		slider.MouseEnter:Connect(function()
@@ -1842,10 +1842,10 @@ components = {
 				optionapi:SetValue(tonumber(valuebox.Text), nil, true)
 			end
 		end)
-		
+
 		optionapi.Object = slider
 		api.Options[optionsettings.Name] = optionapi
-		
+
 		return optionapi
 	end,
 	Targets = function(optionsettings, children, api)
@@ -1853,7 +1853,7 @@ components = {
 			Type = 'Targets',
 			Index = getTableSize(api.Options)
 		}
-		
+
 		local textlist = Instance.new('TextButton')
 		textlist.Name = 'Targets'
 		textlist.Size = UDim2.new(1, 0, 0, 50)
@@ -1942,7 +1942,7 @@ components = {
 		title.Parent = window
 		local close = addCloseButton(window)
 		optionsettings.Function = optionsettings.Function or function() end
-		
+
 		function optionapi:Save(tab)
 			tab.Targets = {
 				Players = self.Players.Enabled,
@@ -1951,7 +1951,7 @@ components = {
 				Walls = self.Walls.Enabled
 			}
 		end
-		
+
 		function optionapi:Load(tab)
 			if self.Players.Enabled ~= tab.Players then
 				self.Players:Toggle()
@@ -1966,7 +1966,7 @@ components = {
 				self.Walls:Toggle()
 			end
 		end
-		
+
 		function optionapi:Color(hue, sat, val, rainbowcheck)
 			bkg.BackgroundColor3 = rainbowcheck and Color3.fromHSV(mainapi:Color((hue - (self.Index * 0.075)) % 1)) or Color3.fromHSV(hue, sat, val)
 			if self.Players.Enabled then
@@ -1986,7 +1986,7 @@ components = {
 				self.Walls.Object.Knob.BackgroundColor3 = Color3.fromHSV(hue, sat, val)
 			end
 		end
-		
+
 		optionapi.Players = components.TargetsButton({
 			Position = UDim2.fromOffset(11, 45),
 			Icon = getcustomasset('aetherv2/assets/new/targetplayers1.png'),
@@ -2049,7 +2049,7 @@ components = {
 		if optionsettings.Walls then
 			optionapi.Walls:Toggle()
 		end
-		
+
 		close.MouseButton1Click:Connect(function()
 			window.Visible = false
 		end)
@@ -2083,12 +2083,12 @@ components = {
 
 		optionapi.Object = textlist
 		api.Options.Targets = optionapi
-		
+
 		return optionapi
 	end,
 	TargetsButton = function(optionsettings, children, api)
 		local optionapi = {Enabled = false}
-		
+
 		local targetbutton = Instance.new('TextButton')
 		targetbutton.Size = UDim2.fromOffset(98, 31)
 		targetbutton.Position = optionsettings.Position
@@ -2115,7 +2115,7 @@ components = {
 		icon.Parent = bkg
 		optionsettings.Function = optionsettings.Function or function() end
 		local tooltipicon
-		
+
 		function optionapi:Toggle()
 			self.Enabled = not self.Enabled
 			tween:Tween(bkg, uipallet.Tween, {
@@ -2137,7 +2137,7 @@ components = {
 			end
 			optionsettings.Function(self.Enabled)
 		end
-		
+
 		targetbutton.MouseEnter:Connect(function()
 			if not optionapi.Enabled then
 				tween:Tween(bkg, uipallet.Tween, {
@@ -2161,9 +2161,9 @@ components = {
 		targetbutton.MouseButton1Click:Connect(function()
 			optionapi:Toggle()
 		end)
-		
+
 		optionapi.Object = targetbutton
-		
+
 		return optionapi
 	end,
 	TextBox = function(optionsettings, children, api)
@@ -2172,7 +2172,7 @@ components = {
 			Value = optionsettings.Default or '',
 			Index = 0
 		}
-		
+
 		local textbox = Instance.new('TextButton')
 		textbox.Name = optionsettings.Name..'TextBox'
 		textbox.Size = UDim2.new(1, 0, 0, 58)
@@ -2214,23 +2214,23 @@ components = {
 		box.ClearTextOnFocus = false
 		box.Parent = bkg
 		optionsettings.Function = optionsettings.Function or function() end
-		
+
 		function optionapi:Save(tab)
 			tab[optionsettings.Name] = {Value = self.Value}
 		end
-		
+
 		function optionapi:Load(tab)
 			if self.Value ~= tab.Value then
 				self:SetValue(tab.Value)
 			end
 		end
-		
+
 		function optionapi:SetValue(val, enter)
 			self.Value = val
 			box.Text = val
 			optionsettings.Function(enter)
 		end
-		
+
 		textbox.MouseButton1Click:Connect(function()
 			box:CaptureFocus()
 		end)
@@ -2240,10 +2240,10 @@ components = {
 		box:GetPropertyChangedSignal('Text'):Connect(function()
 			optionapi:SetValue(box.Text)
 		end)
-		
+
 		optionapi.Object = textbox
 		api.Options[optionsettings.Name] = optionapi
-		
+
 		return optionapi
 	end,
 	TextList = function(optionsettings, children, api)
@@ -2256,7 +2256,7 @@ components = {
 			Index = getTableSize(api.Options)
 		}
 		optionsettings.Color = optionsettings.Color or Color3.fromRGB(190, 115, 255)
-		
+
 		local textlist = Instance.new('TextButton')
 		textlist.Name = optionsettings.Name..'TextList'
 		textlist.Size = UDim2.new(1, 0, 0, 50)
@@ -2381,26 +2381,26 @@ components = {
 		addbutton.ImageTransparency = 0.3
 		addbutton.Parent = addbkg
 		optionsettings.Function = optionsettings.Function or function() end
-		
+
 		function optionapi:Save(tab)
 			tab[optionsettings.Name] = {
 				List = self.List,
 				ListEnabled = self.ListEnabled
 			}
 		end
-		
+
 		function optionapi:Load(tab)
 			self.List = tab.List or {}
 			self.ListEnabled = tab.ListEnabled or {}
 			self:ChangeValue()
 		end
-		
+
 		function optionapi:Color(hue, sat, val, rainbowcheck)
 			if window.Visible then
 				bkg.BackgroundColor3 = rainbowcheck and Color3.fromHSV(mainapi:Color((hue - (self.Index * 0.075)) % 1)) or Color3.fromHSV(hue, sat, val)
 			end
 		end
-		
+
 		function optionapi:ChangeValue(val)
 			if val then
 				local ind = table.find(self.List, val)
@@ -2415,7 +2415,7 @@ components = {
 					table.insert(self.ListEnabled, val)
 				end
 			end
-		
+
 			optionsettings.Function(self.List)
 			for _, v in self.Objects do
 				v:Destroy()
@@ -2423,14 +2423,14 @@ components = {
 			table.clear(self.Objects)
 			window.Size = UDim2.fromOffset(220, 85 + (#self.List * 35))
 			amount.Text = #self.List
-		
+
 			local enabledtext = 'None'
 			for i, v in self.ListEnabled do
 				if i == 1 then enabledtext = '' end
 				enabledtext = enabledtext..(i == 1 and v or ', '..v)
 			end
 			items.Text = enabledtext
-		
+
 			for i, v in self.List do
 				local enabled = table.find(self.ListEnabled, v)
 				local object = Instance.new('TextButton')
@@ -2485,7 +2485,7 @@ components = {
 				close.ImageTransparency = 0.5
 				close.Parent = object
 				addCorner(close, UDim.new(1, 0))
-		
+
 				close.MouseEnter:Connect(function()
 					close.ImageTransparency = 0.3
 					tween:Tween(close, uipallet.Tween, {
@@ -2518,21 +2518,21 @@ components = {
 						objectdot.BackgroundColor3 = optionsettings.Color
 						objectdotin.BackgroundColor3 = optionsettings.Color
 					end
-		
+
 					local enabledtext = 'None'
 					for i, v in self.ListEnabled do
 						if i == 1 then enabledtext = '' end
 						enabledtext = enabledtext..(i == 1 and v or ', '..v)
 					end
-		
+
 					items.Text = enabledtext
 					optionsettings.Function()
 				end)
-		
+
 				table.insert(self.Objects, object)
 			end
 		end
-		
+
 		addbutton.MouseEnter:Connect(function()
 			addbutton.ImageTransparency = 0
 		end)
@@ -2590,13 +2590,13 @@ components = {
 			local actualPosition = (textlist.AbsolutePosition - (api.Panel and api.Panel.AbsolutePosition or -guiService:GetGuiInset())) / scale.Scale
 			window.Position = UDim2.fromOffset(actualPosition.X + 220, actualPosition.Y)
 		end)
-		
+
 		if optionsettings.Default then
 			optionapi:ChangeValue()
 		end
 		optionapi.Object = textlist
 		api.Options[optionsettings.Name] = optionapi
-		
+
 		return optionapi
 	end,
 	Toggle = function(optionsettings, children, api)
@@ -2605,7 +2605,7 @@ components = {
 			Enabled = false,
 			Index = getTableSize(api.Options)
 		}
-		
+
 		local hovered = false
 		local toggle = Instance.new('TextButton')
 		toggle.Name = optionsettings.Name..'Toggle'
@@ -2634,24 +2634,24 @@ components = {
 		knob.BackgroundColor3 = uipallet.Main
 		knob.Parent = knobholder
 		optionsettings.Function = optionsettings.Function or function() end
-		
+
 		function optionapi:Save(tab)
 			tab[optionsettings.Name] = {Enabled = self.Enabled}
 		end
-		
+
 		function optionapi:Load(tab)
 			if self.Enabled ~= tab.Enabled then
 				self:Toggle()
 			end
 		end
-		
+
 		function optionapi:Color(hue, sat, val, rainbowcheck)
 			if self.Enabled then
 				tween:Cancel(knobholder)
 				knobholder.BackgroundColor3 = rainbowcheck and Color3.fromHSV(mainapi:Color((hue - (self.Index * 0.075)) % 1)) or Color3.fromHSV(hue, sat, val)
 			end
 		end
-		
+
 		function optionapi:Toggle()
 			self.Enabled = not self.Enabled
 			local rainbowcheck = mainapi.GUIColor.Rainbow and mainapi.RainbowMode.Value ~= 'Retro'
@@ -2667,10 +2667,10 @@ components = {
 				if shared.VapeDeveloper then
 					mainapi:CreateNotification('AetherV2', 'gui error: '.. err, 15, 'warning')
 					task.defer(error, err)
-				end	
+				end
 			end)
 		end
-		
+
 		toggle.MouseEnter:Connect(function()
 			hovered = true
 			if not optionapi.Enabled then
@@ -2696,7 +2696,7 @@ components = {
 		end
 		optionapi.Object = toggle
 		api.Options[optionsettings.Name] = optionapi
-		
+
 		return optionapi
 	end,
 	TwoSlider = function(optionsettings, children, api)
@@ -2707,7 +2707,7 @@ components = {
 			Max = optionsettings.Max,
 			Index = getTableSize(api.Options)
 		}
-		
+
 		local slider = Instance.new('TextButton')
 		slider.Name = optionsettings.Name..'Slider'
 		slider.Size = UDim2.new(1, 0, 0, 50)
@@ -2806,11 +2806,11 @@ components = {
 		optionsettings.Function = optionsettings.Function or function() end
 		optionsettings.Decimal = optionsettings.Decimal or 1
 		local random = Random.new()
-		
+
 		function optionapi:Save(tab)
 			tab[optionsettings.Name] = {ValueMin = self.ValueMin, ValueMax = self.ValueMax}
 		end
-		
+
 		function optionapi:Load(tab)
 			if self.ValueMin ~= tab.ValueMin then
 				self:SetValue(false, tab.ValueMin)
@@ -2819,17 +2819,17 @@ components = {
 				self:SetValue(true, tab.ValueMax)
 			end
 		end
-		
+
 		function optionapi:Color(hue, sat, val, rainbowcheck)
 			fill.BackgroundColor3 = rainbowcheck and Color3.fromHSV(mainapi:Color((hue - (self.Index * 0.075)) % 1)) or Color3.fromHSV(hue, sat, val)
 			knob.ImageColor3 = fill.BackgroundColor3
 			knobholdermax.Knob.ImageColor3 = fill.BackgroundColor3
 		end
-		
+
 		function optionapi:GetRandomValue()
 			return random:NextNumber(optionapi.ValueMin, optionapi.ValueMax)
 		end
-		
+
 		function optionapi:SetValue(max, value)
 			if tonumber(value) == math.huge or value ~= value then return end
 			self[max and 'ValueMax' or 'ValueMin'] = value
@@ -2841,7 +2841,7 @@ components = {
 				Size = UDim2.fromScale(math.clamp(math.clamp(math.clamp(self.ValueMax / optionsettings.Max, 0.04, 0.96), 0.04, 0.96) - size, 0, 1), 1)
 			})
 		end
-		
+
 		knobholder.MouseEnter:Connect(function()
 			tween:Tween(knob, uipallet.Tween, {
 				Size = UDim2.fromOffset(11, 18)
@@ -2870,14 +2870,14 @@ components = {
 				local maxCheck = (inputObj.Position.X - knobholdermax.AbsolutePosition.X) > -10
 				local newPosition = math.clamp((inputObj.Position.X - bkg.AbsolutePosition.X) / bkg.AbsoluteSize.X, 0, 1)
 				optionapi:SetValue(maxCheck, math.floor((optionsettings.Min + (optionsettings.Max - optionsettings.Min) * newPosition) * optionsettings.Decimal) / optionsettings.Decimal, newPosition)
-		
+
 				local changed = inputService.InputChanged:Connect(function(input)
 					if input.UserInputType == (inputObj.UserInputType == Enum.UserInputType.MouseButton1 and Enum.UserInputType.MouseMovement or Enum.UserInputType.Touch) then
 						local newPosition = math.clamp((input.Position.X - bkg.AbsolutePosition.X) / bkg.AbsoluteSize.X, 0, 1)
 						optionapi:SetValue(maxCheck, math.floor((optionsettings.Min + (optionsettings.Max - optionsettings.Min) * newPosition) * optionsettings.Decimal) / optionsettings.Decimal, newPosition)
 					end
 				end)
-		
+
 				local ended
 				ended = inputObj.Changed:Connect(function()
 					if inputObj.UserInputState == Enum.UserInputState.End then
@@ -2917,10 +2917,10 @@ components = {
 				optionapi:SetValue(false, tonumber(valuebox2.Text))
 			end
 		end)
-		
+
 		optionapi.Object = slider
 		api.Options[optionsettings.Name] = optionapi
-		
+
 		return optionapi
 	end,
 	Divider = function(children, text)
@@ -5147,6 +5147,118 @@ function mainapi:CreateOverlay(categorysettings)
 	return categoryapi
 end
 
+function mainapi:CreateConfigSubmissions(dl)
+-- Submission writes require a backend: Roblox clients cannot safely hold repository
+-- credentials. Set getgenv().AetherConfigBackend or configbackend.txt to the service URL.
+-- The backend contract is POST /submissions, GET /submissions?status=pending, and
+-- PATCH /submissions/:id. Maintainer PATCH/GET calls include the locally stored admin key.
+local submissionMaintainers = {plutoxqqqqq = true}
+local requestFunction = request or http_request or (syn and syn.request)
+local function backendURL()
+	local configured = getgenv and getgenv().AetherConfigBackend
+	if (not configured or configured == '') and isfile('aetherv2/profiles/configbackend.txt') then
+		configured = readfile('aetherv2/profiles/configbackend.txt')
+	end
+	return type(configured) == 'string' and configured:gsub('/+$', '') or ''
+end
+local function backendRequest(method, route, body, admin)
+	local base = backendURL()
+	if base == '' or not requestFunction then return false, 'A config backend has not been configured.' end
+	local headers = {['Content-Type'] = 'application/json'}
+	if admin then
+		local key = isfile('aetherv2/profiles/configadminkey.txt') and readfile('aetherv2/profiles/configadminkey.txt') or ''
+		if key == '' then return false, 'The maintainer key is missing.' end
+		headers.Authorization = 'Bearer '..key
+	end
+	local ok, response = pcall(requestFunction, {
+		Url = base..route,
+		Method = method,
+		Headers = headers,
+		Body = body and httpService:JSONEncode(body) or nil
+	})
+	if not ok or type(response) ~= 'table' then return false, 'The config backend could not be reached.' end
+	local status = tonumber(response.StatusCode or response.Status) or 0
+	local decoded = response.Body and select(2, pcall(httpService.JSONDecode, httpService, response.Body))
+	return status >= 200 and status < 300, decoded or response.Body or ('HTTP '..status)
+end
+
+local footer = Instance.new('Frame')
+footer.Name = 'SubmissionActions'
+footer.Size, footer.Position, footer.BackgroundTransparency, footer.Parent = UDim2.new(1, -20, 0, 32), UDim2.new(0, 10, 1, -38), 1, dl
+local function submissionButton(name, text, position, width, parent)
+	local button = Instance.new('TextButton')
+	button.Name, button.Size, button.Position = name, UDim2.fromOffset(width, 28), position
+	button.BackgroundColor3 = color.Light(uipallet.Main, 0.05)
+	button.Text, button.TextColor3, button.TextSize, button.FontFace = text, uipallet.Text, 12, uipallet.Font
+	button.Parent = parent or footer
+	addCorner(button, UDim.new(0, 5))
+	return button
+end
+local submitConfig = submissionButton('SubmitConfig', 'Submit current', UDim2.new(1, -118, 0, 0), 118)
+addTooltip(submitConfig, 'Submits the active config for in-game review')
+submitConfig.MouseButton1Click:Connect(function()
+	mainapi:Save(mainapi.Profile)
+	local path = getConfigPath(mainapi.Profile)
+	if not isfile(path) then return end
+	local player = game:GetService('Players').LocalPlayer
+	local ok, response = backendRequest('POST', '/submissions', {
+		name = mainapi.Profile,
+		submitter = player.Name,
+		userId = player.UserId,
+		config = select(2, pcall(httpService.JSONDecode, httpService, readfile(path)))
+	})
+	mainapi:CreateNotification('Configs', ok and 'Config submitted for review.' or tostring(response), 8, ok and 'info' or 'alert')
+end)
+
+local username = game:GetService('Players').LocalPlayer.Name
+if submissionMaintainers[username] then
+	local reviewWindow = Instance.new('Frame')
+	reviewWindow.Name, reviewWindow.Size, reviewWindow.Position = 'ConfigReview', UDim2.fromOffset(440, 350), UDim2.new(0.5, -220, 0.5, -175)
+	reviewWindow.BackgroundColor3, reviewWindow.Visible, reviewWindow.Parent = uipallet.Main, false, scaledgui
+	addBlur(reviewWindow); addCorner(reviewWindow); addWindowStroke(reviewWindow); makeDraggable(reviewWindow)
+	local reviewTitle = Instance.new('TextLabel')
+	reviewTitle.Size, reviewTitle.Position, reviewTitle.BackgroundTransparency = UDim2.new(1, -50, 0, 40), UDim2.fromOffset(14, 0), 1
+	reviewTitle.Text, reviewTitle.TextColor3, reviewTitle.TextSize, reviewTitle.FontFace = 'Pending Configs', uipallet.Text, 14, uipallet.FontSemiBold
+	reviewTitle.TextXAlignment, reviewTitle.Parent = Enum.TextXAlignment.Left, reviewWindow
+	local reviewClose = addCloseButton(reviewWindow)
+	reviewClose.MouseButton1Click:Connect(function() reviewWindow.Visible = false end)
+	local reviewList = Instance.new('ScrollingFrame')
+	reviewList.Size, reviewList.Position = UDim2.new(1, -20, 1, -52), UDim2.fromOffset(10, 44)
+	reviewList.BackgroundTransparency, reviewList.ScrollBarThickness, reviewList.CanvasSize, reviewList.Parent = 1, 2, UDim2.new(), reviewWindow
+	local reviewLayout = Instance.new('UIListLayout')
+	reviewLayout.Padding, reviewLayout.Parent = UDim.new(0, 6), reviewList
+	reviewLayout:GetPropertyChangedSignal('AbsoluteContentSize'):Connect(function() reviewList.CanvasSize = UDim2.fromOffset(0, reviewLayout.AbsoluteContentSize.Y / scale.Scale) end)
+	table.insert(mainapi.Windows, reviewWindow)
+	local function refreshReviews()
+		for _, child in reviewList:GetChildren() do if child:IsA('Frame') then child:Destroy() end end
+		local ok, response = backendRequest('GET', '/submissions?status=pending', nil, true)
+		if not ok then mainapi:CreateNotification('Configs', tostring(response), 8, 'alert'); return end
+		local submissions = type(response) == 'table' and (response.submissions or response) or {}
+		for _, submission in submissions do
+			local row = Instance.new('Frame')
+			row.Size, row.BackgroundColor3, row.Parent = UDim2.new(1, 0, 0, 48), color.Light(uipallet.Main, 0.02), reviewList
+			addCorner(row)
+			local label = Instance.new('TextLabel')
+			label.Size, label.Position, label.BackgroundTransparency = UDim2.new(1, -150, 1, 0), UDim2.fromOffset(10, 0), 1
+			label.Text, label.TextColor3, label.TextSize, label.FontFace = tostring(submission.name or 'Config')..' — '..tostring(submission.submitter or '?'), uipallet.Text, 12, uipallet.Font
+			label.TextXAlignment, label.Parent = Enum.TextXAlignment.Left, row
+			local function decide(action, x, text)
+				local button = submissionButton(action, text, UDim2.new(1, x, 0.5, -14), 62, row)
+				button.AnchorPoint = Vector2.new(1, 0)
+				button.MouseButton1Click:Connect(function()
+					local success, result = backendRequest('PATCH', '/submissions/'..httpService:UrlEncode(tostring(submission.id)), {action = action}, true)
+					mainapi:CreateNotification('Configs', success and ('Submission '..action..'ed.') or tostring(result), 7, success and 'info' or 'alert')
+					if success then refreshReviews() end
+				end)
+			end
+			decide('accept', -76, 'Accept'); decide('reject', -8, 'Reject')
+		end
+	end
+	local review = submissionButton('ReviewConfigs', 'Review', UDim2.fromOffset(0, 0), 72)
+	review.MouseButton1Click:Connect(function() reviewWindow.Visible = true; refreshReviews() end)
+end
+end
+
 function mainapi:CreateCategoryList(categorysettings)
 	local displayName = categorysettings.DisplayName or categorysettings.Name
 	local categoryapi = {
@@ -5261,7 +5373,7 @@ function mainapi:CreateCategoryList(categorysettings)
 		downloadbtn.Image = getcustomasset('aetherv2/assets/new/worldicon.png')
 		downloadbtn.ImageColor3 = color.Dark(uipallet.Text, 0.43)
 		downloadbtn.Parent = window
-		addTooltip(downloadbtn, 'Browse the configs in the repo')
+		addTooltip(downloadbtn, 'Browse public configs')
 		downloadbtn.MouseEnter:Connect(function() downloadbtn.ImageColor3 = uipallet.Text end)
 		downloadbtn.MouseLeave:Connect(function() downloadbtn.ImageColor3 = color.Dark(uipallet.Text, 0.43) end)
 
@@ -5285,7 +5397,7 @@ function mainapi:CreateCategoryList(categorysettings)
 		dltitle.Size = UDim2.new(1, -20, 0, 20)
 		dltitle.Position = UDim2.fromOffset(16, 12)
 		dltitle.BackgroundTransparency = 1
-		dltitle.Text = 'Repo Configs'
+		dltitle.Text = 'Public Configs'
 		dltitle.TextXAlignment = Enum.TextXAlignment.Left
 		dltitle.TextColor3 = uipallet.Text
 		dltitle.TextSize = 14
@@ -5337,7 +5449,7 @@ function mainapi:CreateCategoryList(categorysettings)
 		dlstatus.Parent = dl
 		local dllist = Instance.new('ScrollingFrame')
 		dllist.Name = 'List'
-		dllist.Size = UDim2.new(1, -20, 1, -98)
+		dllist.Size = UDim2.new(1, -20, 1, -138)
 		dllist.Position = UDim2.fromOffset(10, 88)
 		dllist.BackgroundTransparency = 1
 		dllist.BorderSizePixel = 0
@@ -5354,6 +5466,7 @@ function mainapi:CreateCategoryList(categorysettings)
 		end)
 		table.insert(mainapi.Windows, dl)
 
+		self:CreateConfigSubmissions(dl)
 		-- Repaints the Load button of every row so exactly one of them reads Active.
 		local refreshRows
 		local downloading = {}
@@ -6200,7 +6313,7 @@ function mainapi:CreateWelcome()
 
 	for index, entry in {
 		{Heading = 'Open and close the menu', Body = 'Press '..table.concat(mainapi.Keybind, ' + '):upper()..'. Rebind it from the key next to the logo'},
-		{Heading = 'Configs live in the repo', Body = 'Profiles has a globe button that lists them, and loading one applies it right away'},
+		{Heading = 'Configs live in the repo', Body = 'Configs has a globe button that lists them, and loading one applies it right away'},
 		{Heading = 'Anything broken or missing', Body = 'discord.gg/aYu5c9v9zv, copied to your clipboard by the button below'}
 	} do
 		local row = Instance.new('Frame')
@@ -6817,7 +6930,7 @@ local function createPanel(config)
 	categoryhighlight.Size = UDim2.new()
 	legitapi.Window = window
 	table.insert(mainapi.Windows, window)
-	
+
 	local function updateCheck()
 		local FocusedCategory = ''
 		for _, v in legitapi.Categories do
@@ -6851,7 +6964,7 @@ local function createPanel(config)
 		children.MouseButton1Click:Connect(function()
 			category:SetVisible()
 		end)
-		
+
 		local sizex = textService:GetTextSize(children.Text, children.TextSize, children.Font, Vector2.new(1000, 1000)).X
 		children.Size = UDim2.new(0, sizex + 30, 1, 0)
 
@@ -7294,6 +7407,40 @@ function mainapi:CreateKits()
 	})
 end
 
+function mainapi:CreateChangelogs()
+	local api = {}
+	local window = Instance.new('Frame')
+	window.Name, window.Size, window.Position = 'ChangelogsGUI', UDim2.fromOffset(700, 389), UDim2.new(0.5, -350, 0.5, -194)
+	window.BackgroundColor3, window.Visible, window.Parent = uipallet.Main, false, scaledgui
+	addBlur(window); addCorner(window); makeDraggable(window)
+	local title = Instance.new('TextLabel')
+	title.Size, title.Position, title.BackgroundTransparency = UDim2.new(1, -47, 0, 40), UDim2.fromOffset(12, 0), 1
+	title.Text, title.TextColor3, title.TextSize, title.FontFace = 'Changelog — Latest Update', uipallet.Text, 14, uipallet.Font
+	title.TextXAlignment, title.Parent = Enum.TextXAlignment.Left, window
+	local close = addCloseButton(window)
+	local notes = Instance.new('ScrollingFrame')
+	notes.Size, notes.Position = UDim2.new(1, -20, 1, -60), UDim2.fromOffset(10, 50)
+	notes.BackgroundColor3, notes.BorderSizePixel, notes.ScrollBarThickness = color.Dark(uipallet.Main, 0.025), 0, 2
+	notes.AutomaticCanvasSize, notes.CanvasSize, notes.Parent = Enum.AutomaticSize.Y, UDim2.new(), window
+	addCorner(notes)
+	local body = Instance.new('TextLabel')
+	body.Size, body.Position, body.AutomaticSize = UDim2.new(1, -28, 0, 0), UDim2.fromOffset(14, 12), Enum.AutomaticSize.Y
+	body.BackgroundTransparency, body.RichText = 1, true
+	body.Text = [=[<b>BedWars</b>
+• Added AutoSheepHerder, AutoAdetunde, AutoZeno, AutoFish, and SkinChanger.
+• Updated ProjectileAimbot targeting and ProjectileAura projectile support.
+• Updated AutoShoot, Scaffold, AutoBuy, and SilentAim.
+• Added separate KillauraV2, BreakerV2, BlockInV2, and AutoClickerV2 modules.
+
+<b>Interface</b>
+• Added this changelog window, Public Configs access, and Hide Vape Button.]=]
+	body.TextColor3, body.TextSize, body.LineHeight = Color3.fromRGB(170, 170, 170), 13, 1.25
+	body.FontFace, body.TextXAlignment, body.TextYAlignment, body.TextWrapped, body.Parent = Font.fromEnum(Enum.Font.Roboto), Enum.TextXAlignment.Left, Enum.TextYAlignment.Top, true, notes
+	close.MouseButton1Click:Connect(function() window.Visible = false end)
+	function api:Open() window.Position = UDim2.new(0.5, -350, 0.5, -194); window.Visible = true; notes.CanvasPosition = Vector2.zero end
+	api.Window = window; self.Changelogs = api; return api
+end
+
 function mainapi:CreateNotification(title, text, duration, type)
 	if not self.Notifications.Enabled then return end
 	local color = type == 'alert' and Color3.fromRGB(250, 50, 56) or type == 'warning' and Color3.fromRGB(236, 129, 43) or Color3.fromRGB(220, 220, 220)
@@ -7513,7 +7660,7 @@ function mainapi:Load(skipgui, profile)
 		local savedata = loadJson(configPath)
 		if not savedata then
 			savedata = {Categories = {}, Modules = {}, Legit = {}, Kits = {}}
-			self:CreateNotification('AetherV2', 'Failed to load '..self.Profile..' profile.', 10, 'alert')
+			self:CreateNotification('AetherV2', 'Failed to load '..self.Profile..' config.', 10, 'alert')
 			savecheck = false
 		end
 
@@ -8526,6 +8673,7 @@ mainapi:Clean(targets.Update)
 
 mainapi:CreateLegit()
 mainapi:CreateKits()
+mainapi:CreateChangelogs()
 -- Route every `vape.Categories.Legit:CreateModule` / `vape.Categories.Kits:CreateModule`
 -- registration into the matching window (opened via its search-bar icon) instead of a
 -- category tab. Using __index (rather than real keys) keeps those modules working while
@@ -8565,6 +8713,7 @@ mainapi:CreateWelcome()
 ]]
 
 local general = mainapi.Categories.Main:CreateSettingsPane({Name = 'General'})
+general:CreateButton({Name = 'View changelog', Function = function() mainapi.Changelogs:Open() end, Tooltip = 'Shows what changed in the latest update'})
 local function reloadAether()
 	task.spawn(function()
 		shared.vapereload = true
@@ -8597,7 +8746,7 @@ general:CreateToggle({
 	Tooltip = 'Prevents AetherV2 from showing its startup loading screen'
 })
 general:CreateButton({
-	Name = 'Reset current profile',
+	Name = 'Reset current config',
 	Function = function()
 		configapi.ResetProfile()
 		reloadAether()
@@ -8795,6 +8944,15 @@ guipane:CreateToggle({
 	Tooltip = 'Toggles visibility of these'
 })
 guipane:CreateToggle({
+	Name = 'Hide Vape Button',
+	Default = isfile('aetherv2/profiles/hide.txt') and readfile('aetherv2/profiles/hide.txt') == 'true' or false,
+	Function = function(enabled)
+		if mainapi.VapeButton then mainapi.VapeButton.Visible = not enabled end
+		writefile('aetherv2/profiles/hide.txt', tostring(enabled))
+	end,
+	Tooltip = 'Hides only the launcher button that opens the GUI'
+})
+guipane:CreateToggle({
 	Name = 'Show legit mode',
 	Function = function(enabled)
 		clickgui.Search.Legit.Visible = enabled
@@ -8965,135 +9123,6 @@ mainapi.Categories.Main:CreateBind()
 --[[
 	Useful Overlays
 ]]
-
--- Target HUD: a live combat readout of the nearest enemy you are aiming at /
--- would attack (name, distance, and a colour-graded health bar). Genuinely useful
--- for aura/aim/bow modules, and degrades gracefully to "No target" when idle.
-do
-	local targethud
-	local nameLabel, distLabel, hpLabel, barBack, barFill
-	local lastUpdate = 0
-
-	local function getTarget()
-		local entitylib = mainapi.Libraries and mainapi.Libraries.entity
-		if not entitylib or not entitylib.List or not entitylib.character then return nil end
-		local origin = entitylib.character.RootPart and entitylib.character.RootPart.Position
-		if not origin then return nil end
-		local localTeam
-		pcall(function() localTeam = entitylib.character.Player and entitylib.character.Player.Team end)
-		local targetinfo = mainapi.Libraries.targetinfo
-		local best, bestScore
-		for _, v in entitylib.List do
-			if v == entitylib.character then continue end
-			if not (v.RootPart and v.Health and v.Health > 0) then continue end
-			local enemy = true
-			pcall(function()
-				if localTeam and v.Player and v.Player.Team == localTeam then enemy = false end
-			end)
-			if not enemy then continue end
-			local dist = (v.RootPart.Position - origin).Magnitude
-			-- Recently attacked entities get priority so the HUD tracks the real combat target.
-			local recent = targetinfo and targetinfo.Targets and targetinfo.Targets[v] and tick() < targetinfo.Targets[v]
-			local score = recent and -1000000 + dist or dist
-			if not bestScore or score < bestScore then
-				best, bestScore = v, score
-			end
-		end
-		if not best or bestScore > 300 then return nil end
-		return best, (best.RootPart.Position - origin).Magnitude
-	end
-
-	local function update()
-		pcall(function()
-			local target, dist = getTarget()
-			if target then
-				local name = 'Player'
-				pcall(function() name = target.Player and target.Player.DisplayName or target.Player and target.Player.Name or (target.Character and target.Character.Name) or 'Entity' end)
-				local hp = math.floor(target.Health or 0)
-				local maxhp = math.max(math.floor(target.MaxHealth or hp), 1)
-				local frac = math.clamp(hp / maxhp, 0, 1)
-				nameLabel.Text = name
-				distLabel.Text = string.format('%d studs', math.floor(dist or 0))
-				hpLabel.Text = hp..' / '..maxhp
-				tween:Tween(barFill, TweenInfo.new(0.12), {Size = UDim2.new(frac, 0, 1, 0)})
-				barFill.BackgroundColor3 = Color3.fromHSV(frac * 0.33, 0.72, 0.92)
-			else
-				nameLabel.Text = 'No target'
-				distLabel.Text = ''
-				hpLabel.Text = ''
-				barFill.Size = UDim2.new(0, 0, 1, 0)
-			end
-		end)
-	end
-
-	targethud = mainapi:CreateOverlay({
-		Name = 'Target HUD',
-		Icon = getcustomasset('aetherv2/assets/new/combaticon.png'),
-		Size = UDim2.fromOffset(13, 14),
-		Position = UDim2.fromOffset(12, 13),
-		CategorySize = 190,
-		Color = true,
-		Function = function(callback)
-			if callback then
-				update()
-				table.insert(targethud.Connections, runService.Heartbeat:Connect(function()
-					if os.clock() - lastUpdate > 0.1 then
-						lastUpdate = os.clock()
-						update()
-					end
-				end))
-			end
-		end
-	})
-	targethud.Object.Size = UDim2.fromOffset(190, 100)
-
-	nameLabel = Instance.new('TextLabel')
-	nameLabel.Name = 'Name'
-	nameLabel.Size = UDim2.new(1, -70, 0, 20)
-	nameLabel.Position = UDim2.fromOffset(10, 40)
-	nameLabel.BackgroundTransparency = 1
-	nameLabel.TextXAlignment = Enum.TextXAlignment.Left
-	nameLabel.TextTruncate = Enum.TextTruncate.AtEnd
-	nameLabel.Text = 'No target'
-	nameLabel.TextColor3 = uipallet.Text
-	nameLabel.TextSize = 13
-	nameLabel.FontFace = uipallet.Font
-	nameLabel.Parent = targethud.Object.CustomChildren
-
-	distLabel = nameLabel:Clone()
-	distLabel.Name = 'Distance'
-	distLabel.Size = UDim2.fromOffset(60, 20)
-	distLabel.Position = UDim2.new(1, -70, 0, 40)
-	distLabel.TextXAlignment = Enum.TextXAlignment.Right
-	distLabel.TextColor3 = color.Dark(uipallet.Text, 0.16)
-	distLabel.Text = ''
-	distLabel.Parent = targethud.Object.CustomChildren
-
-	barBack = Instance.new('Frame')
-	barBack.Name = 'HealthBack'
-	barBack.Size = UDim2.new(1, -20, 0, 8)
-	barBack.Position = UDim2.fromOffset(10, 68)
-	barBack.BackgroundColor3 = color.Dark(uipallet.Main, 0.04)
-	barBack.BorderSizePixel = 0
-	barBack.Parent = targethud.Object.CustomChildren
-	addCorner(barBack, UDim.new(1, 0))
-	barFill = Instance.new('Frame')
-	barFill.Name = 'HealthFill'
-	barFill.Size = UDim2.new(0, 0, 1, 0)
-	barFill.BackgroundColor3 = Color3.fromHSV(0.33, 0.72, 0.92)
-	barFill.BorderSizePixel = 0
-	barFill.Parent = barBack
-	addCorner(barFill, UDim.new(1, 0))
-	hpLabel = nameLabel:Clone()
-	hpLabel.Name = 'HP'
-	hpLabel.Size = UDim2.new(1, -20, 0, 14)
-	hpLabel.Position = UDim2.fromOffset(10, 79)
-	hpLabel.TextXAlignment = Enum.TextXAlignment.Right
-	hpLabel.TextColor3 = color.Dark(uipallet.Text, 0.16)
-	hpLabel.TextSize = 11
-	hpLabel.Text = ''
-	hpLabel.Parent = targethud.Object.CustomChildren
-end
 
 --[[
 	Text GUI
@@ -9589,6 +9618,73 @@ targetinfobcolor = targetinfoobj:CreateColorSlider({
 	Visible = false
 })
 
+local targetinfofollow = targetinfoobj:CreateToggle({
+	Name = 'Follow player',
+	Tooltip = 'Moves the HUD beside the entity currently being attacked while keeping both players visible',
+	Function = function(callback)
+		if not callback then
+			targetinfobkg.Position = UDim2.new()
+		end
+	end
+})
+
+local function updateTargetInfoPosition(target)
+	if not targetinfofollow.Enabled then return true end
+	if not target or not target.RootPart then
+		targetinfobkg.Position = UDim2.new()
+		return mainapi.gui.ScaledGui.ClickGui.Visible
+	end
+
+	local camera = workspace.CurrentCamera
+	if not camera then return false end
+	local targetPoint, visible = camera:WorldToViewportPoint(target.RootPart.Position + Vector3.new(0, 2.5, 0))
+	if not visible or targetPoint.Z <= 0 then return false end
+
+	local viewport = camera.ViewportSize
+	local localPoint = Vector2.new(viewport.X / 2, viewport.Y * 0.72)
+	local entitylib = mainapi.Libraries.entity
+	if entitylib and entitylib.character and entitylib.character.RootPart then
+		local projected, onScreen = camera:WorldToViewportPoint(entitylib.character.RootPart.Position + Vector3.new(0, 2.5, 0))
+		if onScreen and projected.Z > 0 then localPoint = Vector2.new(projected.X, projected.Y) end
+	end
+
+	local target2d = Vector2.new(targetPoint.X, targetPoint.Y)
+	local margin, half = 18, Vector2.new(120, 44.5)
+	local offsets = {
+		Vector2.new(half.X + 42, 0), Vector2.new(-half.X - 42, 0),
+		Vector2.new(0, half.Y + 58), Vector2.new(0, -half.Y - 58),
+		Vector2.new(half.X + 42, half.Y + 58), Vector2.new(half.X + 42, -half.Y - 58),
+		Vector2.new(-half.X - 42, half.Y + 58), Vector2.new(-half.X - 42, -half.Y - 58)
+	}
+	local function covers(center, point)
+		return math.abs(center.X - point.X) <= half.X + margin and math.abs(center.Y - point.Y) <= half.Y + margin
+	end
+	local best, bestScore
+	for _, offset in offsets do
+		local desired = target2d + offset
+		local center = Vector2.new(
+			math.clamp(desired.X, half.X + margin, viewport.X - half.X - margin),
+			math.clamp(desired.Y, half.Y + margin, viewport.Y - half.Y - margin)
+		)
+		-- A candidate is rejected, rather than merely penalised, if the HUD rectangle
+		-- intersects either combatant. On tiny viewports with no safe candidate the HUD
+		-- hides instead of covering the fight.
+		if not covers(center, target2d) and not covers(center, localPoint) then
+			local score = math.min((center - target2d).Magnitude, (center - localPoint).Magnitude) - ((center - desired).Magnitude * 2)
+			if not bestScore or score > bestScore then best, bestScore = center, score end
+		end
+	end
+	if not best then return false end
+
+	local parentPosition = targetinfoobj.Children.AbsolutePosition
+	local guiScale = scale and scale.Scale or 1
+	targetinfobkg.Position = UDim2.fromOffset(
+		(best.X - half.X - parentPosition.X) / guiScale,
+		(best.Y - half.Y - parentPosition.Y) / guiScale
+	)
+	return true
+end
+
 local lasthealth = 0
 local lastmaxhealth = 0
 targetinfo = {
@@ -9612,7 +9708,8 @@ targetinfo = {
 			end
 		end
 
-		targetinfobkg.Visible = v ~= nil or mainapi.gui.ScaledGui.ClickGui.Visible
+		local shouldDisplay = v ~= nil or mainapi.gui.ScaledGui.ClickGui.Visible
+		targetinfobkg.Visible = shouldDisplay and updateTargetInfoPosition(v)
 		if v then
 			targetinfoname.Text = v.Player and (targetinfodisplay.Enabled and v.Player.DisplayName or v.Player.Name) or v.Character and v.Character.Name or targetinfoname.Text
 			targetinfoshot.Image = 'rbxthumb://type=AvatarHeadShot&id='..(v.Player and v.Player.UserId or 1)..'&w=420&h=420'
@@ -9969,7 +10066,7 @@ local function keybindStart(inputObj)
 		if table.find(whitelist, inputObj.UserInputType) then
 			inputObj = convert(inputObj.UserInputType)
 		end
-		
+
 		table.insert(mainapi.HeldKeybinds, inputObj.KeyCode.Name)
 		if mainapi.Binding then return end
 
