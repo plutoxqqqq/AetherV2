@@ -24746,11 +24746,14 @@ run(function()
     local releasingDrops = {}
     local displayEntries = {}
 
-    -- Somewhere nothing else occupies, with the stash laid out on a grid so two drops never
-    -- share a position and shove each other around.
-    local BANK_ORIGIN = CFrame.new(1000, 100000, 1000)
-    local BANK_SPACING = 1200
-    local BANK_COLUMNS = 32
+    -- Keep the stash inside the local character's simulation radius. Parking drops at a fixed
+    -- Y=100000 eventually hands their network ownership back to the server; after that, changing
+    -- CFrame only moves the client's copy and PickupItem rejects it as still being out of range.
+    -- Following the player a few hundred studs overhead remains unreachable while preserving the
+    -- ownership needed to bring the server-authoritative drop back down later.
+    local BANK_HEIGHT = 300
+    local BANK_SPACING = 4
+    local BANK_COLUMNS = 8
 
     local function untrackDrop(drop)
         releasingDrops[drop] = nil
@@ -24807,6 +24810,11 @@ run(function()
     -- True while standing at a shop NPC, which is the cue to hand the stash back.
     local function atShop()
         if not entitylib.isAlive then return false end
+        local opened = false
+        pcall(function()
+            opened = bedwars.AppController:isAppOpen('BedwarsItemShopApp') or bedwars.AppController:isAppOpen('TeamUpgradeApp')
+        end)
+        if opened then return true end
         local position = entitylib.character.RootPart.Position
         for _, npc in store.shop do
             local root = npc.RootPart
@@ -24842,6 +24850,11 @@ run(function()
     -- goes out until we are genuinely stood at one, exactly as a player has to be.
     local function atPersonalChest()
         if not entitylib.isAlive then return false end
+        local opened = false
+        pcall(function()
+            opened = bedwars.AppController:isAppOpen('ChestApp')
+        end)
+        if opened then return true end
         local position = entitylib.character.RootPart.Position
         for _, chest in collectionService:GetTagged('personal-chest') do
             local part = chestPart(chest)
@@ -25021,11 +25034,14 @@ run(function()
                                 -- reclaim() and the skybox holder.
                                 drop.CFrame = entitylib.character.Head.CFrame
                             else
-                                drop.CFrame = BANK_ORIGIN + Vector3.new(
-                                    (index % BANK_COLUMNS) * BANK_SPACING,
-                                    0,
-                                    math.floor(index / BANK_COLUMNS) * BANK_SPACING
-                                )
+                                local root = entitylib.isAlive and entitylib.character.RootPart
+                                if root then
+                                    drop.CFrame = root.CFrame + Vector3.new(
+                                        ((index - 1) % BANK_COLUMNS) * BANK_SPACING,
+                                        BANK_HEIGHT,
+                                        math.floor((index - 1) / BANK_COLUMNS) * BANK_SPACING
+                                    )
+                                end
                             end
                         end
                     end
