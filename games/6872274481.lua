@@ -7886,7 +7886,11 @@ run(function()
 
     local function getAttackData()
         if Mouse.Enabled then
-            if not inputService:IsMouseButtonPressed(0) then return false end
+            -- A real click is released between swings, while the aura's hit cooldown can become
+            -- ready during that tiny gap. Keep the click valid for a fraction of a second after
+            -- the game's own swing so Require mouse down does not randomly miss those windows.
+            if not inputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1)
+                and (tick() - bedwars.SwordController.lastSwing) > 0.15 then return false end
         end
 
 		if GUI.Enabled then
@@ -24737,6 +24741,10 @@ run(function()
     local pendingDrops = {}
     local pendingReclaims = {}
     local displayEntries = {}
+    -- Resources explicitly withdrawn by clicking the display must not be deposited straight
+    -- back into the chest by the next AutoBank tick. They remain excluded until the player
+    -- walks away from the chest.
+    local manualWithdrawals = {}
 
     -- Somewhere nothing else occupies, with the stash laid out on a grid so two drops never
     -- share a position and shove each other around.
@@ -24751,8 +24759,8 @@ run(function()
         end
     end
 
-    -- Bring one drop back to the head and ask for it. The request is asynchronous, so the drop
-    -- is only untracked once the server has actually handed it over.
+    -- Bring one drop back to the head and ask for it. PickupItem only transfers one item from a
+    -- stacked drop per request, so keep requesting until the server removes the emptied drop.
     local function reclaim(drop)
         if not drop or not drop.Parent then
             untrackDrop(drop)
@@ -24769,13 +24777,20 @@ run(function()
         pendingReclaims[drop] = true
 
         local ok = pcall(function()
-            bedwars.Client:Get(remotes.PickupItem):CallServerAsync({itemDrop = drop}):andThen(function(success)
+            bedwars.Client:Get(remotes.PickupItem):CallServerAsync({itemDrop = drop}):andThen(function()
                 pendingReclaims[drop] = nil
-                if success or not drop.Parent then
+                if not drop.Parent then
                     untrackDrop(drop)
+                elseif AutoBank.Enabled then
+                    -- Some versions of PickupItem return nil/false even when one item was
+                    -- transferred. The drop's lifetime is the authoritative completion signal.
+                    task.delay(0.1, reclaim, drop)
                 end
             end, function()
                 pendingReclaims[drop] = nil
+                if drop.Parent and AutoBank.Enabled then
+                    task.delay(0.25, reclaim, drop)
+                end
             end)
         end)
         if not ok then
@@ -24848,7 +24863,8 @@ run(function()
         local wanted = {}
         for _, item in store.inventory.inventory.items do
             local name = item.tool and item.tool.Name
-            if name and table.find(Whitelist.ListEnabled, name) and (dropCooldowns[name] or 0) < os.clock() then
+            if name and table.find(Whitelist.ListEnabled, name) and not manualWithdrawals[name]
+                and (dropCooldowns[name] or 0) < os.clock() then
                 table.insert(wanted, {Name = name, Tool = item.tool})
             end
         end
@@ -24873,8 +24889,9 @@ run(function()
         end)
     end
 
-    -- Take it all back out, for when we are at a shop and about to spend it.
-    local function withdrawFromChest(folder)
+    -- Take matching stacks back out. ChestGetItem transfers one item per call rather than the
+    -- Accessory's entire Amount, so issue one request for every item that was counted.
+    local function withdrawFromChest(folder, itemType)
         local contents = folder:GetChildren()
         if #contents == 0 then return end
 
@@ -24883,10 +24900,15 @@ run(function()
         end)
         for _, entry in contents do
             if not AutoBank.Enabled then break end
-            if entry:IsA('Accessory') and table.find(Whitelist.ListEnabled, entry.Name) then
-                pcall(function()
-                    inventoryRemotes():Get('ChestGetItem'):CallServer(folder, entry)
-                end)
+            if entry:IsA('Accessory') and table.find(Whitelist.ListEnabled, entry.Name)
+                and (not itemType or entry.Name == itemType) then
+                local amount = math.max(entry:GetAttribute('Amount') or 1, 1)
+                for _ = 1, amount do
+                    if not AutoBank.Enabled or not entry.Parent then break end
+                    pcall(function()
+                        inventoryRemotes():Get('ChestGetItem'):CallServer(folder, entry)
+                    end)
+                end
             end
         end
         pcall(function()
@@ -24895,7 +24917,7 @@ run(function()
     end
 
     local function addDisplayEntry(itemType)
-        local icon = Instance.new('ImageLabel')
+        local icon = Instance.new('ImageButton')
         icon.Name = itemType
         icon.Image = bedwars.getIcon({itemType = itemType}, true)
         icon.Size = UDim2.fromOffset(32, 32)
@@ -24913,6 +24935,19 @@ run(function()
         amount.Font = Enum.Font.Arial
         amount.Parent = icon
         displayEntries[itemType] = amount
+        icon.Activated:Connect(function()
+            if Mode.Value == 'Chest' then
+                local folder = ownPersonalFolder()
+                if folder and atPersonalChest() then
+                    manualWithdrawals[itemType] = true
+                    withdrawFromChest(folder, itemType)
+                end
+            else
+                for _, drop in table.clone(droppedItems) do
+                    if drop.Name == itemType then reclaim(drop) end
+                end
+            end
+        end)
     end
 
     AutoBank = vape.Categories.Inventory:CreateModule({
@@ -24938,6 +24973,7 @@ run(function()
                 table.clear(pendingReclaims)
                 table.clear(dropCooldowns)
                 table.clear(displayEntries)
+                table.clear(manualWithdrawals)
                 return
             end
 
@@ -25005,9 +25041,11 @@ run(function()
                         else
                             depositToChest(folder)
                         end
+                    else
+                        table.clear(manualWithdrawals)
                     end
-                elseif not entitylib.isAlive or atShop() then
-                    -- Dead, or at a shop and about to spend it: hand the stash back.
+                elseif not entitylib.isAlive or atShop() or atPersonalChest() then
+                    -- Dead, at a shop, or opening a personal chest: hand every stacked item back.
                     for _, drop in table.clone(droppedItems) do
                         reclaim(drop)
                     end
