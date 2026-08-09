@@ -25019,14 +25019,17 @@ run(function()
                 end
 
                 if Mode.Value == 'Chest' then
-                    -- Nothing at all happens away from the chest, which is the whole point of
-                    -- this mode: no drops, no held items, no remote sent from anywhere a player
-                    -- could not be standing.
-                    local folder = entitylib.isAlive and atPersonalChest() and ownPersonalFolder() or nil
+                    local folder = entitylib.isAlive and ownPersonalFolder() or nil
                     if folder then
+                        -- Withdrawing used to require the player to be in range of a personal
+                        -- chest and a shop at the same time. On bases where those two ranges do
+                        -- not overlap, AutoBuy could never get the resources back without the
+                        -- player shuffling between them. The personal inventory is already the
+                        -- authoritative deposit target, so release it as soon as a shop is in
+                        -- range and only require chest proximity when putting items in.
                         if Withdraw.Enabled and atShop() then
                             withdrawFromChest(folder)
-                        else
+                        elseif atPersonalChest() then
                             depositToChest(folder)
                         end
                     end
@@ -25209,7 +25212,7 @@ run(function()
 		if entitylib.isAlive then
 			local localPosition = entitylib.character.RootPart.Position
 			for _, v in store.shop do
-				if (v.RootPart.Position - localPosition).Magnitude <= 20 then
+				if v.RootPart and v.RootPart.Parent and (v.RootPart.Position - localPosition).Magnitude <= 20 then
 					shop = v.Upgrades or v.Shop or nil
 					upgrades = upgrades or v.Upgrades
 					items = items or v.Shop
@@ -25391,7 +25394,10 @@ run(function()
 
 				local lastupgrades
 				AutoBuy:Clean(vapeEvents.InventoryAmountChanged.Event:Connect(function()
-					if (npctick - tick()) > 1 then npctick = tick() end
+					-- Currency can arrive from a generator, a chest withdrawal, or a delayed
+					-- pickup response. Always wake the buyer instead of only doing so when its
+					-- current deadline happens to be more than a second away.
+					npctick = math.min(npctick, tick())
 				end))
 
 				repeat
@@ -25404,7 +25410,7 @@ run(function()
 					end
 
 					if npc and lastupgrades ~= upgrades then
-						if (npctick - tick()) > 1 then npctick = tick() end
+						npctick = tick()
 						lastupgrades = upgrades
 					end
 
@@ -25418,7 +25424,11 @@ run(function()
 								end
 							end
 						end
-						npctick = tick() + (waitcheck and 0.4 or math.huge)
+						-- Do not sleep forever when nothing is affordable. Inventory events are
+						usually enough to wake us, but they can be coalesced or arrive before a
+						-- chest transfer finishes. A cheap periodic retry makes shop entry and
+						-- AutoBank hand-off deterministic without hammering purchase remotes.
+						npctick = tick() + (waitcheck and 0.4 or 0.5)
 					end
 
 					task.wait(0.1)
