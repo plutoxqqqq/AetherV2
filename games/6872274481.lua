@@ -25465,7 +25465,7 @@ run(function()
 							end
 						end
 						-- Do not sleep forever when nothing is affordable. Inventory events are
-						usually enough to wake us, but they can be coalesced or arrive before a
+						-- usually enough to wake us, but they can be coalesced or arrive before a
 						-- chest transfer finishes. A cheap periodic retry makes shop entry and
 						-- AutoBank hand-off deterministic without hammering purchase remotes.
 						npctick = tick() + (waitcheck and 0.4 or 0.5)
