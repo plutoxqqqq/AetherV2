@@ -3083,33 +3083,38 @@ function mainapi:CreateGUI()
 	addCorner(window)
 	addWindowStroke(window)
 	makeDraggable(window)
-	-- AetherV2's own wordmark, in place of the Vape logo art this fork inherited: the
-	-- header is the one part of the menu you see every single time it opens, so it is
-	-- where the name belongs. Drawn as text rather than an image so it picks up the
-	-- menu's font and needs no artwork of its own. The instance names are unchanged -
-	-- UpdateGUI and the saved layouts still address them.
+	-- Compact Aether wordmark
 	local logo = Instance.new('TextLabel')
 	logo.Name = 'VapeLogo'
-	logo.Size = UDim2.fromOffset(getfontsize('AETHER', 15, uipallet.FontSemiBold).X, 18)
-	logo.Position = UDim2.fromOffset(13, 10)
+	logo.Size = UDim2.fromOffset(82, 22)
+	logo.Position = UDim2.fromOffset(13, 8)
 	logo.BackgroundTransparency = 1
 	logo.Text = 'AETHER'
 	logo.TextXAlignment = Enum.TextXAlignment.Left
 	logo.TextColor3 = select(3, uipallet.Main:ToHSV()) > 0.5 and uipallet.Text or Color3.new(1, 1, 1)
-	logo.TextSize = 15
-	logo.FontFace = uipallet.FontSemiBold
+	logo.TextSize = 14
+	logo.FontFace = Font.fromEnum(Enum.Font.Gotham, Enum.FontWeight.Bold)
 	logo.Parent = window
+	local logoaccent = Instance.new('Frame')
+	logoaccent.Name = 'Accent'
+	logoaccent.Size = UDim2.fromOffset(2, 16)
+	logoaccent.Position = UDim2.fromOffset(-5, 3)
+	logoaccent.BorderSizePixel = 0
+	logoaccent.BackgroundColor3 = Color3.fromHSV(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value)
+	logoaccent.Parent = logo
+	addCorner(logoaccent, UDim.new(1, 0))
 	local logov4 = Instance.new('TextLabel')
 	logov4.Name = 'V4Logo'
-	logov4.Size = UDim2.fromOffset(24, 14)
-	logov4.Position = UDim2.new(1, 5, 0, 2)
-	logov4.BackgroundTransparency = 1
+	logov4.Size = UDim2.fromOffset(22, 16)
+	logov4.Position = UDim2.new(1, -24, 0, 3)
+	logov4.BackgroundTransparency = 0
+	logov4.BackgroundColor3 = Color3.fromHSV(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value)
 	logov4.Text = 'V2'
-	logov4.TextXAlignment = Enum.TextXAlignment.Left
-	logov4.TextColor3 = Color3.fromHSV(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value)
-	logov4.TextSize = 13
-	logov4.FontFace = uipallet.FontSemiBold
+	logov4.TextColor3 = mainapi:TextColor(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value)
+	logov4.TextSize = 10
+	logov4.FontFace = Font.fromEnum(Enum.Font.Gotham, Enum.FontWeight.Bold)
 	logov4.Parent = logo
+	addCorner(logov4, UDim.new(0, 4))
 	local children = Instance.new('Frame')
 	children.Name = 'Children'
 	children.Size = UDim2.new(1, 0, 1, -33)
@@ -5324,7 +5329,7 @@ function mainapi:CreateCategoryList(categorysettings)
 		dltitle.Size = UDim2.new(1, -20, 0, 20)
 		dltitle.Position = UDim2.fromOffset(16, 12)
 		dltitle.BackgroundTransparency = 1
-		dltitle.Text = 'Repo Configs'
+		dltitle.Text = 'Public Configs'
 		dltitle.TextXAlignment = Enum.TextXAlignment.Left
 		dltitle.TextColor3 = uipallet.Text
 		dltitle.TextSize = 14
@@ -5527,6 +5532,68 @@ function mainapi:CreateCategoryList(categorysettings)
 			fields.creator.Text = localPlayer.Name
 			submitWindow.Visible = true
 		end)
+
+		-- Queue completed reviews until the menu opens
+		local reviewCards = {}
+		local activeReviewCard
+		local function showNextReviewCard()
+			if activeReviewCard then
+				activeReviewCard.Visible = clickgui.Visible
+				return
+			end
+			if not clickgui.Visible or #reviewCards == 0 then return end
+			activeReviewCard = table.remove(reviewCards, 1)
+			activeReviewCard.Visible = true
+		end
+		local function createReviewResultCard(result)
+			local accepted = result.status == 'accepted'
+			local accent = accepted and Color3.fromRGB(70, 190, 112) or Color3.fromRGB(224, 79, 84)
+			local card = Instance.new('Frame')
+			card.Name = 'ConfigReviewResult'
+			card.Size = UDim2.fromOffset(430, accepted and 230 or 278)
+			card.Position = UDim2.new(0.5, -215, 0.5, accepted and -115 or -139)
+			card.BackgroundColor3, card.Visible, card.Parent = uipallet.Main, false, scaledgui
+			addBlur(card); addCorner(card); addWindowStroke(card); makeDraggable(card)
+			local modal = Instance.new('TextButton')
+			modal.BackgroundTransparency, modal.Text, modal.Modal, modal.Parent = 1, '', true, card
+			local bar = Instance.new('Frame')
+			bar.Name, bar.Size, bar.BorderSizePixel, bar.BackgroundColor3, bar.Parent = 'StatusBar', UDim2.new(1, 0, 0, 4), 0, accent, card
+			local icon = Instance.new('TextLabel')
+			icon.Name, icon.Size, icon.Position = 'StatusIcon', UDim2.fromOffset(42, 42), UDim2.fromOffset(22, 28)
+			icon.BackgroundColor3, icon.BackgroundTransparency, icon.Text = accent, 0.86, accepted and '✓' or '!'
+			icon.TextColor3, icon.TextSize, icon.FontFace, icon.Parent = accent, 22, uipallet.FontSemiBold, card
+			addCorner(icon, UDim.new(1, 0))
+			local heading = Instance.new('TextLabel')
+			heading.Size, heading.Position, heading.BackgroundTransparency = UDim2.new(1, -100, 0, 24), UDim2.fromOffset(78, 26), 1
+			heading.Text = accepted and 'Config accepted' or 'Config rejected'
+			heading.TextColor3, heading.TextSize, heading.FontFace = uipallet.Text, 17, uipallet.FontSemiBold
+			heading.TextXAlignment, heading.Parent = Enum.TextXAlignment.Left, card
+			local name = tostring(result.name or 'Unnamed config')
+			local message = accepted
+				and ('Congrats! Your config '..name..' has been accepted.\n\nYou can view and download it in the Public Configs window.')
+				or ('Bad luck! Your config '..name..' has been rejected.\n\nThe decision is nothing personal. It may be because the config was low-effort, unoptimised, inappropriate, or similar to an existing one.\n\nFeel free to submit another config request.')
+			local body = Instance.new('TextLabel')
+			body.Size, body.Position, body.BackgroundTransparency = UDim2.new(1, -44, 0, accepted and 90 or 138), UDim2.fromOffset(22, 84), 1
+			body.Text, body.TextColor3, body.TextSize, body.FontFace = message, color.Dark(uipallet.Text, 0.12), 13, uipallet.Font
+			body.TextXAlignment, body.TextYAlignment, body.TextWrapped, body.Parent = Enum.TextXAlignment.Left, Enum.TextYAlignment.Top, true, card
+			local close = Instance.new('TextButton')
+			close.Size, close.Position = UDim2.fromOffset(92, 30), UDim2.new(1, -114, 1, -44)
+			close.BackgroundColor3, close.Text = color.Light(uipallet.Main, 0.06), 'Got it'
+			close.TextColor3, close.TextSize, close.FontFace, close.Parent = uipallet.Text, 12, uipallet.FontSemiBold, card
+			addCorner(close, UDim.new(0, 5))
+			local function dismiss()
+				card.Visible = false
+				activeReviewCard = nil
+				showNextReviewCard()
+			end
+			close.MouseButton1Click:Connect(dismiss)
+			addCloseButton(card).MouseButton1Click:Connect(dismiss)
+			table.insert(mainapi.Windows, card)
+			table.insert(reviewCards, card)
+			showNextReviewCard()
+		end
+		mainapi:Clean(clickgui:GetPropertyChangedSignal('Visible'):Connect(showNextReviewCard))
+
 		-- Receipt tokens are scoped to one submission. Check them whenever the Configs
 		-- UI is created and remove completed receipts after showing the uploader once.
 		task.spawn(function()
@@ -5536,8 +5603,7 @@ function mainapi:CreateCategoryList(categorysettings)
 			for _, receipt in receipts do
 				local ok, result = backendRequest('GET', '/submissions/'..httpService:UrlEncode(tostring(receipt.id))..'?token='..httpService:UrlEncode(tostring(receipt.token)))
 				if ok and type(result) == 'table' and result.status ~= 'pending' then
-					local reason = result.reason and result.reason ~= '' and (' Reason: '..result.reason) or ''
-					mainapi:CreateNotification('Config review', tostring(result.name)..' was '..tostring(result.status)..'.'..reason, 12, result.status == 'accepted' and 'info' or 'alert')
+					createReviewResultCard(result)
 				else table.insert(pending, receipt) end
 			end
 			pcall(writefile, receiptPath, httpService:JSONEncode(pending))
@@ -7568,7 +7634,7 @@ function mainapi:CreateChangelogs()
 • Added AutoSheepHerder, AutoAdetunde, AutoZeno, AutoFish, and SkinChanger.
 • Updated ProjectileAimbot targeting and ProjectileAura projectile support.
 • Updated AutoShoot, Scaffold, AutoBuy, and SilentAim.
-• Added separate KillauraV2, BreakerV2, BlockInV2, and AutoClickerV2 modules.
+• Merged the duplicate AutoClicker and BlockIn modules and removed KillauraV2.
 
 <b>Interface</b>
 • Added this changelog window, Public Configs access, and Hide Vape Button.]=]
@@ -7806,6 +7872,23 @@ function mainapi:Load(skipgui, profile)
 		savedata.Modules = savedata.Modules or {}
 		savedata.Legit = savedata.Legit or {}
 		savedata.Kits = savedata.Kits or {}
+		-- Merge retired BedWars module keys without duplicating their GUI entries
+		local function mergeModuleConfig(target, aliases)
+			local merged = savedata.Modules[target]
+			for _, alias in aliases do
+				local old = savedata.Modules[alias]
+				if old then
+					merged = merged or {Enabled = old.Enabled, Bind = old.Bind, Options = {}}
+					merged.Options = merged.Options or {}
+					for name, value in old.Options or {} do
+						if merged.Options[name] == nil then merged.Options[name] = value end
+					end
+				end
+			end
+			if merged then savedata.Modules[target] = merged end
+		end
+		mergeModuleConfig('AutoClicker', {'AutoClickerV2'})
+		mergeModuleConfig('BlockIn', {'Block-In', 'BlockInV2'})
 
 		for i, v in savedata.Categories do
 			local object = self.Categories[i]
@@ -8751,6 +8834,20 @@ mainapi:Clean(friends.ColorUpdate)
 --[[
 	Configs
 ]]
+local function reloadAether()
+	task.spawn(function()
+		shared.vapereload = true
+		local ok, err = pcall(function()
+			if shared.VapeDeveloper then
+				loadstring(readfile('aetherv2/main.lua'), 'main')(license)
+			else
+				loadstring(game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..readfile('aetherv2/profiles/commit.txt')..'/main.lua', true), 'main')(license)
+			end
+		end)
+		if not ok then warn('[AetherV2] reload failed:', err) end
+	end)
+end
+
 local profiles = mainapi:CreateCategoryList({
 	Name = 'Profiles',
 	DisplayName = 'Configs',
@@ -8791,6 +8888,14 @@ profiles:CreateButton({
 		end
 	end,
 	Tooltip = 'Imports a JSON config from the text box, or from your clipboard if the text box is empty'
+})
+profiles:CreateButton({
+	Name = 'Reset current config',
+	Function = function()
+		configapi.ResetProfile()
+		reloadAether()
+	end,
+	Tooltip = 'Clears the current config and reloads its defaults'
 })
 
 --[[
@@ -8852,19 +8957,6 @@ mainapi:CreateWelcome()
 
 local general = mainapi.Categories.Main:CreateSettingsPane({Name = 'General'})
 general:CreateButton({Name = 'View changelog', Function = function() mainapi.Changelogs:Open() end, Tooltip = 'Shows what changed in the latest update'})
-local function reloadAether()
-	task.spawn(function()
-		shared.vapereload = true
-		local ok, err = pcall(function()
-			if shared.VapeDeveloper then
-				loadstring(readfile('aetherv2/main.lua'), 'main')(license)
-			else
-				loadstring(game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..readfile('aetherv2/profiles/commit.txt')..'/main.lua', true), 'main')(license)
-			end
-		end)
-		if not ok then warn('[AetherV2] reload failed:', err) end
-	end)
-end
 mainapi.MultiKeybind = general:CreateToggle({
 	Name = 'Enable Multi-Keybinding',
 	Tooltip = 'Allows multiple keys to be bound to a module (eg. G + H)'
@@ -8882,14 +8974,6 @@ general:CreateToggle({
 	end,
 	Default = isfile('aetherv2/profiles/disableloading.txt') and readfile('aetherv2/profiles/disableloading.txt') == 'true',
 	Tooltip = 'Prevents AetherV2 from showing its startup loading screen'
-})
-general:CreateButton({
-	Name = 'Reset current config',
-	Function = function()
-		configapi.ResetProfile()
-		reloadAether()
-	end,
-	Tooltip = 'Wipes everything saved for this config and reloads on defaults'
 })
 -- Metadata for JSON exports. The Export to JSON button below refuses to copy until
 -- credits, at least one tag and a description have all been supplied, so shared
@@ -10069,7 +10153,9 @@ function mainapi:UpdateGUI(hue, sat, val, default)
 
 	for i, v in mainapi.Categories do
 		if i == 'Main' then
-			v.Object.VapeLogo.V4Logo.TextColor3 = Color3.fromHSV(hue, sat, val)
+			v.Object.VapeLogo.Accent.BackgroundColor3 = Color3.fromHSV(hue, sat, val)
+			v.Object.VapeLogo.V4Logo.BackgroundColor3 = Color3.fromHSV(hue, sat, val)
+			v.Object.VapeLogo.V4Logo.TextColor3 = mainapi:TextColor(hue, sat, val)
 			for _, button in v.Buttons do
 				if button.Enabled then
 					button.Object.TextColor3 = rainbow and Color3.fromHSV(mainapi:Color((hue - (button.Index * 0.025)) % 1)) or Color3.fromHSV(hue, sat, val)

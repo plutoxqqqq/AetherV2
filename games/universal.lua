@@ -6876,7 +6876,9 @@ run(function()
     local Orbit, OrbitDirection, OrbitSpeed, OrbitDistance
     local Dolly, DollyDirection, DollySpeed
     local KeyframeTime, KeyframeEase, KeyframeLoop
+    local PathName, PathTarget, PathAction, KeyframeIndex
     local HideHud
+    local Collision
 
     local starterGui = cloneref(game:GetService('StarterGui'))
     local bindName = 'AetherV2Freecam'..httpService:GenerateGUID(false)
@@ -6897,6 +6899,31 @@ run(function()
     local shakeClock, firstFrame = 0, true
     local lastPos, lastYaw
     local keyframes, playback = {}, nil
+    local pathFolder = 'aetherv2/profiles/camera-paths'
+
+    local function safePathName()
+        return tostring(PathName and PathName.Value or ''):gsub('[^%w%-%_ ]', ''):sub(1, 40)
+    end
+
+    local function encodeFrames()
+        local out = {}
+        for _, frame in keyframes do
+            table.insert(out, {Position = {frame.Position.X, frame.Position.Y, frame.Position.Z}, Yaw = frame.Yaw, Pitch = frame.Pitch, Roll = frame.Roll, Fov = frame.Fov})
+        end
+        return out
+    end
+
+    local function decodeFrames(data)
+        if type(data) ~= 'table' then return false end
+        local out = {}
+        for _, frame in data do
+            if type(frame) ~= 'table' or type(frame.Position) ~= 'table' or #frame.Position ~= 3 then return false end
+            table.insert(out, {Position = Vector3.new(tonumber(frame.Position[1]), tonumber(frame.Position[2]), tonumber(frame.Position[3])), Yaw = tonumber(frame.Yaw), Pitch = tonumber(frame.Pitch), Roll = tonumber(frame.Roll), Fov = tonumber(frame.Fov)})
+            if not out[#out].Yaw or not out[#out].Pitch or not out[#out].Roll or not out[#out].Fov then return false end
+        end
+        keyframes = out
+        return true
+    end
 
     local function camera()
         gameCamera = workspace.CurrentCamera or gameCamera
@@ -7246,7 +7273,18 @@ run(function()
             else
                 velocity = target
             end
-            pos += velocity * dt
+            local nextPosition = pos + velocity * dt
+            if Collision.Enabled then
+                local params = RaycastParams.new()
+                params.FilterType = Enum.RaycastFilterType.Exclude
+                params.FilterDescendantsInstances = {cam, lplr.Character}
+                local hit = workspace:Raycast(pos, nextPosition - pos, params)
+                if hit then
+                    nextPosition = hit.Position + hit.Normal * 0.35
+                    velocity -= hit.Normal * velocity:Dot(hit.Normal)
+                end
+            end
+            pos = nextPosition
 
             if Orbit.Enabled then
                 if not orbitPivot then
@@ -7788,6 +7826,43 @@ run(function()
 		notif('Freecam', 'Keyframes cleared', 3, 'info')
 	end
     })
+    PathName = Freecam:CreateTextBox({Name = 'Path name', Placeholder = 'Camera path'})
+    PathTarget = Freecam:CreateTextBox({Name = 'Path copy name', Placeholder = 'New name for rename or duplicate'})
+    PathAction = Freecam:CreateDropdown({Name = 'Path action', List = {'Save', 'Load', 'Duplicate', 'Rename', 'Delete', 'Update keyframe', 'Delete keyframe'}})
+    KeyframeIndex = Freecam:CreateSlider({Name = 'Keyframe', Min = 1, Max = 100, Default = 1, Darker = true})
+    Freecam:CreateButton({
+        Name = 'Apply path action',
+        Function = function()
+            local name, action = safePathName(), PathAction.Value
+            if name == '' then notif('Freecam', 'Enter a path name', 4, 'alert'); return end
+            if not isfolder(pathFolder) then makefolder(pathFolder) end
+            local path = pathFolder..'/'..name..'.json'
+            if action == 'Save' or action == 'Duplicate' then
+                if #keyframes == 0 then notif('Freecam', 'Add a keyframe first', 4, 'alert'); return end
+                local target = action == 'Duplicate' and tostring(PathTarget.Value):gsub('[^%w%-%_ ]', ''):sub(1, 40) or name
+                if target == '' then notif('Freecam', 'Enter a copy name', 4, 'alert'); return end
+                writefile(pathFolder..'/'..target..'.json', httpService:JSONEncode(encodeFrames()))
+            elseif action == 'Load' then
+                local ok, data = pcall(function() return httpService:JSONDecode(readfile(path)) end)
+                if not ok or not decodeFrames(data) then notif('Freecam', 'Camera path is missing or corrupt', 5, 'alert'); return end
+            elseif action == 'Rename' then
+                if not isfile(path) then notif('Freecam', 'Camera path not found', 4, 'alert'); return end
+                local renamed = tostring(PathTarget.Value):gsub('[^%w%-%_ ]', ''):sub(1, 40)
+                if renamed == '' then notif('Freecam', 'Enter a new name', 4, 'alert'); return end
+                writefile(pathFolder..'/'..renamed..'.json', readfile(path)); delfile(path)
+            elseif action == 'Delete' then
+                if isfile(path) then delfile(path) end
+            elseif action == 'Update keyframe' then
+                local index = math.clamp(KeyframeIndex.Value, 1, #keyframes)
+                if not keyframes[index] then notif('Freecam', 'Keyframe not found', 4, 'alert'); return end
+                keyframes[index] = snapshot()
+            elseif action == 'Delete keyframe' then
+                local index = math.clamp(KeyframeIndex.Value, 1, #keyframes)
+                if keyframes[index] then table.remove(keyframes, index) end
+            end
+            notif('Freecam', action..' complete', 3, 'info')
+        end
+    })
     KeyframeTime = Freecam:CreateSlider({
 	Name = 'Keyframe time',
 	Min = 0.2,
@@ -7814,6 +7889,7 @@ run(function()
 	Function = refreshInterface,
 	Tooltip = 'Hides the game interface while filming. The AetherV2 menu stays up'
     })
+    Collision = Freecam:CreateToggle({Name = 'Camera collision', Default = true, Tooltip = 'Slides along solid geometry'})
 end)
 
 run(function()
