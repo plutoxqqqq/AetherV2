@@ -24740,6 +24740,10 @@ run(function()
     -- same stack being banked or restored more than once.
     local pendingDrops = {}
     local pendingReclaims = {}
+    -- Drops being returned must no longer be held at BANK_ORIGIN. Without a separate release
+    -- state, PreRender moved them back into the sky on the very next frame, racing the pickup
+    -- remote and making retrieval depend on lucky timing.
+    local releasingDrops = {}
     local displayEntries = {}
 
     -- Somewhere nothing else occupies, with the stash laid out on a grid so two drops never
@@ -24749,6 +24753,8 @@ run(function()
     local BANK_COLUMNS = 32
 
     local function untrackDrop(drop)
+        releasingDrops[drop] = nil
+        pendingReclaims[drop] = nil
         local index = table.find(droppedItems, drop)
         if index then
             table.remove(droppedItems, index)
@@ -24760,11 +24766,11 @@ run(function()
     local function reclaim(drop)
         if not drop or not drop.Parent then
             untrackDrop(drop)
-            pendingReclaims[drop] = nil
             return
         end
         if not entitylib.isAlive then return end
 
+        releasingDrops[drop] = true
         -- Keep moving the drop to the player even while a previous pickup request is pending.
         -- This matters during disable cleanup, when the PreRender skybox holder is disconnected.
         drop.Velocity = Vector3.zero
@@ -24777,15 +24783,24 @@ run(function()
                 pendingReclaims[drop] = nil
                 if not drop.Parent then
                     untrackDrop(drop)
-                elseif success and AutoBank.Enabled then
-                    task.delay(0.03, reclaim, drop)
+                elseif AutoBank.Enabled then
+                    -- A false response can simply mean the server has not observed the move
+                    -- from the sky yet. Keep the drop at the player and retry; stacked drops
+                    -- also require more than one successful pickup request.
+                    task.delay(success and 0.03 or 0.1, reclaim, drop)
                 end
             end, function()
                 pendingReclaims[drop] = nil
+                if AutoBank.Enabled and drop.Parent then
+                    task.delay(0.1, reclaim, drop)
+                end
             end)
         end)
         if not ok then
             pendingReclaims[drop] = nil
+            if AutoBank.Enabled and drop.Parent then
+                task.delay(0.1, reclaim, drop)
+            end
         end
     end
 
@@ -24960,6 +24975,7 @@ run(function()
                 end
                 table.clear(pendingDrops)
                 table.clear(pendingReclaims)
+                table.clear(releasingDrops)
                 table.clear(dropCooldowns)
                 table.clear(displayEntries)
                 return
@@ -24996,13 +25012,21 @@ run(function()
                         if not drop or not drop.Parent or drop.Parent ~= workspace.ItemDrops then
                             untrackDrop(drop)
                         else
-                            totals[drop.Name] = (totals[drop.Name] or 0) + (drop:GetAttribute('Amount') or 0)
+                            totals[drop.Name] = (totals[drop.Name] or 0) + (drop:GetAttribute('Amount') or 1)
                             drop.Velocity = Vector3.zero
-                            drop.CFrame = BANK_ORIGIN + Vector3.new(
-                                (index % BANK_COLUMNS) * BANK_SPACING,
-                                0,
-                                math.floor(index / BANK_COLUMNS) * BANK_SPACING
-                            )
+                            drop.RotVelocity = Vector3.zero
+                            if releasingDrops[drop] and entitylib.isAlive then
+                                -- Keep this position stable until the server acknowledges every
+                                -- item in the stack. This removes the frame-order race between
+                                -- reclaim() and the skybox holder.
+                                drop.CFrame = entitylib.character.Head.CFrame
+                            else
+                                drop.CFrame = BANK_ORIGIN + Vector3.new(
+                                    (index % BANK_COLUMNS) * BANK_SPACING,
+                                    0,
+                                    math.floor(index / BANK_COLUMNS) * BANK_SPACING
+                                )
+                            end
                         end
                     end
                 end
