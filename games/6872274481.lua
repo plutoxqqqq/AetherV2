@@ -7788,6 +7788,9 @@ run(function()
     local AttackRange
     local SwingTime
 	local Sync
+	local MaxHits
+	local maxHitsCache
+	local maxHitsLastUpdate
     local AngleSlider
 	local ChanceSlider
     local MaxTargets
@@ -8017,6 +8020,13 @@ run(function()
                     Attacking = false
                     store.KillauraTarget = nil
                     if sword then
+                        if MaxHits.Enabled and (not maxHitsLastUpdate or tick() - maxHitsLastUpdate >= 1) then
+                            maxHitsLastUpdate = tick()
+                            local ping = math.max(lplr:GetNetworkPing(), 0)
+                            local attackSpeed = (meta.sword and meta.sword.attackSpeed) or 0.3
+                            local swingDelay = math.max(attackSpeed - ping, 0.02)
+                            SwingTime:SetValue(swingDelay / 2)
+                        end
                         local plrs = entitylib.AllPosition({
                             Range = SwingRange.Value,
                             Wallcheck = Targets.Walls.Enabled or nil,
@@ -8209,7 +8219,7 @@ run(function()
         Name = 'Swing time',
         Min = 0,
         Max = 2,
-	Decimal = 100,
+	Decimal = 1000,
 		Default = 0.11,
 		Suffix = 'seconds'
 	})
@@ -8217,6 +8227,19 @@ run(function()
 		Name = 'Sync with hitreg',
 	Darker = true,
 		Tooltip = 'Syncs ur hitreg with the swing time'
+    })
+    MaxHits = Killaura:CreateToggle({
+        Name = 'Max hits',
+        Tooltip = 'Changes your Killaura settings based on a formula to give you the highest hitreg',
+        Function = function(callback)
+            if callback then
+                maxHitsCache = SwingTime.Value
+            elseif maxHitsCache then
+                SwingTime:SetValue(maxHitsCache)
+                maxHitsCache = nil
+            end
+            maxHitsLastUpdate = nil
+        end
     })
     MaxTargets = Killaura:CreateSlider({
         Name = 'Max targets',
@@ -9037,53 +9060,71 @@ run(function()
     rayParams.RespectCanCollide = true
     rayParams.FilterType = Enum.RaycastFilterType.Include
 
-    local function getTelepearlLanding(origin, velocity, gravity)
-        local last = origin
-        for i = 1, 240 do
-            local t = i / 60
-            local nextpos = origin + (velocity * t) - Vector3.new(0, gravity * t * t * 0.5, 0)
-            local ray = workspace:Raycast(last, nextpos - last, rayParams)
-            if ray then
-                return ray.Position
-            end
-            last = nextpos
-        end
-        return last
-    end
-
-    local function getBestTelepearlShot(localPosition, targetPosition, meta)
-        local best, bestDistance
+    local function solveTelepearlShot(localPosition, targetPosition, meta)
+        local speed = meta.launchVelocity
         local gravity = meta.gravitationalAcceleration or workspace.Gravity
-        rayParams.FilterDescendantsInstances = { workspace:WaitForChild('Map', 9e9) }
-        local offsets = {
-            Vector3.zero,
-            Vector3.new(0, 1.5, 0),
-            Vector3.new(0, -1.5, 0),
-            Vector3.new(1.5, 0, 0),
-            Vector3.new(-1.5, 0, 0),
-            Vector3.new(0, 0, 1.5),
-            Vector3.new(0, 0, -1.5)
-        }
+        if not speed or speed <= 0 or gravity <= 0 then return nil end
 
-        for _, offset in offsets do
-            local desired = targetPosition + offset
-            local look = CFrame.new(localPosition, desired)
-            local shootPosition = (look * CFrame.new(Vector3.new(-bedwars.BowConstantsTable.RelX, -bedwars.BowConstantsTable.RelY, -bedwars.BowConstantsTable.RelZ))).Position
-            local calc = prediction.SolveTrajectory(shootPosition, meta.launchVelocity, gravity, targetPosition, Vector3.zero, workspace.Gravity, 0, 0, rayParams)
-            if calc then
-                local velocity = CFrame.lookAt(shootPosition, calc).LookVector * meta.launchVelocity
-                local landing = getTelepearlLanding(shootPosition, velocity, gravity)
-                local distance = (landing - targetPosition).Magnitude
-                if not bestDistance or distance < bestDistance then
-                    bestDistance = distance
-                    best = {
-                        direction = velocity,
-                        shootPosition = shootPosition
-                    }
+        rayParams.FilterDescendantsInstances = {workspace:WaitForChild('Map', 9e9)}
+        local ground = workspace:Raycast(targetPosition + Vector3.new(0, 3, 0), Vector3.new(0, -1000, 0), rayParams)
+        if ground then
+            targetPosition = ground.Position
+        end
+
+        local function velocities(origin)
+            local delta = targetPosition - origin
+            local flat = Vector3.new(delta.X, 0, delta.Z)
+            local distance = flat.Magnitude
+            if distance < 0.01 then return {} end
+
+            local speed2 = speed * speed
+            local discriminant = speed2 * speed2 - gravity * (gravity * distance * distance + 2 * delta.Y * speed2)
+            if discriminant < 0 then return {} end
+
+            local root = math.sqrt(discriminant)
+            local result = {}
+            for _, numerator in {speed2 - root, speed2 + root} do
+                local tangent = numerator / (gravity * distance)
+                local horizontalSpeed = speed / math.sqrt(1 + tangent * tangent)
+                table.insert(result, flat.Unit * horizontalSpeed + Vector3.new(0, horizontalSpeed * tangent, 0))
+            end
+            return result
+        end
+
+        local best, bestDistance
+        for arcIndex, initialVelocity in velocities(localPosition) do
+            local shootPosition = localPosition
+            local velocity = initialVelocity
+            -- Account for the launch socket offset, then solve again from the position the
+            -- server actually uses as the projectile origin.
+            for _ = 1, 2 do
+                shootPosition = (CFrame.lookAt(localPosition, localPosition + velocity) * CFrame.new(Vector3.new(-bedwars.BowConstantsTable.RelX, -bedwars.BowConstantsTable.RelY, -bedwars.BowConstantsTable.RelZ))).Position
+                local refined = velocities(shootPosition)
+                if #refined == 0 then break end
+                velocity = refined[arcIndex]
+            end
+
+            local last = shootPosition
+            local landing
+            for step = 1, 960 do
+                local time = step / 120
+                local nextPosition = shootPosition + velocity * time - Vector3.new(0, gravity * time * time * 0.5, 0)
+                local hit = workspace:Raycast(last, nextPosition - last, rayParams)
+                if hit then
+                    landing = hit.Position
+                    break
+                end
+                last = nextPosition
+            end
+
+            if landing then
+                local miss = (landing - targetPosition).Magnitude
+                if not bestDistance or miss < bestDistance then
+                    bestDistance = miss
+                    best = {direction = velocity, shootPosition = shootPosition}
                 end
             end
         end
-
         return best
     end
 
@@ -9094,7 +9135,7 @@ run(function()
 		if item then
 			if item.itemType == 'telepearl' then
 				local meta = bedwars.ProjectileMeta.telepearl
-				local shot = getBestTelepearlShot(localPosition, position, meta)
+				local shot = solveTelepearlShot(localPosition, position, meta)
 				if not shot then return false end
 
 				switchItem(item.tool)
@@ -9404,6 +9445,9 @@ run(function()
 	local AutoCharge
 	local Aim = {}
 	local OtherProjectiles
+	local MaxAccuracy
+	local maxAccuracyScale = 1
+	local maxAccuracyGeneration = 0
 	local rayCheck = RaycastParams.new()
 	rayCheck.FilterType = Enum.RaycastFilterType.Include
 	rayCheck.FilterDescendantsInstances = {workspace:FindFirstChild('Map')}
@@ -9464,7 +9508,8 @@ run(function()
 						end
 
 						local newlook = CFrame.new(offsetpos, plr[TargetPart.Value].Position) * CFrame.new(projmeta.projectile == 'owl_projectile' and Vector3.zero or Vector3.new(bedwars.BowConstantsTable.RelX, bedwars.BowConstantsTable.RelY, bedwars.BowConstantsTable.RelZ))
-						local calc = prediction.SolveTrajectory(newlook.p, projSpeed, gravity, plr[TargetPart.Value].Position, projmeta.projectile == 'telepearl' and Vector3.zero or plr[TargetPart.Value].Velocity, playerGravity, plr.HipHeight, plr.Jumping and 42.6 or nil, rayCheck, plr.Humanoid.FloorMaterial == Enum.Material.Air or math.abs(plr.RootPart.Velocity.Y) > 0.01, plr.RootPart.Position, plr.RootPart, nil, true)
+						local predictionScale = maxAccuracyScale
+						local calc = prediction.SolveTrajectory(newlook.p, projSpeed * predictionScale, gravity, plr[TargetPart.Value].Position, projmeta.projectile == 'telepearl' and Vector3.zero or plr[TargetPart.Value].Velocity, playerGravity, plr.HipHeight, plr.Jumping and 42.6 or nil, rayCheck, plr.Humanoid.FloorMaterial == Enum.Material.Air or math.abs(plr.RootPart.Velocity.Y) > 0.01, plr.RootPart.Position, plr.RootPart, nil, true)
 						if calc then
 							targetinfo.Targets[plr] = tick() + 1
 							return {
@@ -9503,6 +9548,24 @@ run(function()
 	TargetPart = ProjectileAimbot:CreateDropdown({
 		Name = 'Part',
 		List = {'RootPart', 'Head'}
+	})
+	MaxAccuracy = ProjectileAimbot:CreateToggle({
+		Name = 'Max accuracy',
+		Tooltip = 'Changes prediction based on ping to give you the most accurate shots',
+		Function = function(callback)
+			maxAccuracyGeneration += 1
+			local generation = maxAccuracyGeneration
+			if callback then
+				task.spawn(function()
+					repeat
+						maxAccuracyScale = math.clamp(1 - lplr:GetNetworkPing(), 0.1, 1)
+						task.wait(1)
+					until not MaxAccuracy.Enabled or generation ~= maxAccuracyGeneration
+				end)
+			else
+				maxAccuracyScale = 1
+			end
+		end
 	})
 	FOV = ProjectileAimbot:CreateSlider({
 		Name = 'FOV',
