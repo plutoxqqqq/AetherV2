@@ -4692,6 +4692,9 @@ run(function()
     local Dynamic
     local Sync = {}
     local UpdateRate
+    local MaxHits
+    local maxHitsCache
+    local maxHitsLastUpdate
     local Attackable
     local AngleSlider
     local MaxTargets
@@ -4825,6 +4828,14 @@ run(function()
                     Attacking = false
                     store.KillauraTarget = nil
                     if sword then
+                        if MaxHits.Enabled and (not maxHitsLastUpdate or tick() - maxHitsLastUpdate >= 1) then
+                            maxHitsLastUpdate = tick()
+                            local ping = math.max(lplr:GetNetworkPing(), 0)
+                            local attackSpeed = (meta.sword and meta.sword.attackSpeed) or 0.3
+                            local swingDelay = math.max(attackSpeed - ping, 0.02)
+                            SwingTime:SetValue(swingDelay / 2)
+                            UpdateRate:SetValue(math.clamp(math.floor((swingDelay - ping) * 1000 + 0.5), 1, 1000))
+                        end
                         local plrs = entitylib.AllPosition({
                             Range = SwingRange.Value,
                             Wallcheck = Targets.Walls.Enabled or nil,
@@ -5044,7 +5055,7 @@ run(function()
         Name = 'Swing time',
         Min = 0,
         Max = 2,
-        Decimal = 100,
+        Decimal = 1000,
         Default = 0.11,
         Suffix = 'seconds'
     })
@@ -5056,9 +5067,23 @@ run(function()
     UpdateRate = Killaura:CreateSlider({
         Name = 'Update rate',
         Min = 1,
-        Max = 120,
+        Max = 1000,
         Default = 60,
         Suffix = 'hz'
+    })
+    MaxHits = Killaura:CreateToggle({
+        Name = 'Max hits',
+        Tooltip = 'Changes your Killaura settings based on a formula to give you the highest hitreg',
+        Function = function(callback)
+            if callback then
+                maxHitsCache = {SwingTime = SwingTime.Value, UpdateRate = UpdateRate.Value}
+            elseif maxHitsCache then
+                SwingTime:SetValue(maxHitsCache.SwingTime)
+                UpdateRate:SetValue(maxHitsCache.UpdateRate)
+                maxHitsCache = nil
+            end
+            maxHitsLastUpdate = nil
+        end
     })
     MaxTargets = Killaura:CreateSlider({
         Name = 'Max targets',
@@ -5537,6 +5562,64 @@ run(function()
     rayParams.RespectCanCollide = true
     rayParams.FilterType = Enum.RaycastFilterType.Include
     
+    local function solveTelepearlShot(localPosition, targetPosition, meta)
+        local speed = meta.launchVelocity
+        local gravity = meta.gravitationalAcceleration or workspace.Gravity
+        if not speed or speed <= 0 or gravity <= 0 then return nil end
+
+        rayParams.FilterDescendantsInstances = {workspace:WaitForChild('Map', 9e9)}
+        local ground = workspace:Raycast(targetPosition + Vector3.new(0, 3, 0), Vector3.new(0, -1000, 0), rayParams)
+        if ground then targetPosition = ground.Position end
+
+        local function velocities(origin)
+            local delta = targetPosition - origin
+            local flat = Vector3.new(delta.X, 0, delta.Z)
+            local distance = flat.Magnitude
+            if distance < 0.01 then return {} end
+            local speed2 = speed * speed
+            local discriminant = speed2 * speed2 - gravity * (gravity * distance * distance + 2 * delta.Y * speed2)
+            if discriminant < 0 then return {} end
+            local root = math.sqrt(discriminant)
+            local result = {}
+            for _, numerator in {speed2 - root, speed2 + root} do
+                local tangent = numerator / (gravity * distance)
+                local horizontalSpeed = speed / math.sqrt(1 + tangent * tangent)
+                table.insert(result, flat.Unit * horizontalSpeed + Vector3.new(0, horizontalSpeed * tangent, 0))
+            end
+            return result
+        end
+
+        local best, bestDistance
+        for arcIndex, initialVelocity in velocities(localPosition) do
+            local shootPosition = localPosition
+            local velocity = initialVelocity
+            for _ = 1, 2 do
+                shootPosition = (CFrame.lookAt(localPosition, localPosition + velocity) * CFrame.new(Vector3.new(-bedwars.BowConstantsTable.RelX, -bedwars.BowConstantsTable.RelY, -bedwars.BowConstantsTable.RelZ))).Position
+                local refined = velocities(shootPosition)
+                if #refined == 0 then break end
+                velocity = refined[arcIndex]
+            end
+
+            local last = shootPosition
+            local landing
+            for step = 1, 960 do
+                local time = step / 120
+                local nextPosition = shootPosition + velocity * time - Vector3.new(0, gravity * time * time * 0.5, 0)
+                local hit = workspace:Raycast(last, nextPosition - last, rayParams)
+                if hit then landing = hit.Position break end
+                last = nextPosition
+            end
+            if landing then
+                local miss = (landing - targetPosition).Magnitude
+                if not bestDistance or miss < bestDistance then
+                    bestDistance = miss
+                    best = {direction = velocity, shootPosition = shootPosition}
+                end
+            end
+        end
+        return best
+    end
+
     local MouseTPs = {
     	Items = function(position)
     		local item = getItem('telepearl') or getItem('fireball')
@@ -5544,20 +5627,17 @@ run(function()
     		if item then
     			if item.itemType == 'telepearl' then
     				local meta = bedwars.ProjectileMeta.telepearl
-    				local calc = prediction.SolveTrajectory(localPosition, meta.launchVelocity, meta.gravitationalAcceleration, position, Vector3.zero, workspace.Gravity, 0, 0)
-    				if calc then
-    					position = calc
-    				end
-    
-    				local shootPosition = (CFrame.new(localPosition, position) * CFrame.new(Vector3.new(-bedwars.BowConstantsTable.RelX, -bedwars.BowConstantsTable.RelY, -bedwars.BowConstantsTable.RelZ))).Position
-    				switchItem(item.tool)
+				local shot = solveTelepearlShot(localPosition, position, meta)
+				if not shot then return false end
+
+				switchItem(item.tool)
     				bedwars.Client:Get(remotes.FireProjectile):CallServerAsync(
     					item.tool,
     					'telepearl',
     					'telepearl',
-    					shootPosition,
+					shot.shootPosition,
     					localPosition,
-    					CFrame.lookAt(localPosition, position).LookVector * meta.launchVelocity,
+					shot.direction,
     					httpService:GenerateGUID(true),
     					{
     						drawDurationSeconds = 1,
@@ -5634,7 +5714,7 @@ run(function()
     				rayParams.FilterDescendantsInstances = { workspace:WaitForChild('Map', 9e9) }
     				local ray = cloneref(lplr:GetMouse()).UnitRay
     				ray = workspace:Raycast(ray.Origin, ray.Direction * 10000, rayParams)
-    				position = ray and ray.Position + Vector3.new(0, entitylib.character.HipHeight or 2, 0)
+				position = ray and ray.Position
     			elseif Mode.Value == 'Player' then
     				local ent = entitylib.EntityMouse({
     					Range = math.huge,
@@ -5897,6 +5977,9 @@ run(function()
     end
     
     local ProjectileAimbot
+    local MaxAccuracy
+    local maxAccuracyCache
+    local maxAccuracyGeneration = 0
     ProjectileAimbot = vape.Categories.Blatant:CreateModule({
     	Name = 'ProjectileAimbot',
     	Disabled = not canDebug,
@@ -5955,7 +6038,7 @@ run(function()
     
     					local targetpos = getPosition(plr.Character) or plr[TargetPart.Value].Position
     					local newlook = CFrame.new(offsetpos, targetpos) * CFrame.new(projmeta.projectile == 'owl_projectile' and Vector3.zero or Vector3.new(bedwars.BowConstantsTable.RelX, bedwars.BowConstantsTable.RelY, bedwars.BowConstantsTable.RelZ))
-    					local calc = prediction.SolveTrajectory(newlook.p, projSpeed * Prediction.Value, gravity, targetpos, projmeta.projectile == 'telepearl' and Vector3.zero or plr.RootPart.Velocity, playerGravity, plr.HipHeight, plr.Jumping and 42.6 or nil, rayCheck)
+						local calc = prediction.SolveTrajectory(newlook.p, projSpeed * Prediction.Value, gravity, targetpos, projmeta.projectile == 'telepearl' and Vector3.zero or plr.RootPart.Velocity, playerGravity, plr.HipHeight, plr.Jumping and 42.6 or nil, rayCheck)
     					if calc then
     						targetinfo.Targets[plr] = tick() + 1
     						return {
@@ -6003,7 +6086,27 @@ run(function()
     	Min = 0.1,
     	Max = 2,
     	Default = 1,
-    	Decimal = 10,
+        Decimal = 1000,
+    })
+    MaxAccuracy = ProjectileAimbot:CreateToggle({
+        Name = 'Max accuracy',
+        Tooltip = 'Changes prediction based on ping to give you the most accurate shots',
+        Function = function(callback)
+            maxAccuracyGeneration += 1
+            local generation = maxAccuracyGeneration
+            if callback then
+                maxAccuracyCache = Prediction.Value
+                task.spawn(function()
+                    repeat
+                        Prediction:SetValue(math.clamp(1 - lplr:GetNetworkPing(), 0.1, 1))
+                        task.wait(1)
+                    until not MaxAccuracy.Enabled or generation ~= maxAccuracyGeneration
+                end)
+            elseif maxAccuracyCache then
+                Prediction:SetValue(maxAccuracyCache)
+                maxAccuracyCache = nil
+            end
+        end
     })
     FOV = ProjectileAimbot:CreateSlider({
     	Name = 'FOV',
@@ -14596,6 +14699,10 @@ run(function()
     						for _, v in crates do
     							if (localPosition - v.Position).Magnitude <= Range.Value then
     								local folder = v.ChestFolderValue.Value
+                                local folderName = folder and tostring(folder.Name):lower() or ''
+                                local inventories = replicatedStorage:FindFirstChild('Inventories')
+                                local ownFolder = inventories and inventories:FindFirstChild(lplr.Name .. '_personal')
+                                if not folder or folder == ownFolder or folderName:sub(-9) == '_personal' then continue end
     								bedwars.Client:GetNamespace('Inventory'):Get('SetObservedChest'):SendToServer(folder)
     								for _, v2 in folder:GetChildren() do
     									if v2:IsA('Accessory') then
