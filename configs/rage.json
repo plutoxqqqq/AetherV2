@@ -2932,130 +2932,6 @@
       },
       "Bind": []
     },
-    "KillauraV2": {
-      "Enabled": false,
-      "Favourited": false,
-      "Options": {
-        "No Tween": {
-          "Enabled": false
-        },
-        "Attack range": {
-          "Value": 20,
-          "Max": 20
-        },
-        "Target skilled": {
-          "Enabled": false
-        },
-        "Target Mode": {
-          "Value": "Damage"
-        },
-        "Max targets": {
-          "Value": 5,
-          "Max": 5
-        },
-        "Attackable check": {
-          "Enabled": false
-        },
-        "Max angle": {
-          "Value": 360,
-          "Max": 360
-        },
-        "Custom Animation": {
-          "Enabled": false
-        },
-        "Swing range": {
-          "Value": 28,
-          "Max": 28
-        },
-        "Attack Color": {
-          "Hue": 0.7559524,
-          "Sat": 0.5490196,
-          "Value": 1,
-          "Opacity": 0.5,
-          "Rainbow": false
-        },
-        "Size": {
-          "Value": 0.2,
-          "Max": 1
-        },
-        "Limit to items": {
-          "Enabled": false
-        },
-        "Animation Mode": {
-          "Value": "Normal"
-        },
-        "Texture": {
-          "Value": "rbxassetid://14736249347"
-        },
-        "Animation Speed": {
-          "Value": 1,
-          "Max": 2
-        },
-        "Face target": {
-          "Enabled": false
-        },
-        "Swing time": {
-          "Value": 0.11,
-          "Max": 2
-        },
-        "Require mouse down": {
-          "Enabled": false
-        },
-        "Show target": {
-          "Enabled": false
-        },
-        "Air hit chance": {
-          "Value": 100,
-          "Max": 100
-        },
-        "Target particles": {
-          "Enabled": false
-        },
-        "GUI check": {
-          "Enabled": false
-        },
-        "Color Begin": {
-          "Hue": 0.7559524,
-          "Sat": 0.5490196,
-          "Value": 1,
-          "Opacity": 1,
-          "Rainbow": false
-        },
-        "No Swing": {
-          "Enabled": false
-        },
-        "Targets": {
-          "Players": true,
-          "NPCs": true,
-          "Invisible": false,
-          "Walls": false
-        },
-        "Color End": {
-          "Hue": 0.7559524,
-          "Sat": 0.5490196,
-          "Value": 1,
-          "Opacity": 1,
-          "Rainbow": false
-        },
-        "Attack Mode": {
-          "Value": "Single"
-        },
-        "Target Color": {
-          "Hue": 0.7559524,
-          "Sat": 0.5490196,
-          "Value": 1,
-          "Opacity": 0.5,
-          "Rainbow": false
-        },
-        "Sync with hitreg": {
-          "Enabled": false
-        },
-        "Swing only": {
-          "Enabled": false
-        }
-      },
-      "Bind": []
-    },
     "AntiDeath": {
       "Enabled": false,
       "Favourited": false,
@@ -3832,6 +3708,9 @@
         },
         "Place Blocks": {
           "Enabled": true
+        },
+        "Wool only": {
+          "Enabled": false
         }
       },
       "Bind": []
@@ -4472,38 +4351,6 @@
       },
       "Bind": []
     },
-    "BlockInV2": {
-      "Enabled": false,
-      "Favourited": false,
-      "Options": {
-        "Return to last slot": {
-          "Enabled": true
-        },
-        "Wool only": {
-          "Enabled": false
-        },
-        "Block priority": {
-          "Value": "Lowest cost"
-        },
-        "Place delay": {
-          "ValueMin": 30,
-          "ValueMax": 50
-        },
-        "Blacklist": {
-          "ListEnabled": [
-            "cannon",
-            "siege_tnt",
-            "tnt"
-          ],
-          "List": [
-            "cannon",
-            "siege_tnt",
-            "tnt"
-          ]
-        }
-      },
-      "Bind": []
-    },
     "StreamRemover": {
       "Enabled": true,
       "Favourited": false,
@@ -4922,45 +4769,6 @@
         "Range": {
           "Value": 23,
           "Max": 35
-        }
-      },
-      "Bind": []
-    },
-    "Block-In": {
-      "Enabled": false,
-      "Favourited": false,
-      "Options": {
-        "Bed finder": {
-          "Enabled": false
-        },
-        "Placement Mode": {
-          "Value": "Normal"
-        },
-        "Break speed": {
-          "Value": 0.25,
-          "Max": 0.3
-        },
-        "Place Delay": {
-          "ValueMin": 0.07,
-          "ValueMax": 0.1
-        },
-        "Limit to items": {
-          "Enabled": false
-        },
-        "Use blacklist": {
-          "Enabled": true
-        },
-        "Blacklists": {
-          "ListEnabled": [
-            "cannon",
-            "tnt",
-            "siege_tnt"
-          ],
-          "List": [
-            "cannon",
-            "tnt",
-            "siege_tnt"
-          ]
         }
       },
       "Bind": []
@@ -5566,27 +5374,6 @@
       },
       "Bind": []
     },
-    "AutoClickerV2": {
-      "Enabled": false,
-      "Favourited": false,
-      "Options": {
-        "Wool only": {
-          "Enabled": false
-        },
-        "Block CPS": {
-          "ValueMin": 12,
-          "ValueMax": 12
-        },
-        "CPS": {
-          "ValueMin": 7,
-          "ValueMax": 7
-        },
-        "Place Blocks": {
-          "Enabled": true
-        }
-      },
-      "Bind": []
-    },
     "CheatDetector": {
       "Enabled": true,
       "Favourited": false,
@@ -5917,6 +5704,69 @@
         }
       },
       "Bind": []
+    },
+    "BlockIn": {
+      "Enabled": false,
+      "Bind": [],
+      "Options": {
+        "Bed finder": {
+          "Enabled": false
+        },
+        "Placement Mode": {
+          "Value": "Normal"
+        },
+        "Break speed": {
+          "Value": 0.25,
+          "Max": 0.3
+        },
+        "Place Delay": {
+          "ValueMin": 0.07,
+          "ValueMax": 0.1
+        },
+        "Limit to items": {
+          "Enabled": false
+        },
+        "Use blacklist": {
+          "Enabled": true
+        },
+        "Blacklists": {
+          "ListEnabled": [
+            "cannon",
+            "tnt",
+            "siege_tnt"
+          ],
+          "List": [
+            "cannon",
+            "tnt",
+            "siege_tnt"
+          ]
+        },
+        "Return to last slot": {
+          "Enabled": true
+        },
+        "Wool only": {
+          "Enabled": false
+        },
+        "Block priority": {
+          "Value": "Lowest cost"
+        },
+        "Place delay": {
+          "ValueMin": 30,
+          "ValueMax": 50
+        },
+        "Blacklist": {
+          "ListEnabled": [
+            "cannon",
+            "siege_tnt",
+            "tnt"
+          ],
+          "List": [
+            "cannon",
+            "siege_tnt",
+            "tnt"
+          ]
+        }
+      }
     }
   },
   "GUIColor": {
