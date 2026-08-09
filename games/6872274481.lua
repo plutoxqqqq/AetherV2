@@ -24740,6 +24740,10 @@ run(function()
     -- same stack being banked or restored more than once.
     local pendingDrops = {}
     local pendingReclaims = {}
+    -- Drops being returned must no longer be held at BANK_ORIGIN. Without a separate release
+    -- state, PreRender moved them back into the sky on the very next frame, racing the pickup
+    -- remote and making retrieval depend on lucky timing.
+    local releasingDrops = {}
     local displayEntries = {}
 
     -- Somewhere nothing else occupies, with the stash laid out on a grid so two drops never
@@ -24749,6 +24753,8 @@ run(function()
     local BANK_COLUMNS = 32
 
     local function untrackDrop(drop)
+        releasingDrops[drop] = nil
+        pendingReclaims[drop] = nil
         local index = table.find(droppedItems, drop)
         if index then
             table.remove(droppedItems, index)
@@ -24760,11 +24766,11 @@ run(function()
     local function reclaim(drop)
         if not drop or not drop.Parent then
             untrackDrop(drop)
-            pendingReclaims[drop] = nil
             return
         end
         if not entitylib.isAlive then return end
 
+        releasingDrops[drop] = true
         -- Keep moving the drop to the player even while a previous pickup request is pending.
         -- This matters during disable cleanup, when the PreRender skybox holder is disconnected.
         drop.Velocity = Vector3.zero
@@ -24777,15 +24783,24 @@ run(function()
                 pendingReclaims[drop] = nil
                 if not drop.Parent then
                     untrackDrop(drop)
-                elseif success and AutoBank.Enabled then
-                    task.delay(0.03, reclaim, drop)
+                elseif AutoBank.Enabled then
+                    -- A false response can simply mean the server has not observed the move
+                    -- from the sky yet. Keep the drop at the player and retry; stacked drops
+                    -- also require more than one successful pickup request.
+                    task.delay(success and 0.03 or 0.1, reclaim, drop)
                 end
             end, function()
                 pendingReclaims[drop] = nil
+                if AutoBank.Enabled and drop.Parent then
+                    task.delay(0.1, reclaim, drop)
+                end
             end)
         end)
         if not ok then
             pendingReclaims[drop] = nil
+            if AutoBank.Enabled and drop.Parent then
+                task.delay(0.1, reclaim, drop)
+            end
         end
     end
 
@@ -24960,6 +24975,7 @@ run(function()
                 end
                 table.clear(pendingDrops)
                 table.clear(pendingReclaims)
+                table.clear(releasingDrops)
                 table.clear(dropCooldowns)
                 table.clear(displayEntries)
                 return
@@ -24996,13 +25012,21 @@ run(function()
                         if not drop or not drop.Parent or drop.Parent ~= workspace.ItemDrops then
                             untrackDrop(drop)
                         else
-                            totals[drop.Name] = (totals[drop.Name] or 0) + (drop:GetAttribute('Amount') or 0)
+                            totals[drop.Name] = (totals[drop.Name] or 0) + (drop:GetAttribute('Amount') or 1)
                             drop.Velocity = Vector3.zero
-                            drop.CFrame = BANK_ORIGIN + Vector3.new(
-                                (index % BANK_COLUMNS) * BANK_SPACING,
-                                0,
-                                math.floor(index / BANK_COLUMNS) * BANK_SPACING
-                            )
+                            drop.RotVelocity = Vector3.zero
+                            if releasingDrops[drop] and entitylib.isAlive then
+                                -- Keep this position stable until the server acknowledges every
+                                -- item in the stack. This removes the frame-order race between
+                                -- reclaim() and the skybox holder.
+                                drop.CFrame = entitylib.character.Head.CFrame
+                            else
+                                drop.CFrame = BANK_ORIGIN + Vector3.new(
+                                    (index % BANK_COLUMNS) * BANK_SPACING,
+                                    0,
+                                    math.floor(index / BANK_COLUMNS) * BANK_SPACING
+                                )
+                            end
                         end
                     end
                 end
@@ -25019,14 +25043,17 @@ run(function()
                 end
 
                 if Mode.Value == 'Chest' then
-                    -- Nothing at all happens away from the chest, which is the whole point of
-                    -- this mode: no drops, no held items, no remote sent from anywhere a player
-                    -- could not be standing.
-                    local folder = entitylib.isAlive and atPersonalChest() and ownPersonalFolder() or nil
+                    local folder = entitylib.isAlive and ownPersonalFolder() or nil
                     if folder then
+                        -- Withdrawing used to require the player to be in range of a personal
+                        -- chest and a shop at the same time. On bases where those two ranges do
+                        -- not overlap, AutoBuy could never get the resources back without the
+                        -- player shuffling between them. The personal inventory is already the
+                        -- authoritative deposit target, so release it as soon as a shop is in
+                        -- range and only require chest proximity when putting items in.
                         if Withdraw.Enabled and atShop() then
                             withdrawFromChest(folder)
-                        else
+                        elseif atPersonalChest() then
                             depositToChest(folder)
                         end
                     end
@@ -25209,7 +25236,7 @@ run(function()
 		if entitylib.isAlive then
 			local localPosition = entitylib.character.RootPart.Position
 			for _, v in store.shop do
-				if (v.RootPart.Position - localPosition).Magnitude <= 20 then
+				if v.RootPart and v.RootPart.Parent and (v.RootPart.Position - localPosition).Magnitude <= 20 then
 					shop = v.Upgrades or v.Shop or nil
 					upgrades = upgrades or v.Upgrades
 					items = items or v.Shop
@@ -25391,7 +25418,10 @@ run(function()
 
 				local lastupgrades
 				AutoBuy:Clean(vapeEvents.InventoryAmountChanged.Event:Connect(function()
-					if (npctick - tick()) > 1 then npctick = tick() end
+					-- Currency can arrive from a generator, a chest withdrawal, or a delayed
+					-- pickup response. Always wake the buyer instead of only doing so when its
+					-- current deadline happens to be more than a second away.
+					npctick = math.min(npctick, tick())
 				end))
 
 				repeat
@@ -25404,7 +25434,7 @@ run(function()
 					end
 
 					if npc and lastupgrades ~= upgrades then
-						if (npctick - tick()) > 1 then npctick = tick() end
+						npctick = tick()
 						lastupgrades = upgrades
 					end
 
@@ -25418,7 +25448,11 @@ run(function()
 								end
 							end
 						end
-						npctick = tick() + (waitcheck and 0.4 or math.huge)
+						-- Do not sleep forever when nothing is affordable. Inventory events are
+						usually enough to wake us, but they can be coalesced or arrive before a
+						-- chest transfer finishes. A cheap periodic retry makes shop entry and
+						-- AutoBank hand-off deterministic without hammering purchase remotes.
+						npctick = tick() + (waitcheck and 0.4 or 0.5)
 					end
 
 					task.wait(0.1)
