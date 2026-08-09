@@ -2129,135 +2129,98 @@ run(function()
 end)
 
 run(function()
-    local AutoClicker
-    local CPS
-    local BlockCPS
-    local Wool
-    local PlaceBlocks
-    local Thread
+	local AutoClicker
+	local CPS
+	local BlockCPS = {}
+	local Thread
 
-    local function AutoClick()
-	if Thread then
-		task.cancel(Thread)
-	end
+	local function AutoClick()
+		if Thread then
+			task.cancel(Thread)
+		end
 
-	Thread = task.delay(1 / (store.hand.toolType == 'block' and BlockCPS or CPS).GetRandomValue(), function()
-		repeat
-			if not bedwars.AppController:isLayerOpen(bedwars.UILayers.MAIN) then
-				local blockPlacer = bedwars.BlockPlacementController.blockPlacer
-				if PlaceBlocks.Enabled and store.hand.toolType == 'block' and blockPlacer and canPlace()
-					and (not Wool.Enabled or (store.hand.tool and store.hand.tool.Name:find('wool_'))) then
-					if canDebug then
-						if inputService.TouchEnabled then
-							task.spawn(function()
-								blockPlacer:autoBridge(
-									workspace:GetServerTimeNow() - bedwars.KnockbackController:getLastKnockbackTime()
-										>= 0.2
-								)
-							end)
-						else
-							if
-								(workspace:GetServerTimeNow() - bedwars.BlockCpsController.lastPlaceTimestamp)
-								>= ((1 / 12) * 0.5)
-							then
-								local mouseinfo
-								if canDebug then
-									mouseinfo = blockPlacer.clientManager:getBlockSelector():getMouseInfo(0)
-								else
-									mouseinfo = { placementPosition = lplr:GetMouse().Hit.Position }
-								end
-								if mouseinfo and mouseinfo.placementPosition == mouseinfo.placementPosition then
-									if canDebug then
-										task.spawn(blockPlacer.placeBlock, blockPlacer, mouseinfo.placementPosition)
-									else
-										bedwars.placeBlock(({ getPlacedBlock(mouseinfo.placementPosition) })[2])
-									end
-								end
+		Thread = task.delay(1 / 7, function()
+			repeat
+				if not bedwars.AppController:isLayerOpen(bedwars.UILayers.MAIN) then
+					local blockPlacer = bedwars.BlockPlacementController.blockPlacer
+					if store.hand.toolType == 'block' and blockPlacer then
+						if (workspace:GetServerTimeNow() - bedwars.BlockCpsController.lastPlaceTimestamp) >= ((1 / 12) * 0.5) then
+							local mouseinfo = blockPlacer.clientManager:getBlockSelector():getMouseInfo(0)
+							if mouseinfo and mouseinfo.placementPosition == mouseinfo.placementPosition then
+								task.spawn(blockPlacer.placeBlock, blockPlacer, mouseinfo.placementPosition)
 							end
 						end
+					elseif store.hand.toolType == 'sword' then
+						bedwars.SwordController:swingSwordAtMouse()
 					end
-				elseif store.hand.toolType == 'sword' and canSwing() then
-					bedwars.SwordController:swingSwordAtMouse(0.39)
 				end
-			end
 
-			task.wait(1 / (store.hand.toolType == 'block' and BlockCPS or CPS).GetRandomValue()) --
-		until not AutoClicker.Enabled
-	end)
-    end
+				task.wait(1 / (store.hand.toolType == 'block' and BlockCPS or CPS).GetRandomValue())
+			until not AutoClicker.Enabled
+		end)
+	end
 
-    AutoClicker = vape.Categories.Combat:CreateModule({
-	Name = 'AutoClicker',
-	Function = function(callback)
-		if callback then
-			AutoClicker:Clean(inputService.InputBegan:Connect(function(input)
-				if input.UserInputType == Enum.UserInputType.MouseButton1 then
-					AutoClick()
-				end
-			end))
+	AutoClicker = vape.Categories.Combat:CreateModule({
+		Name = 'AutoClicker',
+		Function = function(callback)
+			if callback then
+				AutoClicker:Clean(inputService.InputBegan:Connect(function(input)
+					if input.UserInputType == Enum.UserInputType.MouseButton1 then
+						AutoClick()
+					end
+				end))
 
-			AutoClicker:Clean(inputService.InputEnded:Connect(function(input)
-				if input.UserInputType == Enum.UserInputType.MouseButton1 and Thread then
-					task.cancel(Thread)
-					Thread = nil
-				end
-			end))
+				AutoClicker:Clean(inputService.InputEnded:Connect(function(input)
+					if input.UserInputType == Enum.UserInputType.MouseButton1 and Thread then
+						task.cancel(Thread)
+						Thread = nil
+					end
+				end))
 
-			if inputService.TouchEnabled then
-				local hooked = {}
-				local function hookButton(button)
-					if hooked[button] or not button:IsA('GuiButton') or not tonumber(button.Name) then return end
-					hooked[button] = true
-					AutoClicker:Clean(button.MouseButton1Down:Connect(AutoClick))
-					AutoClicker:Clean(button.MouseButton1Up:Connect(function()
+				if inputService.TouchEnabled then
+					pcall(function()
+						AutoClicker:Clean(lplr.PlayerGui.MobileUI['2'].MouseButton1Down:Connect(AutoClick))
+						AutoClicker:Clean(lplr.PlayerGui.MobileUI['2'].MouseButton1Up:Connect(function()
 							if Thread then
 								task.cancel(Thread)
 								Thread = nil
 							end
-					end))
+						end))
+					end)
 				end
-				task.spawn(function()
-					local mobileUI = lplr.PlayerGui:WaitForChild('MobileUI', 20)
-					if not mobileUI or not AutoClicker.Enabled then return end
-					for _, button in mobileUI:GetChildren() do hookButton(button) end
-					AutoClicker:Clean(mobileUI.ChildAdded:Connect(hookButton))
-				end)
+			else
+				if Thread then
+					task.cancel(Thread)
+					Thread = nil
+				end
 			end
-		else
-			if Thread then
-				task.cancel(Thread)
-				Thread = nil
+		end,
+		Tooltip = 'Hold attack button to automatically click'
+	})
+	CPS = AutoClicker:CreateTwoSlider({
+		Name = 'CPS',
+		Min = 1,
+		Max = 9,
+		DefaultMin = 7,
+		DefaultMax = 7
+	})
+	AutoClicker:CreateToggle({
+		Name = 'Place Blocks',
+		Default = true,
+		Function = function(callback)
+			if BlockCPS.Object then
+				BlockCPS.Object.Visible = callback
 			end
 		end
-	end,
-	Tooltip = 'Hold attack button to automatically click',
-    })
-    CPS = AutoClicker:CreateTwoSlider({
-	Name = 'CPS',
-	Min = 1,
-	Max = 9,
-	DefaultMin = 7,
-	DefaultMax = 7,
-    })
-	PlaceBlocks = AutoClicker:CreateToggle({
-	Name = 'Place Blocks',
-	Default = true,
-	Function = function(callback)
-		if BlockCPS and BlockCPS.Object then
-			BlockCPS.Object.Visible = callback
-		end
-		if Wool and Wool.Object then Wool.Object.Visible = callback end
-	end,
-    })
-    Wool = AutoClicker:CreateToggle({Name = 'Wool only', Darker = true, Visible = PlaceBlocks.Enabled})
-    BlockCPS = AutoClicker:CreateTwoSlider({
-	Name = 'Block CPS',
-	Min = 1,
-	Max = 20,
-	DefaultMin = 12,
-	DefaultMax = 12,
-	Darker = true,
-    })
+	})
+	BlockCPS = AutoClicker:CreateTwoSlider({
+		Name = 'Block CPS',
+		Min = 1,
+		Max = 12,
+		DefaultMin = 12,
+		DefaultMax = 12,
+		Darker = true
+	})
 end)
 
 run(function()
@@ -24768,6 +24731,11 @@ run(function()
     -- itemType -> when we may next try to drop it. A stack the server refuses would otherwise
     -- be re-dropped ten times a second for the rest of the match.
     local dropCooldowns = {}
+    -- Tools with an in-flight DropItem request and drops with an in-flight pickup request.
+    -- The main loop runs faster than either remote can respond, so these guards prevent the
+    -- same stack being banked or restored more than once.
+    local pendingDrops = {}
+    local pendingReclaims = {}
     local displayEntries = {}
 
     -- Somewhere nothing else occupies, with the stash laid out on a grid so two drops never
@@ -24786,18 +24754,33 @@ run(function()
     -- Bring one drop back to the head and ask for it. The request is asynchronous, so the drop
     -- is only untracked once the server has actually handed it over.
     local function reclaim(drop)
-        if not drop or not drop.Parent or not entitylib.isAlive then return end
+        if not drop or not drop.Parent then
+            untrackDrop(drop)
+            pendingReclaims[drop] = nil
+            return
+        end
+        if not entitylib.isAlive then return end
+
+        -- Keep moving the drop to the player even while a previous pickup request is pending.
+        -- This matters during disable cleanup, when the PreRender skybox holder is disconnected.
         drop.Velocity = Vector3.zero
         drop.CFrame = entitylib.character.Head.CFrame
-        task.spawn(function()
-            pcall(function()
-                bedwars.Client:Get(remotes.PickupItem):CallServerAsync({itemDrop = drop}):andThen(function(success)
-                    if success then
-                        untrackDrop(drop)
-                    end
-                end)
+        if pendingReclaims[drop] then return end
+        pendingReclaims[drop] = true
+
+        local ok = pcall(function()
+            bedwars.Client:Get(remotes.PickupItem):CallServerAsync({itemDrop = drop}):andThen(function(success)
+                pendingReclaims[drop] = nil
+                if success or not drop.Parent then
+                    untrackDrop(drop)
+                end
+            end, function()
+                pendingReclaims[drop] = nil
             end)
         end)
+        if not ok then
+            pendingReclaims[drop] = nil
+        end
     end
 
     -- True while standing at a shop NPC, which is the cue to hand the stash back.
@@ -24946,7 +24929,13 @@ run(function()
                     end
                     task.wait(0.1)
                 end
-                table.clear(droppedItems)
+                -- Never forget a live drop that the server has not returned yet. If cleanup
+                -- times out (for example while respawning), the next enable can restore it.
+                for _, drop in table.clone(droppedItems) do
+                    if not drop or not drop.Parent then untrackDrop(drop) end
+                end
+                table.clear(pendingDrops)
+                table.clear(pendingReclaims)
                 table.clear(dropCooldowns)
                 table.clear(displayEntries)
                 return
@@ -25025,16 +25014,19 @@ run(function()
                 else
                     for _, item in store.inventory.inventory.items do
                         local name = item.tool and item.tool.Name
-                        if name and table.find(Whitelist.ListEnabled, name) and (dropCooldowns[name] or 0) < os.clock() then
+                        local tool = item.tool
+                        if name and table.find(Whitelist.ListEnabled, name) and not pendingDrops[tool]
+                            and (dropCooldowns[name] or 0) < os.clock() then
+                            pendingDrops[tool] = true
                             task.spawn(function()
                                 local drop
                                 pcall(function()
                                     drop = bedwars.Client:Get(remotes.DropItem):CallServer({
-                                        item = item.tool,
+                                        item = tool,
                                         amount = item.amount
                                     })
                                 end)
-                                if not AutoBank.Enabled then return end
+                                pendingDrops[tool] = nil
                                 if not drop or not drop.Parent or table.find(droppedItems, drop) then
                                     -- Refused, or handed us something we already hold. Back off
                                     -- rather than hammering the same stack.
@@ -25046,8 +25038,16 @@ run(function()
                                 -- so nobody can walk into the stash and take it if it is ever seen.
                                 drop:ClearAllChildren()
                                 drop.AncestryChanged:Once(function()
+                                    pendingReclaims[drop] = nil
                                     untrackDrop(drop)
                                 end)
+
+                                -- A DropItem response can arrive after AutoBank was disabled or
+                                -- after the player reached a shop. Restore that late drop instead
+                                -- of abandoning it at its server-provided position.
+                                if not AutoBank.Enabled or atShop() then
+                                    reclaim(drop)
+                                end
                             end)
                         end
                     end
