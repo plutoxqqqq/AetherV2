@@ -252,6 +252,34 @@ local function getItem(itemName, inv, find)
 	return nil
 end
 
+-- Shared by ProjectileAura and AutoShoot. This used to be duplicated inside both
+-- modules; when those copies were consolidated the call sites remained but the
+-- helper itself was accidentally omitted, causing either module's loop to stop as
+-- soon as it tried to enumerate the available ammunition.
+local function getProjectiles(enabled, useSophia, useWhim)
+	local projectiles = {}
+	for _, item in store.inventory.inventory.items do
+		local itemMeta = bedwars.ItemMeta[item.itemType]
+		local source = itemMeta and itemMeta.projectileSource
+		if source then
+			local ammo
+			for _, ammoType in source.ammoItemTypes or {} do
+				if getItem(ammoType) then
+					ammo = ammoType
+					break
+				end
+			end
+
+			local special = useSophia and item.itemType:find('frost')
+				or useWhim and (item.itemType:find('mage') or item.itemType:find('whim'))
+			if ammo and (special or table.find(enabled, ammo) or table.find(enabled, item.itemType) or table.find(enabled, itemMeta.displayName)) then
+				table.insert(projectiles, {item, ammo, source.projectileType(ammo), source})
+			end
+		end
+	end
+	return projectiles
+end
+
 local function getRoactRender(func)
 	return debug.getupvalue(debug.getupvalue(debug.getupvalue(func, 3).render, 2).render, 1)
 end
@@ -9858,13 +9886,14 @@ run(function()
 									local calc = prediction.SolveTrajectory(pos, projSpeed, gravity, ent.RootPart.Position, ent.RootPart.Velocity, workspace.Gravity, ent.HipHeight, ent.Jumping and 42.6 or nil, rayCheck, ent.Humanoid.FloorMaterial == Enum.Material.Air or math.abs(ent.RootPart.Velocity.Y) > 0.01, ent.RootPart.Position, ent.RootPart, nil, true)
 									if calc then
 										switchItem(item.tool, 0)
+										store.lastProjectileFire = workspace:GetServerTimeNow()
 										targetinfo.Targets[ent] = tick() + 1
 
 										task.spawn(function()
 											local shootPosition = (CFrame.new(pos, calc) * CFrame.new(Vector3.new(-bedwars.BowConstantsTable.RelX, -bedwars.BowConstantsTable.RelY, -bedwars.BowConstantsTable.RelZ))).Position
 											local aim = prediction.SolveTrajectory(shootPosition, projSpeed, gravity, ent.RootPart.Position, ent.RootPart.Velocity, workspace.Gravity, ent.HipHeight, ent.Jumping and 42.6 or nil, rayCheck, ent.Humanoid.FloorMaterial == Enum.Material.Air or math.abs(ent.RootPart.Velocity.Y) > 0.01, ent.RootPart.Position, ent.RootPart, nil, true) or calc
 											local dir, id = CFrame.lookAt(shootPosition, aim).LookVector, httpService:GenerateGUID(true)
-											--bedwars.ProjectileController:createLocalProjectile(meta, ammo, projectile, shootPosition, id, dir * projSpeed, {drawDurationSeconds = 1})
+											bedwars.ProjectileController:createLocalProjectile(meta, ammo, projectile, shootPosition, id, dir * projSpeed, {drawDurationSeconds = 1})
 											local res = projectileRemote:InvokeServer(item.tool, ammo, projectile, shootPosition, pos, dir * projSpeed, id, {drawDurationSeconds = 1, shotId = httpService:GenerateGUID(false)}, workspace:GetServerTimeNow() - 0.045)
 											prediction.trackShot(ent.RootPart)
 											if not res then

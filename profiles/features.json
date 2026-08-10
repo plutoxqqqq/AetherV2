@@ -1,4 +1,9 @@
 {
+	"added": [],
+	"updated": [
+		"ProjectileAura"
+	],
+	"text": "[BEDWARS]\n\u001b[2;33m[!]\u001b[0m Fixed ProjectileAura not firing\n[GENERAL]",
 	"newModules": [
 		"EntityAnalyser",
 		"KrystalDisabler",
