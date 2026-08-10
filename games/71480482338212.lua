@@ -5589,7 +5589,7 @@ run(function()
             return result
         end
 
-        local best, bestDistance
+        local best, bestMiss, bestTime, bestAccurate
         for arcIndex, initialVelocity in velocities(localPosition) do
             local shootPosition = localPosition
             local velocity = initialVelocity
@@ -5602,17 +5602,27 @@ run(function()
 
             local last = shootPosition
             local landing
+            local landingTime
             for step = 1, 960 do
                 local time = step / 120
                 local nextPosition = shootPosition + velocity * time - Vector3.new(0, gravity * time * time * 0.5, 0)
                 local hit = workspace:Raycast(last, nextPosition - last, rayParams)
-                if hit then landing = hit.Position break end
+                if hit then landing = hit.Position landingTime = time break end
                 last = nextPosition
             end
             if landing then
                 local miss = (landing - targetPosition).Magnitude
-                if not bestDistance or miss < bestDistance then
-                    bestDistance = miss
+                local accurate = miss <= 3
+                local score = landingTime + miss / speed
+                local bestScore = bestTime and bestTime + bestMiss / speed
+                local better = not best or (accurate and not bestAccurate)
+                if accurate == bestAccurate then
+                    -- Once both arcs land close enough to teleport to the selected spot,
+                    -- prefer the lower, faster arc. Otherwise accuracy remains the priority.
+                    better = accurate and score < bestScore or not accurate and (miss < bestMiss or miss == bestMiss and landingTime < bestTime)
+                end
+                if better then
+                    bestMiss, bestTime, bestAccurate = miss, landingTime, accurate
                     best = {direction = velocity, shootPosition = shootPosition}
                 end
             end
