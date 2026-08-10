@@ -28429,15 +28429,12 @@ run(function()
     local FPSBoost
     local Profile
     local Systems
-    local Dashboard
     local changed, killEffects, visualizers = {}, {}, {}
-    local dashboardGui
-    local samples, lowest = {}, math.huge
     local profiles = {
         Minimal = {'Particles'},
         Balanced = {'Particles', 'Bloom', 'Weather'},
         Competitive = {'Particles', 'Bloom', 'Weather', 'Shadows', 'Kill effects', 'Projectile effects'},
-        Max = {'Particles', 'Bloom', 'Weather', 'Shadows', 'Kill effects', 'Projectile effects', 'UI animations'}
+        Max = {'Particles', 'Bloom', 'Weather', 'Shadows', 'Kill effects', 'Projectile effects', 'Textures', 'Materials', 'Lighting'}
     }
 
     local function selected(name)
@@ -28462,6 +28459,28 @@ run(function()
         if selected('Weather') and (object:GetAttribute('WeatherEffect') or object.Name:lower():find('weather')) then
             if object:IsA('ParticleEmitter') or object:IsA('Trail') or object:IsA('Beam') then setProperty(object, 'Enabled', false) end
         end
+        if Profile.Value == 'Max' then
+            if object:IsA('BasePart') then
+                setProperty(object, 'CastShadow', false)
+                setProperty(object, 'Reflectance', 0)
+                setProperty(object, 'Material', Enum.Material.SmoothPlastic)
+                if object:IsA('MeshPart') then
+                    setProperty(object, 'TextureID', '')
+                    setProperty(object, 'RenderFidelity', Enum.RenderFidelity.Performance)
+                end
+            elseif object:IsA('Texture') or object:IsA('Decal') then
+                setProperty(object, 'Transparency', 1)
+            elseif object:IsA('SurfaceAppearance') then
+                setProperty(object, 'ColorMap', '')
+                setProperty(object, 'MetalnessMap', '')
+                setProperty(object, 'NormalMap', '')
+                setProperty(object, 'RoughnessMap', '')
+            elseif object:IsA('Explosion') then
+                setProperty(object, 'Visible', false)
+            elseif object:IsA('Smoke') or object:IsA('Fire') or object:IsA('Sparkles') then
+                setProperty(object, 'Enabled', false)
+            end
+        end
     end
 
     local function restore()
@@ -28479,12 +28498,24 @@ run(function()
             if bedwars.VisualizerUtils[name] then bedwars.VisualizerUtils[name] = fn end
         end
         table.clear(changed); table.clear(killEffects); table.clear(visualizers)
-        if dashboardGui then dashboardGui:Destroy(); dashboardGui = nil end
-        table.clear(samples); lowest = math.huge
     end
 
     local function apply()
         if selected('Shadows') then setProperty(game:GetService('Lighting'), 'GlobalShadows', false) end
+        if Profile.Value == 'Max' then
+            local lighting = game:GetService('Lighting')
+            local terrain = workspace:FindFirstChildOfClass('Terrain')
+            setProperty(lighting, 'Brightness', 1)
+            setProperty(lighting, 'EnvironmentDiffuseScale', 0)
+            setProperty(lighting, 'EnvironmentSpecularScale', 0)
+            if terrain then
+                setProperty(terrain, 'Decoration', false)
+                setProperty(terrain, 'WaterReflectance', 0)
+                setProperty(terrain, 'WaterTransparency', 1)
+                setProperty(terrain, 'WaterWaveSize', 0)
+                setProperty(terrain, 'WaterWaveSpeed', 0)
+            end
+        end
         for _, object in game:GetDescendants() do applyObject(object) end
         if selected('Kill effects') then
             for name, effect in bedwars.KillEffectController.killEffects do
@@ -28499,42 +28530,13 @@ run(function()
         end
     end
 
-    local function createDashboard()
-        if not Dashboard.Enabled then return end
-        dashboardGui = Instance.new('TextLabel')
-        dashboardGui.Name = 'FPSBoostDashboard'
-        dashboardGui.Size = UDim2.fromOffset(210, 72)
-        dashboardGui.Position = UDim2.fromOffset(12, 90)
-        dashboardGui.BackgroundColor3 = Color3.fromRGB(24, 24, 24)
-        dashboardGui.BackgroundTransparency = 0.18
-        dashboardGui.TextColor3 = Color3.fromRGB(220, 220, 220)
-        dashboardGui.TextSize = 12
-        dashboardGui.TextXAlignment = Enum.TextXAlignment.Left
-        dashboardGui.Font = Enum.Font.Gotham
-        dashboardGui.Parent = vape.gui
-        Instance.new('UICorner', dashboardGui).CornerRadius = UDim.new(0, 6)
-        FPSBoost:Clean(dashboardGui)
-    end
-
     FPSBoost = vape.Categories.Legit:CreateModule({
         Name = 'FPSBoost',
         Function = function(callback)
             restore()
             if not callback then return end
             apply()
-            createDashboard()
             FPSBoost:Clean(game.DescendantAdded:Connect(applyObject))
-            FPSBoost:Clean(runService.Heartbeat:Connect(function(dt)
-                if not dashboardGui then return end
-                local fps = math.floor(1 / math.max(dt, 1 / 500))
-                table.insert(samples, fps)
-                if #samples > 120 then table.remove(samples, 1) end
-                lowest = math.min(lowest, fps)
-                local total = 0 for _, value in samples do total += value end
-                local memory = math.floor(game:GetService('Stats'):GetTotalMemoryUsageMb())
-                local count = 0 for _, properties in changed do for _ in properties do count += 1 end end
-                dashboardGui.Text = ('  FPS  %d   AVG  %d   LOW  %d\n  MEM  %d MB   CHANGED  %d\n  %s'):format(fps, math.floor(total / #samples), lowest, memory, Profile.Value)
-            end))
         end,
         Tooltip = 'Reversibly reduces expensive visual effects'
     })
@@ -28549,10 +28551,6 @@ run(function()
     })
     Systems = FPSBoost:CreateTextList({
         Name = 'Visual systems', Default = profiles.Balanced,
-        Function = function() if FPSBoost.Enabled then FPSBoost:Toggle(); FPSBoost:Toggle() end end
-    })
-    Dashboard = FPSBoost:CreateToggle({
-        Name = 'Performance dashboard', Default = true,
         Function = function() if FPSBoost.Enabled then FPSBoost:Toggle(); FPSBoost:Toggle() end end
     })
 end)
