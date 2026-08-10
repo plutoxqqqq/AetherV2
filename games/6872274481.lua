@@ -7175,6 +7175,39 @@ run(function()
     })
 end)
 
+run(function()
+	if not canDebug then return end
+
+	local FastPlace
+	local CPS
+	local defaultCPS = bedwars.SharedConstants.BLOCK_PLACE_CPS or 12
+
+	FastPlace = vape.Categories.World:CreateModule({
+		Name = 'FastPlace',
+		Function = function(callback)
+			bedwars.SharedConstants.BLOCK_PLACE_CPS = callback and CPS.Value or defaultCPS
+		end,
+		Tooltip = 'Shortens the delay between block placements.'
+	})
+	CPS = FastPlace:CreateSlider({
+		Name = 'CPS',
+		Min = 1,
+		Max = 100,
+		Default = 13,
+		Function = function(value)
+			if FastPlace.Enabled then
+				bedwars.SharedConstants.BLOCK_PLACE_CPS = value
+			end
+		end
+	})
+	FastPlace:CreateButton({
+		Name = 'Reset to BedWars CPS',
+		Function = function()
+			CPS:SetValue(defaultCPS)
+		end
+	})
+end)
+
 -- Consumes the supplied Grim Reaper soul and applies a configurable horizontal speed only while
 -- the character is in the controller's soul-collecting channel. Leaving the form immediately
 -- hands velocity control back to the game.
