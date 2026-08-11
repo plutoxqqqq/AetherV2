@@ -16216,6 +16216,7 @@ run(function()
     local GROUPS = {
         {Name = 'Impossible hits', Children = {'Killaura', 'SilentAim', 'HitBoxes', 'Reach'}},
         {Name = 'Blatant modules', Children = {'PlayerAttach', 'AntiDeath', 'Phase', 'Invisible', 'HighJump', 'Speed'}},
+        {Name = 'Bypasses', Children = {'NoFallDamage', 'VoidFlight', 'ExtremeSpeed'}},
         {Name = 'AutoKit'},
         {Name = 'Crashers', Children = {'Animation', 'Remote'}},
         {Name = 'Breaker'},
@@ -16293,7 +16294,7 @@ run(function()
     -- Crashers are floods, and the bar has to sit well above a player having a busy second -
     -- jumping while spamming a sword throws out a surprising number of both animations and
     -- replicated actions. These are per SECOND, not per three.
-    local ANIMATION_FLOOD, ANIMATION_WINDOW = 30, 1
+    local ANIMATION_FLOOD, ANIMATION_WINDOW = 45, 1
     local REMOTE_FLOOD, REMOTE_WINDOW = 45, 1
 
     -- How many readings of one kind before a player is flagged. Set per check rather than shared:
@@ -16310,6 +16311,9 @@ run(function()
         Invisible = 4,
         HighJump = 4,
         Speed = 3,
+        NoFallDamage = 3,
+        VoidFlight = 2,
+        ExtremeSpeed = 2,
         AutoKit = 4,
         Animation = 3,
         Remote = 3,
@@ -16571,6 +16575,12 @@ run(function()
                 animationLast[plr] = os.clock()
                 if not checkEnabled('Crashers', 'Animation') then return end
                 if CheatersFlagged[plr] then return end
+                -- Landing/fall-state animations are restarted by the stock controller and by
+                -- NoFallDamage's landed-state path. They are movement state, not an animation
+                -- flood, and counting them made the Animation toggle accuse ordinary falls.
+                local state = humanoid:GetState()
+                if state == Enum.HumanoidStateType.Freefall or state == Enum.HumanoidStateType.Landed
+                    or math.abs((rec.RootPart and rec.RootPart.AssemblyLinearVelocity.Y) or 0) > 8 then return end
                 if bumpRate(animationRates, plr, ANIMATION_WINDOW) >= ANIMATION_FLOOD then
                     animationRates[plr] = nil
                     strike(plr, 'Animation', 'animation spam', `{ANIMATION_FLOOD} animation starts inside {ANIMATION_WINDOW}s`)
@@ -16591,6 +16601,9 @@ run(function()
         Invisible = 'Blatant modules',
         HighJump = 'Blatant modules',
         Speed = 'Blatant modules',
+        NoFallDamage = 'Bypasses',
+        VoidFlight = 'Bypasses',
+        ExtremeSpeed = 'Bypasses',
         AutoKit = 'AutoKit',
         Animation = 'Crashers',
         Remote = 'Crashers',
@@ -16689,6 +16702,96 @@ run(function()
     end
 
     ------------------------------------------------------------------------
+    -- Bypass behaviour.
+    ------------------------------------------------------------------------
+    -- These checks intentionally measure outcomes rather than known module signatures. A bypass
+    -- can rename itself, but it still has to keep a player above the void, move them at an
+    -- impossible pace, or suppress the health loss from a long unassisted fall.
+    Pollers.ExtremeSpeed = function()
+        local held = {}
+        return function(now, list, delta)
+            for _, rec in list do
+                local plr = rec.Player
+                if rec.Teleported or rec.Effects.Movement or rec.Hurt or not rec.Grounded then
+                    held[plr] = nil
+                    continue
+                end
+                local speed = (rec.Velocity * Vector3.new(1, 0, 1)).Magnitude
+                if speed > 40 then
+                    local entry = held[plr] or {Since = now, Peak = speed}
+                    entry.Peak = math.max(entry.Peak, speed)
+                    held[plr] = entry
+                    if now - entry.Since >= 0.6 then
+                        held[plr] = nil
+                        strike(plr, 'ExtremeSpeed', 'anticheat bypass', `{math.floor(entry.Peak)} studs/s without a movement effect`)
+                    end
+                else
+                    held[plr] = nil
+                end
+            end
+        end
+    end
+
+    Pollers.VoidFlight = function()
+        local since = {}
+        return function(now, list)
+            local floor = voidLevel()
+            for _, rec in list do
+                local plr = rec.Player
+                -- A genuine void fall keeps descending. Only a body held/flying for three seconds
+                -- below all playable ground is suspicious; this also fixes AntiDeath flagging the
+                -- first samples of somebody simply falling out of the map.
+                if rec.Position.Y < floor and rec.Velocity.Y > -35 and not rec.Teleported and not rec.Effects.Vertical then
+                    since[plr] = since[plr] or now
+                    if now - since[plr] >= 3 then
+                        since[plr] = now
+                        strike(plr, 'VoidFlight', 'anticheat bypass', 'remained mobile over the void for more than 3s')
+                    end
+                else
+                    since[plr] = nil
+                end
+            end
+        end
+    end
+
+    Pollers.NoFallDamage = function()
+        local falls = {}
+        return function(now, list)
+            for _, rec in list do
+                local plr = rec.Player
+                local fall = falls[plr]
+                if rec.Teleported or rec.Effects.Vertical or rec.Effects.Ability then
+                    falls[plr] = nil
+                    continue
+                end
+                if not rec.Grounded then
+                    fall = fall or {Peak = rec.Position.Y, Lowest = rec.Position.Y, Health = rec.Health}
+                    fall.Peak = math.max(fall.Peak, rec.Position.Y)
+                    fall.Lowest = math.min(fall.Lowest, rec.Position.Y)
+                    fall.Health = math.max(fall.Health, rec.Health)
+                    falls[plr] = fall
+                elseif fall then
+                    local distance = fall.Peak - rec.Position.Y
+                    -- BedWars starts meaningful fall damage well below this. The generous height
+                    -- keeps slopes, replicated ground jitter and ordinary jumps out. Wait through
+                    -- the server's damage-settle window before deciding health never changed.
+                    if distance >= 32 then
+                        fall.Landed = fall.Landed or now
+                        if now - fall.Landed >= 0.8 then
+                            if rec.Health >= fall.Health - 1 and not rec.Hurt then
+                                strike(plr, 'NoFallDamage', 'no fall damage', `fell {math.floor(distance)} studs without losing health`)
+                            end
+                            falls[plr] = nil
+                        end
+                    else
+                        falls[plr] = nil
+                    end
+                end
+            end
+        end
+    end
+
+    ------------------------------------------------------------------------
     -- PlayerAttach.
     ------------------------------------------------------------------------
     -- Two halves of the same behaviour, either of which is enough on its own. Getting there: a
@@ -16760,10 +16863,10 @@ run(function()
     ------------------------------------------------------------------------
     -- AntiDeath.
     ------------------------------------------------------------------------
-    -- The hitbox taken somewhere nothing can reach it and brought straight back. Both halves are
-    -- read: alive and holding a position below every block on the map, and the vertical step
-    -- itself - dropped and returned faster than gravity can move anything, over and over, which
-    -- is what parking a hitbox out of a fight and putting it back looks like from outside.
+    -- The hitbox taken somewhere nothing can reach it and brought straight back. This does not
+    -- flag somebody merely for spending time below the map: it records impossible boundary
+    -- crossings and requires repeated teleports to and from the void, which is what parking a
+    -- hitbox out of a fight and restoring it looks like from outside.
     Pollers.AntiDeath = function()
         local tracks = {}
         return function(now, list, delta)
@@ -16774,7 +16877,7 @@ run(function()
                 seen[plr] = true
                 local track = tracks[plr]
                 if not track or track.Character ~= rec.Character then
-                    tracks[plr] = {Character = rec.Character, Y = position.Y, Flat = rec.Flat, Below = 0, Direction = 0, Reversals = {}}
+                    tracks[plr] = {Character = rec.Character, Y = position.Y, Flat = rec.Flat, Below = position.Y < floor, Crossings = {}, Direction = 0, Reversals = {}}
                     continue
                 end
 
@@ -16782,22 +16885,38 @@ run(function()
                 local flatStep = (rec.Flat - track.Flat).Magnitude
                 track.Y, track.Flat = position.Y, rec.Flat
 
-                if position.Y < floor and not rec.Teleported then
-                    track.Below += 1
-                    -- Held there rather than passing through: a real fall into the void ends in a
-                    -- death within a second or so.
-                    if track.Below >= 3 then
-                        track.Below = 0
-                        strike(plr, 'AntiDeath', 'anti death', `alive {math.floor(floor - position.Y)} studs below the map`)
-                    end
-                else
-                    track.Below = 0
+                local below = position.Y < floor
+                if rec.Teleported or delta <= 0 then
+                    track.Below = below
+                    continue
+                end
+                -- Straight up or straight down, faster than free fall, with the body barely
+                -- moving sideways. Nothing physical does this. A normal void fall can cross the
+                -- boundary once; AntiDeath has to cross it in both directions repeatedly.
+                if math.abs(rise) < VERTICAL_TELEPORT or (math.abs(rise) / delta) < VERTICAL_RATE or flatStep > 15 then
+                    track.Below = below
+                    continue
                 end
 
-                if rec.Teleported or delta <= 0 then continue end
-                -- Straight up or straight down, faster than free fall, with the body barely
-                -- moving sideways. Nothing physical does this.
-                if math.abs(rise) < VERTICAL_TELEPORT or (math.abs(rise) / delta) < VERTICAL_RATE or flatStep > 15 then continue end
+                if below ~= track.Below then
+                    table.insert(track.Crossings, {Time = now, Below = below})
+                    for i = #track.Crossings, 1, -1 do
+                        if now - track.Crossings[i].Time > VERTICAL_MEMORY then
+                            table.remove(track.Crossings, i)
+                        end
+                    end
+                    local alternating = 0
+                    for i = 2, #track.Crossings do
+                        if track.Crossings[i].Below ~= track.Crossings[i - 1].Below then
+                            alternating += 1
+                        end
+                    end
+                    if alternating >= 3 then
+                        table.clear(track.Crossings)
+                        strike(plr, 'AntiDeath', 'anti death', 'repeatedly teleported to and from below the map')
+                    end
+                end
+                track.Below = below
 
                 local direction = rise > 0 and 1 or -1
                 if track.Direction ~= 0 and direction ~= track.Direction then
@@ -17374,7 +17493,8 @@ run(function()
                 Grounded = (ent.Humanoid and ent.Humanoid.FloorMaterial ~= Enum.Material.Air) or false,
                 Effects = effects,
                 Teleported = correctionContext(plr, char),
-                Hurt = (now - (lastHurt[plr] or 0)) < 1.5
+                Hurt = (now - (lastHurt[plr] or 0)) < 1.5,
+                Health = ent.Health or (ent.Humanoid and ent.Humanoid.Health) or 0
             })
         end
         return list
@@ -17474,6 +17594,7 @@ run(function()
     local GROUP_TOOLTIPS = {
         ['Impossible hits'] = 'Hits that cannot have been aimed or thrown by hand: killaura, silent aim, expanded hitboxes, reach past any weapon',
         ['Blatant modules'] = 'Movement and state nobody can produce by playing: attach, anti death, phase, invisibility, high jump, speed',
+        ['Bypasses'] = 'Outcome-based checks for impossible movement, sustained void flight, and suppressed fall damage',
         ['AutoKit'] = 'Kit abilities fired on a fixed interval, the regularity no hand holds',
         ['Crashers'] = 'Floods meant to bury other clients - animations or replicated actions many times a second',
         ['Breaker'] = 'Blocks broken faster than a tool swings, or from across the map',
@@ -17485,11 +17606,14 @@ run(function()
         HitBoxes = 'Melee landing while facing well off the body being drawn',
         Reach = 'Hits landing past 15.5 studs, further than any sword in the game swings',
         PlayerAttach = 'Teleporting onto a player, or riding them with the gap between you barely moving',
-        AntiDeath = 'The hitbox thrown up and down faster than gravity, or held below every block on the map',
+        AntiDeath = 'Repeated impossible teleports to and from below the map, or rapid vertical reversals faster than gravity',
         Phase = 'The body stood inside solid geometry across consecutive samples',
         Invisible = 'Moving with every limb hidden and no invisibility effect of their own',
         HighJump = 'Rising far past jump power off one jump, with no launch or ability effect',
         Speed = 'Ground speed held past 22 studs/s - or past whatever the kit\'s own metadata says it is worth - with potions, dashes and knockback excluded',
+        NoFallDamage = 'Falls over 32 studs that settle without health loss; teleports, kit abilities, launches and vertical effects are excluded',
+        VoidFlight = 'A player held or moving below all playable ground for more than three seconds instead of naturally falling',
+        ExtremeSpeed = 'Sustained movement over 40 studs/s without a kit movement effect, knockback, teleport, or launch',
         Animation = 'Animation starts many times a second, far past anything play produces',
         Remote = 'Replicated actions - places, breaks, hits - many times a second'
     }
