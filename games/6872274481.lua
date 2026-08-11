@@ -10699,9 +10699,9 @@ run(function()
 	Reference[ent] = nametag
 
 	HiveESP:Clean(ent:GetAttributeChangedSignal('Level'):Connect(function()
-		Updates[ent] = tick() + 0.1
+		Updates[ent] = true
 	end))
-	Updates[ent] = tick() + 0.1
+	Updates[ent] = true
     end
     local function Updated(ent)
 	if Reference[ent] then
@@ -10734,10 +10734,11 @@ run(function()
 						continue
 					end
 
-					if (Updates[ent] or 0) > tick() then
+					if Updates[ent] then
 						nametag.Text = string.format(Strings[ent], tostring(ent:GetAttribute('Level') or 0), (ent:GetAttribute('Level') or 0) >= 2 and 's' or '')
 						local size = getfontsize(removeTags(nametag.Text), nametag.TextSize, nametag.FontFace, Vector2.new(100000, 100000))
 						nametag.Size = UDim2.fromOffset(size.X + 8, size.Y + 7)
+						Updates[ent] = nil
 					end
 
 					nametag.Position = UDim2.fromOffset(headPos.X, headPos.Y)
@@ -10990,7 +10991,7 @@ run(function()
 	Reference[ent] = nametag
 
 	local Update = function()
-		Updates[ent] = tick() + 0.1
+		Updates[ent] = true
 	end
 	GeneratorESP:Clean(ent:GetAttributeChangedSignal('GeneratorLevel'):Connect(Update))
 	GeneratorESP:Clean(ent:GetAttributeChangedSignal('Cooldown'):Connect(Update))
@@ -11030,10 +11031,11 @@ run(function()
 						continue
 					end
 
-					if (Updates[ent] or 0) > tick() then
+					if Updates[ent] then
 						nametag.Text = string.format(Strings[ent], `| T{ent:GetAttribute('GeneratorLevel')}`, Cooldown[ent] and ` | {getNumber(Cooldown[ent].Text)}s` or '')
 						local size = getfontsize(removeTags(nametag.Text), nametag.TextSize, nametag.FontFace, Vector2.new(100000, 100000))
 						nametag.Size = UDim2.fromOffset(size.X + 8, size.Y + 7)
+						Updates[ent] = nil
 					end
 
 					nametag.Position = UDim2.fromOffset(headPos.X, headPos.Y)
@@ -11155,7 +11157,9 @@ run(function()
 	nametag.BackgroundTransparency = 0.5
 	nametag.BorderSizePixel = 0
 	nametag.Visible = false
-	nametag.Text = string.format(Strings[ent], '', ent:GetAttribute('Amount') >= 2 and ' x' .. tostring(ent:GetAttribute('Amount')) or '')
+	local amount = ent:GetAttribute('Amount') or 1
+	local suffix = amount >= 2 and ' x' .. tostring(amount) or ''
+	nametag.Text = Distance.Enabled and string.format(Strings[ent], 0, suffix) or string.format(Strings[ent], suffix)
 	nametag.TextColor3 = Color3.new(1, 1, 1)
 	nametag.RichText = true
 	nametag.Parent = Folder
@@ -11188,18 +11192,17 @@ run(function()
 						continue
 					end
 
-					if Distance.Enabled then
-						local mag = entitylib.isAlive and math.floor((entitylib.character.RootPart.Position - ent.Position).Magnitude) or 0
-						if Sizes[ent] ~= mag then
-							nametag.Text = string.format(Strings[ent], mag, ent:GetAttribute('Amount') >= 2 and ' x' .. tostring(ent:GetAttribute('Amount')) or '')
-							local size = getfontsize(removeTags(nametag.Text), nametag.TextSize, nametag.FontFace, Vector2.new(100000, 100000))
-							nametag.Size = UDim2.fromOffset(size.X + 8, size.Y + 7)
-							Sizes[ent] = mag
-						end
-					else
-						nametag.Text = string.format(Strings[ent], '')
+					local amount = ent:GetAttribute('Amount') or 1
+					local mag = Distance.Enabled and entitylib.isAlive
+						and math.floor((entitylib.character.RootPart.Position - ent.Position).Magnitude) or nil
+					local cache = tostring(mag or '') .. ':' .. tostring(amount)
+					if Sizes[ent] ~= cache then
+						local suffix = amount >= 2 and ' x' .. tostring(amount) or ''
+						nametag.Text = Distance.Enabled and string.format(Strings[ent], mag or 0, suffix)
+							or string.format(Strings[ent], suffix)
 						local size = getfontsize(removeTags(nametag.Text), nametag.TextSize, nametag.FontFace, Vector2.new(100000, 100000))
 						nametag.Size = UDim2.fromOffset(size.X + 8, size.Y + 7)
+						Sizes[ent] = cache
 					end
 					nametag.Position = UDim2.fromOffset(headPos.X, headPos.Y)
 				end
@@ -21269,6 +21272,7 @@ run(function()
     local RESCORE_INTERVAL = 0.5  -- a profile is rebuilt at most this often
     local FAR_INTERVAL = 0.5      -- sampling period outside the near radius
     local AFK_INTERVAL = 2        -- sampling period for someone who is not doing anything
+    local NEAR_INTERVAL = 0.1     -- combat sampling does not need the render frame rate
     local PROBE_INTERVAL = 0.1    -- terrain probe period for near players
     local PROBE_BUDGET = 4        -- terrain probes allowed per frame, across everyone
     local WORLD_INTERVAL = 0.5    -- bed/generator/roster snapshot rebuild period
@@ -23386,10 +23390,10 @@ run(function()
                 local fighting = now - record.Combat.LastHit <= FIGHT_MEMORY or now - record.Combat.LastHurt <= FIGHT_MEMORY
                 local near = distance <= nearRange or fighting
 
-                -- Adaptive: every frame for anyone near or fighting, twice a second for everyone
+                -- Adaptive: ten times a second for anyone near or fighting, twice a second for everyone
                 -- else, and once every couple of seconds for somebody who is not doing anything -
                 -- which is still often enough to notice the moment they start again.
-                local interval = near and 0 or (record.Context.AFK and AFK_INTERVAL or FAR_INTERVAL)
+                local interval = near and NEAR_INTERVAL or (record.Context.AFK and AFK_INTERVAL or FAR_INTERVAL)
                 if now - record.LastSample >= interval then
                     local sampleDt = math.min(now - record.LastSample, 1)
                     record.LastSample = now
@@ -23516,8 +23520,12 @@ run(function()
                 end))
                 -- Everything above is event driven. This is the only loop, and all it does is the
                 -- adaptive sampling and the label refresh - the two things that need a clock.
+                local nextStep = 0
                 EntityAnalyser:Clean(runService.Heartbeat:Connect(function()
                     if not running then return end
+                    local now = tick()
+                    if now < nextStep then return end
+                    nextStep = now + NEAR_INTERVAL
                     pcall(step)
                 end))
             else
@@ -25011,7 +25019,7 @@ run(function()
     -- CFrame only moves the client's copy and PickupItem rejects it as still being out of range.
     -- Following the player a few hundred studs overhead remains unreachable while preserving the
     -- ownership needed to bring the server-authoritative drop back down later.
-    local BANK_HEIGHT = 300
+    local BANK_HEIGHT = 120
     local BANK_SPACING = 4
     local BANK_COLUMNS = 8
 
@@ -25141,7 +25149,7 @@ run(function()
     local function depositToChest(folder)
         local wanted = {}
         for _, item in store.inventory.inventory.items do
-            local name = item.tool and item.tool.Name
+            local name = item.itemType or (item.tool and item.tool.Name)
             if name and table.find(Whitelist.ListEnabled, name) and (dropCooldowns[name] or 0) < os.clock() then
                 table.insert(wanted, {Name = name, Tool = item.tool})
             end
@@ -25273,19 +25281,14 @@ run(function()
             end
 
             -- The skybox stash has to be re-asserted every frame: the server keeps trying to drop
-            -- the items back down, so a slower loop lets them fall into the world. Chest mode has
-            -- nothing to hold in place, so this only totals up what is banked for the display.
+            -- the items back down, so a slower loop lets them fall into the world. Chest mode does
+            -- no work on the render thread; its display is refreshed by the throttled main loop.
             AutoBank:Clean(runService.PreRender:Connect(function()
-                local totals
-                if Mode.Value == 'Chest' then
-                    totals = chestTotals(ownPersonalFolder())
-                else
-                    totals = {}
+                if Mode.Value == 'Skybox' then
                     for index, drop in droppedItems do
-                        if not drop or not drop.Parent or drop.Parent ~= workspace.ItemDrops then
-                            untrackDrop(drop)
-                        else
-                            totals[drop.Name] = (totals[drop.Name] or 0) + (drop:GetAttribute('Amount') or 1)
+                        -- Item drops are tagged, but recent BedWars builds parent them directly
+                        -- to Workspace instead of the legacy ItemDrops folder.
+                        if drop and drop.Parent then
                             drop.Velocity = Vector3.zero
                             drop.RotVelocity = Vector3.zero
                             if releasingDrops[drop] and entitylib.isAlive then
@@ -25306,12 +25309,24 @@ run(function()
                         end
                     end
                 end
-                for itemType, label in displayEntries do
-                    label.Text = formatNumber(totals[itemType] or 0)
-                end
             end))
 
             repeat
+                local totals = Mode.Value == 'Chest' and chestTotals(ownPersonalFolder()) or {}
+                if Mode.Value == 'Skybox' then
+                    for index = #droppedItems, 1, -1 do
+                        local drop = droppedItems[index]
+                        if drop and drop.Parent then
+                            totals[drop.Name] = (totals[drop.Name] or 0) + (drop:GetAttribute('Amount') or 1)
+                        else
+                            untrackDrop(drop)
+                        end
+                    end
+                end
+                for itemType, label in displayEntries do
+                    label.Text = formatNumber(totals[itemType] or 0)
+                end
+
                 local hotbar = lplr.PlayerGui:FindFirstChild('hotbar')
                 hotbar = hotbar and hotbar['1']:FindFirstChild('HotbarHealthbarContainer')
                 if hotbar then
@@ -25340,7 +25355,7 @@ run(function()
                     end
                 else
                     for _, item in store.inventory.inventory.items do
-                        local name = item.tool and item.tool.Name
+                        local name = item.itemType or (item.tool and item.tool.Name)
                         local tool = item.tool
                         if name and table.find(Whitelist.ListEnabled, name) and not pendingDrops[tool]
                             and (dropCooldowns[name] or 0) < os.clock() then

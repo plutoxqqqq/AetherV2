@@ -4452,21 +4452,16 @@ run(function()
 				continue
 			end
 
-			local topPos = gameCamera:WorldToViewportPoint(
-				(
-					CFrame.lookAlong(ent.RootPart.Position, gameCamera.CFrame.LookVector)
-					* CFrame.new(2, ent.HipHeight, 0)
-				).p
-			)
-			local bottomPos = gameCamera:WorldToViewportPoint(
-				(CFrame.lookAlong(ent.RootPart.Position, gameCamera.CFrame.LookVector) * CFrame.new(
-					-2,
-					-ent.HipHeight - 1,
-					0
-				)).p
-			)
-			local sizex, sizey = topPos.X - bottomPos.X, topPos.Y - bottomPos.Y
-			local posx, posy = (rootPos.X - sizex / 2), (rootPos.Y - sizey / 2)
+			-- Project the top and bottom of the character on the world Y axis.  The old
+			-- calculation offset opposite corners on the camera X axis and then used the
+			-- signed difference as the size.  Its width consequently changed with camera
+			-- angle (and could be negative), making boxes drift far away from their target.
+			local halfHeight = math.max(ent.HipHeight + 1, 2.5)
+			local topPos = gameCamera:WorldToViewportPoint(ent.RootPart.Position + Vector3.new(0, halfHeight, 0))
+			local bottomPos = gameCamera:WorldToViewportPoint(ent.RootPart.Position - Vector3.new(0, halfHeight, 0))
+			local sizey = math.max(math.abs(bottomPos.Y - topPos.Y), 2)
+			local sizex = math.max(sizey * 0.5, 2)
+			local posx, posy = rootPos.X - (sizex / 2), math.min(topPos.Y, bottomPos.Y)
 			EntityESP.Main.Position = Vector2.new(posx, posy) // 1
 			EntityESP.Main.Size = Vector2.new(sizex, sizey) // 1
 			if EntityESP.Border then
