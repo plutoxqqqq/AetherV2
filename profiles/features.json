@@ -1,9 +1,10 @@
 {
 	"added": [],
 	"updated": [
-		"ProjectileAura"
+		"ProjectileAura",
+		"CheatDetector"
 	],
-	"text": "[BEDWARS]\n\u001b[2;33m[!]\u001b[0m Fixed ProjectileAura not firing\n[GENERAL]",
+	"text": "[BEDWARS]\n\u001b[2;33m[!]\u001b[0m Fixed ProjectileAura not firing\n\u001b[2;33m[!]\u001b[0m Overhauled CheatDetector bypass, fall-damage, speed, void-flight, AntiDeath, and animation checks\n[GENERAL]",
 	"newModules": [
 		"EntityAnalyser",
 		"KrystalDisabler",
