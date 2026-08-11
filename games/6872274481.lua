@@ -2225,6 +2225,11 @@ run(function()
 	Attacks = AutoClicker:CreateToggle({
 		Name = 'Attack',
 		Default = true,
+		Function = function(callback)
+			if CPS and CPS.Object then
+				CPS.Object.Visible = callback
+			end
+		end,
 		Tooltip = 'Automatically attacks while the mouse button is held'
 	})
 	CPS = AutoClicker:CreateTwoSlider({
@@ -7117,14 +7122,14 @@ run(function()
             return val == 1 and 'stud' or 'studs'
         end
     })
-    KrystalKit = Fly:CreateToggle({Name = 'Krystal'})
-    KrystalSpeed = Fly:CreateSlider({Name = 'Krystal Speed', Min = 1, Max = 80, Default = 30, Suffix = ' studs/s', Darker = true})
-    SigridKit = Fly:CreateToggle({Name = 'Sigrid'})
-    SigridSpeed = Fly:CreateSlider({Name = 'Sigrid Speed', Min = 1, Max = 80, Default = 30, Suffix = ' studs/s', Darker = true})
-    GrimKit = Fly:CreateToggle({Name = 'Grim Reaper'})
-    GrimSpeed = Fly:CreateSlider({Name = 'Grim Reaper Speed', Min = 1, Max = 80, Default = 37, Suffix = ' studs/s', Darker = true})
-    ZephyrKit = Fly:CreateToggle({Name = 'Zephyr'})
-    ZephyrSpeed = Fly:CreateSlider({Name = 'Zephyr Speed', Min = 1, Max = 80, Default = 30, Suffix = ' studs/s', Darker = true})
+    KrystalKit = Fly:CreateToggle({Name = 'Krystal', Function = function(callback) if KrystalSpeed and KrystalSpeed.Object then KrystalSpeed.Object.Visible = callback end end})
+    KrystalSpeed = Fly:CreateSlider({Name = 'Krystal Speed', Min = 1, Max = 80, Default = 30, Suffix = ' studs/s', Darker = true, Visible = false})
+    SigridKit = Fly:CreateToggle({Name = 'Sigrid', Function = function(callback) if SigridSpeed and SigridSpeed.Object then SigridSpeed.Object.Visible = callback end end})
+    SigridSpeed = Fly:CreateSlider({Name = 'Sigrid Speed', Min = 1, Max = 80, Default = 30, Suffix = ' studs/s', Darker = true, Visible = false})
+    GrimKit = Fly:CreateToggle({Name = 'Grim Reaper', Function = function(callback) if GrimSpeed and GrimSpeed.Object then GrimSpeed.Object.Visible = callback end end})
+    GrimSpeed = Fly:CreateSlider({Name = 'Grim Reaper Speed', Min = 1, Max = 80, Default = 37, Suffix = ' studs/s', Darker = true, Visible = false})
+    ZephyrKit = Fly:CreateToggle({Name = 'Zephyr', Function = function(callback) if ZephyrSpeed and ZephyrSpeed.Object then ZephyrSpeed.Object.Visible = callback end end})
+    ZephyrSpeed = Fly:CreateSlider({Name = 'Zephyr Speed', Min = 1, Max = 80, Default = 30, Suffix = ' studs/s', Darker = true, Visible = false})
     VerticalValue = Fly:CreateSlider({
         Name = 'Vertical Speed',
         Min = 1,
@@ -9607,14 +9612,14 @@ run(function()
             return val == 1 and 'stud' or 'studs'
         end
     })
-    KrystalKit = Speed:CreateToggle({Name = 'Krystal'})
-    KrystalSpeed = Speed:CreateSlider({Name = 'Krystal Speed', Min = 1, Max = 80, Default = 30, Suffix = ' studs/s', Darker = true})
-    SigridKit = Speed:CreateToggle({Name = 'Sigrid'})
-    SigridSpeed = Speed:CreateSlider({Name = 'Sigrid Speed', Min = 1, Max = 80, Default = 30, Suffix = ' studs/s', Darker = true})
-    GrimKit = Speed:CreateToggle({Name = 'Grim Reaper'})
-    GrimSpeed = Speed:CreateSlider({Name = 'Grim Reaper Speed', Min = 1, Max = 80, Default = 37, Suffix = ' studs/s', Darker = true})
-    ZephyrKit = Speed:CreateToggle({Name = 'Zephyr'})
-    ZephyrSpeed = Speed:CreateSlider({Name = 'Zephyr Speed', Min = 1, Max = 80, Default = 30, Suffix = ' studs/s', Darker = true})
+    KrystalKit = Speed:CreateToggle({Name = 'Krystal', Function = function(callback) if KrystalSpeed and KrystalSpeed.Object then KrystalSpeed.Object.Visible = callback end end})
+    KrystalSpeed = Speed:CreateSlider({Name = 'Krystal Speed', Min = 1, Max = 80, Default = 30, Suffix = ' studs/s', Darker = true, Visible = false})
+    SigridKit = Speed:CreateToggle({Name = 'Sigrid', Function = function(callback) if SigridSpeed and SigridSpeed.Object then SigridSpeed.Object.Visible = callback end end})
+    SigridSpeed = Speed:CreateSlider({Name = 'Sigrid Speed', Min = 1, Max = 80, Default = 30, Suffix = ' studs/s', Darker = true, Visible = false})
+    GrimKit = Speed:CreateToggle({Name = 'Grim Reaper', Function = function(callback) if GrimSpeed and GrimSpeed.Object then GrimSpeed.Object.Visible = callback end end})
+    GrimSpeed = Speed:CreateSlider({Name = 'Grim Reaper Speed', Min = 1, Max = 80, Default = 37, Suffix = ' studs/s', Darker = true, Visible = false})
+    ZephyrKit = Speed:CreateToggle({Name = 'Zephyr', Function = function(callback) if ZephyrSpeed and ZephyrSpeed.Object then ZephyrSpeed.Object.Visible = callback end end})
+    ZephyrSpeed = Speed:CreateSlider({Name = 'Zephyr Speed', Min = 1, Max = 80, Default = 30, Suffix = ' studs/s', Darker = true, Visible = false})
     WallCheck = Speed:CreateToggle({
         Name = 'Wall Check',
         Default = true
