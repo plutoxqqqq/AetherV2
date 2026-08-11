@@ -7630,14 +7630,13 @@ function mainapi:CreateChangelogs()
 	local body = Instance.new('TextLabel')
 	body.Size, body.Position, body.AutomaticSize = UDim2.new(1, -28, 0, 0), UDim2.fromOffset(14, 12), Enum.AutomaticSize.Y
 	body.BackgroundTransparency, body.RichText = 1, true
-	body.Text = [=[<b>BedWars</b>
-• Added AutoSheepHerder, AutoAdetunde, AutoZeno, AutoFish, and SkinChanger.
-• Updated ProjectileAimbot targeting and ProjectileAura projectile support.
-• Updated AutoShoot, Scaffold, AutoBuy, and SilentAim.
-• Merged the duplicate AutoClicker and BlockIn modules and removed KillauraV2.
-
-<b>Interface</b>
-• Added this changelog window, Public Configs access, and Hide Vape Button.]=]
+	body.Text = [=[<b>Performance and fixes</b>
+• Audited module update loops and moved AutoBank accounting off the render thread.
+• Throttled EntityAnalyser sampling instead of rescanning every player every frame.
+• Cached BeehiveESP, GeneratorESP, and ItemESP text sizing until their data changes.
+• Fixed ESP boxes drifting, inverting, or appearing away from players.
+• Fixed AutoBank resource matching and support for the current ItemDrop layout.
+• Improved Skybox ownership reliability and chest resource display updates.]=]
 	body.TextColor3, body.TextSize, body.LineHeight = Color3.fromRGB(170, 170, 170), 13, 1.25
 	body.FontFace, body.TextXAlignment, body.TextYAlignment, body.TextWrapped, body.Parent = Font.fromEnum(Enum.Font.Roboto), Enum.TextXAlignment.Left, Enum.TextYAlignment.Top, true, notes
 	close.MouseButton1Click:Connect(function() window.Visible = false end)
