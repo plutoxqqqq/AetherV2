@@ -7630,13 +7630,13 @@ function mainapi:CreateChangelogs()
 	local body = Instance.new('TextLabel')
 	body.Size, body.Position, body.AutomaticSize = UDim2.new(1, -28, 0, 0), UDim2.fromOffset(14, 12), Enum.AutomaticSize.Y
 	body.BackgroundTransparency, body.RichText = 1, true
-	body.Text = [=[<b>Performance and fixes</b>
-• Audited module update loops and moved AutoBank accounting off the render thread.
-• Throttled EntityAnalyser sampling instead of rescanning every player every frame.
-• Cached BeehiveESP, GeneratorESP, and ItemESP text sizing until their data changes.
-• Fixed ESP boxes drifting, inverting, or appearing away from players.
-• Fixed AutoBank resource matching and support for the current ItemDrop layout.
-• Improved Skybox ownership reliability and chest resource display updates.]=]
+	body.Text = [=[<b>AetherV2 refresh</b>
+• Added HitReg calculator with reversible Killaura tuning.
+• Added Krystal, Sigrid, Grim Reaper, and Zephyr compatibility to Fly and Speed.
+• Stabilized Target Info and repaired Breaker's automatic tool selection.
+• Added AutoClicker's attack toggle and hardcoded Auto modules for every remaining kit.
+• Replaced GodMode with Blatant DeathTP.
+• Removed BreakerV2, InfiniteFly, and MP3Player Spotify mode.]=]
 	body.TextColor3, body.TextSize, body.LineHeight = Color3.fromRGB(170, 170, 170), 13, 1.25
 	body.FontFace, body.TextXAlignment, body.TextYAlignment, body.TextWrapped, body.Parent = Font.fromEnum(Enum.Font.Roboto), Enum.TextXAlignment.Left, Enum.TextYAlignment.Top, true, notes
 	close.MouseButton1Click:Connect(function() window.Visible = false end)
@@ -9916,7 +9916,7 @@ local function updateTargetInfoPosition(target)
 	end
 	if followTarget ~= target then followCenter = best end
 	followTarget, followSide = target, bestSide
-	followCenter = followCenter and followCenter:Lerp(best, 0.18) or best
+	followCenter = followCenter and followCenter:Lerp(best, 0.04) or best
 	best = followCenter
 
 	local parentPosition = targetinfoobj.Children.AbsolutePosition

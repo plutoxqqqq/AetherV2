@@ -142,7 +142,6 @@ getgenv().store = store
 
 local Reach = {}
 local HitBoxes = {}
-local InfiniteFly = {}
 local TrapDisabler
 local AntiFallPart
 local bedwars, remotes, sides, oldinvrender, oldSwing = {}, {}, {}
@@ -1488,7 +1487,7 @@ run(function()
 	end
 
 	bedwars.breakBlock = function(block, effects, anim, customHealthbar, visualise, sort, angle, wallcheck, prefs)
-		if lplr:GetAttribute('DenyBlockBreak') or not entitylib.isAlive or InfiniteFly.Enabled then return end
+		if lplr:GetAttribute('DenyBlockBreak') or not entitylib.isAlive then return end
 
 		local handler = bedwars.BlockController:getHandlerRegistry():getHandler(block.Name)
 		local cost, pos, target, path = math.huge, nil, nil, nil
@@ -1534,12 +1533,9 @@ run(function()
 				if not (busyMelee or busyProjectile) then
 					if visualise then
 						local hotbar = getHotbar(tool.tool)
-						if hotbar then
-							hotbarSwitch(hotbar)
-						end
-					else
-						switchItem(tool.tool)
+						if hotbar then hotbarSwitch(hotbar) end
 					end
+					if not held or held ~= tool.tool then switchItem(tool.tool, 0) end
 				end
 			end
 
@@ -2160,6 +2156,7 @@ run(function()
 	local AutoClicker
 	local CPS
 	local BlockCPS = {}
+	local Attacks
 	local Thread
 
 	local function AutoClick()
@@ -2178,7 +2175,7 @@ run(function()
 								task.spawn(blockPlacer.placeBlock, blockPlacer, mouseinfo.placementPosition)
 							end
 						end
-					elseif store.hand.toolType == 'sword' then
+					elseif store.hand.toolType == 'sword' and Attacks.Enabled then
 						bedwars.SwordController:swingSwordAtMouse()
 					end
 				end
@@ -2224,6 +2221,11 @@ run(function()
 			end
 		end,
 		Tooltip = 'Hold attack button to automatically click'
+	})
+	Attacks = AutoClicker:CreateToggle({
+		Name = 'Attack',
+		Default = true,
+		Tooltip = 'Automatically attacks while the mouse button is held'
 	})
 	CPS = AutoClicker:CreateTwoSlider({
 		Name = 'CPS',
@@ -3521,7 +3523,6 @@ run(function()
         local longJumpModule = LongJump or vape.Modules.LongJump
         if flyModule and flyModule.Enabled then return true end
         if longJumpModule and longJumpModule.Enabled then return true end
-        if InfiniteFly and InfiniteFly.Enabled then return true end
         return false
     end
 
@@ -6127,409 +6128,37 @@ run(function()
     })
 end)
 
--- GodMode
---
--- Nothing can damage you, because nothing the server tests ever touches you. Your real RootPart is
--- moved off your visible body, so every sword raycast, arrow, trap and explosion the server
--- resolves against your hitbox resolves against empty space. A local clone stays behind as your
--- body, so your camera, controls, animations and your own hits carry on exactly as before.
---
--- The whole design point is the anticheat, because a hitbox parked away from your body forever is
--- the one thing it definitely notices:
---   * the desync is DUTY-CYCLED. It hides for Hide time, then puts the hitbox back on your body for
---     Sync time, every cycle, forever. The server never sees a body that has been somewhere
---     impossible for longer than one hide window.
---   * Offset mode (the default) moves the hitbox only a few studs, which is small enough to read as
---     ordinary jitter. Under map mode is the strong version and is deliberately given the shortest
---     windows.
---   * over the void it does not hide at all while Void guard is on. Being off the map is already
---     the state the server scrutinises hardest, and stacking a desync on top of it is what gets you
---     pulled, so out there the hitbox stays on your body.
---   * it watches for the anticheat winning anyway - network ownership taken away, or the hitbox
---     being moved somewhere we did not put it - and on either it reverts instantly and stands down
---     for the Recover window rather than fighting back.
---   * it hands the hitbox back for a moment around your own attacks, so your hits still validate.
+-- DeathTP teleports at critical health after a confirmed landing.
 run(function()
-    local GodMode
-    local Mode
-    local Offset
-    local HideTime
-    local SyncTime
-    local Recover
-    local VoidGuard
-    local AttackSync
-    local SyncAir
-    local Notify
+    local DeathTP
     local HealthThreshold
     local TeleportHeight
     local GroundTime
-
-    -- realchar is the character the parked hitbox was taken OUT of, and giveBack refuses to hand it
-    -- to any other one. Respawn while it is parked and lplr.Character is a different model; putting
-    -- the old root in there and making it the PrimaryPart leaves the visible body welded to a part
-    -- nothing drives, which renders as a character frozen on the spot for you alone while you keep
-    -- moving around perfectly normally everywhere else.
-    local realroot, realchar, clone, hip, realCanCollide = nil, nil, nil, 2.5, true
-    local hiding, hideUntil, syncUntil, standDownUntil = false, 0, 0, 0
-    local lastWarn = 0
-    local lowestPoint = -9e9
-    local teleportCycling = false
-    -- When the current stretch of standing on the ground began, or 0 while airborne. The launch
-    -- waits on this so every cycle spends a real, visible moment on the floor.
     local groundedSince = 0
-    local groundRay = RaycastParams.new()
-    groundRay.RespectCanCollide = true
-    groundRay.FilterType = Enum.RaycastFilterType.Exclude
 
-    local function refreshLowest()
-        local lowest = 9e9
-        for _, v in store.blocks do
-            local point = (v.Position.Y - (v.Size.Y / 2)) - 50
-            if point < lowest then
-                lowest = point
-            end
-        end
-        lowestPoint = lowest < 9e9 and lowest or -300
-    end
-
-    -- Take the swap. store.rootpart is the convention the whole script uses for "somebody already
-    -- owns this character's hitbox" (AntiDeath sets it too and checks it before cloning), so the two
-    -- modules can never both try to own it.
-    local function takeClone()
-        if store.rootpart then return realroot ~= nil end
-        if not entitylib.isAlive or entitylib.character.Humanoid.Health <= 0 then return false end
-        if realroot and realroot.Parent then return true end
-        if not lplr.Character or not lplr.Character.Parent then return false end
-
-        hip = entitylib.character.Humanoid.HipHeight
-        realroot = entitylib.character.HumanoidRootPart
-        realchar = lplr.Character
-        realCanCollide = realroot.CanCollide
-        lplr.Character.Parent = replicatedStorage
-		clone = realroot:Clone()
-		clone.Name = 'HumanoidRootPart'
-		clone.Parent = lplr.Character
-        realroot.Transparency = 1
-        realroot.Parent = workspace
-        store.rootpart = realroot
-		lplr.Character.PrimaryPart = clone
-		entitylib.character.RootPart = clone
-		entitylib.character.HumanoidRootPart = clone
-        lplr.Character.Parent = workspace
-        bedwars.QueryUtil:setQueryIgnored(clone, true)
-        bedwars.QueryUtil:setQueryIgnored(realroot, true)
-        return true
-    end
-
-    local function giveBack()
-        -- Same character or nothing. realchar ~= lplr.Character means we respawned while the hitbox
-        -- was parked, and the model this root belongs to no longer exists.
-        if realroot and realroot.Parent and entitylib.isAlive and lplr.Character and realchar == lplr.Character and lplr.Character.Parent then
-            lplr.Character.Parent = replicatedStorage
-            realroot.Parent = lplr.Character
-            if clone then
-                realroot.CFrame = clone.CFrame
-                realroot.AssemblyLinearVelocity = clone.AssemblyLinearVelocity
-                clone:Destroy()
-                clone = nil
-            end
-			lplr.Character.PrimaryPart = realroot
-			entitylib.character.RootPart = realroot
-			entitylib.character.HumanoidRootPart = realroot
-            lplr.Character.Parent = workspace
-            realroot.CanCollide = realCanCollide
-            entitylib.character.Humanoid.HipHeight = hip or 2.6
-            realroot.Transparency = 1
-        elseif realroot then
-            -- Died, respawned, or the character went away while the hitbox was parked: there is
-            -- nothing of ours left to give it back to, so destroy both parts rather than leaving a
-            -- stray root in workspace or grafting it into somebody else's body.
-            if realroot.Parent == workspace or realroot.Parent ~= realchar then
-                pcall(function() realroot:Destroy() end)
-            end
-            if clone then
-                pcall(function() clone:Destroy() end)
-            end
-        end
-		if store.rootpart == realroot then
-			store.rootpart = nil
-		end
-		realroot, realchar, clone = nil, nil, nil
-        hiding, hideUntil, syncUntil = false, 0, 0
-    end
-
-    -- Over the void? Then the hitbox stays home - see the Void guard note above.
-    local function overVoid()
-        if not clone then return false end
-        -- Built by hand rather than as a literal: AntiFallPart is often nil, and a nil in the middle
-        -- of a filter list is not something to hand to Roblox.
-        local ignore = {lplr.Character, gameCamera}
-        if AntiFallPart then table.insert(ignore, AntiFallPart) end
-        if realroot then table.insert(ignore, realroot) end
-        groundRay.FilterDescendantsInstances = ignore
-        return workspace:Raycast(clone.Position, Vector3.new(0, -90, 0), groundRay) == nil
-    end
-
-    local function attacking()
-        if not AttackSync.Enabled then return false end
-        local last = bedwars.SwordController and bedwars.SwordController.lastAttack or 0
-        return (workspace:GetServerTimeNow() - last) <= 0.3
-    end
-
-    local function hideTarget()
-        if Mode.Value == 'Under map' then
-            return CFrame.new(clone.Position.X, lowestPoint - 6, clone.Position.Z) * CFrame.Angles(math.rad(90), 0, 0)
-        end
-        -- Offset: far enough off the body that a sword raycast and a projectile capsule both miss,
-        -- but into OPEN AIR - never into a block. The old version parked it straight DOWN into the
-        -- floor you were standing on, which embedded the hitbox in a block and is what suffocated
-        -- you to death. Prefer up (usually clear sky); only drop if something is right above.
-        local off = Offset.Value
-        local ignore = {lplr.Character, gameCamera}
-        if AntiFallPart then table.insert(ignore, AntiFallPart) end
-        if realroot then table.insert(ignore, realroot) end
-        groundRay.FilterDescendantsInstances = ignore
-        local blockedAbove = workspace:Raycast(clone.Position, Vector3.new(0, off + 2, 0), groundRay)
-        local dir = blockedAbove and -1 or 1
-        return CFrame.new(clone.Position + Vector3.new(0, off * dir, 0)) * CFrame.Angles(math.rad(90), 0, 0)
-    end
-
-    GodMode = vape.Categories.Exploits:CreateModule({
-        Name = 'GodMode',
+    DeathTP = vape.Categories.Blatant:CreateModule({
+        Name = 'DeathTP',
         Function = function(callback)
-            if callback then
-                repeat task.wait() until (store.matchState ~= 0 and store.map) or not GodMode.Enabled
-                if not GodMode.Enabled then return end
-                refreshLowest()
-                hiding, hideUntil, syncUntil, standDownUntil = false, 0, 0, 0
-
-                GodMode:Clean(function()
-                    giveBack()
-                end)
-                GodMode:Clean(task.spawn(function()
-                    while GodMode.Enabled do
-                        refreshLowest()
-                        task.wait(5)
-                    end
-                end))
-
-                GodMode:Clean(runService.PostSimulation:Connect(function()
-                    if not GodMode.Enabled then return end
-                    if not entitylib.isAlive then
-                        if realroot then giveBack() end
-                        return
-                    end
-                    -- Teleport mode is an emergency fall loop rather than a hitbox desync. Keep
-                    -- launching while health is critical; landing between launches gives health
-                    -- regeneration a chance to end the cycle naturally.
-                    if Mode.Value == 'Teleport' then
-                        if realroot then giveBack() end
-                        local humanoid, root = entitylib.character.Humanoid, entitylib.character.RootPart
-                        if humanoid.Health >= HealthThreshold.Value then
-                            teleportCycling = false
-                            groundedSince = 0
-                            return
-                        end
-                        if not isnetworkowner(root) then return end
-                        local landed = humanoid.FloorMaterial ~= Enum.Material.Air
-                        -- Never launch on enable while airborne: every teleport is armed by a
-                        -- genuine landing, including the first one. Relaunching on the very frame
-                        -- the floor was detected meant the landing never actually happened as far
-                        -- as the server was concerned - the body clipped the ground and was gone
-                        -- again. Hold the landing for its full dwell first, so the fall resolves,
-                        -- the fall damage is taken once and health regeneration gets a window.
-                        if not landed then
-                            groundedSince = 0
-                            return
-                        end
-                        local now = tick()
-                        if groundedSince == 0 then
-                            groundedSince = now
-                            return
-                        end
-                        if now - groundedSince < GroundTime.Value then return end
-                        groundedSince = 0
-                        teleportCycling = true
-                        root.CFrame = CFrame.new(root.Position.X, TeleportHeight.Value, root.Position.Z) * root.CFrame.Rotation
-                        root.AssemblyLinearVelocity = Vector3.zero
-                        humanoid:ChangeState(Enum.HumanoidStateType.Freefall)
-                        return
-                    end
-                    teleportCycling = false
-                    groundedSince = 0
-
-                    -- Somebody else (AntiDeath) owns the hitbox: keep out of its way entirely.
-                    if store.rootpart and realroot == nil then return end
-
-                    if tick() < standDownUntil then
-                        if realroot then giveBack() end
-                        return
-                    end
-
-                    if not takeClone() then return end
-                    if not (realroot and realroot.Parent and clone and clone.Parent) then return end
-
-                    -- The anticheat got a word in: ownership taken away, or our hitbox moved
-                    -- somewhere we did not put it. Give up cleanly instead of fighting.
-                    local ownership = isnetworkowner(realroot)
-                    if not ownership then
-                        if Notify.Enabled and tick() - lastWarn > 2 then
-                            lastWarn = tick()
-                            notif('GodMode', 'Network ownership taken - standing down', 4, 'alert')
-                        end
-                        standDownUntil = tick() + Recover.Value
-                        giveBack()
-                        return
-                    end
-
-                    local now = tick()
-                    local blocked = overVoid() and VoidGuard.Enabled
-                    -- While you are off the ground the hidden hitbox has to travel with your body
-                    -- every frame, and a fast jump makes that motion large. Parked away from the
-                    -- body that reads as impossible movement and the server lags you back mid-jump,
-                    -- so for the airtime we put the hitbox back on the body. That is the jump lagback.
-                    local airborne = SyncAir.Enabled and entitylib.character.Humanoid.FloorMaterial == Enum.Material.Air
-                    if blocked or attacking() or airborne then
-                        -- Forced sync: hitbox on the body, and the next hide window starts fresh.
-                        hiding = false
-                        hideUntil = 0
-                        syncUntil = now + SyncTime.Value
-                    elseif hiding then
-                        if now >= hideUntil then
-                            hiding = false
-                            syncUntil = now + SyncTime.Value
-                        end
-                    elseif now >= syncUntil then
-                        hiding = true
-                        hideUntil = now + HideTime.Value
-                    end
-
-                    if hiding then
-                        realroot.CFrame = hideTarget()
-                        -- Carry the hidden hitbox at your body's own velocity rather than freezing it
-                        -- at zero: a part whose position shifts every frame while it claims to be
-                        -- standing still is exactly the impossible motion the anticheat pulls you for.
-                        realroot.AssemblyLinearVelocity = clone.AssemblyLinearVelocity
-                        -- Cannot be shoved into or crushed by geometry while it is off on its own.
-                        realroot.CanCollide = false
-                    else
-                        -- Synced: sit exactly on the visible body so the server sees a perfectly
-                        -- ordinary player who is standing where they look like they are standing.
-                        realroot.CFrame = clone.CFrame
-                        realroot.AssemblyLinearVelocity = clone.AssemblyLinearVelocity
-                        realroot.CanCollide = realCanCollide
-                    end
-                end))
-            else
-                giveBack()
-            end
+            if not callback then groundedSince = 0 return end
+            DeathTP:Clean(runService.PostSimulation:Connect(function()
+                if not DeathTP.Enabled or not entitylib.isAlive then groundedSince = 0 return end
+                local humanoid, root = entitylib.character.Humanoid, entitylib.character.RootPart
+                if humanoid.Health >= HealthThreshold.Value or not isnetworkowner(root) then groundedSince = 0 return end
+                if humanoid.FloorMaterial == Enum.Material.Air then groundedSince = 0 return end
+                local now = tick()
+                if groundedSince == 0 then groundedSince = now return end
+                if now - groundedSince < GroundTime.Value then return end
+                groundedSince = 0
+                root.CFrame = CFrame.new(root.Position.X, TeleportHeight.Value, root.Position.Z) * root.CFrame.Rotation
+                root.AssemblyLinearVelocity = Vector3.zero
+                humanoid:ChangeState(Enum.HumanoidStateType.Freefall)
+            end))
         end,
-        Tooltip = 'Moves your hitbox off your body so nothing can damage you, while your hits carry on as normal',
-        ExtraText = function()
-            return Mode.Value
-        end
+        Tooltip = 'Teleports you to a safe height when your health is critical'
     })
-    Mode = GodMode:CreateDropdown({
-        Name = 'Mode',
-        List = {'Offset', 'Under map', 'Teleport'},
-        Default = 'Offset',
-        Tooltip = 'Offset - a few studs away, subtle enough to hold longer\nUnder map - unreachable but obvious, keep it short',
-        Function = function(val)
-            pcall(function()
-                Offset.Object.Visible = val == 'Offset'
-                HealthThreshold.Object.Visible = val == 'Teleport'
-                TeleportHeight.Object.Visible = val == 'Teleport'
-                GroundTime.Object.Visible = val == 'Teleport'
-            end)
-        end
-    })
-    HealthThreshold = GodMode:CreateSlider({
-        Name = 'Health threshold',
-        Min = 1,
-        Max = 99,
-        Default = 35,
-        Suffix = ' HP',
-        Darker = true,
-        Visible = false,
-        Tooltip = 'Teleport mode starts its fall cycle below this health and stops as soon as health recovers to it'
-    })
-    TeleportHeight = GodMode:CreateSlider({
-        Name = 'Safe height',
-        Min = 80,
-        Max = 300,
-        Default = 180,
-        Suffix = ' studs',
-        Darker = true,
-        Visible = false,
-        Tooltip = 'Absolute Y level used for each launch; kept below the usual excessive-height damage zone'
-    })
-    GroundTime = GodMode:CreateSlider({
-        Name = 'Ground time',
-        Min = 0.1,
-        Max = 3,
-        Default = 0.5,
-        Decimal = 100,
-        Suffix = ' seconds',
-        Darker = true,
-        Visible = false,
-        Tooltip = 'How long each landing is held before the next launch. Too short and the landing never registers'
-    })
-    Offset = GodMode:CreateSlider({
-        Name = 'Offset',
-        Min = 3,
-        Max = 14,
-        Default = 6,
-        Decimal = 10,
-        Suffix = ' studs',
-        Darker = true,
-        Tooltip = 'How far off your body the hitbox sits. 6 clears a sword swing without looking like much'
-    })
-    HideTime = GodMode:CreateSlider({
-        Name = 'Hide time',
-        Min = 0.1,
-        Max = 1.5,
-        Default = 0.55,
-        Decimal = 100,
-        Suffix = ' seconds',
-        Tooltip = 'Longest the hitbox may be away from your body at once. Raise for immunity, lower if you get pulled'
-    })
-    SyncTime = GodMode:CreateSlider({
-        Name = 'Sync time',
-        Min = 0.05,
-        Max = 1,
-        Default = 0.25,
-        Decimal = 100,
-        Suffix = ' seconds',
-        Tooltip = 'How long the hitbox goes back on your body between hides. This is when you can be hit'
-    })
-    Recover = GodMode:CreateSlider({
-        Name = 'Recover',
-        Min = 1,
-        Max = 10,
-        Default = 3,
-        Suffix = ' seconds',
-        Tooltip = 'How long to stay completely normal after the anticheat pushes back before trying again'
-    })
-    VoidGuard = GodMode:CreateToggle({
-        Name = 'Void guard',
-        Default = true,
-        Tooltip = 'Never hide the hitbox while you are over the void - that is where the anticheat watches hardest'
-    })
-    AttackSync = GodMode:CreateToggle({
-        Name = 'Sync on attack',
-        Default = true,
-        Tooltip = 'Put the hitbox back on your body for a moment around your own hits so the server still accepts them'
-    })
-    SyncAir = GodMode:CreateToggle({
-        Name = 'Sync while airborne',
-        Default = true,
-        Tooltip = 'Puts the hitbox back on your body while airborne, since a jump moves it fast enough to lag you back'
-    })
-    Notify = GodMode:CreateToggle({
-        Name = 'Notifications',
-        Default = true,
-        Tooltip = 'Tell you when the anticheat pushes back and GodMode stands down'
-    })
+    HealthThreshold = DeathTP:CreateSlider({Name = 'Health threshold', Min = 1, Max = 99, Default = 35, Suffix = ' HP'})
+    TeleportHeight = DeathTP:CreateSlider({Name = 'Safe height', Min = 80, Max = 300, Default = 180, Suffix = ' studs'})
+    GroundTime = DeathTP:CreateSlider({Name = 'Ground time', Min = 0.1, Max = 3, Default = 0.5, Decimal = 100, Suffix = ' seconds'})
 end)
 
 run(function()
@@ -7348,6 +6977,30 @@ run(function()
     local rayCheck = RaycastParams.new()
     rayCheck.RespectCanCollide = true
     local up, down, old = 0, 0
+    local KrystalKit, KrystalSpeed
+    local SigridKit, SigridSpeed
+    local GrimKit, GrimSpeed
+    local ZephyrKit, ZephyrSpeed
+
+    local function kitMovementSpeed(fallback)
+        if not entitylib.isAlive then return fallback end
+        local equipped = store.equippedKit
+        if equipped == nil or equipped == '' then equipped = lplr:GetAttribute('PlayingAsKit') end
+        local kit = string.lower(tostring(equipped or ''))
+        local char = lplr.Character
+        local function has(words)
+            for _, word in words do if kit:find(word, 1, true) then return true end end
+            return false
+        end
+        if KrystalKit.Enabled and has({'ice_skater', 'ice skater', 'glacier', 'krystal'}) then return KrystalSpeed.Value end
+        local riding = lplr:GetAttribute('ElkKitMounted') or (char and (char:GetAttribute('ElkKitMounted') or char:FindFirstChild('ElkMount', true)))
+        if SigridKit.Enabled and has({'elk', 'rider', 'sigrid'}) and riding then return SigridSpeed.Value end
+        local soul = char and (char:GetAttribute('GrimReaperChannel') or char:GetAttribute('SoulForm') or char:FindFirstChild('GrimReaperChannel', true))
+        if GrimKit.Enabled and has({'grim', 'soul'}) and soul then return GrimSpeed.Value end
+        local stacks = tonumber(lplr:GetAttribute('WindWalkerStacks') or lplr:GetAttribute('WindStacks') or (char and char:GetAttribute('WindStacks')) or 0) or 0
+        if ZephyrKit.Enabled and has({'zephyr', 'wind', 'stacks'}) and stacks >= 1 then return ZephyrSpeed.Value end
+        return fallback
+    end
 
     Fly = vape.Categories.Blatant:CreateModule({
         Name = 'Fly',
@@ -7368,12 +7021,13 @@ run(function()
                     end
                 end))
                 Fly:Clean(runService.PreSimulation:Connect(function(dt)
-                    if entitylib.isAlive and not InfiniteFly.Enabled and isnetworkowner(entitylib.character.RootPart) then
+                    if entitylib.isAlive and isnetworkowner(entitylib.character.RootPart) then
                         local flyAllowed = (lplr.Character:GetAttribute('InflatedBalloons') and lplr.Character:GetAttribute('InflatedBalloons') > 0) or store.matchState == 2
                         local mass = (0.9 + (flyAllowed and 6 or 0) * (tick() % 0.4 < 0.2 and -1 or 1)) + ((up + down) * VerticalValue.Value)
                         local root, moveDirection = entitylib.character.RootPart, entitylib.character.Humanoid.MoveDirection
                         local velo = getSpeed()
-                        local destination = (moveDirection * math.max(Value.Value - velo, 0) * dt)
+                        local movementSpeed = kitMovementSpeed(Value.Value)
+                        local destination = (moveDirection * math.max(movementSpeed - velo, 0) * dt)
                         rayCheck.FilterDescendantsInstances = {lplr.Character, gameCamera, AntiFallPart}
                         rayCheck.CollisionGroup = root.CollisionGroup
 
@@ -7413,7 +7067,7 @@ run(function()
                         end
 
                         root.CFrame += destination
-                        root.AssemblyLinearVelocity = (moveDirection * velo) + Vector3.new(0, mass, 0)
+                        root.AssemblyLinearVelocity = (moveDirection * math.max(velo, movementSpeed)) + Vector3.new(0, mass, 0)
                     end
                 end))
                 Fly:Clean(inputService.InputBegan:Connect(function(input)
@@ -7463,6 +7117,14 @@ run(function()
             return val == 1 and 'stud' or 'studs'
         end
     })
+    KrystalKit = Fly:CreateToggle({Name = 'Krystal'})
+    KrystalSpeed = Fly:CreateSlider({Name = 'Krystal Speed', Min = 1, Max = 80, Default = 30, Suffix = ' studs/s', Darker = true})
+    SigridKit = Fly:CreateToggle({Name = 'Sigrid'})
+    SigridSpeed = Fly:CreateSlider({Name = 'Sigrid Speed', Min = 1, Max = 80, Default = 30, Suffix = ' studs/s', Darker = true})
+    GrimKit = Fly:CreateToggle({Name = 'Grim Reaper'})
+    GrimSpeed = Fly:CreateSlider({Name = 'Grim Reaper Speed', Min = 1, Max = 80, Default = 37, Suffix = ' studs/s', Darker = true})
+    ZephyrKit = Fly:CreateToggle({Name = 'Zephyr'})
+    ZephyrSpeed = Fly:CreateSlider({Name = 'Zephyr Speed', Min = 1, Max = 80, Default = 30, Suffix = ' studs/s', Darker = true})
     VerticalValue = Fly:CreateSlider({
         Name = 'Vertical Speed',
         Min = 1,
@@ -7483,148 +7145,6 @@ run(function()
     TP = Fly:CreateToggle({
         Name = 'TP Down',
         Default = true
-    })
-end)
-
-run(function()
-    -- InfiniteFly
-    --
-    -- Keeps you alive over the void by handing the server a ground touch to see.
-    --
-    -- One cycle, run on a timer while there is nothing under you: withhold replication so the
-    -- server stops hearing from us, wait, drop onto the nearest real ground, hold it long enough
-    -- for the landing to register, go back to where we were, wait, then let replication go again.
-    -- The lag window is the part that makes the round trip survivable - without it the server sees
-    -- a player cross the map and back inside a fifth of a second.
-    --
-    -- Nothing here fights the movement modules: AntiFall already treats InfiniteFly as something
-    -- carrying the character and stands off while it runs, and block breaking is suppressed for
-    -- the same reason.
-    local Interval
-    local Range
-    local Notify
-
-    local voidRay = RaycastParams.new()
-    voidRay.RespectCanCollide = true
-    voidRay.FilterType = Enum.RaycastFilterType.Exclude
-
-    local flagsBroken = false
-
-    -- The same replication flags FakeLag drives, restored to the same defaults it restores, so
-    -- whichever of the two ran last leaves the client in a sane state instead of throttled for
-    -- good. Running both at once is still a bad idea - they take turns writing the same knobs.
-    local function setLag(state)
-        if flagsBroken then return end
-        local ok = pcall(function()
-            if state then
-                setfflag('PhysicsSenderMaxBandwidthBps', '0')
-                setfflag('S2PhysicsSenderRate', '0')
-                setfflag('DataSenderRate', '-1')
-            else
-                setfflag('PhysicsSenderMaxBandwidthBps', '38760')
-                setfflag('S2PhysicsSenderRate', '15')
-                setfflag('DataSenderRate', '60')
-            end
-        end)
-        if not ok and not flagsBroken then
-            flagsBroken = true
-            warn('[AetherV2] InfiniteFly: this executor has no usable setfflag, so the lag window cannot be opened')
-        end
-    end
-
-    local function overVoid(root)
-        voidRay.FilterDescendantsInstances = {lplr.Character, gameCamera, AntiFallPart}
-        voidRay.CollisionGroup = root.CollisionGroup
-        return workspace:Raycast(root.Position, Vector3.new(0, -500, 0), voidRay) == nil
-    end
-
-    local function cycle()
-        local root = entitylib.character.RootPart
-        local origin = root.CFrame
-
-        -- Resolved before the lag goes up. It is a local block-store lookup the server never sees,
-        -- and there is no sense blinding ourselves for most of a second only to find there was
-        -- nothing to stand on.
-        local ground = getNearGround(Range.Value)
-        if not ground then
-            if Notify.Enabled then
-                notif('InfiniteFly', 'No ground in range to touch', 3, 'warning')
-            end
-            return
-        end
-
-        setLag(true)
-        task.wait(0.2)
-
-        if entitylib.isAlive then
-            local live = entitylib.character.RootPart
-            live.CFrame = CFrame.new(ground) * origin.Rotation
-            live.AssemblyLinearVelocity = Vector3.zero
-        end
-        task.wait(0.2)
-
-        if entitylib.isAlive then
-            local live = entitylib.character.RootPart
-            live.CFrame = origin
-            live.AssemblyLinearVelocity = Vector3.zero
-        end
-        task.wait(0.2)
-
-        setLag(false)
-    end
-
-    InfiniteFly = vape.Categories.Blatant:CreateModule({
-        Name = 'InfiniteFly',
-        Function = function(callback)
-            if callback then
-                -- Replication has to come back on whatever happens to the loop below - a disable
-                -- part way through a cycle, a death, an unload - or the client stays throttled.
-                InfiniteFly:Clean(function()
-                    setLag(false)
-                end)
-
-                repeat
-                    local started = tick()
-                    if entitylib.isAlive then
-                        local root = entitylib.character.RootPart
-                        if root and root.Parent and overVoid(root) then
-                            local ok, err = pcall(cycle)
-                            if not ok then
-                                setLag(false)
-                                warn('[AetherV2] InfiniteFly: '..tostring(err))
-                            end
-                        end
-                    end
-                    -- Interval is the period rather than the gap. The cycle itself takes 0.6s, so
-                    -- waiting the full interval afterwards would drift later every time round.
-                    task.wait(math.max(Interval.Value - (tick() - started), 0))
-                until not InfiniteFly.Enabled
-                setLag(false)
-            end
-        end,
-        Tooltip = 'Over the void, withholds replication and touches ground so the server sees you land. Not with FakeLag'
-    })
-
-    Interval = InfiniteFly:CreateSlider({
-        Name = 'Interval',
-        Min = 1,
-        Max = 10,
-        Default = 2,
-        Decimal = 10,
-        Suffix = ' seconds',
-        Tooltip = 'How often the touch cycle runs while you are over the void. The cycle itself takes 0.6 seconds of that'
-    })
-    Range = InfiniteFly:CreateSlider({
-        Name = 'Ground search',
-        Min = 4,
-        Max = 24,
-        Default = 12,
-        Suffix = ' blocks',
-        Tooltip = 'How far out to look for ground to touch. A larger search covers more of the map each cycle and costs more to run'
-    })
-    Notify = InfiniteFly:CreateToggle({
-        Name = 'Notifications',
-        Tooltip = 'Say something when a cycle finds no ground in range to touch'
     })
 end)
 
@@ -7849,9 +7369,10 @@ run(function()
     local AttackRange
     local SwingTime
 	local Sync
-	local MaxHits
-	local maxHitsCache
-	local maxHitsLastUpdate
+	local HitRegCalculator
+	local hitRegCache
+	local hitRegLastUpdate
+	local hitRegUpdateRate = 60
     local AngleSlider
 	local ChanceSlider
     local MaxTargets
@@ -8081,12 +7602,14 @@ run(function()
                     Attacking = false
                     store.KillauraTarget = nil
                     if sword then
-                        if MaxHits.Enabled and (not maxHitsLastUpdate or tick() - maxHitsLastUpdate >= 1) then
-                            maxHitsLastUpdate = tick()
+                        if HitRegCalculator.Enabled and (not hitRegLastUpdate or tick() - hitRegLastUpdate >= 1) then
+                            hitRegLastUpdate = tick()
                             local ping = math.max(lplr:GetNetworkPing(), 0)
                             local attackSpeed = (meta.sword and meta.sword.attackSpeed) or 0.3
                             local swingDelay = math.max(attackSpeed - ping, 0.02)
                             SwingTime:SetValue(swingDelay / 2)
+                            hitRegUpdateRate = math.clamp((swingDelay - ping) * 1000, 1, 1000)
+                            if not Sync.Enabled then Sync:SetValue(true) end
                         end
                         local plrs = entitylib.AllPosition({
                             Range = SwingRange.Value,
@@ -8212,7 +7735,7 @@ run(function()
                         entitylib.character.RootPart.CFrame = CFrame.lookAt(entitylib.character.RootPart.Position, Vector3.new(vec.X, entitylib.character.RootPart.Position.Y + 0.001, vec.Z))
                     end
 
-                    task.wait()
+                    task.wait(HitRegCalculator.Enabled and (1 / hitRegUpdateRate) or nil)
                 until not Killaura.Enabled
             else
                 store.KillauraTarget = nil
@@ -8289,17 +7812,19 @@ run(function()
 	Darker = true,
 		Tooltip = 'Syncs ur hitreg with the swing time'
     })
-    MaxHits = Killaura:CreateToggle({
-        Name = 'Max hits',
-        Tooltip = 'Changes your Killaura settings based on a formula to give you the highest hitreg',
+    HitRegCalculator = Killaura:CreateToggle({
+        Name = 'HitReg calculator',
+        Tooltip = 'Calculates and sets your Killaura settings based on a formula',
         Function = function(callback)
             if callback then
-                maxHitsCache = SwingTime.Value
-            elseif maxHitsCache then
-                SwingTime:SetValue(maxHitsCache)
-                maxHitsCache = nil
+                hitRegCache = {SwingTime = SwingTime.Value, Sync = Sync.Enabled}
+            elseif hitRegCache then
+                SwingTime:SetValue(hitRegCache.SwingTime)
+                if Sync.Enabled ~= hitRegCache.Sync then Sync:SetValue(hitRegCache.Sync) end
+                hitRegCache = nil
+                hitRegUpdateRate = 60
             end
-            maxHitsLastUpdate = nil
+            hitRegLastUpdate = nil
         end
     })
     MaxTargets = Killaura:CreateSlider({
@@ -9962,6 +9487,30 @@ run(function()
     local WallCheck
     local AutoJump
     local AlwaysJump
+    local KrystalKit, KrystalSpeed
+    local SigridKit, SigridSpeed
+    local GrimKit, GrimSpeed
+    local ZephyrKit, ZephyrSpeed
+
+    local function kitMovementSpeed(fallback)
+        if not entitylib.isAlive then return fallback end
+        local equipped = store.equippedKit
+        if equipped == nil or equipped == '' then equipped = lplr:GetAttribute('PlayingAsKit') end
+        local kit = string.lower(tostring(equipped or ''))
+        local char = lplr.Character
+        local function has(words)
+            for _, word in words do if kit:find(word, 1, true) then return true end end
+            return false
+        end
+        if KrystalKit.Enabled and has({'ice_skater', 'ice skater', 'glacier', 'krystal'}) then return KrystalSpeed.Value end
+        local riding = lplr:GetAttribute('ElkKitMounted') or (char and (char:GetAttribute('ElkKitMounted') or char:FindFirstChild('ElkMount', true)))
+        if SigridKit.Enabled and has({'elk', 'rider', 'sigrid'}) and riding then return SigridSpeed.Value end
+        local soul = char and (char:GetAttribute('GrimReaperChannel') or char:GetAttribute('SoulForm') or char:FindFirstChild('GrimReaperChannel', true))
+        if GrimKit.Enabled and has({'grim', 'soul'}) and soul then return GrimSpeed.Value end
+        local stacks = tonumber(lplr:GetAttribute('WindWalkerStacks') or lplr:GetAttribute('WindStacks') or (char and char:GetAttribute('WindStacks')) or 0) or 0
+        if ZephyrKit.Enabled and has({'zephyr', 'wind', 'stacks'}) and stacks >= 1 then return ZephyrSpeed.Value end
+        return fallback
+    end
     local rayCheck = RaycastParams.new()
     rayCheck.RespectCanCollide = true
 
@@ -9979,14 +9528,15 @@ run(function()
                     bedwars.StatefulEntityKnockbackController.lastImpulseTime = callback and math.huge or time()
                     if entitylib.isAlive then
                         if not (Fly and Fly.Enabled) and not (LongJump and LongJump.Enabled) then
-                            bedwars.SprintController:setSpeed(Mode.Value == 'CFrame' and 20 or Value.Value)
+                            local movementSpeed = kitMovementSpeed(Value.Value)
+                            bedwars.SprintController:setSpeed(Mode.Value == 'CFrame' and 20 or movementSpeed)
                             if Mode.Value == 'CFrame' then
                                 local state = entitylib.character.Humanoid:GetState()
                                 if state == Enum.HumanoidStateType.Climbing then return end
 
                                 local root, velo = entitylib.character.RootPart, getSpeed()
                                 local moveDirection = AntiFallDirection or entitylib.character.Humanoid.MoveDirection
-                                local destination = (moveDirection * math.max(Value.Value - velo, 0) * dt)
+                                local destination = (moveDirection * math.max(movementSpeed - velo, 0) * dt)
 
                                 if WallCheck.Enabled and destination.Magnitude > 1e-4 then
                                     rayCheck.FilterDescendantsInstances = {lplr.Character, gameCamera}
@@ -10057,6 +9607,14 @@ run(function()
             return val == 1 and 'stud' or 'studs'
         end
     })
+    KrystalKit = Speed:CreateToggle({Name = 'Krystal'})
+    KrystalSpeed = Speed:CreateSlider({Name = 'Krystal Speed', Min = 1, Max = 80, Default = 30, Suffix = ' studs/s', Darker = true})
+    SigridKit = Speed:CreateToggle({Name = 'Sigrid'})
+    SigridSpeed = Speed:CreateSlider({Name = 'Sigrid Speed', Min = 1, Max = 80, Default = 30, Suffix = ' studs/s', Darker = true})
+    GrimKit = Speed:CreateToggle({Name = 'Grim Reaper'})
+    GrimSpeed = Speed:CreateSlider({Name = 'Grim Reaper Speed', Min = 1, Max = 80, Default = 37, Suffix = ' studs/s', Darker = true})
+    ZephyrKit = Speed:CreateToggle({Name = 'Zephyr'})
+    ZephyrSpeed = Speed:CreateSlider({Name = 'Zephyr Speed', Min = 1, Max = 80, Default = 30, Suffix = ' studs/s', Darker = true})
     WallCheck = Speed:CreateToggle({
         Name = 'Wall Check',
         Default = true
@@ -13915,9 +13473,6 @@ end)
 -- without a reinject (Auto refresh, plus a Refresh button for right now). Anything the executor
 -- can turn into an asset works - mp3, wav, ogg.
 --
--- Spotify mode is best-effort and honest about it: Spotify hands out no audio at all without a
--- session, EXCEPT the 30-second preview its own web player uses. So a track link is resolved to
--- that preview, saved into songs/spotify and played. Full tracks are not possible from here.
 run(function()
     local MP3Player
     local Volume
@@ -13927,15 +13482,12 @@ run(function()
     local AutoRefresh
     local PlayField
     local Playlist
-    local SpotifyMode
-    local SpotifyLink
     local ShowHUD
     local HUDProgress
     local HUDTime
     local HUDColor
 
     local SONGS = 'aetherv2/songs'
-    local SPOTIFY = 'aetherv2/songs/spotify'
 
     local sound
     local tracks, index = {}, 0
@@ -14119,77 +13671,6 @@ run(function()
         play(index + step)
     end
 
-    -- Spotify: pull the track's own preview clip and keep it as a normal song file.
-    local function fetchSpotify(link)
-        local id = tostring(link):match('track[/:]([%w]+)')
-        if not id then
-            notif('MP3Player', 'That is not a Spotify track link', 5, 'warning')
-            return nil
-        end
-        local target = SPOTIFY .. '/' .. id .. '.mp3'
-        if isfile and isfile(target) then return target end
-
-        local page
-        local ok = pcall(function()
-            page = game:HttpGet('https://open.spotify.com/embed/track/' .. id, true)
-        end)
-        if not ok or type(page) ~= 'string' then
-            notif('MP3Player', 'Could not reach Spotify', 5, 'warning')
-            return nil
-        end
-        local url = page:match('"audioPreviewUrl":"(.-)"') or page:match('(https://p%.scdn%.co/mp3%-preview/[%w%-%._%?=]+)')
-        if url then
-            url = url:gsub('\\u002F', '/'):gsub('\\/', '/')
-        end
-        if not url then
-            notif('MP3Player', 'Spotify gave no preview for that track', 6, 'warning')
-            return nil
-        end
-
-        local data
-        local got = pcall(function()
-            data = game:HttpGet(url, true)
-        end)
-        if not got or type(data) ~= 'string' or #data < 1024 then
-            notif('MP3Player', 'Could not download that preview', 5, 'warning')
-            return nil
-        end
-        if isfolder and not isfolder(SPOTIFY) and makefolder then
-            makefolder(SPOTIFY)
-        end
-        local written = pcall(function()
-            writefile(target, data)
-        end)
-        if not written then
-            notif('MP3Player', 'Could not save that preview', 5, 'warning')
-            return nil
-        end
-        notif('MP3Player', 'Saved the Spotify preview (30 seconds is all Spotify gives out)', 6)
-        return target
-    end
-
-    local function playSpotify()
-        local target = fetchSpotify(SpotifyLink.Value)
-        if not target then return end
-        scan(false)
-        for i, track in tracks do
-            if track.Path:lower():find(tostring(target):lower(), 1, true) or track.Path == target then
-                play(i)
-                return
-            end
-        end
-        -- Not in the scanned list (a playlist filter is on): play it directly.
-        local asset = assetFor(target)
-        if asset and sound then
-            sound.SoundId = asset
-            sound.Volume = Volume.Value / 100
-            sound.PlaybackSpeed = Speed.Value
-            pcall(function()
-                sound:Play()
-            end)
-        end
-    end
-
     MP3Player = vape.Categories.Utility:CreateModule({
         Name = 'MP3Player',
         Function = function(callback)
@@ -14202,7 +13683,6 @@ run(function()
                 end
                 if isfolder and makefolder then
                     if not isfolder(SONGS) then makefolder(SONGS) end
-                    if not isfolder(SPOTIFY) then makefolder(SPOTIFY) end
                 end
 
                 sound = Instance.new('Sound')
@@ -14225,9 +13705,7 @@ run(function()
                 end
 
                 scan(true)
-                if SpotifyMode.Enabled and (SpotifyLink.Value or '') ~= '' then
-                    task.spawn(playSpotify)
-                elseif #tracks > 0 then
+                if #tracks > 0 then
                     play(Shuffle.Enabled and math.random(1, #tracks) or 1)
                 end
 
@@ -14444,30 +13922,6 @@ run(function()
             scan(true)
         end,
         Tooltip = 'Leave empty to play everything in the folder. Add names and only those play, in the order you list them'
-    })
-    SpotifyMode = MP3Player:CreateToggle({
-        Name = 'Spotify mode',
-        Tooltip = 'Play a song from a Spotify link. Only its 30-second preview, saved into songs/spotify',
-        Function = function(callback)
-            pcall(function()
-                SpotifyLink.Object.Visible = callback
-            end)
-            if callback and MP3Player.Enabled and SpotifyLink.Value ~= '' then
-                task.spawn(playSpotify)
-            end
-        end
-    })
-    SpotifyLink = MP3Player:CreateTextBox({
-        Name = 'Spotify link',
-        Placeholder = 'open.spotify.com/track/...',
-        Darker = true,
-        Visible = false,
-        Function = function(enter)
-            if not enter then return end
-            if MP3Player.Enabled and SpotifyMode.Enabled and (SpotifyLink.Value or '') ~= '' then
-                task.spawn(playSpotify)
-            end
-        end
     })
     ShowHUD = MP3Player:CreateToggle({
         Name = 'Show HUD',
@@ -18771,7 +18225,7 @@ run(function()
     -- stops asserting velocity itself, because two writers fighting over AssemblyLinearVelocity is
     -- how a character ends up vibrating on the spot instead of going anywhere.
     local function movementModuleActive()
-        for _, name in ipairs({'Fly', 'InfiniteFly', 'Speed', 'LongJump', 'Scaffold', 'TPAura'}) do
+        for _, name in ipairs({'Fly', 'Speed', 'LongJump', 'Scaffold', 'TPAura'}) do
             local module = moduleByName(name)
             if module and module.Enabled then return true end
         end
@@ -18789,7 +18243,7 @@ run(function()
         return nil
     end
 
-    -- store.rootpart means GodMode/AntiDeath has parked the hitbox somewhere. Moving the character
+    -- store.rootpart means DeathTP/AntiDeath has parked the hitbox somewhere. Moving the character
     -- then would drag their parked copy around, so the run holds still until they are done.
     local function alive()
         return entitylib.isAlive and not store.rootpart and myRoot() ~= nil
@@ -20033,7 +19487,7 @@ run(function()
     --   * With our bed gone the respawn IS the elimination. That check existed, but as a bare
     --     ownBedAlive() at each site, and one missed site throws the match.
     --   * A reset while a hitbox swap is in flight is what leaves your body frozen in place.
-    --     Anything that parks your real root elsewhere for a moment (GodMode, AntiDeath) sets
+    --     Anything that parks your real root elsewhere for a moment (DeathTP, AntiDeath) sets
     --     store.rootpart, which is the whole script's flag for "somebody owns the hitbox". Wait
     --     for the swap to finish, and skip the reset entirely if it will not clear.
     -- `force` is for the watchdog, whose reset is the last thing standing between a wedged run and
@@ -27830,362 +27284,6 @@ end)
 --[[
     Legit
 ]]
-
-run(function()
-	local BreakerV2
-	local Mode
-	local Range
-	local BreakSpeed
-	local UpdateRate
-	local Custom
-	local Bed
-	local Tesla
-	local Hive
-	local LuckyBlock
-	local IronOre
-	local Effect
-	local CustomHealth = {}
-	local Animation
-	local SelfBreak
-	local InstantBreak
-	local LimitItem
-	local Wallcheck
-	local AutoTool
-	local TargetProfile
-	local Priority
-	local Safety
-	local customlist, parts = {}, {}
-
-	local function customHealthbar(self, blockRef, health, maxHealth, changeHealth, block)
-		xpcall(function()
-			if block:GetAttribute('NoHealthbar') then return end
-			if not self.healthbarPart or not self.healthbarBlockRef or self.healthbarBlockRef.blockPosition ~= blockRef.blockPosition then
-				if self.healthbarPart then
-					bedwars.QueryUtil:setQueryIgnored(self.healthbarPart, true)
-				end
-				self.maid:DoCleaning()
-				self.healthbarBlockRef = blockRef
-				local create = bedwars.Roact.createElement
-				local display = (bedwars.ItemMeta[block.Name] and bedwars.ItemMeta[block.Name].displayName or block.Name)
-				local distance = entitylib.isAlive and (entitylib.character.RootPart.Position - block.Position).Magnitude or 0
-				local tool = store.hand and store.hand.tool and store.hand.tool.Name or 'none'
-				local previewText = ('%s  %.1f studs  %s'):format(display, distance, tool)
-				local percent = math.clamp(health / maxHealth, 0, 1)
-				local cleanCheck = true
-				local part = Instance.new('Part')
-				part.Size = Vector3.one
-				part.CFrame = CFrame.new(bedwars.BlockController:getWorldPosition(blockRef.blockPosition))
-				part.Transparency = 1
-				part.Anchored = true
-				part.CanCollide = false
-				part.Parent = workspace
-				bedwars.QueryUtil:setQueryIgnored(part, true)
-				self.healthbarPart = part
-
-				local mounted = bedwars.Roact.mount(create('BillboardGui', {
-					Size = UDim2.fromOffset(249, 102),
-					StudsOffset = Vector3.new(0, 2.5, 0),
-					Adornee = part,
-					MaxDistance = 40,
-					AlwaysOnTop = true
-				}, {
-					create('Frame', {
-						Size = UDim2.fromOffset(160, 50),
-						Position = UDim2.fromOffset(44, 32),
-						BackgroundColor3 = Color3.new(),
-						BackgroundTransparency = 0.5
-					}, {
-						create('UICorner', {CornerRadius = UDim.new(0, 5)}),
-						create('ImageLabel', {
-							Size = UDim2.new(1, 89, 1, 52),
-							Position = UDim2.fromOffset(-48, -31),
-							BackgroundTransparency = 1,
-							Image = getcustomasset('catsix/assets/new/blur.png'),
-							ScaleType = Enum.ScaleType.Slice,
-							SliceCenter = Rect.new(52, 31, 261, 502)
-						}),
-						create('TextLabel', {
-							Size = UDim2.fromOffset(145, 14),
-							Position = UDim2.fromOffset(13, 12),
-							BackgroundTransparency = 1,
-							Text = previewText,
-							TextXAlignment = Enum.TextXAlignment.Left,
-							TextYAlignment = Enum.TextYAlignment.Top,
-							TextColor3 = Color3.new(),
-							TextScaled = true,
-							Font = Enum.Font.Arial
-						}),
-						create('TextLabel', {
-							Size = UDim2.fromOffset(145, 14),
-							Position = UDim2.fromOffset(12, 11),
-							BackgroundTransparency = 1,
-							Text = previewText,
-							TextXAlignment = Enum.TextXAlignment.Left,
-							TextYAlignment = Enum.TextYAlignment.Top,
-							TextColor3 = color.Dark(uipallet.Text, 0.16),
-							TextScaled = true,
-							Font = Enum.Font.Arial
-						}),
-						create('Frame', {
-							Size = UDim2.fromOffset(138, 4),
-							Position = UDim2.fromOffset(12, 32),
-							BackgroundColor3 = uipallet.Main
-						}, {
-							create('UICorner', {CornerRadius = UDim.new(1, 0)}),
-							create('Frame', {
-								[bedwars.Roact.Ref] = self.blockHealthbar.healthbarProgressRef,
-								Size = UDim2.fromScale(percent, 1),
-								BackgroundColor3 = Color3.fromHSV(math.clamp(percent / 2.5, 0, 1), 0.89, 0.75)
-							}, {create('UICorner', {CornerRadius = UDim.new(1, 0)})})
-						})
-					})
-				}), part)
-
-				self.maid:GiveTask(function()
-					cleanCheck = false
-					self.healthbarBlockRef = nil
-					bedwars.Roact.unmount(mounted)
-					if self.healthbarPart then
-						self.healthbarPart:Destroy()
-					end
-					self.healthbarPart = nil
-				end)
-
-				bedwars.RuntimeLib.Promise.delay(5):andThen(function()
-					if cleanCheck then
-						self.maid:DoCleaning()
-					end
-				end)
-			end
-
-			local newpercent = math.clamp((health - changeHealth) / maxHealth, 0, 1)
-			tweenService:Create(self.blockHealthbar.healthbarProgressRef:getValue(), TweenInfo.new(0.3), {
-				Size = UDim2.fromScale(newpercent, 1), BackgroundColor3 = Color3.fromHSV(math.clamp(newpercent / 2.5, 0, 1), 0.89, 0.75)
-			}):Play()
-		end, function(...)
-			if shared.VapeDeveloper then
-				warn(...)
-			end
-		end)
-	end
-
-	local hit = 0
-
-	local function attemptBreak(tab, localPosition)
-		if not tab then return end
-		for _, v in tab do
-			if not v or not v.Parent then continue end
-			if (v.Position - localPosition).Magnitude < Range.Value and bedwars.BlockController:isBlockBreakable({blockPosition = v.Position / 3}, lplr) then
-				if not SelfBreak.Enabled and v:GetAttribute('PlacedByUserId') == lplr.UserId then continue end
-				if (v:GetAttribute('BedShieldEndTime') or 0) > workspace:GetServerTimeNow() then continue end
-				if LimitItem.Enabled and not (store.hand.tool and bedwars.ItemMeta[store.hand.tool.Name].breakBlock) then continue end
-
-				hit += 1
-				local target, path, endpos = bedwars.breakBlock(v, Effect.Enabled, Animation.Enabled, CustomHealth.Enabled and customHealthbar or nil, AutoTool.Enabled, Wallcheck.Enabled, breakmethods[Mode.Value])
-				if path then
-					local currentnode = target
-					for _, part in parts do
-						part.Position = currentnode or Vector3.zero
-						if currentnode then
-							part.BoxHandleAdornment.Color3 = currentnode == endpos and Color3.new(1, 0.2, 0.2) or currentnode == target and Color3.new(0.2, 0.2, 1) or Color3.new(0.2, 1, 0.2)
-						end
-						currentnode = path[currentnode]
-					end
-				end
-
-				task.wait(InstantBreak.Enabled and (store.damageBlockFail > tick() and 4.5 or 0) or BreakSpeed.Value)
-
-				return true
-			end
-		end
-
-		return false
-	end
-
-	BreakerV2 = vape.Categories.Minigames:CreateModule({
-		Name = 'BreakerV2',
-		Function = function(callback)
-			if callback then
-				for _ = 1, 30 do
-					local part = Instance.new('Part')
-					part.Anchored = true
-					part.CanQuery = false
-					part.CanCollide = false
-					part.Transparency = 1
-					part.Parent = gameCamera
-					local highlight = Instance.new('BoxHandleAdornment')
-					highlight.Size = Vector3.one
-					highlight.AlwaysOnTop = true
-					highlight.ZIndex = 1
-					highlight.Transparency = 0.5
-					highlight.Adornee = part
-					highlight.Parent = part
-					table.insert(parts, part)
-				end
-
-				local beds = collection('bed', BreakerV2)
-				local teslas = collection('tesla-trap', BreakerV2, function(tab, obj)
-					task.delay(0.1, function()
-						if not BreakerV2.Enabled or not obj.Parent then return end
-						local player = playersService:GetPlayerByUserId(obj:GetAttribute('PlacedByUserId'))
-						if player and player:GetAttribute('Team') ~= lplr:GetAttribute('Team') then
-							table.insert(tab, obj)
-						end
-					end)
-				end)
-				local hives = collection('beehive', BreakerV2, function(tab, obj)
-					task.delay(0.1, function()
-						if not BreakerV2.Enabled or not obj.Parent then return end
-						local player = playersService:GetPlayerByUserId(obj:GetAttribute('PlacedByUserId'))
-						if player and player:GetAttribute('Team') ~= lplr:GetAttribute('Team') then
-							table.insert(tab, obj)
-						end
-					end)
-				end)
-				local luckyblock = collection('LuckyBlock', BreakerV2)
-				local ironores = collection('iron_ore_mesh_block', BreakerV2)
-				customlist = collection('block', BreakerV2, function(tab, obj)
-					if table.find(Custom.ListEnabled, obj.Name) then
-						table.insert(tab, obj)
-					end
-				end)
-
-				repeat
-					task.wait(1 / UpdateRate.Value)
-					if not BreakerV2.Enabled then break end
-					if entitylib.isAlive then
-						local localPosition = entitylib.character.RootPart.Position
-
-						local targets = {
-							Beds = Bed.Enabled and beds, Traps = Tesla.Enabled and teslas, Hives = Hive.Enabled and hives,
-							Custom = customlist, ['Lucky blocks'] = LuckyBlock.Enabled and luckyblock, Ores = IronOre.Enabled and ironores
-						}
-						local order = {Priority.Value, 'Beds', 'Traps', 'Hives', 'Lucky blocks', 'Ores', 'Custom'}
-						local checked = {}
-						for _, kind in order do
-							if checked[kind] then continue end
-							checked[kind] = true
-							if attemptBreak(targets[kind], localPosition) then break end
-						end
-
-						for _, v in parts do
-							v.Position = Vector3.zero
-						end
-					end
-				until not BreakerV2.Enabled
-			else
-				for _, v in parts do
-					v:ClearAllChildren()
-					v:Destroy()
-				end
-				table.clear(parts)
-			end
-		end,
-		Tooltip = 'Break blocks around you automatically'
-	})
-	Mode = BreakerV2:CreateDropdown({
-		Name = 'Break mode',
-		List = {'Health', 'Distance'},
-		Default = 'Health'
-	})
-	TargetProfile = BreakerV2:CreateDropdown({
-		Name = 'Target Filters', List = {'Objectives', 'Resources', 'All'}, Default = 'All',
-		Function = function(value)
-			if not Bed then return end
-			local objectives, resources = value ~= 'Resources', value ~= 'Objectives'
-			for _, option in {Bed, Tesla, Hive} do option:SetValue(objectives) end
-			for _, option in {LuckyBlock, IronOre} do option:SetValue(resources) end
-		end
-	})
-	Priority = BreakerV2:CreateDropdown({Name = 'Priority', List = {'Beds', 'Traps', 'Hives', 'Lucky blocks', 'Ores', 'Custom'}, Default = 'Beds'})
-	Safety = BreakerV2:CreateToggle({Name = 'Safety', Default = true, Tooltip = 'Immediately discards destroyed and unreachable targets'})
-	Range = BreakerV2:CreateSlider({
-		Name = 'Break range',
-		Min = 1,
-		Max = 30,
-		Default = 30,
-		Suffix = function(val)
-			return val == 1 and 'stud' or 'studs'
-		end
-	})
-	BreakSpeed = BreakerV2:CreateSlider({
-		Name = 'Break speed',
-		Min = 0,
-		Max = 0.3,
-		Default = 0.25,
-		Decimal = 100,
-		Suffix = 'seconds'
-	})
-	UpdateRate = BreakerV2:CreateSlider({
-		Name = 'Update rate',
-		Min = 1,
-		Max = 120,
-		Default = 60,
-		Suffix = 'hz'
-	})
-	Custom = BreakerV2:CreateTextList({
-		Name = 'Custom',
-		Function = function()
-			if not customlist then return end
-			table.clear(customlist)
-			for _, obj in store.blocks do
-				if table.find(Custom.ListEnabled, obj.Name) then
-					table.insert(customlist, obj)
-				end
-			end
-		end
-	})
-	Bed = BreakerV2:CreateToggle({
-		Name = 'Break Bed',
-		Default = true
-	})
-	Tesla = BreakerV2:CreateToggle({
-		Name = 'Break Tesla',
-		Default = true
-	})
-	Hive = BreakerV2:CreateToggle({
-		Name = 'Break Hive',
-		Default = true
-	})
-	LuckyBlock = BreakerV2:CreateToggle({
-		Name = 'Break Lucky Block',
-		Default = true
-	})
-	IronOre = BreakerV2:CreateToggle({
-		Name = 'Break Iron Ore',
-		Default = true
-	})
-	Effect = BreakerV2:CreateToggle({
-		Name = 'Show Healthbar & Effects',
-		Function = function(callback)
-			if CustomHealth.Object then
-				CustomHealth.Object.Visible = callback
-			end
-		end,
-		Default = true
-	})
-	CustomHealth = BreakerV2:CreateToggle({
-		Name = 'Custom Healthbar',
-		Default = true,
-		Darker = true
-	})
-	Animation = BreakerV2:CreateToggle({Name = 'Animation'})
-	SelfBreak = BreakerV2:CreateToggle({Name = 'Self Break'})
-	InstantBreak = BreakerV2:CreateToggle({Name = 'Instant Break'})
-	Wallcheck = BreakerV2:CreateToggle({
-		Name = 'Legit mode',
-		Default = true,
-		Tooltip = 'Checks for blocks inside the bed instead of directly targetting bed'
-	})
-	AutoTool = BreakerV2:CreateToggle({
-		Name = 'Auto Tool',
-		Tooltip = 'Visualises tool switching on ur client'
-	})
-	LimitItem = BreakerV2:CreateToggle({
-		Name = 'Limit to items',
-		Tooltip = 'Only breaks when tools are held'
-	})
-end)
 
 run(function()
     local ArmorTrims
@@ -37513,5 +36611,570 @@ run(function()
 		Suffix = function(val)
 			return val <= 1 and 'stud' or 'studs'
 		end
+	})
+end)
+
+-- Hardcoded Auto kit modules
+--
+-- These are deliberately explicit registrations rather than a BedwarsKitMeta generator. Each kit
+-- keeps a stable module/config name even if game metadata is missing, renamed, or loaded late.
+local function runHardcodedAutoKit(module, kitId, abilities, targets, range, interval)
+	repeat
+		if entitylib.isAlive and store.equippedKit == kitId and bedwars.AbilityController then
+			local ent = targets and entitylib.EntityPosition({
+				Range = range, Part = 'RootPart', Players = true, NPCs = true, Wallcheck = true, Sort = sortmethods.Distance
+			}) or nil
+			for _, ability in abilities do
+				local ready = false
+				pcall(function() ready = bedwars.AbilityController:canUseAbility(ability) end)
+				if ready then
+					pcall(function()
+						bedwars.AbilityController:useAbility(ability, nil, ent and {target = ent.Character, targetPosition = ent.RootPart.Position} or nil)
+					end)
+				end
+			end
+		end
+		task.wait(interval)
+	until not module.Enabled
+end
+
+run(function()
+	local AutoBarbarian
+	AutoBarbarian = kits:CreateModule({
+		Name = 'AutoBarbarian', Category = 'Auto',
+		Function = function(callback)
+			if callback then runHardcodedAutoKit(AutoBarbarian, 'barbarian', {'BARBARIAN_ABILITY', 'BARBARIAN'}, true, 30, 0.1) end
+		end,
+		Tooltip = 'Automatically uses Barbarian abilities when they are ready'
+	})
+end)
+
+run(function()
+	local AutoBaker
+	AutoBaker = kits:CreateModule({
+		Name = 'AutoBaker', Category = 'Auto',
+		Function = function(callback)
+			if callback then runHardcodedAutoKit(AutoBaker, 'baker', {'BAKER_ABILITY', 'BAKER'}, true, 30, 0.1) end
+		end,
+		Tooltip = 'Automatically uses Baker abilities when they are ready'
+	})
+end)
+
+run(function()
+	local AutoArcher
+	AutoArcher = kits:CreateModule({
+		Name = 'AutoArcher', Category = 'Auto',
+		Function = function(callback)
+			if callback then runHardcodedAutoKit(AutoArcher, 'archer', {'ARCHER_ABILITY', 'ARCHER'}, true, 30, 0.1) end
+		end,
+		Tooltip = 'Automatically uses Archer abilities when they are ready'
+	})
+end)
+
+run(function()
+	local AutoInfernalShielder
+	AutoInfernalShielder = kits:CreateModule({
+		Name = 'AutoInfernalShielder', Category = 'Auto',
+		Function = function(callback)
+			if callback then runHardcodedAutoKit(AutoInfernalShielder, 'infernal_shielder', {'INFERNAL_SHIELDER_ABILITY', 'INFERNAL_SHIELDER'}, true, 30, 0.1) end
+		end,
+		Tooltip = 'Automatically uses InfernalShielder abilities when they are ready'
+	})
+end)
+
+run(function()
+	local AutoLassy
+	AutoLassy = kits:CreateModule({
+		Name = 'AutoLassy', Category = 'Auto',
+		Function = function(callback)
+			if callback then runHardcodedAutoKit(AutoLassy, 'lassy', {'LASSY_ABILITY', 'LASSY'}, true, 30, 0.1) end
+		end,
+		Tooltip = 'Automatically uses Lassy abilities when they are ready'
+	})
+end)
+
+run(function()
+	local AutoVulcan
+	AutoVulcan = kits:CreateModule({
+		Name = 'AutoVulcan', Category = 'Auto',
+		Function = function(callback)
+			if callback then runHardcodedAutoKit(AutoVulcan, 'vulcan', {'VULCAN_ABILITY', 'VULCAN'}, true, 30, 0.1) end
+		end,
+		Tooltip = 'Automatically uses Vulcan abilities when they are ready'
+	})
+end)
+
+run(function()
+	local AutoTrinity
+	AutoTrinity = kits:CreateModule({
+		Name = 'AutoTrinity', Category = 'Auto',
+		Function = function(callback)
+			if callback then runHardcodedAutoKit(AutoTrinity, 'trinity', {'TRINITY_ABILITY', 'TRINITY'}, true, 30, 0.1) end
+		end,
+		Tooltip = 'Automatically uses Trinity abilities when they are ready'
+	})
+end)
+
+run(function()
+	local AutoAxolotlAmy
+	AutoAxolotlAmy = kits:CreateModule({
+		Name = 'AutoAxolotlAmy', Category = 'Auto',
+		Function = function(callback)
+			if callback then runHardcodedAutoKit(AutoAxolotlAmy, 'axolotl', {'AXOLOTL_ABILITY', 'AXOLOTL'}, true, 30, 0.1) end
+		end,
+		Tooltip = 'Automatically uses AxolotlAmy abilities when they are ready'
+	})
+end)
+
+run(function()
+	local AutoFreiya
+	AutoFreiya = kits:CreateModule({
+		Name = 'AutoFreiya', Category = 'Auto',
+		Function = function(callback)
+			if callback then runHardcodedAutoKit(AutoFreiya, 'ice_queen', {'ICE_QUEEN_ABILITY', 'ICE_QUEEN'}, true, 30, 0.1) end
+		end,
+		Tooltip = 'Automatically uses Freiya abilities when they are ready'
+	})
+end)
+
+run(function()
+	local AutoYuzi
+	AutoYuzi = kits:CreateModule({
+		Name = 'AutoYuzi', Category = 'Auto',
+		Function = function(callback)
+			if callback then runHardcodedAutoKit(AutoYuzi, 'dasher', {'DASHER_ABILITY', 'DASHER'}, true, 30, 0.1) end
+		end,
+		Tooltip = 'Automatically uses Yuzi abilities when they are ready'
+	})
+end)
+
+run(function()
+	local AutoWarrior
+	AutoWarrior = kits:CreateModule({
+		Name = 'AutoWarrior', Category = 'Auto',
+		Function = function(callback)
+			if callback then runHardcodedAutoKit(AutoWarrior, 'warrior', {'WARRIOR_ABILITY', 'WARRIOR'}, true, 30, 0.1) end
+		end,
+		Tooltip = 'Automatically uses Warrior abilities when they are ready'
+	})
+end)
+
+run(function()
+	local AutoBountyHunter
+	AutoBountyHunter = kits:CreateModule({
+		Name = 'AutoBountyHunter', Category = 'Auto',
+		Function = function(callback)
+			if callback then runHardcodedAutoKit(AutoBountyHunter, 'bounty_hunter', {'BOUNTY_HUNTER_ABILITY', 'BOUNTY_HUNTER'}, true, 30, 0.1) end
+		end,
+		Tooltip = 'Automatically uses BountyHunter abilities when they are ready'
+	})
+end)
+
+run(function()
+	local AutoJade
+	AutoJade = kits:CreateModule({
+		Name = 'AutoJade', Category = 'Auto',
+		Function = function(callback)
+			if callback then runHardcodedAutoKit(AutoJade, 'jade', {'JADE_ABILITY', 'JADE'}, true, 30, 0.1) end
+		end,
+		Tooltip = 'Automatically uses Jade abilities when they are ready'
+	})
+end)
+
+run(function()
+	local AutoRaven
+	AutoRaven = kits:CreateModule({
+		Name = 'AutoRaven', Category = 'Auto',
+		Function = function(callback)
+			if callback then runHardcodedAutoKit(AutoRaven, 'raven', {'RAVEN_ABILITY', 'RAVEN'}, true, 30, 0.1) end
+		end,
+		Tooltip = 'Automatically uses Raven abilities when they are ready'
+	})
+end)
+
+run(function()
+	local AutoSpiritCatcher
+	AutoSpiritCatcher = kits:CreateModule({
+		Name = 'AutoSpiritCatcher', Category = 'Auto',
+		Function = function(callback)
+			if callback then runHardcodedAutoKit(AutoSpiritCatcher, 'spirit_catcher', {'SPIRIT_CATCHER_ABILITY', 'SPIRIT_CATCHER'}, true, 30, 0.1) end
+		end,
+		Tooltip = 'Automatically uses SpiritCatcher abilities when they are ready'
+	})
+end)
+
+run(function()
+	local AutoTrapper
+	AutoTrapper = kits:CreateModule({
+		Name = 'AutoTrapper', Category = 'Auto',
+		Function = function(callback)
+			if callback then runHardcodedAutoKit(AutoTrapper, 'trapper', {'TRAPPER_ABILITY', 'TRAPPER'}, true, 30, 0.1) end
+		end,
+		Tooltip = 'Automatically uses Trapper abilities when they are ready'
+	})
+end)
+
+run(function()
+	local AutoGompy
+	AutoGompy = kits:CreateModule({
+		Name = 'AutoGompy', Category = 'Auto',
+		Function = function(callback)
+			if callback then runHardcodedAutoKit(AutoGompy, 'ghost_catcher', {'GHOST_CATCHER_ABILITY', 'GHOST_CATCHER'}, true, 30, 0.1) end
+		end,
+		Tooltip = 'Automatically uses Gompy abilities when they are ready'
+	})
+end)
+
+run(function()
+	local AutoJack
+	AutoJack = kits:CreateModule({
+		Name = 'AutoJack', Category = 'Auto',
+		Function = function(callback)
+			if callback then runHardcodedAutoKit(AutoJack, 'oil_man', {'OIL_MAN_ABILITY', 'OIL_MAN'}, true, 30, 0.1) end
+		end,
+		Tooltip = 'Automatically uses Jack abilities when they are ready'
+	})
+end)
+
+run(function()
+	local AutoAres
+	AutoAres = kits:CreateModule({
+		Name = 'AutoAres', Category = 'Auto',
+		Function = function(callback)
+			if callback then runHardcodedAutoKit(AutoAres, 'ares', {'ARES_ABILITY', 'ARES'}, true, 30, 0.1) end
+		end,
+		Tooltip = 'Automatically uses Ares abilities when they are ready'
+	})
+end)
+
+run(function()
+	local AutoSanta
+	AutoSanta = kits:CreateModule({
+		Name = 'AutoSanta', Category = 'Auto',
+		Function = function(callback)
+			if callback then runHardcodedAutoKit(AutoSanta, 'santa', {'SANTA_ABILITY', 'SANTA'}, true, 30, 0.1) end
+		end,
+		Tooltip = 'Automatically uses Santa abilities when they are ready'
+	})
+end)
+
+run(function()
+	local AutoSmoke
+	AutoSmoke = kits:CreateModule({
+		Name = 'AutoSmoke', Category = 'Auto',
+		Function = function(callback)
+			if callback then runHardcodedAutoKit(AutoSmoke, 'smoke', {'SMOKE_ABILITY', 'SMOKE'}, true, 30, 0.1) end
+		end,
+		Tooltip = 'Automatically uses Smoke abilities when they are ready'
+	})
+end)
+
+run(function()
+	local AutoYeti
+	AutoYeti = kits:CreateModule({
+		Name = 'AutoYeti', Category = 'Auto',
+		Function = function(callback)
+			if callback then runHardcodedAutoKit(AutoYeti, 'yeti', {'YETI_ABILITY', 'YETI'}, true, 30, 0.1) end
+		end,
+		Tooltip = 'Automatically uses Yeti abilities when they are ready'
+	})
+end)
+
+run(function()
+	local AutoFrosty
+	AutoFrosty = kits:CreateModule({
+		Name = 'AutoFrosty', Category = 'Auto',
+		Function = function(callback)
+			if callback then runHardcodedAutoKit(AutoFrosty, 'frosty', {'FROSTY_ABILITY', 'FROSTY'}, true, 30, 0.1) end
+		end,
+		Tooltip = 'Automatically uses Frosty abilities when they are ready'
+	})
+end)
+
+run(function()
+	local AutoAery
+	AutoAery = kits:CreateModule({
+		Name = 'AutoAery', Category = 'Auto',
+		Function = function(callback)
+			if callback then runHardcodedAutoKit(AutoAery, 'aery', {'AERY_ABILITY', 'AERY'}, true, 30, 0.1) end
+		end,
+		Tooltip = 'Automatically uses Aery abilities when they are ready'
+	})
+end)
+
+run(function()
+	local AutoAlchemist
+	AutoAlchemist = kits:CreateModule({
+		Name = 'AutoAlchemist', Category = 'Auto',
+		Function = function(callback)
+			if callback then runHardcodedAutoKit(AutoAlchemist, 'alchemist', {'ALCHEMIST_ABILITY', 'ALCHEMIST'}, true, 30, 0.1) end
+		end,
+		Tooltip = 'Automatically uses Alchemist abilities when they are ready'
+	})
+end)
+
+run(function()
+	local AutoCrocowolf
+	AutoCrocowolf = kits:CreateModule({
+		Name = 'AutoCrocowolf', Category = 'Auto',
+		Function = function(callback)
+			if callback then runHardcodedAutoKit(AutoCrocowolf, 'crocowolf', {'CROCOWOLF_ABILITY', 'CROCOWOLF'}, true, 30, 0.1) end
+		end,
+		Tooltip = 'Automatically uses Crocowolf abilities when they are ready'
+	})
+end)
+
+run(function()
+	local AutoConqueror
+	AutoConqueror = kits:CreateModule({
+		Name = 'AutoConqueror', Category = 'Auto',
+		Function = function(callback)
+			if callback then runHardcodedAutoKit(AutoConqueror, 'conqueror', {'CONQUEROR_ABILITY', 'CONQUEROR'}, true, 30, 0.1) end
+		end,
+		Tooltip = 'Automatically uses Conqueror abilities when they are ready'
+	})
+end)
+
+
+run(function()
+	local AutoMerchantMarco
+	AutoMerchantMarco = kits:CreateModule({
+		Name = 'AutoMerchantMarco', Category = 'Auto',
+		Function = function(callback)
+			if callback then runHardcodedAutoKit(AutoMerchantMarco, 'merchant_marco', {'MERCHANT_MARCO_ABILITY', 'MERCHANT_MARCO'}, true, 30, 0.1) end
+		end,
+		Tooltip = 'Automatically uses MerchantMarco abilities when they are ready'
+	})
+end)
+
+run(function()
+	local AutoDinoTamerDom
+	AutoDinoTamerDom = kits:CreateModule({
+		Name = 'AutoDinoTamerDom', Category = 'Auto',
+		Function = function(callback)
+			if callback then runHardcodedAutoKit(AutoDinoTamerDom, 'dino_tamer', {'DINO_TAMER_ABILITY', 'DINO_TAMER'}, true, 30, 0.1) end
+		end,
+		Tooltip = 'Automatically uses DinoTamerDom abilities when they are ready'
+	})
+end)
+
+run(function()
+	local AutoZephyr
+	AutoZephyr = kits:CreateModule({
+		Name = 'AutoZephyr', Category = 'Auto',
+		Function = function(callback)
+			if callback then runHardcodedAutoKit(AutoZephyr, 'wind_walker', {'WIND_WALKER_ABILITY', 'WIND_WALKER'}, true, 30, 0.1) end
+		end,
+		Tooltip = 'Automatically uses Zephyr abilities when they are ready'
+	})
+end)
+
+run(function()
+	local AutoVoidRegent
+	AutoVoidRegent = kits:CreateModule({
+		Name = 'AutoVoidRegent', Category = 'Auto',
+		Function = function(callback)
+			if callback then runHardcodedAutoKit(AutoVoidRegent, 'regent', {'REGENT_ABILITY', 'REGENT'}, true, 30, 0.1) end
+		end,
+		Tooltip = 'Automatically uses VoidRegent abilities when they are ready'
+	})
+end)
+
+run(function()
+	local AutoLumen
+	AutoLumen = kits:CreateModule({
+		Name = 'AutoLumen', Category = 'Auto',
+		Function = function(callback)
+			if callback then runHardcodedAutoKit(AutoLumen, 'lumen', {'LUMEN_ABILITY', 'LUMEN'}, true, 30, 0.1) end
+		end,
+		Tooltip = 'Automatically uses Lumen abilities when they are ready'
+	})
+end)
+
+run(function()
+	local AutoAgni
+	AutoAgni = kits:CreateModule({
+		Name = 'AutoAgni', Category = 'Auto',
+		Function = function(callback)
+			if callback then runHardcodedAutoKit(AutoAgni, 'agni', {'AGNI_ABILITY', 'AGNI'}, true, 30, 0.1) end
+		end,
+		Tooltip = 'Automatically uses Agni abilities when they are ready'
+	})
+end)
+
+run(function()
+	local AutoBekzat
+	AutoBekzat = kits:CreateModule({
+		Name = 'AutoBekzat', Category = 'Auto',
+		Function = function(callback)
+			if callback then runHardcodedAutoKit(AutoBekzat, 'bekzat', {'BEKZAT_ABILITY', 'BEKZAT'}, true, 30, 0.1) end
+		end,
+		Tooltip = 'Automatically uses Bekzat abilities when they are ready'
+	})
+end)
+
+run(function()
+	local AutoDeathAdder
+	AutoDeathAdder = kits:CreateModule({
+		Name = 'AutoDeathAdder', Category = 'Auto',
+		Function = function(callback)
+			if callback then runHardcodedAutoKit(AutoDeathAdder, 'death_adder', {'DEATH_ADDER_ABILITY', 'DEATH_ADDER'}, true, 30, 0.1) end
+		end,
+		Tooltip = 'Automatically uses DeathAdder abilities when they are ready'
+	})
+end)
+
+run(function()
+	local AutoNazar
+	AutoNazar = kits:CreateModule({
+		Name = 'AutoNazar', Category = 'Auto',
+		Function = function(callback)
+			if callback then runHardcodedAutoKit(AutoNazar, 'nazar', {'NAZAR_ABILITY', 'NAZAR'}, true, 30, 0.1) end
+		end,
+		Tooltip = 'Automatically uses Nazar abilities when they are ready'
+	})
+end)
+
+run(function()
+	local AutoNyoka
+	AutoNyoka = kits:CreateModule({
+		Name = 'AutoNyoka', Category = 'Auto',
+		Function = function(callback)
+			if callback then runHardcodedAutoKit(AutoNyoka, 'nyoka', {'NYOKA_ABILITY', 'NYOKA'}, true, 30, 0.1) end
+		end,
+		Tooltip = 'Automatically uses Nyoka abilities when they are ready'
+	})
+end)
+
+run(function()
+	local AutoSheila
+	AutoSheila = kits:CreateModule({
+		Name = 'AutoSheila', Category = 'Auto',
+		Function = function(callback)
+			if callback then runHardcodedAutoKit(AutoSheila, 'sheila', {'SHEILA_ABILITY', 'SHEILA'}, true, 30, 0.1) end
+		end,
+		Tooltip = 'Automatically uses Sheila abilities when they are ready'
+	})
+end)
+
+run(function()
+	local AutoSilas
+	AutoSilas = kits:CreateModule({
+		Name = 'AutoSilas', Category = 'Auto',
+		Function = function(callback)
+			if callback then runHardcodedAutoKit(AutoSilas, 'silas', {'SILAS_ABILITY', 'SILAS'}, true, 30, 0.1) end
+		end,
+		Tooltip = 'Automatically uses Silas abilities when they are ready'
+	})
+end)
+
+run(function()
+	local AutoStyx
+	AutoStyx = kits:CreateModule({
+		Name = 'AutoStyx', Category = 'Auto',
+		Function = function(callback)
+			if callback then runHardcodedAutoKit(AutoStyx, 'styx', {'STYX_ABILITY', 'STYX'}, true, 30, 0.1) end
+		end,
+		Tooltip = 'Automatically uses Styx abilities when they are ready'
+	})
+end)
+
+run(function()
+	local AutoTerra
+	AutoTerra = kits:CreateModule({
+		Name = 'AutoTerra', Category = 'Auto',
+		Function = function(callback)
+			if callback then runHardcodedAutoKit(AutoTerra, 'terra', {'TERRA_ABILITY', 'TERRA'}, true, 30, 0.1) end
+		end,
+		Tooltip = 'Automatically uses Terra abilities when they are ready'
+	})
+end)
+
+run(function()
+	local AutoUmbra
+	AutoUmbra = kits:CreateModule({
+		Name = 'AutoUmbra', Category = 'Auto',
+		Function = function(callback)
+			if callback then runHardcodedAutoKit(AutoUmbra, 'umbra', {'UMBRA_ABILITY', 'UMBRA'}, true, 30, 0.1) end
+		end,
+		Tooltip = 'Automatically uses Umbra abilities when they are ready'
+	})
+end)
+
+run(function()
+	local AutoUmeko
+	AutoUmeko = kits:CreateModule({
+		Name = 'AutoUmeko', Category = 'Auto',
+		Function = function(callback)
+			if callback then runHardcodedAutoKit(AutoUmeko, 'umeko', {'UMEKO_ABILITY', 'UMEKO'}, true, 30, 0.1) end
+		end,
+		Tooltip = 'Automatically uses Umeko abilities when they are ready'
+	})
+end)
+
+run(function()
+	local AutoWarden
+	AutoWarden = kits:CreateModule({
+		Name = 'AutoWarden', Category = 'Auto',
+		Function = function(callback)
+			if callback then runHardcodedAutoKit(AutoWarden, 'warden', {'WARDEN_ABILITY', 'WARDEN'}, true, 30, 0.1) end
+		end,
+		Tooltip = 'Automatically uses Warden abilities when they are ready'
+	})
+end)
+
+run(function()
+	local AutoWhim
+	AutoWhim = kits:CreateModule({
+		Name = 'AutoWhim', Category = 'Auto',
+		Function = function(callback)
+			if callback then runHardcodedAutoKit(AutoWhim, 'whim', {'WHIM_ABILITY', 'WHIM'}, true, 30, 0.1) end
+		end,
+		Tooltip = 'Automatically uses Whim abilities when they are ready'
+	})
+end)
+
+run(function()
+	local AutoWren
+	AutoWren = kits:CreateModule({
+		Name = 'AutoWren', Category = 'Auto',
+		Function = function(callback)
+			if callback then runHardcodedAutoKit(AutoWren, 'wren', {'WREN_ABILITY', 'WREN'}, true, 30, 0.1) end
+		end,
+		Tooltip = 'Automatically uses Wren abilities when they are ready'
+	})
+end)
+
+
+run(function()
+	local AutoYamini
+	AutoYamini = kits:CreateModule({
+		Name = 'AutoYamini', Category = 'Auto',
+		Function = function(callback)
+			if callback then runHardcodedAutoKit(AutoYamini, 'yamini', {'YAMINI_ABILITY', 'YAMINI'}, true, 30, 0.1) end
+		end,
+		Tooltip = 'Automatically uses Yamini abilities when they are ready'
+	})
+end)
+
+run(function()
+	local AutoZenith
+	AutoZenith = kits:CreateModule({
+		Name = 'AutoZenith', Category = 'Auto',
+		Function = function(callback)
+			if callback then runHardcodedAutoKit(AutoZenith, 'zenith', {'ZENITH_ABILITY', 'ZENITH'}, true, 30, 0.1) end
+		end,
+		Tooltip = 'Automatically uses Zenith abilities when they are ready'
+	})
+end)
+
+run(function()
+	local AutoZola
+	AutoZola = kits:CreateModule({
+		Name = 'AutoZola', Category = 'Auto',
+		Function = function(callback)
+			if callback then runHardcodedAutoKit(AutoZola, 'zola', {'ZOLA_ABILITY', 'ZOLA'}, true, 30, 0.1) end
+		end,
+		Tooltip = 'Automatically uses Zola abilities when they are ready'
 	})
 end)
