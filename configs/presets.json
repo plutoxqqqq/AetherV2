@@ -17,6 +17,21 @@
       "credits": "plutoxqqqqq",
       "tags": [],
       "description": "Community config submitted by plutoxqqqqq."
+    },
+    {
+      "name": "CC Config",
+      "file": "cc-config.json",
+      "credits": "plutoxqq",
+      "tags": [
+        "Closet",
+        "legit",
+        "cc"
+      ],
+      "description": "Built-in CC Config, regularly updated",
+      "version": 1,
+      "createdAt": "2026-08-12T09:58:46.098Z",
+      "updatedAt": "2026-08-12T09:58:46.098Z",
+      "lastPublishedAt": "2026-08-12T09:58:46.098Z"
     }
   ]
 }
