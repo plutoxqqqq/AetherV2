@@ -1,17 +1,6 @@
 {
   "presets": [
     {
-      "name": "CC",
-      "file": "cc.json",
-      "credits": "plutoxqqqq",
-      "tags": [
-        "Legit",
-        "Closet",
-        "Combat"
-      ],
-      "description": "Balanced closet-combat config tuned to look legit."
-    },
-    {
       "name": "Rage",
       "file": "rage.json",
       "credits": "plutoxqqqqq",
