@@ -774,7 +774,8 @@ end
 ]]
 configapi.Presets = {
 	Path = profileFolder..'/presetconfigs.json',
-	OwnerPath = profileFolder..'/communityconfigowners.json'
+	OwnerPath = profileFolder..'/communityconfigowners.json',
+	ClientPath = profileFolder..'/communityclientid.txt'
 }
 configapi.Presets.Registry = (isfile(configapi.Presets.Path) and loadJson(configapi.Presets.Path)) or {}
 configapi.Presets.Owners = (isfile(configapi.Presets.OwnerPath) and loadJson(configapi.Presets.OwnerPath)) or {}
@@ -796,10 +797,22 @@ function configapi.Presets.Backend()
 	return configured:match('^%s*(.-)%s*$'):gsub('/+$', '')
 end
 
+function configapi.Presets.ClientId()
+	if configapi.Presets.InstallationId then return configapi.Presets.InstallationId end
+	local stored = isfile(configapi.Presets.ClientPath) and tostring(readfile(configapi.Presets.ClientPath)):lower():match('^%s*([a-f0-9%-]+)%s*$') or nil
+	if not stored or #stored < 32 or #stored > 64 then
+		stored = httpService:GenerateGUID(false):lower()
+		pcall(writefile, configapi.Presets.ClientPath, stored)
+	end
+	configapi.Presets.InstallationId = stored
+	return stored
+end
+
 function configapi.Presets.URL(file)
 	local player = cloneref(game:GetService('Players')).LocalPlayer
 	return configapi.Presets.Backend()..'/public-configs/'..httpService:UrlEncode(tostring(file))
 		..'?userId='..tostring(player.UserId)
+		..'&clientId='..httpService:UrlEncode(configapi.Presets.ClientId())
 		..'&aether='..tostring(os.time())..'-'..tostring(math.random(100000, 999999))
 end
 
@@ -5422,7 +5435,7 @@ function mainapi:CreateCategoryList(categorysettings)
 		-- Live search over the preset list.
 		local dlsearchbkg = Instance.new('Frame')
 		dlsearchbkg.Name = 'SearchBkg'
-		dlsearchbkg.Size = UDim2.new(1, -20, 0, 26)
+		dlsearchbkg.Size = UDim2.fromOffset(280, 26)
 		dlsearchbkg.Position = UDim2.fromOffset(10, 52)
 		dlsearchbkg.BackgroundColor3 = color.Light(uipallet.Main, 0.03)
 		dlsearchbkg.BorderSizePixel = 0
@@ -5446,7 +5459,7 @@ function mainapi:CreateCategoryList(categorysettings)
 		local dlstatus = Instance.new('TextLabel')
 		dlstatus.Name = 'Status'
 		dlstatus.Size = UDim2.new(1, -20, 0, 30)
-		dlstatus.Position = UDim2.fromOffset(10, 124)
+		dlstatus.Position = UDim2.fromOffset(10, 86)
 		dlstatus.BackgroundTransparency = 1
 		dlstatus.Text = ''
 		dlstatus.TextColor3 = color.Dark(uipallet.Text, 0.35)
@@ -5455,8 +5468,8 @@ function mainapi:CreateCategoryList(categorysettings)
 		dlstatus.Parent = dl
 		local dllist = Instance.new('ScrollingFrame')
 		dllist.Name = 'List'
-		dllist.Size = UDim2.new(1, -20, 1, -174)
-		dllist.Position = UDim2.fromOffset(10, 124)
+		dllist.Size = UDim2.new(1, -20, 1, -136)
+		dllist.Position = UDim2.fromOffset(10, 86)
 		dllist.BackgroundTransparency = 1
 		dllist.BorderSizePixel = 0
 		dllist.ScrollBarThickness = 2
@@ -5501,7 +5514,8 @@ function mainapi:CreateCategoryList(categorysettings)
 			return successful, decoded or response.Body or ('HTTP '..status)
 		end
 
-		-- Submit/Review live in a footer strip so they never overlap the preset list.
+		-- Submission and the admin queue stay in the footer. Sorting and refresh are
+		-- compact controls beside Search, leaving the catalogue itself uncluttered.
 		local footer = Instance.new('Frame')
 		footer.Name = 'Footer'
 		footer.Size, footer.Position, footer.BackgroundTransparency, footer.Parent = UDim2.new(1, -20, 0, 32), UDim2.new(0, 10, 1, -38), 1, dl
@@ -5516,8 +5530,7 @@ function mainapi:CreateCategoryList(categorysettings)
 			return button
 		end
 		local submitConfig = submissionButton('Submit', 'Submit config', UDim2.fromOffset(0, 2), 110)
-		local refreshButton = submissionButton('Refresh', 'Refresh', UDim2.fromOffset(118, 2), 72)
-		local review = submissionButton('Review', 'Review queue', UDim2.fromOffset(198, 2), 110)
+		local review = submissionButton('Review', 'Review queue', UDim2.new(1, -110, 0, 2), 110)
 		local sortModes = {
 			{Key = 'trending', Label = 'Trending'},
 			{Key = 'most-downloaded', Label = 'Most Downloaded'},
@@ -5526,7 +5539,8 @@ function mainapi:CreateCategoryList(categorysettings)
 			{Key = 'recently-updated', Label = 'Recently Updated'}
 		}
 		local sortIndex = 1
-		local sortButton = submissionButton('Sort', 'Sort: '..sortModes[sortIndex].Label, UDim2.fromOffset(10, 86), 176, dl)
+		local sortButton = submissionButton('Sort', 'Sort: '..sortModes[sortIndex].Label, UDim2.fromOffset(298, 52), 176, dl)
+		local refreshButton = submissionButton('Refresh', '↻', UDim2.fromOffset(480, 52), 30, dl)
 		-- The queue button is part of the existing repo-config window, but only the
 		-- repository owner should see it. The backend key remains the actual security
 		-- boundary; this check merely avoids presenting a dead admin control to users.
@@ -5571,21 +5585,24 @@ function mainapi:CreateCategoryList(categorysettings)
 			local route = updatePreset
 				and ('/public-configs/'..httpService:UrlEncode(tostring(updatePreset.file))..'/updates')
 				or '/submissions'
-			local ok, response = backendRequest('POST', route, {
+			local payload = {
 				name = mainapi.Profile,
-				displayName = details.displayName,
 				submitter = player.Name,
 				userId = player.UserId,
 				ownerToken = owner and owner.token or nil,
-				creator = details.creator,
-				category = details.category,
-				description = details.description,
 				changelog = updatePreset and details.changelog or nil,
-				tags = details.tags,
 				game = tostring(mainapi.Place),
 				config = config,
 				gui = guiData
-			})
+			}
+			if not updatePreset or details.editDetails then
+				payload.displayName = details.displayName
+				payload.creator = details.creator
+				payload.description = details.description
+				payload.tags = details.tags
+				payload.category = details.category
+			end
+			local ok, response = backendRequest('POST', route, payload)
 			local successMessage = updatePreset and ('Update submitted for v'..tostring(type(response) == 'table' and response.targetVersion or '?')..' review.') or 'Config submitted for review.'
 			mainapi:CreateNotification('Configs', ok and successMessage or responseMessage(response, 'Config submission failed.'), 8, ok and 'info' or 'alert')
 			if ok and type(response) == 'table' and response.id then
@@ -5602,11 +5619,11 @@ function mainapi:CreateCategoryList(categorysettings)
 			return ok
 		end
 
-		-- Collect the same attribution/context required by Export JSON, without making
-		-- submitters leave the Configs tab.  Category is deliberately constrained so
-		-- repository cards remain consistent.
+		-- The full form is used for new submissions and the optional Edit details path
+		-- on updates. Tags are fixed chips, with contradictory choices made mutually
+		-- exclusive in the client and independently checked by the Worker.
 		local submitWindow = Instance.new('Frame')
-		submitWindow.Name, submitWindow.Size, submitWindow.Position = 'SubmitConfig', UDim2.fromOffset(430, 304), UDim2.new(0.5, -215, 0.5, -152)
+		submitWindow.Name, submitWindow.Size, submitWindow.Position = 'SubmitConfig', UDim2.fromOffset(430, 368), UDim2.new(0.5, -215, 0.5, -184)
 		submitWindow.BackgroundColor3, submitWindow.Visible, submitWindow.Parent = uipallet.Main, false, scaledgui
 		addBlur(submitWindow); addCorner(submitWindow); addWindowStroke(submitWindow); makeDraggable(submitWindow)
 		local submitTitle = Instance.new('TextLabel')
@@ -5626,13 +5643,65 @@ function mainapi:CreateCategoryList(categorysettings)
 		end
 		submitField('displayName', 'Display name shown publicly (50 characters)', 44, 34, 50)
 		submitField('creator', 'Creator / credit', 84, 34, 50)
-		submitField('tags', 'Tags, separated by commas', 124, 34, 300)
-		submitField('description', 'Description shown after acceptance (300 characters)', 164, 58, 300)
-		submitField('changelog', 'What changed in this version? (300 characters)', 228, 58, 300)
-		local categories, categoryIndex = {'Closet', 'Semi-closet', 'Blatant'}, 1
-		local categoryButton = submissionButton('Category', categories[categoryIndex], UDim2.fromOffset(14, 232), 130, submitWindow)
-		categoryButton.MouseButton1Click:Connect(function() categoryIndex = categoryIndex % #categories + 1; categoryButton.Text = categories[categoryIndex] end)
-		local confirmSubmit = submissionButton('Confirm', 'Send for review', UDim2.new(1, -144, 0, 232), 130, submitWindow)
+		submitField('description', 'Description shown after acceptance (300 characters)', 124, 58, 300)
+		submitField('changelog', 'What changed in this version? (300 characters)', 324, 58, 300)
+		local tagLabel = Instance.new('TextLabel')
+		tagLabel.Size, tagLabel.Position, tagLabel.BackgroundTransparency = UDim2.new(1, -28, 0, 20), UDim2.fromOffset(14, 188), 1
+		tagLabel.Text, tagLabel.TextColor3, tagLabel.TextSize, tagLabel.FontFace = 'Built-in tags  •  one choice per group', color.Dark(uipallet.Text, 0.25), 11, uipallet.Font
+		tagLabel.TextXAlignment, tagLabel.Parent = Enum.TextXAlignment.Left, submitWindow
+		local builtInTags = {'Closet', 'Semi-Closet', 'Blatant', 'Ranked', 'Casual', 'Low Ping', 'Medium Ping', 'High Ping', 'Mobile'}
+		local tagGroups = {
+			Closet = 'style', ['Semi-Closet'] = 'style', Blatant = 'style',
+			Ranked = 'mode', Casual = 'mode',
+			['Low Ping'] = 'ping', ['Medium Ping'] = 'ping', ['High Ping'] = 'ping',
+			Mobile = 'device'
+		}
+		local tagPositions = {
+			Closet = {14, 212, 92}, ['Semi-Closet'] = {112, 212, 112}, Blatant = {230, 212, 92},
+			Ranked = {14, 246, 92}, Casual = {112, 246, 92}, Mobile = {210, 246, 92},
+			['Low Ping'] = {14, 280, 100}, ['Medium Ping'] = {120, 280, 116}, ['High Ping'] = {242, 280, 100}
+		}
+		local selectedTagMap, tagButtons = {}, {}
+		local function paintTag(tag)
+			local button = tagButtons[tag]
+			if not button then return end
+			button.BackgroundColor3 = selectedTagMap[tag]
+				and Color3.fromHSV(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value)
+				or color.Light(uipallet.Main, 0.04)
+			button.TextColor3 = selectedTagMap[tag]
+				and mainapi:TextColor(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value)
+				or uipallet.Text
+		end
+		for _, tag in builtInTags do
+			local position = tagPositions[tag]
+			local button = submissionButton('Tag'..tag:gsub('%s+', ''), tag, UDim2.fromOffset(position[1], position[2]), position[3], submitWindow)
+			tagButtons[tag] = button
+			button.MouseButton1Click:Connect(function()
+				local selecting = not selectedTagMap[tag]
+				if selecting then
+					for selected in selectedTagMap do
+						if tagGroups[selected] == tagGroups[tag] then selectedTagMap[selected] = nil; paintTag(selected) end
+					end
+				end
+				selectedTagMap[tag] = selecting or nil
+				paintTag(tag)
+			end)
+		end
+		local function setSelectedTags(tags)
+			table.clear(selectedTagMap)
+			for _, rawTag in tags or {} do
+				for _, builtIn in builtInTags do
+					if tostring(rawTag):lower() == builtIn:lower() then selectedTagMap[builtIn] = true break end
+				end
+			end
+			for _, tag in builtInTags do paintTag(tag) end
+		end
+		local function selectedTags()
+			local result = {}
+			for _, tag in builtInTags do if selectedTagMap[tag] then table.insert(result, tag) end end
+			return result
+		end
+		local confirmSubmit = submissionButton('Confirm', 'Send for review', UDim2.new(1, -144, 0, 324), 130, submitWindow)
 		local submitModePreset
 		local function trimmed(text)
 			return tostring(text or ''):match('^%s*(.-)%s*$')
@@ -5642,19 +5711,18 @@ function mainapi:CreateCategoryList(categorysettings)
 			return (success and length or #text) <= maximum
 		end
 		confirmSubmit.MouseButton1Click:Connect(function()
-			local tags = {}
-			for tag in fields.tags.Text:gmatch('[^,]+') do tag = trimmed(tag); if tag ~= '' then table.insert(tags, tag) end end
+			local tags = selectedTags()
 			local displayName, creator = trimmed(fields.displayName.Text), trimmed(fields.creator.Text)
 			local description, changelog = trimmed(fields.description.Text), trimmed(fields.changelog.Text)
 			if displayName == '' or creator == '' or description == '' or #tags == 0 then
 				mainapi:CreateNotification('Configs', 'Display name, creator, description, and at least one tag are required.', 7, 'alert')
 				return
 			end
-			if displayName:find('[<>%c]') or description:find('[<>%c]') or (submitModePreset and changelog:find('[<>%c]')) then
+			if displayName:find('[<>%c]') or creator:find('[<>%c]') or description:find('[<>%c]') or (submitModePreset and changelog:find('[<>%c]')) then
 				mainapi:CreateNotification('Configs', 'Public text cannot contain markup or control characters.', 7, 'alert')
 				return
 			end
-			if not validLength(displayName, 50) or not validLength(description, 300) or not validLength(changelog, 300) then
+			if not validLength(displayName, 50) or not validLength(creator, 50) or not validLength(description, 300) or not validLength(changelog, 300) then
 				mainapi:CreateNotification('Configs', 'Display names are limited to 50 characters; descriptions and changelogs to 300.', 8, 'alert')
 				return
 			end
@@ -5668,42 +5736,88 @@ function mainapi:CreateCategoryList(categorysettings)
 				description = description,
 				changelog = changelog,
 				tags = tags,
-				category = categories[categoryIndex]
+				category = selectedTagMap.Closet and 'Closet' or selectedTagMap['Semi-Closet'] and 'Semi-Closet' or selectedTagMap.Blatant and 'Blatant' or nil,
+				editDetails = true
 			}, submitModePreset) then submitWindow.Visible = false end
 		end)
 		table.insert(mainapi.Windows, submitWindow)
-		local function openSubmitWindow(preset)
-			if preset then
-				local active = configapi.Presets.Get(mainapi.Profile)
-				if not active or tostring(active.file):lower() ~= tostring(preset.file):lower() then
-					mainapi:CreateNotification('Configs', 'Load this Public Config before submitting an update to it.', 8, 'alert')
-					return
-				end
-			end
+		local function openSubmitWindow(preset, existingChangelog)
 			submitModePreset = preset
-			submitTitle.Text = preset and ('Submit '..tostring(preset.versionLabel or ('v'..tostring(preset.version or 1)))..' update') or 'Submit current config'
+			submitTitle.Text = preset and ('Edit '..tostring(preset.name)..' update') or 'Submit current config'
 			fields.displayName.Text = preset and tostring(preset.name or mainapi.Profile) or tostring(mainapi.Profile or '')
 			fields.creator.Text = preset and tostring(preset.credits or localPlayer.Name) or localPlayer.Name
-			fields.tags.Text = preset and table.concat(preset.tags or {}, ', ') or ''
 			fields.description.Text = preset and tostring(preset.description or '') or ''
-			fields.changelog.Text = ''
+			fields.changelog.Text = tostring(existingChangelog or '')
 			fields.changelog.Visible = preset ~= nil
-			categoryIndex = 1
-			if preset then
-				for index, category in categories do
-					if table.find(preset.tags or {}, category) then categoryIndex = index break end
-				end
-			end
-			categoryButton.Text = categories[categoryIndex]
-			local actionY = preset and 296 or 232
-			categoryButton.Position = UDim2.fromOffset(14, actionY)
+			setSelectedTags(preset and preset.tags or {})
+			local actionY = preset and 388 or 324
 			confirmSubmit.Position = UDim2.new(1, -144, 0, actionY)
-			confirmSubmit.Text = preset and 'Send update' or 'Send for review'
-			submitWindow.Size = UDim2.fromOffset(430, preset and 368 or 304)
-			submitWindow.Position = UDim2.new(0.5, -215, 0.5, preset and -184 or -152)
+			confirmSubmit.Text = preset and 'Save & submit' or 'Send for review'
+			submitWindow.Size = UDim2.fromOffset(430, preset and 432 or 368)
+			submitWindow.Position = UDim2.new(0.5, -215, 0.5, preset and -216 or -184)
 			submitWindow.Visible = true
 		end
 		submitConfig.MouseButton1Click:Connect(function() openSubmitWindow(nil) end)
+
+		-- Owner updates are deliberately short: current local profile + changelog.
+		-- Public metadata is preserved unless Edit details opens the full form above.
+		local updateWindow = Instance.new('Frame')
+		updateWindow.Name, updateWindow.Size, updateWindow.Position = 'UpdateConfig', UDim2.fromOffset(410, 246), UDim2.new(0.5, -205, 0.5, -123)
+		updateWindow.BackgroundColor3, updateWindow.Visible, updateWindow.Parent = uipallet.Main, false, scaledgui
+		addBlur(updateWindow); addCorner(updateWindow); addWindowStroke(updateWindow); makeDraggable(updateWindow)
+		local updateTitle = Instance.new('TextLabel')
+		updateTitle.Size, updateTitle.Position, updateTitle.BackgroundTransparency = UDim2.new(1, -50, 0, 36), UDim2.fromOffset(14, 0), 1
+		updateTitle.Text, updateTitle.TextColor3, updateTitle.TextSize, updateTitle.FontFace = 'Update config', uipallet.Text, 14, uipallet.FontSemiBold
+		updateTitle.TextXAlignment, updateTitle.Parent = Enum.TextXAlignment.Left, updateWindow
+		addCloseButton(updateWindow).MouseButton1Click:Connect(function() updateWindow.Visible = false end)
+		local updateSummary = updateTitle:Clone()
+		updateSummary.Size, updateSummary.Position = UDim2.new(1, -28, 0, 54), UDim2.fromOffset(14, 38)
+		updateSummary.TextColor3, updateSummary.TextSize, updateSummary.FontFace = color.Dark(uipallet.Text, 0.2), 11, uipallet.Font
+		updateSummary.TextWrapped, updateSummary.TextYAlignment, updateSummary.Parent = true, Enum.TextYAlignment.Top, updateWindow
+		local updateChangelog = Instance.new('TextBox')
+		updateChangelog.Size, updateChangelog.Position = UDim2.new(1, -28, 0, 76), UDim2.fromOffset(14, 94)
+		updateChangelog.BackgroundColor3, updateChangelog.TextColor3, updateChangelog.PlaceholderColor3 = color.Light(uipallet.Main, 0.04), uipallet.Text, color.Dark(uipallet.Text, 0.35)
+		updateChangelog.Text, updateChangelog.PlaceholderText = '', 'What changed? Required for moderation (300 characters)'
+		updateChangelog.TextSize, updateChangelog.FontFace, updateChangelog.MultiLine, updateChangelog.TextWrapped = 12, uipallet.Font, true, true
+		updateChangelog.ClearTextOnFocus, updateChangelog.Parent = false, updateWindow
+		pcall(function() updateChangelog.MaxVisibleGraphemes = 300 end)
+		addCorner(updateChangelog)
+		local editUpdate = submissionButton('EditDetails', 'Edit details', UDim2.fromOffset(14, 190), 110, updateWindow)
+		local confirmUpdate = submissionButton('ConfirmUpdate', 'Send update', UDim2.new(1, -144, 0, 190), 130, updateWindow)
+		local updateModePreset
+		local function openUpdateWindow(preset)
+			if not configapi.Presets.GetOwner(tostring(preset.file)) then
+				mainapi:CreateNotification('Configs', 'The original submission receipt is not available on this install.', 8, 'alert')
+				return
+			end
+			if not mainapi.Profile or not isfile(getConfigPath(mainapi.Profile)) then
+				mainapi:CreateNotification('Configs', 'Save the active config before updating.', 7, 'alert')
+				return
+			end
+			updateModePreset = preset
+			updateTitle.Text = 'Update '..tostring(preset.name)
+			updateSummary.Text = 'Active profile: '..tostring(mainapi.Profile)..'\nPublishes as '..tostring(preset.name)..' v'..tostring((tonumber(preset.version) or 1) + 1)..' only after approval.'
+			updateChangelog.Text = ''
+			updateWindow.Visible = true
+		end
+		local function validateUpdateChangelog()
+			local changelog = trimmed(updateChangelog.Text)
+			if changelog == '' then mainapi:CreateNotification('Configs', 'Describe what changed before submitting an update.', 7, 'alert'); return nil end
+			if changelog:find('[<>%c]') or not validLength(changelog, 300) then mainapi:CreateNotification('Configs', 'The changelog must be plain text and 300 characters or fewer.', 7, 'alert'); return nil end
+			return changelog
+		end
+		editUpdate.MouseButton1Click:Connect(function()
+			local changelog = validateUpdateChangelog()
+			if not changelog or not updateModePreset then return end
+			updateWindow.Visible = false
+			openSubmitWindow(updateModePreset, changelog)
+		end)
+		confirmUpdate.MouseButton1Click:Connect(function()
+			local changelog = validateUpdateChangelog()
+			if not changelog or not updateModePreset then return end
+			if submitActiveConfig({changelog = changelog}, updateModePreset) then updateWindow.Visible = false end
+		end)
+		table.insert(mainapi.Windows, updateWindow)
 
 		-- Queue completed reviews until the menu opens
 		local reviewCards = {}
@@ -5902,31 +6016,123 @@ function mainapi:CreateCategoryList(categorysettings)
 			return tostring(math.floor(number))
 		end
 
-		local function info(preset)
-			task.spawn(function()
-				local tags = (preset.tags and #preset.tags > 0) and escapeRichText(table.concat(preset.tags, ', ')) or 'none'
-				local ratingCount = tonumber(preset.ratingCount) or 0
-				local rating = ratingCount > 0
-					and (tostring(preset.ratingPercentage)..'% positive from '..tostring(ratingCount)..' votes')
-					or 'Unrated'
-				local lines = {
-					'By '..escapeRichText(preset.credits or '?'),
-					tostring(preset.versionLabel or ('v'..tostring(preset.version or 1)))..' • published '..formatDate(preset.lastPublishedAt or preset.updatedAt),
-					compactCount(preset.downloads)..' downloads • '..rating,
-					'Tags: '..tags
-				}
-				if preset.description then table.insert(lines, escapeRichText(preset.description)) end
-				local success, versions = backendRequest('GET', '/public-configs/'..httpService:UrlEncode(tostring(preset.file))..'/versions')
-				if success and type(versions) == 'table' and type(versions.versions) == 'table' and #versions.versions > 0 then
-					table.insert(lines, 'Version history:')
-					for index = 1, math.min(#versions.versions, 4) do
-						local version = versions.versions[index]
-						table.insert(lines, tostring(version.versionLabel or ('v'..tostring(version.version)))..' • '..formatDate(version.publishedAt)..(version.changelog and version.changelog ~= '' and (' — '..escapeRichText(version.changelog)) or ''))
-					end
+		-- Secondary actions live in one reusable details panel. Rows only expose the
+		-- primary Download action and the owner-only Update action.
+		local detailsWindow = Instance.new('Frame')
+		detailsWindow.Name, detailsWindow.Size, detailsWindow.Position = 'ConfigDetails', UDim2.fromOffset(470, 410), UDim2.new(0.5, -235, 0.5, -205)
+		detailsWindow.BackgroundColor3, detailsWindow.Visible, detailsWindow.Parent = uipallet.Main, false, scaledgui
+		addBlur(detailsWindow); addCorner(detailsWindow); addWindowStroke(detailsWindow); makeDraggable(detailsWindow)
+		local detailsTitle = Instance.new('TextLabel')
+		detailsTitle.Size, detailsTitle.Position, detailsTitle.BackgroundTransparency = UDim2.new(1, -52, 0, 28), UDim2.fromOffset(16, 8), 1
+		detailsTitle.TextColor3, detailsTitle.TextSize, detailsTitle.FontFace = uipallet.Text, 16, uipallet.FontSemiBold
+		detailsTitle.TextXAlignment, detailsTitle.Parent = Enum.TextXAlignment.Left, detailsWindow
+		addCloseButton(detailsWindow).MouseButton1Click:Connect(function() detailsWindow.Visible = false end)
+		local detailsSubtitle = detailsTitle:Clone()
+		detailsSubtitle.Size, detailsSubtitle.Position = UDim2.new(1, -32, 0, 18), UDim2.fromOffset(16, 38)
+		detailsSubtitle.TextColor3, detailsSubtitle.TextSize, detailsSubtitle.FontFace = color.Dark(uipallet.Text, 0.32), 11, uipallet.Font
+		detailsSubtitle.Parent = detailsWindow
+		local detailsScroll = Instance.new('ScrollingFrame')
+		detailsScroll.Size, detailsScroll.Position = UDim2.new(1, -28, 1, -118), UDim2.fromOffset(14, 66)
+		detailsScroll.BackgroundColor3, detailsScroll.BorderSizePixel = color.Light(uipallet.Main, 0.025), 0
+		detailsScroll.ScrollBarThickness, detailsScroll.ScrollBarImageTransparency = 2, 0.7
+		detailsScroll.CanvasSize, detailsScroll.AutomaticCanvasSize, detailsScroll.Parent = UDim2.new(), Enum.AutomaticSize.Y, detailsWindow
+		addCorner(detailsScroll)
+		local detailsBody = Instance.new('TextLabel')
+		detailsBody.Size, detailsBody.Position, detailsBody.AutomaticSize = UDim2.new(1, -20, 0, 0), UDim2.fromOffset(10, 10), Enum.AutomaticSize.Y
+		detailsBody.BackgroundTransparency, detailsBody.TextWrapped, detailsBody.TextXAlignment, detailsBody.TextYAlignment = 1, true, Enum.TextXAlignment.Left, Enum.TextYAlignment.Top
+		detailsBody.TextColor3, detailsBody.TextSize, detailsBody.FontFace, detailsBody.Parent = color.Dark(uipallet.Text, 0.12), 12, uipallet.Font, detailsScroll
+		local detailsLike = submissionButton('Like', 'Like', UDim2.fromOffset(14, 370), 86, detailsWindow)
+		local detailsDislike = submissionButton('Dislike', 'Dislike', UDim2.fromOffset(106, 370), 86, detailsWindow)
+		local detailsDelete = submissionButton('Delete', 'Delete', UDim2.new(1, -100, 0, 370), 86, detailsWindow)
+		detailsDelete.BackgroundColor3 = Color3.fromRGB(155, 61, 67)
+		detailsDelete.Visible = localPlayer.Name:lower() == 'plutoxqqqqq'
+		table.insert(mainapi.Windows, detailsWindow)
+
+		local deleteWindow = Instance.new('Frame')
+		deleteWindow.Name, deleteWindow.Size, deleteWindow.Position = 'DeleteConfigConfirm', UDim2.fromOffset(370, 196), UDim2.new(0.5, -185, 0.5, -98)
+		deleteWindow.BackgroundColor3, deleteWindow.Visible, deleteWindow.Parent = uipallet.Main, false, scaledgui
+		addBlur(deleteWindow); addCorner(deleteWindow); addWindowStroke(deleteWindow); makeDraggable(deleteWindow)
+		local deleteTitle = Instance.new('TextLabel')
+		deleteTitle.Size, deleteTitle.Position, deleteTitle.BackgroundTransparency = UDim2.new(1, -50, 0, 34), UDim2.fromOffset(14, 2), 1
+		deleteTitle.Text, deleteTitle.TextColor3, deleteTitle.TextSize, deleteTitle.FontFace = 'Delete public config?', uipallet.Text, 14, uipallet.FontSemiBold
+		deleteTitle.TextXAlignment, deleteTitle.Parent = Enum.TextXAlignment.Left, deleteWindow
+		local deleteTarget
+		addCloseButton(deleteWindow).MouseButton1Click:Connect(function() deleteWindow.Visible = false; deleteTarget = nil end)
+		local deleteText = deleteTitle:Clone()
+		deleteText.Size, deleteText.Position = UDim2.new(1, -28, 0, 86), UDim2.fromOffset(14, 42)
+		deleteText.TextColor3, deleteText.TextSize, deleteText.FontFace = color.Dark(uipallet.Text, 0.15), 12, uipallet.Font
+		deleteText.TextWrapped, deleteText.TextYAlignment, deleteText.Parent = true, Enum.TextYAlignment.Top, deleteWindow
+		local cancelDelete = submissionButton('CancelDelete', 'Cancel', UDim2.fromOffset(14, 148), 92, deleteWindow)
+		local confirmDelete = submissionButton('ConfirmDelete', 'Delete config', UDim2.new(1, -128, 0, 148), 114, deleteWindow)
+		confirmDelete.BackgroundColor3 = Color3.fromRGB(155, 61, 67)
+		cancelDelete.MouseButton1Click:Connect(function() deleteWindow.Visible = false; deleteTarget = nil end)
+		table.insert(mainapi.Windows, deleteWindow)
+
+		local activeDetailsPreset
+		local rate
+		local function detailsText(preset, versions, loading)
+			local ratingCount = tonumber(preset.ratingCount) or 0
+			local rating = ratingCount > 0 and (tostring(preset.ratingPercentage)..'% positive from '..tostring(ratingCount)..' votes') or 'Unrated'
+			local lines = {
+				tostring(preset.description or 'No description provided.'),
+				'',
+				'Tags: '..((preset.tags and #preset.tags > 0) and table.concat(preset.tags, ' • ') or 'None'),
+				'Published: '..formatDate(preset.lastPublishedAt or preset.updatedAt),
+				'Rating: '..rating,
+				'',
+				'Version history'
+			}
+			if loading then
+				table.insert(lines, 'Loading...')
+			elseif type(versions) == 'table' and #versions > 0 then
+				for index = 1, math.min(#versions, 8) do
+					local version = versions[index]
+					table.insert(lines, tostring(version.versionLabel or ('v'..tostring(version.version)))..' • '..formatDate(version.publishedAt)..(version.changelog and version.changelog ~= '' and ('\n'..tostring(version.changelog)) or ''))
 				end
-				mainapi:CreateNotification(escapeRichText(preset.name), table.concat(lines, '\n'), 12, 'info')
+			else
+				table.insert(lines, 'No version history available.')
+			end
+			return table.concat(lines, '\n')
+		end
+		local function paintDetailsRatings(preset)
+			local accent = Color3.fromHSV(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value)
+			local accentText = mainapi:TextColor(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value)
+			detailsLike.Text, detailsDislike.Text = 'Like '..compactCount(preset.likes), 'Dislike '..compactCount(preset.dislikes)
+			detailsLike.BackgroundColor3 = tonumber(preset.userRating) == 1 and accent or color.Light(uipallet.Main, 0.05)
+			detailsDislike.BackgroundColor3 = tonumber(preset.userRating) == -1 and accent or color.Light(uipallet.Main, 0.05)
+			detailsLike.TextColor3 = tonumber(preset.userRating) == 1 and accentText or uipallet.Text
+			detailsDislike.TextColor3 = tonumber(preset.userRating) == -1 and accentText or uipallet.Text
+		end
+		local function openDetails(preset)
+			activeDetailsPreset = preset
+			detailsTitle.Text = tostring(preset.name)..'  '..tostring(preset.versionLabel or ('v'..tostring(preset.version or 1)))
+			detailsSubtitle.Text = 'By '..tostring(preset.credits or '?')..'  •  '..compactCount(preset.downloads)..' downloads'
+			detailsBody.Text = detailsText(preset, nil, true)
+			paintDetailsRatings(preset)
+			detailsWindow.Visible = true
+			task.spawn(function()
+				local success, result = backendRequest('GET', '/public-configs/'..httpService:UrlEncode(tostring(preset.file))..'/versions')
+				if activeDetailsPreset ~= preset then return end
+				detailsBody.Text = detailsText(preset, success and type(result) == 'table' and result.versions or nil, false)
 			end)
 		end
+		detailsLike.MouseButton1Click:Connect(function() if activeDetailsPreset and rate then rate(activeDetailsPreset, 'like') end end)
+		detailsDislike.MouseButton1Click:Connect(function() if activeDetailsPreset and rate then rate(activeDetailsPreset, 'dislike') end end)
+		detailsDelete.MouseButton1Click:Connect(function()
+			if not activeDetailsPreset then return end
+			deleteTarget = activeDetailsPreset
+			deleteText.Text = 'This permanently removes '..tostring(deleteTarget.name)..' from Public Configs and deletes '..tostring(deleteTarget.file)..' from GitHub. This cannot be undone from Aether.'
+			deleteWindow.Visible = true
+		end)
+		confirmDelete.MouseButton1Click:Connect(function()
+			if not deleteTarget then return end
+			local target = deleteTarget
+			confirmDelete.Active = false
+			local success, result = backendRequest('DELETE', '/public-configs/'..httpService:UrlEncode(tostring(target.file)), nil, true)
+			confirmDelete.Active = true
+			mainapi:CreateNotification('Configs', success and 'Config deleted successfully.' or responseMessage(result, 'Config deletion failed.'), 8, success and 'info' or 'alert')
+			if success then detailsWindow.Visible = false; deleteWindow.Visible = false; deleteTarget = nil; if refresh then refresh() end end
+		end)
 
 		local rowbuttons = {}
 		function refreshRows()
@@ -5939,17 +6145,23 @@ function mainapi:CreateCategoryList(categorysettings)
 		end
 
 		local ratingInFlight = {}
-		local function rate(preset, value)
+		rate = function(preset, value)
 			if ratingInFlight[preset.file] then return end
 			ratingInFlight[preset.file] = true
 			task.spawn(function()
 				local success, result = backendRequest('POST', '/public-configs/'..httpService:UrlEncode(tostring(preset.file))..'/ratings', {
 					userId = localPlayer.UserId,
+					clientId = configapi.Presets.ClientId(),
 					rating = value
 				})
 				ratingInFlight[preset.file] = nil
 				mainapi:CreateNotification('Configs', success and 'Your rating was saved.' or responseMessage(result, 'Could not save your rating.'), 6, success and 'info' or 'alert')
-				if success and refresh then refresh() end
+				if success and type(result) == 'table' then
+					preset.likes, preset.dislikes = result.likes or preset.likes, result.dislikes or preset.dislikes
+					preset.ratingCount, preset.ratingPercentage, preset.userRating = result.ratingCount or preset.ratingCount, result.ratingPercentage, result.userRating
+					if activeDetailsPreset == preset then openDetails(preset) end
+					if refresh then refresh() end
+				end
 			end)
 		end
 
@@ -5963,7 +6175,7 @@ function mainapi:CreateCategoryList(categorysettings)
 			local row = Instance.new('Frame')
 			row.Name = tostring(preset.name)
 			row:SetAttribute('Tags', (preset.tags and table.concat(preset.tags, ' ') or '')..' '..tostring(preset.credits or '')..' '..tostring(preset.description or ''))
-			row.Size = UDim2.new(1, 0, 0, 72)
+			row.Size = UDim2.new(1, 0, 0, 64)
 			row.BackgroundColor3 = color.Light(uipallet.Main, 0.02)
 			row.Parent = dllist
 			addCorner(row)
@@ -5971,10 +6183,15 @@ function mainapi:CreateCategoryList(categorysettings)
 				addTooltip(row, tostring(preset.description), 360)
 			end
 			local owner = configapi.Presets.GetOwner(tostring(preset.file))
-			local admin = localPlayer.Name:lower() == 'plutoxqqqqq'
-			local actionOffset = -150 - (owner and 60 or 0) - (admin and 60 or 0)
+			local actionWidth = owner and 188 or 100
+			local openArea = Instance.new('TextButton')
+			openArea.Name, openArea.Size, openArea.BackgroundTransparency, openArea.Text = 'OpenDetails', UDim2.new(1, -actionWidth, 1, 0), 1, ''
+			openArea.AutoButtonColor, openArea.ZIndex, openArea.Parent = false, 1, row
+			openArea.MouseButton1Click:Connect(function() openDetails(preset) end)
+			openArea.MouseEnter:Connect(function() row.BackgroundColor3 = color.Light(uipallet.Main, 0.04) end)
+			openArea.MouseLeave:Connect(function() row.BackgroundColor3 = color.Light(uipallet.Main, 0.02) end)
 			local name = Instance.new('TextLabel')
-			name.Size = UDim2.new(1, actionOffset - 8, 0, 18)
+			name.Size = UDim2.new(1, -actionWidth - 8, 0, 18)
 			name.Position = UDim2.fromOffset(12, 6)
 			name.BackgroundTransparency = 1
 			name.Text = tostring(preset.name)..'  '..tostring(preset.versionLabel or ('v'..tostring(preset.version or 1)))
@@ -5983,18 +6200,19 @@ function mainapi:CreateCategoryList(categorysettings)
 			name.TextColor3 = uipallet.Text
 			name.TextSize = 13
 			name.FontFace = uipallet.Font
-			name.Parent = row
+			name.ZIndex, name.Parent = 2, row
 			local tagline = name:Clone()
-			tagline.Size = UDim2.new(1, -170, 0, 14)
-			tagline.Position = UDim2.fromOffset(12, 26)
+			tagline.Size = UDim2.new(1, -actionWidth - 8, 0, 14)
+			tagline.Position = UDim2.fromOffset(12, 24)
 			local ratingText = (tonumber(preset.ratingCount) or 0) > 0 and (tostring(preset.ratingPercentage)..'% positive') or 'unrated'
 			tagline.Text = compactCount(preset.downloads)..' downloads • '..ratingText..' • '..formatDate(preset.lastPublishedAt or preset.updatedAt)
 			tagline.TextColor3 = color.Dark(uipallet.Text, 0.31)
 			tagline.TextSize = 11
 			tagline.Parent = row
 			local tags = tagline:Clone()
-			tags.Position = UDim2.fromOffset(12, 46)
+			tags.Position = UDim2.fromOffset(12, 42)
 			tags.Text = (preset.tags and #preset.tags > 0) and table.concat(preset.tags, ' • ') or ('By '..tostring(preset.credits or '?'))
+			tags.TextTruncate = Enum.TextTruncate.AtEnd
 			tags.Parent = row
 			local function mkbtn(text, xoff, width, y, colour, fn)
 				local b = Instance.new('TextButton')
@@ -6007,30 +6225,16 @@ function mainapi:CreateCategoryList(categorysettings)
 				b.TextSize = 12
 				b.FontFace = uipallet.Font
 				b.AutoButtonColor = true
-				b.Parent = row
+				b.ZIndex, b.Parent = 3, row
 				addCorner(b, UDim.new(0, 5))
 				b.MouseButton1Click:Connect(fn)
 				return b
 			end
-			mkbtn('Info', -100, 44, 6, color.Light(uipallet.Main, 0.05), function() info(preset) end)
-			local extraOffset = -150
 			if owner then
-				mkbtn('Update', extraOffset, 54, 6, color.Light(uipallet.Main, 0.05), function() openSubmitWindow(preset) end)
-				extraOffset -= 60
+				mkbtn('Update', -100, 78, 19, color.Light(uipallet.Main, 0.05), function() openUpdateWindow(preset) end)
 			end
-			if admin then
-				mkbtn('Delete', extraOffset, 54, 6, color.Light(uipallet.Main, 0.05), function()
-					local success, result = backendRequest('DELETE', '/public-configs/'..httpService:UrlEncode(tostring(preset.file)), nil, true)
-					mainapi:CreateNotification('Configs', success and 'Config deleted successfully.' or responseMessage(result, 'Config deletion failed.'), 8, success and 'info' or 'alert')
-					if success and refresh then refresh() end
-				end)
-			end
-			local downloadButton = mkbtn(isfile(getConfigPath(tostring(preset.name))) and 'Redownload' or 'Download', -10, 84, 6, Color3.fromHSV(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value), function() download(preset) end)
+			local downloadButton = mkbtn(isfile(getConfigPath(tostring(preset.name))) and 'Redownload' or 'Download', -10, 84, 19, Color3.fromHSV(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value), function() download(preset) end)
 			rowbuttons[tostring(preset.file)] = {Name = tostring(preset.name), Button = downloadButton}
-			local like = mkbtn('Like '..compactCount(preset.likes), -82, 70, 40, tonumber(preset.userRating) == 1 and Color3.fromHSV(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value) or color.Light(uipallet.Main, 0.05), function() rate(preset, 'like') end)
-			local dislike = mkbtn('Dislike '..compactCount(preset.dislikes), -10, 70, 40, tonumber(preset.userRating) == -1 and Color3.fromHSV(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value) or color.Light(uipallet.Main, 0.05), function() rate(preset, 'dislike') end)
-			if tonumber(preset.userRating) == 1 then like.TextColor3 = mainapi:TextColor(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value) end
-			if tonumber(preset.userRating) == -1 then dislike.TextColor3 = mainapi:TextColor(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value) end
 		end
 
 		-- Live search: match against the preset name and its tags.
