@@ -9849,6 +9849,13 @@ local targetinfofollow = targetinfoobj:CreateToggle({
 	end
 })
 
+-- Target Info consumes targets published by combat modules, so expose the same
+-- player/NPC element selector those modules use instead of silently accepting both.
+local targetinfoelements = targetinfoobj:CreateTargets({
+	Players = true,
+	NPCs = true
+})
+
 local followCenter, followTarget, followSide
 local function updateTargetInfoPosition(target)
 	-- Returns whether the HUD should be shown: the caller ands this into Visible, so
@@ -9945,7 +9952,8 @@ targetinfo = {
 
 		local v, highest = nil, tick()
 		for i, check in self.Targets do
-			if check > highest then
+			local allowed = i.Player and targetinfoelements.Players.Enabled or targetinfoelements.NPCs.Enabled
+			if allowed and check > highest then
 				v = i
 				highest = check
 			end
