@@ -6990,20 +6990,22 @@ run(function()
     local function kitMovementSpeed(fallback)
         if not entitylib.isAlive then return fallback end
         local equipped = store.equippedKit
-        if equipped == nil or equipped == '' then equipped = lplr:GetAttribute('PlayingAsKit') end
+        if equipped == nil or equipped == '' then equipped = lplr:GetAttribute('PlayingAsKit') or lplr:GetAttribute('PlayingAsKits') end
         local kit = string.lower(tostring(equipped or ''))
         local char = lplr.Character
         local function has(words)
             for _, word in words do if kit:find(word, 1, true) then return true end end
             return false
         end
-        if KrystalKit.Enabled and has({'ice_skater', 'ice skater', 'glacier', 'krystal'}) then return KrystalSpeed.Value end
-        local riding = lplr:GetAttribute('ElkKitMounted') or (char and (char:GetAttribute('ElkKitMounted') or char:FindFirstChild('ElkMount', true)))
-        if SigridKit.Enabled and has({'elk', 'rider', 'sigrid'}) and riding then return SigridSpeed.Value end
-        local soul = char and (char:GetAttribute('GrimReaperChannel') or char:GetAttribute('SoulForm') or char:FindFirstChild('GrimReaperChannel', true))
-        if GrimKit.Enabled and has({'grim', 'soul'}) and soul then return GrimSpeed.Value end
-        local stacks = tonumber(lplr:GetAttribute('WindWalkerStacks') or lplr:GetAttribute('WindStacks') or (char and char:GetAttribute('WindStacks')) or 0) or 0
-        if ZephyrKit.Enabled and has({'zephyr', 'wind', 'stacks'}) and stacks >= 1 then return ZephyrSpeed.Value end
+        if KrystalKit.Enabled and has({'glacial_skater', 'ice_skater', 'glacier', 'krystal'}) then return KrystalSpeed.Value end
+        local riding = lplr:GetAttribute('ElkKitMounted') or lplr:GetAttribute('SigridMounted')
+            or (char and (char:GetAttribute('ElkKitMounted') or char:GetAttribute('SigridMounted') or char:FindFirstChild('ElkMount', true)))
+        if SigridKit.Enabled and has({'elk_master', 'elk', 'rider', 'sigrid'}) and riding then return SigridSpeed.Value end
+        local soul = char and (char:GetAttribute('GrimReaperChannel') or char:GetAttribute('SoulForm') or char:GetAttribute('GrimReaperGhost') or char:FindFirstChild('GrimReaperChannel', true))
+        if GrimKit.Enabled and has({'grim_reaper', 'grim', 'soul'}) and soul then return GrimSpeed.Value end
+        local stacks = tonumber(lplr:GetAttribute('WindWalkerStacks') or lplr:GetAttribute('WindWalkerStack') or lplr:GetAttribute('WindStacks')
+            or (char and (char:GetAttribute('WindWalkerStacks') or char:GetAttribute('WindWalkerStack') or char:GetAttribute('WindStacks'))) or 0) or 0
+        if ZephyrKit.Enabled and has({'wind_walker', 'zephyr', 'wind'}) and stacks >= 1 then return ZephyrSpeed.Value end
         return fallback
     end
 
@@ -7375,9 +7377,9 @@ run(function()
     local SwingTime
 	local Sync
 	local HitRegCalculator
-	local hitRegCache
 	local hitRegLastUpdate
 	local hitRegUpdateRate = 60
+	local hitRegSwingTime
     local AngleSlider
 	local ChanceSlider
     local MaxTargets
@@ -7524,16 +7526,16 @@ run(function()
 		for _, v in lastvelos[ent] do
 			velo += v
 		end
-		local delta = #lastvelos * (1/60)
+		local samples = lastvelos[ent]
 		table.insert(lastvelos[ent], newvelo)
-		if delta <= 0 then
-			return velo
+		if #samples < 2 then
+			return Vector3.zero
 		end
-		return (newvelo - (velo / (#lastvelos - 1)))
+		return newvelo - (velo / (#samples - 1))
 	end
 	local function getPosition(ent, root)
 		local multi, pos = getMultiplier(ent, root), root.Position + (root.AssemblyLinearVelocity * (lplr:GetNetworkPing()))
-		if #lastvelos > 1 then
+		if #lastvelos[ent] > 1 then
 			pos = pos + (0.5 * multi * (lplr:GetNetworkPing() * lplr:GetNetworkPing()))
 		end
 		return pos
@@ -7612,9 +7614,12 @@ run(function()
                             local ping = math.max(lplr:GetNetworkPing(), 0)
                             local attackSpeed = (meta.sword and meta.sword.attackSpeed) or 0.3
                             local swingDelay = math.max(attackSpeed - ping, 0.02)
-                            SwingTime:SetValue(swingDelay / 2)
-                            hitRegUpdateRate = math.clamp((swingDelay - ping) * 1000, 1, 1000)
-                            if not Sync.Enabled then Sync:SetValue(true) end
+							-- Keep calculator state private. Mutating controls from inside the aura's
+							-- worker invokes their callbacks and used to tear down/restart the worker,
+							-- leaving it unable to swing. The calculator only needs to supply the
+							-- cooldown used by this loop.
+							hitRegSwingTime = math.max(swingDelay / 2, 0.02)
+							hitRegUpdateRate = math.clamp(1 / hitRegSwingTime, 1, 60)
                         end
                         local plrs = entitylib.AllPosition({
                             Range = SwingRange.Value,
@@ -7694,8 +7699,10 @@ run(function()
 
                                 if entry ~= focus then continue end
 
-                                local actualRoot = v.Character.PrimaryPart
-								if actualRoot and (tick() - swingCooldown) >= (Sync.Enabled and SwingTime.Value or 0.292) then
+								local actualRoot = v.Character.PrimaryPart
+								local attackDelay = HitRegCalculator.Enabled and hitRegSwingTime
+									or (Sync.Enabled and SwingTime.Value or 0.292)
+								if actualRoot and (tick() - swingCooldown) >= (attackDelay or 0.292) then
                                     switchIndex += 1
 									local dir = CFrame.lookAt(selfpos, actualRoot.Position).LookVector
 									local pos = selfpos + dir * math.max(delta.Magnitude - 14.399, 0)
@@ -7819,16 +7826,10 @@ run(function()
     })
     HitRegCalculator = Killaura:CreateToggle({
         Name = 'HitReg calculator',
-        Tooltip = 'Calculates and sets your Killaura settings based on a formula',
+        Tooltip = 'Calculates an attack cooldown from weapon speed and ping',
         Function = function(callback)
-            if callback then
-                hitRegCache = {SwingTime = SwingTime.Value, Sync = Sync.Enabled}
-            elseif hitRegCache then
-                SwingTime:SetValue(hitRegCache.SwingTime)
-                if Sync.Enabled ~= hitRegCache.Sync then Sync:SetValue(hitRegCache.Sync) end
-                hitRegCache = nil
-                hitRegUpdateRate = 60
-            end
+			hitRegSwingTime = nil
+			if not callback then hitRegUpdateRate = 60 end
             hitRegLastUpdate = nil
         end
     })
@@ -8511,31 +8512,30 @@ local function createKitExtender(spec)
 
         controller, original = target, method
         hooked = function(...)
-            -- Whether the ability was actually available has to be read BEFORE the original
-            -- runs, because running it is what spends the cooldown.
-            local available = true
-            if spec.Ability then
-                local ok, ready = pcall(function()
-                    return bedwars.AbilityController:canUseAbility(spec.Ability)
-                end)
-                available = ok and ready and true or false
-            end
-
             -- Read out of the varargs here: the guarded block below is a closure, which
             -- cannot see `...` of the function it sits in.
-            local direction = spec.Argument and select(spec.Argument, ...) or nil
+			local direction = spec.Argument and select(spec.Argument, ...) or nil
+			if spec.Argument and typeof(direction) ~= 'Vector3' then
+				for index = 1, select('#', ...) do
+					local candidate = select(index, ...)
+					if typeof(candidate) == 'Vector3' then direction = candidate end
+				end
+			end
             local results = table.pack(method(...))
 
-            if Extender.Enabled and available and entitylib.isAlive
-                and store.equippedKit == spec.Kit
-                and (not spec.Argument or typeof(direction) == 'Vector3') then
-                pcall(function()
-                    local root = entitylib.character.RootPart
-                    local impulse = spec.Impulse(root, direction, Multiplier.Value)
-                    if impulse then
-                        root:ApplyImpulse(impulse)
-                    end
-                end)
+            if Extender.Enabled and entitylib.isAlive
+				and (not spec.Argument or typeof(direction) == 'Vector3') then
+				-- Controllers spend their cooldown before returning and several of them
+				-- write velocity again at the end of the same frame. A deferred impulse
+				-- therefore both proves the ability ran and cannot be overwritten by it.
+				task.defer(function()
+					pcall(function()
+						if not Extender.Enabled or not entitylib.isAlive then return end
+						local root = entitylib.character.RootPart
+						local impulse = spec.Impulse(root, direction, Multiplier.Value)
+						if impulse then root:ApplyImpulse(impulse) end
+					end)
+				end)
             end
 
             return table.unpack(results, 1, results.n)
@@ -9500,20 +9500,22 @@ run(function()
     local function kitMovementSpeed(fallback)
         if not entitylib.isAlive then return fallback end
         local equipped = store.equippedKit
-        if equipped == nil or equipped == '' then equipped = lplr:GetAttribute('PlayingAsKit') end
+        if equipped == nil or equipped == '' then equipped = lplr:GetAttribute('PlayingAsKit') or lplr:GetAttribute('PlayingAsKits') end
         local kit = string.lower(tostring(equipped or ''))
         local char = lplr.Character
         local function has(words)
             for _, word in words do if kit:find(word, 1, true) then return true end end
             return false
         end
-        if KrystalKit.Enabled and has({'ice_skater', 'ice skater', 'glacier', 'krystal'}) then return KrystalSpeed.Value end
-        local riding = lplr:GetAttribute('ElkKitMounted') or (char and (char:GetAttribute('ElkKitMounted') or char:FindFirstChild('ElkMount', true)))
-        if SigridKit.Enabled and has({'elk', 'rider', 'sigrid'}) and riding then return SigridSpeed.Value end
-        local soul = char and (char:GetAttribute('GrimReaperChannel') or char:GetAttribute('SoulForm') or char:FindFirstChild('GrimReaperChannel', true))
-        if GrimKit.Enabled and has({'grim', 'soul'}) and soul then return GrimSpeed.Value end
-        local stacks = tonumber(lplr:GetAttribute('WindWalkerStacks') or lplr:GetAttribute('WindStacks') or (char and char:GetAttribute('WindStacks')) or 0) or 0
-        if ZephyrKit.Enabled and has({'zephyr', 'wind', 'stacks'}) and stacks >= 1 then return ZephyrSpeed.Value end
+        if KrystalKit.Enabled and has({'glacial_skater', 'ice_skater', 'glacier', 'krystal'}) then return KrystalSpeed.Value end
+        local riding = lplr:GetAttribute('ElkKitMounted') or lplr:GetAttribute('SigridMounted')
+            or (char and (char:GetAttribute('ElkKitMounted') or char:GetAttribute('SigridMounted') or char:FindFirstChild('ElkMount', true)))
+        if SigridKit.Enabled and has({'elk_master', 'elk', 'rider', 'sigrid'}) and riding then return SigridSpeed.Value end
+        local soul = char and (char:GetAttribute('GrimReaperChannel') or char:GetAttribute('SoulForm') or char:GetAttribute('GrimReaperGhost') or char:FindFirstChild('GrimReaperChannel', true))
+        if GrimKit.Enabled and has({'grim_reaper', 'grim', 'soul'}) and soul then return GrimSpeed.Value end
+        local stacks = tonumber(lplr:GetAttribute('WindWalkerStacks') or lplr:GetAttribute('WindWalkerStack') or lplr:GetAttribute('WindStacks')
+            or (char and (char:GetAttribute('WindWalkerStacks') or char:GetAttribute('WindWalkerStack') or char:GetAttribute('WindStacks'))) or 0) or 0
+        if ZephyrKit.Enabled and has({'wind_walker', 'zephyr', 'wind'}) and stacks >= 1 then return ZephyrSpeed.Value end
         return fallback
     end
     local rayCheck = RaycastParams.new()
@@ -9581,7 +9583,15 @@ run(function()
                                 end
 
                                 root.CFrame += destination
-                                root.AssemblyLinearVelocity = (moveDirection * velo) + Vector3.new(0, root.AssemblyLinearVelocity.Y, 0)
+								-- CFrame mode contributes only its missing horizontal speed. Do not
+								-- replace physics velocity: doing so erased dao/kit impulses and made
+								-- contact with a wall behave like a downward wall slide.
+				local current = root.AssemblyLinearVelocity
+				local requested = moveDirection * velo
+				local currentHorizontal = Vector3.new(current.X, 0, current.Z)
+				if currentHorizontal.Magnitude < requested.Magnitude then
+									root.AssemblyLinearVelocity = Vector3.new(requested.X, current.Y, requested.Z)
+								end
                                 if AutoJump.Enabled and (state == Enum.HumanoidStateType.Running or state == Enum.HumanoidStateType.Landed) and moveDirection ~= Vector3.zero and (Attacking or AlwaysJump.Enabled) then
                                     entitylib.character.Humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
                                 end
@@ -13971,10 +13981,16 @@ run(function()
     -- cells above and below) before nudging, but TP mode must also fire when
     -- only part of the body is inside a block - most importantly legs-only
     -- suffocation, where the body/head cells are still free.
+    local function isSolidBlock(block)
+		return block and block:IsA('BasePart') and block.CanCollide and block.CanQuery
+			and block.Transparency < 1 and block.Size.Magnitude > 0
+	end
+
     local function isSuffocating(root, mode)
         local body = getPlacedBlock(root.Position)
         local head = getPlacedBlock(root.Position + Vector3.new(0, 2, 0))
         local legs = getPlacedBlock(root.Position - Vector3.new(0, 2, 0))
+		body, head, legs = isSolidBlock(body), isSolidBlock(head), isSolidBlock(legs)
         if mode == 'TP' then
             return (body or legs) and true or false
         end
@@ -13989,7 +14005,7 @@ run(function()
         for step = 1, 26 do
             local probe = base + Vector3.new(0, step, 0)
             local ground = getPlacedBlock(probe - Vector3.new(0, 2, 0))
-            if ground and not getPlacedBlock(probe) and not getPlacedBlock(probe + Vector3.new(0, 2, 0)) then
+            if isSolidBlock(ground) and not isSolidBlock(getPlacedBlock(probe)) and not isSolidBlock(getPlacedBlock(probe + Vector3.new(0, 2, 0))) then
                 local topY = ground.Position.Y + ground.Size.Y / 2
                 root.CFrame = CFrame.new(base.X, topY + hip + 0.1, base.Z) * root.CFrame.Rotation
                 root.AssemblyLinearVelocity = Vector3.zero
