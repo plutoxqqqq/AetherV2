@@ -7640,6 +7640,35 @@ run(function()
 		return pos
 	end
 
+	-- StatusEffectUtil has used more than one representation for active effects over
+	-- time.  In particular, relying on isActive alone misses Fury on builds where
+	-- potion effects are replicated as attributes before the utility's cache updates.
+	local function hasFuryPotion()
+		local character = lplr.Character
+		if not character then return false end
+
+		if bedwars.StatusEffectUtil:isActive(character, 'fury_potion') then
+			return true
+		end
+
+		for name, value in character:GetAttributes() do
+			if value ~= false and value ~= 0 and name:lower():gsub('[^%w]', '') == 'statuseffectfurypotion' then
+				return true
+			end
+		end
+
+		for _, effect in bedwars.StatusEffectUtil:getAllActive(character) do
+			local effectType = type(effect) == 'table'
+				and (effect.statusEffect or effect.statusEffectType or effect.effectType or effect.type or effect.name)
+				or effect
+			if type(effectType) == 'string' and effectType:lower():gsub('[^%w]', '') == 'furypotion' then
+				return true
+			end
+		end
+
+		return false
+	end
+
     Killaura = vape.Categories.Blatant:CreateModule({
         Name = 'Killaura',
         Function = function(callback)
@@ -7711,8 +7740,7 @@ run(function()
                         if HitRegCalculator.Enabled then
                             local ping = math.clamp(lplr:GetNetworkPing(), 0, 1)
                             local weapon = sword.tool.Name
-                            local fury = bedwars.StatusEffectUtil:isActive(lplr.Character, 'fury_potion')
-                                or lplr.Character:GetAttribute('StatusEffect_fury_potion') ~= nil
+                            local fury = hasFuryPotion()
                             if weapon ~= hitRegWeapon or fury ~= hitRegFury or not hitRegPing or math.abs(ping - hitRegPing) >= 0.005
                                 or not hitRegLastUpdate or tick() - hitRegLastUpdate >= 1 then
                                 hitRegLastUpdate, hitRegWeapon, hitRegPing, hitRegFury = tick(), weapon, ping, fury
@@ -7720,7 +7748,11 @@ run(function()
                                 -- These values have different jobs. Network compensation affects only
                                 -- the remote cooldown; viewmodel time stays visual; update interval only
                                 -- controls how often targets are polled.
-                                hitRegAttackCooldown = fury and (10 / 43)
+                                -- Poll faster than Fury's server-side attack window instead of
+                                -- trying to land exactly on its boundary. Rejected early packets
+                                -- are harmless, while the extra packets prevent scheduler jitter
+                                -- from leaving Fury at the normal ~34-hit rate.
+                                hitRegAttackCooldown = fury and (10 / 50)
                                     or math.clamp(weaponCooldown - math.min(ping * 0.5, weaponCooldown * 0.35), 0.05, 2)
                                 hitRegAnimationTime = math.clamp(math.min(SwingTime.Value, hitRegAttackCooldown), 0.05, 1)
                                 hitRegUpdateInterval = math.clamp(math.min(hitRegAttackCooldown / 4, 1 / 30), 1 / 60, 0.1)
