@@ -6809,36 +6809,123 @@ run(function()
     })
 end)
 
+
 run(function()
-    -- FastInteraction is hidden in BedWars (GameId 2619619496) at the user's request;
-    -- it still loads for every other game.
-    if game.GameId == 2619619496 then return end
-    local PromptDuration
-    local Duration
+    local ProximityExtender
+    local ExtraRange
+    local originals = {}
+    local applying = {}
 
-    PromptDuration = vape.Categories.World:CreateModule({
-	Name = 'FastInteraction',
-	Tooltip = 'Changes how fast ur interacting',
-	Function = function(call)
-		if call then
-			PromptDuration:Clean(proximityPromptService.PromptButtonHoldBegan:Connect(function(prompt, player)
-				if player == lplr and prompt.HoldDuration <= Duration.Value then
-					task.delay(Duration.Value, fireproximityprompt, prompt)
-				end
-			end))
-		end
-	end,
+    local function restorePrompt(prompt)
+        local original = originals[prompt]
+        if original ~= nil and prompt.Parent then
+            applying[prompt] = true
+            prompt.MaxActivationDistance = original
+            applying[prompt] = nil
+        end
+        originals[prompt] = nil
+    end
+
+    local function applyPrompt(prompt)
+        if not prompt:IsA('ProximityPrompt') then return end
+        if originals[prompt] == nil then
+            originals[prompt] = prompt.MaxActivationDistance
+            ProximityExtender:Clean(prompt.AncestryChanged:Connect(function(_, parent)
+                if not parent then
+                    originals[prompt] = nil
+                    applying[prompt] = nil
+                end
+            end))
+            ProximityExtender:Clean(prompt:GetPropertyChangedSignal('MaxActivationDistance'):Connect(function()
+                if applying[prompt] or not ProximityExtender.Enabled then return end
+                originals[prompt] = prompt.MaxActivationDistance
+                applying[prompt] = true
+                prompt.MaxActivationDistance = originals[prompt] + ExtraRange.Value
+                applying[prompt] = nil
+            end))
+        end
+        applying[prompt] = true
+        prompt.MaxActivationDistance = originals[prompt] + ExtraRange.Value
+        applying[prompt] = nil
+    end
+
+    ProximityExtender = vape.Categories.World:CreateModule({
+        Name = 'ProximityExtender',
+        Tooltip = 'Adds interaction range and restores every prompt when disabled',
+        Function = function(enabled)
+            if enabled then
+                ProximityExtender:Clean(workspace.DescendantAdded:Connect(applyPrompt))
+                for _, prompt in workspace:GetDescendants() do applyPrompt(prompt) end
+            else
+                for prompt in originals do restorePrompt(prompt) end
+                table.clear(applying)
+            end
+        end
     })
+    ExtraRange = ProximityExtender:CreateSlider({
+        Name = 'Extra activation range', Min = 0, Max = 20, Default = 10, Decimal = 10,
+        Function = function()
+            if ProximityExtender.Enabled then
+                for prompt in originals do applyPrompt(prompt) end
+            end
+        end,
+        Suffix = function(value) return value == 1 and 'stud' or 'studs' end
+    })
+end)
 
-    Duration = PromptDuration:CreateSlider({
-	Name = 'Duration',
-	Min = 0,
-	Max = 2,
-	Default = 0,
-	Suffix = function(val)
-		return val > 1 and 'secs' or 'sec'
-	end,
-	Decimal = 100,
+run(function()
+    local ProximityPromptDuration
+    local Duration
+    local originals = {}
+    local applying = {}
+
+    local function applyPrompt(prompt)
+        if not prompt:IsA('ProximityPrompt') then return end
+        if originals[prompt] == nil then
+            originals[prompt] = prompt.HoldDuration
+            ProximityPromptDuration:Clean(prompt.AncestryChanged:Connect(function(_, parent)
+                if not parent then originals[prompt], applying[prompt] = nil, nil end
+            end))
+            ProximityPromptDuration:Clean(prompt:GetPropertyChangedSignal('HoldDuration'):Connect(function()
+                if applying[prompt] or not ProximityPromptDuration.Enabled then return end
+                originals[prompt] = prompt.HoldDuration
+                applying[prompt] = true
+                prompt.HoldDuration = Duration.Value
+                applying[prompt] = nil
+            end))
+        end
+        applying[prompt] = true
+        prompt.HoldDuration = Duration.Value
+        applying[prompt] = nil
+    end
+
+    ProximityPromptDuration = vape.Categories.World:CreateModule({
+        Name = 'ProximityPromptDuration',
+        Tooltip = 'Changes prompt hold duration and restores original durations when disabled',
+        Function = function(enabled)
+            if enabled then
+                ProximityPromptDuration:Clean(workspace.DescendantAdded:Connect(applyPrompt))
+                for _, prompt in workspace:GetDescendants() do applyPrompt(prompt) end
+            else
+                for prompt, original in originals do
+                    if prompt.Parent then
+                        applying[prompt] = true
+                        prompt.HoldDuration = original
+                        applying[prompt] = nil
+                    end
+                    originals[prompt] = nil
+                end
+                table.clear(applying)
+            end
+        end
+    })
+    Duration = ProximityPromptDuration:CreateSlider({
+        Name = 'Duration', Min = 0, Max = 10, Default = 1, Decimal = 100, Suffix = 's',
+        Function = function()
+            if ProximityPromptDuration.Enabled then
+                for prompt in originals do applyPrompt(prompt) end
+            end
+        end
     })
 end)
 
@@ -7952,50 +8039,6 @@ run(function()
     })
 end)
 
-run(function()
-    local PromptExtender
-    local Extend
-
-    local Reference = {}
-    local function Added(v)
-	if v:IsA(`ProximityPrompt`) then
-		Reference[v] = v.MaxActivationDistance
-		v.MaxActivationDistance = v.MaxActivationDistance + Extend.Value
-		PromptExtender:Clean(v:GetPropertyChangedSignal('MaxActivationDistance'):Connect(function()
-			Reference[v] = v.MaxActivationDistance
-			v.MaxActivationDistance = v.MaxActivationDistance + Extend.Value
-		end))
-	end
-    end
-
-    PromptExtender = vape.Categories.World:CreateModule({
-	Name = 'InteractExtender',
-	Tooltip = 'Allows you to interact with stuff further',
-	Function = function(callback)
-		if callback then
-			PromptExtender:Clean(workspace.DescendantAdded:Connect(Added))
-			for _, v in workspace:QueryDescendants('ProximityPrompt') do
-				task.spawn(Added, v)
-			end
-		else
-			for ent, value in Reference do
-				ent.MaxActivationDistance = value
-				Reference[ent] = nil
-			end
-		end
-	end,
-    })
-    Extend = PromptExtender:CreateSlider({
-	Name = 'Extra activation range',
-	Min = 0,
-	Max = 10,
-	Default = 5,
-	Decimal = 10,
-	Suffix = function(val)
-		return val <= 1 and 'stud' or 'studs'
-	end,
-    })
-end)
 
 run(function()
     local Parkour
