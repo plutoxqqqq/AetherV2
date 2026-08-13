@@ -7640,6 +7640,35 @@ run(function()
 		return pos
 	end
 
+	-- StatusEffectUtil has used more than one representation for active effects over
+	-- time.  In particular, relying on isActive alone misses Fury on builds where
+	-- potion effects are replicated as attributes before the utility's cache updates.
+	local function hasFuryPotion()
+		local character = lplr.Character
+		if not character then return false end
+
+		if bedwars.StatusEffectUtil:isActive(character, 'fury_potion') then
+			return true
+		end
+
+		for name, value in character:GetAttributes() do
+			if value ~= false and value ~= 0 and name:lower():gsub('[^%w]', '') == 'statuseffectfurypotion' then
+				return true
+			end
+		end
+
+		for _, effect in bedwars.StatusEffectUtil:getAllActive(character) do
+			local effectType = type(effect) == 'table'
+				and (effect.statusEffect or effect.statusEffectType or effect.effectType or effect.type or effect.name)
+				or effect
+			if type(effectType) == 'string' and effectType:lower():gsub('[^%w]', '') == 'furypotion' then
+				return true
+			end
+		end
+
+		return false
+	end
+
     Killaura = vape.Categories.Blatant:CreateModule({
         Name = 'Killaura',
         Function = function(callback)
@@ -7711,8 +7740,7 @@ run(function()
                         if HitRegCalculator.Enabled then
                             local ping = math.clamp(lplr:GetNetworkPing(), 0, 1)
                             local weapon = sword.tool.Name
-                            local fury = bedwars.StatusEffectUtil:isActive(lplr.Character, 'fury_potion')
-                                or lplr.Character:GetAttribute('StatusEffect_fury_potion') ~= nil
+                            local fury = hasFuryPotion()
                             if weapon ~= hitRegWeapon or fury ~= hitRegFury or not hitRegPing or math.abs(ping - hitRegPing) >= 0.005
                                 or not hitRegLastUpdate or tick() - hitRegLastUpdate >= 1 then
                                 hitRegLastUpdate, hitRegWeapon, hitRegPing, hitRegFury = tick(), weapon, ping, fury
@@ -7720,7 +7748,11 @@ run(function()
                                 -- These values have different jobs. Network compensation affects only
                                 -- the remote cooldown; viewmodel time stays visual; update interval only
                                 -- controls how often targets are polled.
-                                hitRegAttackCooldown = fury and (10 / 43)
+                                -- Poll faster than Fury's server-side attack window instead of
+                                -- trying to land exactly on its boundary. Rejected early packets
+                                -- are harmless, while the extra packets prevent scheduler jitter
+                                -- from leaving Fury at the normal ~34-hit rate.
+                                hitRegAttackCooldown = fury and (10 / 50)
                                     or math.clamp(weaponCooldown - math.min(ping * 0.5, weaponCooldown * 0.35), 0.05, 2)
                                 hitRegAnimationTime = math.clamp(math.min(SwingTime.Value, hitRegAttackCooldown), 0.05, 1)
                                 hitRegUpdateInterval = math.clamp(math.min(hitRegAttackCooldown / 4, 1 / 30), 1 / 60, 0.1)
@@ -29735,6 +29767,242 @@ end)
 
 
 run(function()
+	local TransparentCharacter
+	local Amount
+	local originals = {}
+
+	local function applyTransparency(char)
+		if not char then return end
+		for _, obj in char:GetDescendants() do
+			if obj:IsA('BasePart') then
+				if originals[obj] == nil then originals[obj] = obj.LocalTransparencyModifier end
+				obj.LocalTransparencyModifier = Amount.Value / 100
+			end
+		end
+	end
+
+	local function restoreTransparency()
+		for obj, value in originals do
+			if obj.Parent then obj.LocalTransparencyModifier = value end
+		end
+		table.clear(originals)
+	end
+	local function watchCharacter(char)
+		applyTransparency(char)
+		if char then
+			TransparentCharacter:Clean(char.DescendantAdded:Connect(function()
+				task.defer(applyTransparency, char)
+			end))
+		end
+	end
+
+	TransparentCharacter = vape.Categories.Legit:CreateModule({
+		Name = 'TransparentCharacter',
+		Tooltip = 'Makes your entire character locally transparent',
+		Function = function(callback)
+			if callback then
+				watchCharacter(lplr.Character)
+				TransparentCharacter:Clean(lplr.CharacterAdded:Connect(watchCharacter))
+			else
+				restoreTransparency()
+			end
+		end
+	})
+	Amount = TransparentCharacter:CreateSlider({
+		Name = 'Transparency',
+		Min = 0,
+		Max = 100,
+		Default = 50,
+		Suffix = '%',
+		Function = function()
+			if TransparentCharacter.Enabled then applyTransparency(lplr.Character) end
+		end
+	})
+end)
+
+run(function()
+	local Invisible
+	local TransparencyNode
+	local RenderNode
+	local EffectNode
+	local InterfaceNode
+	local AssetNode
+	local Strategy
+	local marker
+	local saved = {}
+	local locks = {}
+	local watchdogElapsed = 0
+	local generation = 0
+
+	local function setProperty(obj, property, value)
+		local properties = saved[obj]
+		if not properties then
+			properties = {}
+			saved[obj] = properties
+		end
+		if properties[property] == nil then properties[property] = obj[property] end
+		obj[property] = value
+		local propertyLocks = locks[obj]
+		if not propertyLocks then
+			propertyLocks = {}
+			locks[obj] = propertyLocks
+		end
+		if not propertyLocks[property] then
+			propertyLocks[property] = true
+			local lockGeneration = generation
+			Invisible:Clean(obj:GetPropertyChangedSignal(property):Connect(function()
+				if Invisible.Enabled and (Strategy.Value == 'Property lock' or Strategy.Value == 'Hybrid')
+					and lockGeneration == generation and obj.Parent and obj[property] ~= value then
+					obj[property] = value
+				end
+			end))
+		end
+	end
+
+	local function restoreCharacter()
+		generation += 1
+		for obj, properties in saved do
+			if obj.Parent then
+				for property, value in properties do obj[property] = value end
+			end
+		end
+		table.clear(saved)
+		table.clear(locks)
+		if marker then marker:Destroy(); marker = nil end
+	end
+
+	local function hideCharacter(char)
+		if not char then return end
+		for _, obj in char:GetDescendants() do
+			-- Each node targets a different part of BedWars' character renderer. They can
+			-- be combined so a renderer update defeating one node does not expose the rest.
+			if TransparencyNode.Enabled and (obj:IsA('BasePart') or obj:IsA('Decal') or obj:IsA('Texture')) then
+				setProperty(obj, 'Transparency', 1)
+			end
+			if RenderNode.Enabled and obj:IsA('BasePart') then
+				setProperty(obj, 'LocalTransparencyModifier', 1)
+				setProperty(obj, 'CastShadow', false)
+			end
+			if EffectNode.Enabled and (obj:IsA('ParticleEmitter') or obj:IsA('Trail') or obj:IsA('Beam')
+				or obj:IsA('BillboardGui') or obj:IsA('SurfaceGui')) then
+				setProperty(obj, 'Enabled', false)
+			end
+			if InterfaceNode.Enabled and (obj.Name:lower():find('nametag') or obj.Name:lower():find('healthbar')) then
+				if obj:IsA('GuiObject') then
+					setProperty(obj, 'Visible', false)
+				elseif obj:IsA('BillboardGui') or obj:IsA('SurfaceGui') then
+					setProperty(obj, 'Enabled', false)
+				end
+			end
+			if AssetNode.Enabled then
+				if obj:IsA('MeshPart') then
+					setProperty(obj, 'TextureID', '')
+				elseif obj:IsA('SpecialMesh') then
+					setProperty(obj, 'TextureId', '')
+				elseif obj:IsA('SurfaceAppearance') then
+					setProperty(obj, 'ColorMap', '')
+					setProperty(obj, 'MetalnessMap', '')
+					setProperty(obj, 'NormalMap', '')
+					setProperty(obj, 'RoughnessMap', '')
+				elseif obj:IsA('PointLight') or obj:IsA('SpotLight') or obj:IsA('SurfaceLight')
+					or obj:IsA('Smoke') or obj:IsA('Fire') or obj:IsA('Sparkles') then
+					setProperty(obj, 'Enabled', false)
+				end
+			end
+		end
+	end
+
+	local function createMarker(char)
+		if marker then marker:Destroy() end
+		marker = Instance.new('Highlight')
+		marker.Name = 'AetherInvisibleMarker'
+		marker.Adornee = char
+		marker.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+		marker.FillColor = Color3.fromRGB(85, 170, 255)
+		marker.FillTransparency = 0.65
+		marker.OutlineColor = Color3.new(1, 1, 1)
+		marker.OutlineTransparency = 0.15
+		marker.Parent = gameCamera
+	end
+
+	local function applyInvisible(char)
+		restoreCharacter()
+		hideCharacter(char)
+		createMarker(char)
+		if char then
+			Invisible:Clean(char.DescendantAdded:Connect(function()
+				task.defer(hideCharacter, char)
+			end))
+		end
+	end
+
+	Invisible = vape.Categories.Blatant:CreateModule({
+		Name = 'Invisible',
+		Tooltip = 'Layers multiple character-render hiding nodes; the blue outline remains visible only to you',
+		Function = function(callback)
+			if callback then
+				applyInvisible(lplr.Character)
+				Invisible:Clean(lplr.CharacterAdded:Connect(applyInvisible))
+				Invisible:Clean(runService.Heartbeat:Connect(function(dt)
+					if Strategy.Value ~= 'Watchdog' and Strategy.Value ~= 'Hybrid' then return end
+					watchdogElapsed += dt
+					if watchdogElapsed >= 0.12 then
+						watchdogElapsed = 0
+						hideCharacter(lplr.Character)
+					end
+				end))
+			else
+				watchdogElapsed = 0
+				restoreCharacter()
+			end
+		end
+	})
+	local function nodeChanged()
+		if Invisible.Enabled then
+			restoreCharacter()
+			hideCharacter(lplr.Character)
+			createMarker(lplr.Character)
+		end
+	end
+	TransparencyNode = Invisible:CreateToggle({
+		Name = 'Transparency node',
+		Tooltip = 'Hides replicated character geometry and textures',
+		Default = true,
+		Function = nodeChanged
+	})
+	RenderNode = Invisible:CreateToggle({
+		Name = 'Render node',
+		Tooltip = 'Adds a local render override and removes character shadows',
+		Default = true,
+		Function = nodeChanged
+	})
+	EffectNode = Invisible:CreateToggle({
+		Name = 'Effect node',
+		Tooltip = 'Disables trails, particles, beams, and world-space interfaces',
+		Default = true,
+		Function = nodeChanged
+	})
+	InterfaceNode = Invisible:CreateToggle({
+		Name = 'Interface node',
+		Tooltip = 'Hides character nametag and health-bar interface descendants',
+		Default = true,
+		Function = nodeChanged
+	})
+	AssetNode = Invisible:CreateToggle({
+		Name = 'Asset node',
+		Tooltip = 'Suppresses lights, legacy effects, and surface appearance alpha',
+		Default = true,
+		Function = nodeChanged
+	})
+	Strategy = Invisible:CreateDropdown({
+		Name = 'Enforcement mode',
+		List = {'Hybrid', 'Property lock', 'Watchdog', 'Event driven'},
+		Tooltip = 'Hybrid combines property-signal locks with a throttled renderer watchdog',
+		Function = nodeChanged
+	})
+end)
+
+run(function()
 	local Headless
 	local headlessLoop = nil
 
@@ -29826,6 +30094,95 @@ run(function()
 			if Headless.Enabled then
 				applyHeadless(lplr.Character)
 			end
+		end
+	})
+end)
+
+run(function()
+	local Legless
+	local Side
+	local RemoveAccessories
+	local originals = {}
+	local legAttachments = {
+		LeftAnkleAttachment = 'Left', LeftFootAttachment = 'Left', LeftKneeAttachment = 'Left',
+		RightAnkleAttachment = 'Right', RightFootAttachment = 'Right', RightKneeAttachment = 'Right'
+	}
+
+	local function selected(name)
+		return Side.Value == 'Both' or name:sub(1, #Side.Value) == Side.Value
+	end
+
+	local function hide(obj)
+		if originals[obj] == nil then originals[obj] = obj.Transparency end
+		obj.Transparency = 1
+	end
+
+	local function applyLegless(char)
+		if not char then return end
+		for _, obj in char:GetDescendants() do
+			if obj:IsA('BasePart') and (selected(obj.Name) and obj.Name:find('Leg') or selected(obj.Name) and obj.Name:find('Foot')) then
+				hide(obj)
+			end
+		end
+		if RemoveAccessories.Enabled then
+			for _, acc in char:GetChildren() do
+				if acc:IsA('Accessory') then
+					local handle = acc:FindFirstChild('Handle')
+					if handle then
+						for _, attachment in handle:GetChildren() do
+							if attachment:IsA('Attachment') and legAttachments[attachment.Name] and selected(legAttachments[attachment.Name]) then
+								hide(handle)
+								for _, texture in handle:GetChildren() do
+									if texture:IsA('Decal') or texture:IsA('Texture') then hide(texture) end
+								end
+								break
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+
+	local function restoreLegs()
+		for obj, value in originals do
+			if obj.Parent then obj.Transparency = value end
+		end
+		table.clear(originals)
+	end
+	local function watchCharacter(char)
+		applyLegless(char)
+		if char then
+			Legless:Clean(char.DescendantAdded:Connect(function()
+				task.defer(applyLegless, char)
+			end))
+		end
+	end
+
+	Legless = vape.Categories.Utility:CreateModule({
+		PerformanceModeBlacklisted = true,
+		Name = 'Legless',
+		Tooltip = 'Hides either or both legs',
+		Function = function(callback)
+			if callback then
+				watchCharacter(lplr.Character)
+				Legless:Clean(lplr.CharacterAdded:Connect(watchCharacter))
+			else
+				restoreLegs()
+			end
+		end
+	})
+	Side = Legless:CreateDropdown({
+		Name = 'Legs',
+		List = {'Both', 'Left', 'Right'},
+		Function = function()
+			if Legless.Enabled then restoreLegs(); applyLegless(lplr.Character) end
+		end
+	})
+	RemoveAccessories = Legless:CreateToggle({
+		Name = 'Remove Accessories',
+		Function = function()
+			if Legless.Enabled then restoreLegs(); applyLegless(lplr.Character) end
 		end
 	})
 end)
