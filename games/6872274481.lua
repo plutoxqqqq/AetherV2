@@ -2651,9 +2651,33 @@ run(function()
     local ShopQuickBuy
     local HoldDelay
     local CPS
+    local purchaseSounds = {}
 
     local holding = false
     local clickThread
+
+    -- SoundManager coalesces repeated requests for the same sound while its
+    -- cached instance is still active. ShopClicker can complete several buys
+    -- during that window, so give each successful purchase its own playback
+    -- instance instead of asking the shared manager to replay its cached one.
+    local function playPurchaseSound()
+        local sound = Instance.new('Sound')
+        sound.Name = 'AetherShopPurchase'
+        sound.SoundId = bedwars.SoundList.BEDWARS_PURCHASE_ITEM
+        sound.Parent = gameCamera
+        purchaseSounds[sound] = true
+        sound.Ended:Once(function()
+            purchaseSounds[sound] = nil
+            sound:Destroy()
+        end)
+        sound:Play()
+        task.delay(10, function()
+            if purchaseSounds[sound] then
+                purchaseSounds[sound] = nil
+                sound:Destroy()
+            end
+        end)
+    end
 
     local function getShopId()
         if not entitylib.isAlive then return nil end
@@ -2704,7 +2728,7 @@ run(function()
             shopId = shopId
         }):andThen(function(suc)
             if not suc then return end
-            bedwars.SoundManager:playSound(bedwars.SoundList.BEDWARS_PURCHASE_ITEM)
+            playPurchaseSound()
             bedwars.Store:dispatch({
                 type = 'BedwarsAddItemPurchased',
                 itemType = itemType
@@ -2760,6 +2784,10 @@ run(function()
                 if clickThread then
                     task.cancel(clickThread)
                     clickThread = nil
+                end
+                for sound in purchaseSounds do
+                    sound:Destroy()
+                    purchaseSounds[sound] = nil
                 end
             end
         end,
@@ -6139,6 +6167,7 @@ run(function()
     local HealthThreshold
     local TeleportHeight
     local GroundTime
+    local PlayerCheck
     local groundedSince = 0
 
     DeathTP = vape.Categories.Blatant:CreateModule({
@@ -6149,6 +6178,14 @@ run(function()
                 if not DeathTP.Enabled or not entitylib.isAlive then groundedSince = 0 return end
                 local humanoid, root = entitylib.character.Humanoid, entitylib.character.RootPart
                 if humanoid.Health >= HealthThreshold.Value or not isnetworkowner(root) then groundedSince = 0 return end
+                if PlayerCheck.Enabled and not entitylib.EntityPosition({
+                    Range = 50,
+                    Part = 'RootPart',
+                    Players = true
+                }) then
+                    groundedSince = 0
+                    return
+                end
                 if humanoid.FloorMaterial == Enum.Material.Air then groundedSince = 0 return end
                 local now = tick()
                 if groundedSince == 0 then groundedSince = now return end
@@ -6164,6 +6201,60 @@ run(function()
     HealthThreshold = DeathTP:CreateSlider({Name = 'Health threshold', Min = 1, Max = 99, Default = 35, Suffix = ' HP'})
     TeleportHeight = DeathTP:CreateSlider({Name = 'Safe height', Min = 80, Max = 300, Default = 180, Suffix = ' studs'})
     GroundTime = DeathTP:CreateSlider({Name = 'Ground time', Min = 0.1, Max = 3, Default = 0.5, Decimal = 100, Suffix = ' seconds'})
+    PlayerCheck = DeathTP:CreateToggle({
+        Name = 'Player check',
+        Tooltip = 'Only teleports while a player is within 50 studs'
+    })
+end)
+
+-- BedWars' client placement check queries character geometry before it sends the
+-- placement remote. Excluding character parts from spatial queries lets the
+-- normal placer select cells occupied by any avatar, including the cell above
+-- the local player's head, without changing character collision or physics.
+run(function()
+    local IgnorePlaceHitboxes
+    local originals = {}
+
+    local function include(part)
+        if not part:IsA('BasePart') or originals[part] ~= nil then return end
+        originals[part] = part.CanQuery
+        part.CanQuery = false
+        IgnorePlaceHitboxes:Clean(part:GetPropertyChangedSignal('CanQuery'):Connect(function()
+            if IgnorePlaceHitboxes.Enabled and part.CanQuery then
+                part.CanQuery = false
+            end
+        end))
+        IgnorePlaceHitboxes:Clean(part.AncestryChanged:Connect(function(_, parent)
+            if not parent then originals[part] = nil end
+        end))
+    end
+
+    local function includeCharacter(character)
+        if not character then return end
+        for _, part in character:GetDescendants() do include(part) end
+        IgnorePlaceHitboxes:Clean(character.DescendantAdded:Connect(include))
+    end
+
+    IgnorePlaceHitboxes = vape.Categories.World:CreateModule({
+        Name = 'IgnorePlaceHitboxes',
+        Tooltip = 'Allows block placement through players and your own character',
+        Function = function(enabled)
+            if enabled then
+                for _, plr in playersService:GetPlayers() do includeCharacter(plr.Character) end
+                IgnorePlaceHitboxes:Clean(playersService.PlayerAdded:Connect(function(plr)
+                    IgnorePlaceHitboxes:Clean(plr.CharacterAdded:Connect(includeCharacter))
+                end))
+                for _, plr in playersService:GetPlayers() do
+                    IgnorePlaceHitboxes:Clean(plr.CharacterAdded:Connect(includeCharacter))
+                end
+            else
+                for part, value in originals do
+                    if part.Parent then part.CanQuery = value end
+                    originals[part] = nil
+                end
+            end
+        end
+    })
 end)
 
 run(function()
@@ -7387,6 +7478,7 @@ run(function()
 	local hitRegUpdateInterval
 	local hitRegWeapon
 	local hitRegPing
+	local hitRegFury
     local AngleSlider
 	local ChanceSlider
     local MaxTargets
@@ -7619,14 +7711,17 @@ run(function()
                         if HitRegCalculator.Enabled then
                             local ping = math.clamp(lplr:GetNetworkPing(), 0, 1)
                             local weapon = sword.tool.Name
-                            if weapon ~= hitRegWeapon or not hitRegPing or math.abs(ping - hitRegPing) >= 0.005
+                            local fury = bedwars.StatusEffectUtil:isActive(lplr.Character, 'fury_potion')
+                                or lplr.Character:GetAttribute('StatusEffect_fury_potion') ~= nil
+                            if weapon ~= hitRegWeapon or fury ~= hitRegFury or not hitRegPing or math.abs(ping - hitRegPing) >= 0.005
                                 or not hitRegLastUpdate or tick() - hitRegLastUpdate >= 1 then
-                                hitRegLastUpdate, hitRegWeapon, hitRegPing = tick(), weapon, ping
+                                hitRegLastUpdate, hitRegWeapon, hitRegPing, hitRegFury = tick(), weapon, ping, fury
                                 local weaponCooldown = math.clamp((meta.sword and meta.sword.attackSpeed) or 0.3, 0.05, 2)
                                 -- These values have different jobs. Network compensation affects only
                                 -- the remote cooldown; viewmodel time stays visual; update interval only
                                 -- controls how often targets are polled.
-                                hitRegAttackCooldown = math.clamp(weaponCooldown - math.min(ping * 0.5, weaponCooldown * 0.35), 0.05, 2)
+                                hitRegAttackCooldown = fury and (10 / 43)
+                                    or math.clamp(weaponCooldown - math.min(ping * 0.5, weaponCooldown * 0.35), 0.05, 2)
                                 hitRegAnimationTime = math.clamp(math.min(SwingTime.Value, hitRegAttackCooldown), 0.05, 1)
                                 hitRegUpdateInterval = math.clamp(math.min(hitRegAttackCooldown / 4, 1 / 30), 1 / 60, 0.1)
                             end
@@ -7794,7 +7889,7 @@ run(function()
         Name = 'Swing range',
         Min = 1,
 		Max = 28,
-		Default = 28,
+		Default = 18,
         Suffix = function(val)
             return val == 1 and 'stud' or 'studs'
         end
@@ -7803,7 +7898,7 @@ run(function()
         Name = 'Attack range',
         Min = 1,
 		Max = 20,
-		Default = 20,
+		Default = 18,
         Suffix = function(val)
             return val == 1 and 'stud' or 'studs'
         end
@@ -7838,7 +7933,7 @@ run(function()
         Name = 'HitReg calculator',
         Tooltip = 'Calculates an attack cooldown from weapon speed and ping',
         Function = function()
-            hitRegLastUpdate, hitRegWeapon, hitRegPing = nil, nil, nil
+            hitRegLastUpdate, hitRegWeapon, hitRegPing, hitRegFury = nil, nil, nil, nil
             hitRegAttackCooldown, hitRegAnimationTime, hitRegUpdateInterval = nil, nil, nil
         end
     })
