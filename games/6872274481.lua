@@ -6838,36 +6838,40 @@ run(function()
 end)
 
 run(function()
-	if not canDebug then return end
+    local FastPlace
+    local CPS
+    local originalCPS
 
-	local FastPlace
-	local CPS
-	local defaultCPS = bedwars.SharedConstants.BLOCK_PLACE_CPS or 12
+    local function restore()
+        if originalCPS ~= nil then
+            bedwars.SharedConstants.BLOCK_PLACE_CPS = originalCPS
+            originalCPS = nil
+        end
+    end
 
-	FastPlace = vape.Categories.World:CreateModule({
-		Name = 'FastPlace',
-		Function = function(callback)
-			bedwars.SharedConstants.BLOCK_PLACE_CPS = callback and CPS.Value or defaultCPS
-		end,
-		Tooltip = 'Shortens the delay between block placements.'
-	})
-	CPS = FastPlace:CreateSlider({
-		Name = 'CPS',
-		Min = 1,
-		Max = 100,
-		Default = 13,
-		Function = function(value)
-			if FastPlace.Enabled then
-				bedwars.SharedConstants.BLOCK_PLACE_CPS = value
-			end
-		end
-	})
-	FastPlace:CreateButton({
-		Name = 'Reset to BedWars CPS',
-		Function = function()
-			CPS:SetValue(defaultCPS)
-		end
-	})
+    FastPlace = vape.Categories.World:CreateModule({
+        Name = 'FastPlace',
+        Function = function(enabled)
+            if enabled then
+                -- Capture on every enable: other modules and game updates may legitimately change it.
+                originalCPS = bedwars.SharedConstants.BLOCK_PLACE_CPS or 12
+                bedwars.SharedConstants.BLOCK_PLACE_CPS = math.clamp(CPS.Value, 1, 20)
+            else
+                restore()
+            end
+        end,
+        Tooltip = 'Reduces only the placement cooldown; does not hook placement or alter range.'
+    })
+    CPS = FastPlace:CreateSlider({
+        Name = 'CPS', Min = 1, Max = 20, Default = 13,
+        Function = function(value)
+            if FastPlace.Enabled then bedwars.SharedConstants.BLOCK_PLACE_CPS = math.clamp(value, 1, 20) end
+        end
+    })
+    FastPlace:CreateButton({Name = 'Use current BedWars CPS', Function = function()
+        local current = originalCPS or bedwars.SharedConstants.BLOCK_PLACE_CPS or 12
+        CPS:SetValue(math.clamp(current, 1, 20))
+    end})
 end)
 
 -- Consumes the supplied Grim Reaper soul and applies a configurable horizontal speed only while
@@ -7378,8 +7382,11 @@ run(function()
 	local Sync
 	local HitRegCalculator
 	local hitRegLastUpdate
-	local hitRegUpdateRate = 60
-	local hitRegSwingTime
+	local hitRegAttackCooldown
+	local hitRegAnimationTime
+	local hitRegUpdateInterval
+	local hitRegWeapon
+	local hitRegPing
     local AngleSlider
 	local ChanceSlider
     local MaxTargets
@@ -7609,17 +7616,20 @@ run(function()
                     Attacking = false
                     store.KillauraTarget = nil
                     if sword then
-                        if HitRegCalculator.Enabled and (not hitRegLastUpdate or tick() - hitRegLastUpdate >= 1) then
-                            hitRegLastUpdate = tick()
-                            local ping = math.max(lplr:GetNetworkPing(), 0)
-                            local attackSpeed = (meta.sword and meta.sword.attackSpeed) or 0.3
-                            local swingDelay = math.max(attackSpeed - ping, 0.02)
-							-- Keep calculator state private. Mutating controls from inside the aura's
-							-- worker invokes their callbacks and used to tear down/restart the worker,
-							-- leaving it unable to swing. The calculator only needs to supply the
-							-- cooldown used by this loop.
-							hitRegSwingTime = math.max(swingDelay / 2, 0.02)
-							hitRegUpdateRate = math.clamp(1 / hitRegSwingTime, 1, 60)
+                        if HitRegCalculator.Enabled then
+                            local ping = math.clamp(lplr:GetNetworkPing(), 0, 1)
+                            local weapon = sword.tool.Name
+                            if weapon ~= hitRegWeapon or not hitRegPing or math.abs(ping - hitRegPing) >= 0.005
+                                or not hitRegLastUpdate or tick() - hitRegLastUpdate >= 1 then
+                                hitRegLastUpdate, hitRegWeapon, hitRegPing = tick(), weapon, ping
+                                local weaponCooldown = math.clamp((meta.sword and meta.sword.attackSpeed) or 0.3, 0.05, 2)
+                                -- These values have different jobs. Network compensation affects only
+                                -- the remote cooldown; viewmodel time stays visual; update interval only
+                                -- controls how often targets are polled.
+                                hitRegAttackCooldown = math.clamp(weaponCooldown - math.min(ping * 0.5, weaponCooldown * 0.35), 0.05, 2)
+                                hitRegAnimationTime = math.clamp(math.min(SwingTime.Value, hitRegAttackCooldown), 0.05, 1)
+                                hitRegUpdateInterval = math.clamp(math.min(hitRegAttackCooldown / 4, 1 / 30), 1 / 60, 0.1)
+                            end
                         end
                         local plrs = entitylib.AllPosition({
                             Range = SwingRange.Value,
@@ -7700,7 +7710,7 @@ run(function()
                                 if entry ~= focus then continue end
 
 								local actualRoot = v.Character.PrimaryPart
-								local attackDelay = HitRegCalculator.Enabled and hitRegSwingTime
+								local attackDelay = HitRegCalculator.Enabled and hitRegAttackCooldown
 									or (Sync.Enabled and SwingTime.Value or 0.292)
 								if actualRoot and (tick() - swingCooldown) >= (attackDelay or 0.292) then
                                     switchIndex += 1
@@ -7747,7 +7757,7 @@ run(function()
                         entitylib.character.RootPart.CFrame = CFrame.lookAt(entitylib.character.RootPart.Position, Vector3.new(vec.X, entitylib.character.RootPart.Position.Y + 0.001, vec.Z))
                     end
 
-                    task.wait(HitRegCalculator.Enabled and (1 / hitRegUpdateRate) or nil)
+                    task.wait(HitRegCalculator.Enabled and hitRegUpdateInterval or nil)
                 until not Killaura.Enabled
             else
                 store.KillauraTarget = nil
@@ -7827,12 +7837,15 @@ run(function()
     HitRegCalculator = Killaura:CreateToggle({
         Name = 'HitReg calculator',
         Tooltip = 'Calculates an attack cooldown from weapon speed and ping',
-        Function = function(callback)
-			hitRegSwingTime = nil
-			if not callback then hitRegUpdateRate = 60 end
-            hitRegLastUpdate = nil
+        Function = function()
+            hitRegLastUpdate, hitRegWeapon, hitRegPing = nil, nil, nil
+            hitRegAttackCooldown, hitRegAnimationTime, hitRegUpdateInterval = nil, nil, nil
         end
     })
+    Killaura.ExtraText = function()
+        if not HitRegCalculator.Enabled or not hitRegAttackCooldown then return '' end
+        return string.format('CD %.3fs | Anim %.3fs | Poll %.3fs', hitRegAttackCooldown, hitRegAnimationTime, hitRegUpdateInterval)
+    end
     MaxTargets = Killaura:CreateSlider({
         Name = 'Max targets',
         Min = 1,
@@ -23978,7 +23991,15 @@ run(function()
 					notif('BlockIn', 'Hold a block first', 2, 'warning')
 				else
 					local oldPlaceCPS = bedwars.SharedConstants.BLOCK_PLACE_CPS
-					bedwars.SharedConstants.BLOCK_PLACE_CPS = 20
+                    local restored = false
+                    local function restoreState()
+                        if restored then return end
+                        restored = true
+                        bedwars.SharedConstants.BLOCK_PLACE_CPS = oldPlaceCPS or 12
+                        if ReturnSlot.Enabled and previousSlot ~= nil then hotbarSwitch(previousSlot) end
+                    end
+                    BlockIn:Clean(restoreState)
+					bedwars.SharedConstants.BLOCK_PLACE_CPS = math.clamp(20, 1, 20)
 					if PlaceMode.Value == 'Smart' then
 						local ray
 						for _, offset in { Vector3.new(0, -2, 0), Vector3.new(0, 1, 0) } do
@@ -24023,16 +24044,16 @@ run(function()
 					end
 
 					local blocks = getBlocks()
-					local protectedDirection
-					if BedBreak.Enabled then
-						local mouseinfo = bedwars.BlockBreaker.clientManager:getBlockSelector():getMouseInfo(0)
-						local target = mouseinfo and mouseinfo.target and mouseinfo.target.blockRef
-						local bed = getBed()
-						if bed and target and (bed.Position - selfpos).Magnitude <= 14 and inputService:IsMouseButtonPressed(0) then
-							local delta = (target.blockPosition * 3 - selfpos) * Vector3.new(1, 0, 1)
-							if delta.Magnitude > 0.1 then protectedDirection = delta.Unit end
-						end
-					end
+                    local function currentBreakingDirection()
+                        if not BedBreak.Enabled or not entitylib.isAlive or not inputService:IsMouseButtonPressed(0) then return nil end
+                        local bed = getBed()
+                        local selector = bedwars.BlockBreaker.clientManager:getBlockSelector()
+                        local mouseinfo = selector and selector:getMouseInfo(0)
+                        local target = mouseinfo and mouseinfo.target and mouseinfo.target.blockRef
+                        if not bed or not target or (bed.Position - entitylib.character.RootPart.Position).Magnitude > 14 then return nil end
+                        local delta = (target.blockPosition * 3 - entitylib.character.RootPart.Position) * Vector3.new(1, 0, 1)
+                        return delta.Magnitude > 0.1 and delta.Unit or nil
+                    end
 					for i, block in blocks do
 						if not BlockIn.Enabled or not entitylib.isAlive then
 							break
@@ -24046,7 +24067,7 @@ run(function()
 								break
 							end
 						end
-						local pattern = getPyramid(protectedDirection)
+						local pattern = getPyramid(currentBreakingDirection())
 
 						for i2, pos in pattern do
 							if not BlockIn.Enabled or not entitylib.isAlive then
@@ -24055,8 +24076,25 @@ run(function()
 							if getPlacedBlock(selfpos + pos) and i2 ~= 10 then
 								continue
 							end
-							task.wait()
-							task.spawn(bedwars.placeBlock, selfpos + pos, block[1], true)
+                            -- Re-read the active break ray before every placement. If the player
+                            -- changes block or face mid-run, never close that new attack corridor.
+                            local direction = currentBreakingDirection()
+                            local flat = pos * Vector3.new(1, 0, 1)
+                            if direction and flat.Magnitude > 0 and flat.Unit:Dot(direction) > 0.65 then continue end
+                            local worldPosition = selfpos + pos
+                            local placed = getPlacedBlock(worldPosition)
+                            for _ = 1, 3 do
+                                if placed or not BlockIn.Enabled or not entitylib.isAlive then break end
+                                bedwars.placeBlock(worldPosition, block[1], true)
+                                local deadline = tick() + 0.35
+                                repeat
+                                    task.wait()
+                                    placed = getPlacedBlock(worldPosition)
+                                until placed or tick() >= deadline or not BlockIn.Enabled or not entitylib.isAlive
+                            end
+                            if not placed and BlockIn.Enabled then
+                                notif('BlockIn', 'Placement was not confirmed; leaving the opening clear', 3, 'warning')
+                            end
 							local delay = PlaceDelay:GetRandomValue()
 							if delay > 0 then
 								task.wait(delay)
@@ -24067,8 +24105,7 @@ run(function()
 					if #blocks < 1 then
 						notif('BlockIn', 'Missing blocks', 4, 'warning')
 					end
-					bedwars.SharedConstants.BLOCK_PLACE_CPS = oldPlaceCPS or 12
-					if ReturnSlot.Enabled then hotbarSwitch(previousSlot) end
+                    restoreState()
 				end
 			end
 			if BlockIn.Enabled then
@@ -27482,35 +27519,71 @@ end)
 
 run(function()
     local BlockSelectorColor
-    local Fill
-    local Outline
+    local OutlineColor
+    local FillColor
+    local originals = {}
+    local applying = {}
+
+    local function apply(selector)
+        if not (selector:IsA('SelectionBox') or selector:IsA('Highlight')) then return end
+        if not originals[selector] then
+            if selector:IsA('SelectionBox') then
+                originals[selector] = {selector.Color3, selector.Transparency, selector.SurfaceColor3, selector.SurfaceTransparency}
+            else
+                originals[selector] = {selector.OutlineColor, selector.OutlineTransparency, selector.FillColor, selector.FillTransparency}
+            end
+            BlockSelectorColor:Clean(selector.AncestryChanged:Connect(function(_, parent)
+                if not parent then originals[selector], applying[selector] = nil, nil end
+            end))
+        end
+        applying[selector] = true
+        if selector:IsA('SelectionBox') then
+            selector.Color3 = Color3.fromHSV(OutlineColor.Hue, OutlineColor.Sat, OutlineColor.Value)
+            selector.Transparency = 1 - OutlineColor.Opacity
+            selector.SurfaceColor3 = Color3.fromHSV(FillColor.Hue, FillColor.Sat, FillColor.Value)
+            selector.SurfaceTransparency = 1 - FillColor.Opacity
+        else
+            selector.OutlineColor = Color3.fromHSV(OutlineColor.Hue, OutlineColor.Sat, OutlineColor.Value)
+            selector.OutlineTransparency = 1 - OutlineColor.Opacity
+            selector.FillColor = Color3.fromHSV(FillColor.Hue, FillColor.Sat, FillColor.Value)
+            selector.FillTransparency = 1 - FillColor.Opacity
+        end
+        applying[selector] = nil
+    end
+
+    local function refresh()
+        if not BlockSelectorColor.Enabled then return end
+        for selector in originals do apply(selector) end
+    end
 
     BlockSelectorColor = vape.Categories.Legit:CreateModule({
         Name = 'BlockSelectorColor',
-        Function = function(callback)
-            if callback then
-                BlockSelectorColor:Clean(workspace.ChildAdded:Connect(function(v)
-                    local selector = v:FindFirstChild('SelectionBox') or v:WaitForChild('SelectionBox', 1)
-                    if selector then
-                        selector.Color3 = Color3.fromHSV(Outline.Hue, Outline.Sat, Outline.Value)
-                        selector.Transparency = 1 - Outline.Opacity
-                        selector.SurfaceColor3 = Color3.fromHSV(Fill.Hue, Fill.Sat, Fill.Value)
-                        selector.SurfaceTransparency = 1 - Fill.Opacity
+        Tooltip = 'Changes block selector outline and fill colours and transparency',
+        Function = function(enabled)
+            if enabled then
+                BlockSelectorColor:Clean(workspace.DescendantAdded:Connect(apply))
+                for _, selector in workspace:GetDescendants() do apply(selector) end
+            else
+                for selector, values in originals do
+                    if selector.Parent then
+                        applying[selector] = true
+                        if selector:IsA('SelectionBox') then
+                            selector.Color3, selector.Transparency = values[1], values[2]
+                            selector.SurfaceColor3, selector.SurfaceTransparency = values[3], values[4]
+                        else
+                            selector.OutlineColor, selector.OutlineTransparency = values[1], values[2]
+                            selector.FillColor, selector.FillTransparency = values[3], values[4]
+                        end
+                        applying[selector] = nil
                     end
-                end))
+                    originals[selector] = nil
+                end
+                table.clear(applying)
             end
-        end,
-        Tooltip = 'Changes the block selector\'s overlay colors'
+        end
     })
-
-    Fill = BlockSelectorColor:CreateColorSlider({
-        Name = 'Overlay Color',
-        DefaultOpacity = 0.5
-    })
-    Outline = BlockSelectorColor:CreateColorSlider({
-        Name = 'Outline Color',
-        DefaultOpacity = 1
-    })
+    OutlineColor = BlockSelectorColor:CreateColorSlider({Name = 'Outline colour', DefaultOpacity = 1, Function = refresh})
+    FillColor = BlockSelectorColor:CreateColorSlider({Name = 'Fill colour', DefaultOpacity = 0.5, Function = refresh})
 end)
 
 run(function()
@@ -28942,73 +29015,6 @@ end)
 
 
 -- Unique BedWars match modules ported from skid.lua.
-run(function()
-    local moduleData = {
-        Connection = nil,
-        CurrentDuration = 1,
-        CachedPrompts = {}
-    }
-
-    local function updatePrompt(prompt, duration)
-        if prompt and prompt:IsA("ProximityPrompt") then
-            prompt.HoldDuration = duration
-        end
-    end
-
-    local function updateAllPrompts(duration)
-        for prompt in pairs(moduleData.CachedPrompts) do
-            if prompt and prompt.Parent then
-                prompt.HoldDuration = duration
-            else
-                moduleData.CachedPrompts[prompt] = nil
-            end
-        end
-    end
-
-    local function cacheExistingPrompts()
-        moduleData.CachedPrompts = {}
-
-        for _, descendant in workspace:GetDescendants() do
-            if descendant:IsA("ProximityPrompt") then
-                moduleData.CachedPrompts[descendant] = true
-                descendant.HoldDuration = moduleData.CurrentDuration
-            end
-        end
-    end
-
-	ProximityPromptDuration = vape.Categories.Utility:CreateModule({
-		Name = 'ProximityPromptDuration',
-		Function = function(callback)
-			if callback then
-				cacheExistingPrompts()
-				ProximityPromptDuration:Clean(workspace.DescendantAdded:Connect(function(descendant)
-					if descendant:IsA("ProximityPrompt") then
-						moduleData.CachedPrompts[descendant] = true
-						descendant.HoldDuration = moduleData.CurrentDuration
-					end
-				end))
-			else
-				moduleData.CachedPrompts = {}
-			end
-		end,
-		Tooltip = 'customize proximity prompts'
-	})
-
-    local ProximityDurationSlider = ProximityPromptDuration:CreateSlider({
-        Name = 'Duration',
-        Min = 0,
-        Max = 10,
-        Default = 1,
-        Decimal = 100,
-        Suffix = 's',
-        Function = function(value)
-            moduleData.CurrentDuration = value
-            if ProximityPromptDuration.Enabled then
-                updateAllPrompts(value)
-            end
-        end
-    })
-end)
 
 run(function()
 	local LootESP
@@ -29632,95 +29638,6 @@ run(function()
     })
 end)
 
-run(function()
-    local ProximityMaxDistance
-    local MaxDistance
-    local oldDistances = {}
-    local addedConnection
-    local removedConnection
-    local trackedPrompts = {}
-
-    ProximityMaxDistance = vape.Categories.Utility:CreateModule({
-        Name = "ProximityExtender",
-        Function = function(callback)
-
-            if callback then
-                table.clear(oldDistances)
-                table.clear(trackedPrompts)
-
-                local function applyToPrompt(prompt)
-                    if not prompt:IsA("ProximityPrompt") then return end
-                    if trackedPrompts[prompt] then return end
-
-                    trackedPrompts[prompt] = true
-                    oldDistances[prompt] = prompt.MaxActivationDistance
-                    prompt.MaxActivationDistance = MaxDistance.Value
-                end
-
-                local function scanForPrompts(parent)
-                    for _, obj in ipairs(parent:GetDescendants()) do
-                        if obj:IsA("ProximityPrompt") then
-                            applyToPrompt(obj)
-                        end
-                    end
-                end
-
-                scanForPrompts(workspace)
-
-                addedConnection = workspace.DescendantAdded:Connect(function(obj)
-                    if obj:IsA("ProximityPrompt") then
-                        applyToPrompt(obj)
-                    end
-                end)
-
-                removedConnection = workspace.DescendantRemoving:Connect(function(obj)
-                    if obj:IsA("ProximityPrompt") then
-                        oldDistances[obj] = nil
-                        trackedPrompts[obj] = nil
-                    end
-                end)
-
-                MaxDistance.Function = function(value)
-                    for prompt in pairs(trackedPrompts) do
-                        if prompt and prompt.Parent then
-                            prompt.MaxActivationDistance = value
-                        end
-                    end
-                end
-            else
-                if addedConnection then
-                    addedConnection:Disconnect()
-                    addedConnection = nil
-                end
-
-                if removedConnection then
-                    removedConnection:Disconnect()
-                    removedConnection = nil
-                end
-
-                for prompt, dist in pairs(oldDistances) do
-                    if prompt and prompt.Parent then
-                        pcall(function()
-                            prompt.MaxActivationDistance = dist
-                        end)
-                    end
-                end
-
-                table.clear(oldDistances)
-                table.clear(trackedPrompts)
-                MaxDistance.Function = function() end
-            end
-        end,
-        Tooltip = "increase the range of proximity"
-    })
-
-    MaxDistance = ProximityMaxDistance:CreateSlider({
-        Name = 'Max Distance',
-        Min = 10,
-        Max = 20,
-        Default = 20,
-    })
-end)
 
 run(function()
 	local Headless
@@ -30402,26 +30319,6 @@ run(function()
 	})
 end)
 
-run(function()
-	local AutoEmote
-	if not remotes.Emote then remotes.Emote = "Emote" end
-	AutoEmote = vape.Categories.Utility:CreateModule({
-		Name = "AutoEmote",
-		Function = function(callback) end,
-		Tooltip = "only plays bed break emote on kill"
-	})
-	AutoEmote:Clean(vapeEvents.EntityDeathEvent.Event:Connect(function(deathTable)
-		local killer = playersService:GetPlayerFromCharacter(deathTable.fromEntity)
-		local killed = playersService:GetPlayerFromCharacter(deathTable.entityInstance)
-		if killer == lplr and killed and killed ~= lplr then
-			if not AutoEmote.Enabled then return end
-			if not entitylib.isAlive then return end
-			pcall(function()
-				bedwars.Client:Get(remotes.Emote):CallServer({ emoteType = 'bed_break' })
-			end)
-		end
-	end))
-end)
 
 run(function()
 	local NameTagSpoofer
@@ -31390,53 +31287,43 @@ run(function()
 	})
 end)
 
-run(function()
-    local blockSelectorColor = Color3.fromRGB(255, 255, 255)
-    local conn
 
-    local BlockColor = vape.Categories.Render:CreateModule({
-        Name = 'BlockSelectorColor',
-        Tooltip = 'change your block placement outline color',
+run(function()
+    local ChatNameColor
+    local Color
+    local original
+    local applying = false
+
+    local function selectedColor()
+        return Color3.fromHSV(Color.Hue, Color.Sat, Color.Value)
+    end
+
+    local function apply()
+        if not ChatNameColor.Enabled then return end
+        applying = true
+        lplr:SetAttribute('ChatNameColor', selectedColor())
+        applying = false
+    end
+
+    ChatNameColor = vape.Categories.Render:CreateModule({
+        Name = 'ChatNameColor',
+        Tooltip = 'Changes your chat name colour while enabled',
         Function = function(enabled)
             if enabled then
-                local lastCheck = 0
-                conn = workspace.DescendantAdded:Connect(function(v)
-                    if not (v:IsA('SelectionBox') or v:IsA('Highlight')) then return end
-                    local now = tick()
-                    if now - lastCheck < 0.05 then return end
-                    lastCheck = now
-                    pcall(function()
-                        v.Color3 = blockSelectorColor
-                    end)
-                end)
+                original = lplr:GetAttribute('ChatNameColor')
+                apply()
+                ChatNameColor:Clean(lplr:GetAttributeChangedSignal('ChatNameColor'):Connect(function()
+                    if not applying then apply() end
+                end))
             else
-                if conn then conn:Disconnect() conn = nil end
+                applying = true
+                lplr:SetAttribute('ChatNameColor', original)
+                applying = false
+                original = nil
             end
         end
     })
-
-    BlockColor:CreateColorSlider({
-        Name = 'Color',
-        Function = function(h, s, v)
-            blockSelectorColor = Color3.fromHSV(h, s, v)
-        end
-    })
-end)
-
-run(function()
-    local ChatNameColor = vape.Categories.Render:CreateModule({
-        Name = 'ChatNameColor',
-        Tooltip = 'change your chat name color',
-        Function = function(enabled) end
-    })
-
-    ChatNameColor:CreateColorSlider({
-        Name = 'Color',
-        Function = function(h, s, v)
-			if not ChatNameColor.Enabled then return false end
-            lplr:SetAttribute('ChatNameColor', Color3.fromHSV(h, s, v))
-        end
-    })
+    Color = ChatNameColor:CreateColorSlider({Name = 'Colour', Function = apply})
 end)
 
 run(function()
@@ -36639,24 +36526,75 @@ end)
 --
 -- These are deliberately explicit registrations rather than a BedwarsKitMeta generator. Each kit
 -- keeps a stable module/config name even if game metadata is missing, renamed, or loaded late.
+local showUnverifiedKits = false
+local unverifiedKitModules = {}
+
+local function detectKitAbility(abilities)
+    local controller = bedwars.AbilityController
+    if not controller or type(controller.canUseAbility) ~= 'function' or type(controller.useAbility) ~= 'function' then
+        return nil, 'ability controller is unavailable'
+    end
+    -- New builds expose one of these registries. Prefer registry membership because canUseAbility
+    -- returning false alone cannot distinguish cooldown from a made-up ability name.
+    for _, registryName in {'abilities', 'abilityData', 'abilityDefinitions', 'registeredAbilities'} do
+        local registry = controller[registryName]
+        if type(registry) == 'table' then
+            for _, ability in abilities do
+                if registry[ability] ~= nil or table.find(registry, ability) then return ability end
+            end
+            return nil, 'none of the declared abilities are registered'
+        end
+    end
+    for _, ability in abilities do
+        local ok = pcall(controller.canUseAbility, controller, ability, {disableBlockedAbilityAlert = true})
+        if ok then return ability end
+    end
+    return nil, 'ability validation failed'
+end
+
+local function validateHardcodedAutoKit(module, abilities)
+    local ability, reason = detectKitAbility(abilities)
+    module.VerifiedAbility = ability
+    module.VerificationError = reason
+    if not ability then
+        table.insert(unverifiedKitModules, module)
+        if module.Object then module.Object.Visible = showUnverifiedKits end
+    end
+end
+
 local function runHardcodedAutoKit(module, kitId, abilities, targets, range, interval)
-	repeat
-		if entitylib.isAlive and store.equippedKit == kitId and bedwars.AbilityController then
-			local ent = targets and entitylib.EntityPosition({
-				Range = range, Part = 'RootPart', Players = true, NPCs = true, Wallcheck = true, Sort = sortmethods.Distance
-			}) or nil
-			for _, ability in abilities do
-				local ready = false
-				pcall(function() ready = bedwars.AbilityController:canUseAbility(ability) end)
-				if ready then
-					pcall(function()
-						bedwars.AbilityController:useAbility(ability, nil, ent and {target = ent.Character, targetPosition = ent.RootPart.Position} or nil)
-					end)
-				end
-			end
-		end
-		task.wait(interval)
-	until not module.Enabled
+    local ability, reason = detectKitAbility(abilities)
+    if not ability then
+        notif(module.Name or 'Auto kit', 'Unavailable: ' .. (reason or 'kit ability could not be verified'), 5, 'warning')
+        if module.Enabled then module:Toggle() end
+        return
+    end
+    module.VerifiedAbility = ability
+    local failureCount = 0
+    repeat
+        if entitylib.isAlive and store.equippedKit == kitId then
+            local ent = targets and entitylib.EntityPosition({
+                Range = range, Part = 'RootPart', Players = true, NPCs = true, Wallcheck = true, Sort = sortmethods.Distance
+            }) or nil
+            local ok, ready = pcall(bedwars.AbilityController.canUseAbility, bedwars.AbilityController, ability, {disableBlockedAbilityAlert = true})
+            if not ok then
+                failureCount += 1
+                if failureCount == 1 or failureCount % 10 == 0 then
+                    notif(module.Name, 'Ability check failed (' .. failureCount .. '): ' .. tostring(ready), 5, 'warning')
+                end
+            elseif ready then
+                local used, err = pcall(bedwars.AbilityController.useAbility, bedwars.AbilityController, ability, newproxy(true),
+                    ent and {target = ent.Character, targetPosition = ent.RootPart.Position} or nil)
+                if not used then
+                    failureCount += 1
+                    notif(module.Name, 'Ability failed: ' .. tostring(err), 5, 'warning')
+                else
+                    failureCount = 0
+                end
+            end
+        end
+        task.wait(math.clamp(interval, 0.1, 5))
+    until not module.Enabled
 end
 
 run(function()
@@ -36668,6 +36606,8 @@ run(function()
 		end,
 		Tooltip = 'Automatically uses Barbarian abilities when they are ready'
 	})
+
+	task.defer(validateHardcodedAutoKit, AutoBarbarian, {'BARBARIAN_ABILITY', 'BARBARIAN'})
 end)
 
 run(function()
@@ -36679,6 +36619,8 @@ run(function()
 		end,
 		Tooltip = 'Automatically uses Baker abilities when they are ready'
 	})
+
+	task.defer(validateHardcodedAutoKit, AutoBaker, {'BAKER_ABILITY', 'BAKER'})
 end)
 
 run(function()
@@ -36690,6 +36632,8 @@ run(function()
 		end,
 		Tooltip = 'Automatically uses Archer abilities when they are ready'
 	})
+
+	task.defer(validateHardcodedAutoKit, AutoArcher, {'ARCHER_ABILITY', 'ARCHER'})
 end)
 
 run(function()
@@ -36701,18 +36645,10 @@ run(function()
 		end,
 		Tooltip = 'Automatically uses InfernalShielder abilities when they are ready'
 	})
+
+	task.defer(validateHardcodedAutoKit, AutoInfernalShielder, {'INFERNAL_SHIELDER_ABILITY', 'INFERNAL_SHIELDER'})
 end)
 
-run(function()
-	local AutoLassy
-	AutoLassy = kits:CreateModule({
-		Name = 'AutoLassy', Category = 'Auto',
-		Function = function(callback)
-			if callback then runHardcodedAutoKit(AutoLassy, 'lassy', {'LASSY_ABILITY', 'LASSY'}, true, 30, 0.1) end
-		end,
-		Tooltip = 'Automatically uses Lassy abilities when they are ready'
-	})
-end)
 
 run(function()
 	local AutoVulcan
@@ -36723,6 +36659,8 @@ run(function()
 		end,
 		Tooltip = 'Automatically uses Vulcan abilities when they are ready'
 	})
+
+	task.defer(validateHardcodedAutoKit, AutoVulcan, {'VULCAN_ABILITY', 'VULCAN'})
 end)
 
 run(function()
@@ -36734,6 +36672,8 @@ run(function()
 		end,
 		Tooltip = 'Automatically uses Trinity abilities when they are ready'
 	})
+
+	task.defer(validateHardcodedAutoKit, AutoTrinity, {'TRINITY_ABILITY', 'TRINITY'})
 end)
 
 run(function()
@@ -36745,6 +36685,8 @@ run(function()
 		end,
 		Tooltip = 'Automatically uses AxolotlAmy abilities when they are ready'
 	})
+
+	task.defer(validateHardcodedAutoKit, AutoAxolotlAmy, {'AXOLOTL_ABILITY', 'AXOLOTL'})
 end)
 
 run(function()
@@ -36756,6 +36698,8 @@ run(function()
 		end,
 		Tooltip = 'Automatically uses Freiya abilities when they are ready'
 	})
+
+	task.defer(validateHardcodedAutoKit, AutoFreiya, {'ICE_QUEEN_ABILITY', 'ICE_QUEEN'})
 end)
 
 run(function()
@@ -36767,6 +36711,8 @@ run(function()
 		end,
 		Tooltip = 'Automatically uses Yuzi abilities when they are ready'
 	})
+
+	task.defer(validateHardcodedAutoKit, AutoYuzi, {'DASHER_ABILITY', 'DASHER'})
 end)
 
 run(function()
@@ -36778,6 +36724,8 @@ run(function()
 		end,
 		Tooltip = 'Automatically uses Warrior abilities when they are ready'
 	})
+
+	task.defer(validateHardcodedAutoKit, AutoWarrior, {'WARRIOR_ABILITY', 'WARRIOR'})
 end)
 
 run(function()
@@ -36789,6 +36737,8 @@ run(function()
 		end,
 		Tooltip = 'Automatically uses BountyHunter abilities when they are ready'
 	})
+
+	task.defer(validateHardcodedAutoKit, AutoBountyHunter, {'BOUNTY_HUNTER_ABILITY', 'BOUNTY_HUNTER'})
 end)
 
 run(function()
@@ -36800,6 +36750,8 @@ run(function()
 		end,
 		Tooltip = 'Automatically uses Jade abilities when they are ready'
 	})
+
+	task.defer(validateHardcodedAutoKit, AutoJade, {'JADE_ABILITY', 'JADE'})
 end)
 
 run(function()
@@ -36811,6 +36763,8 @@ run(function()
 		end,
 		Tooltip = 'Automatically uses Raven abilities when they are ready'
 	})
+
+	task.defer(validateHardcodedAutoKit, AutoRaven, {'RAVEN_ABILITY', 'RAVEN'})
 end)
 
 run(function()
@@ -36822,6 +36776,8 @@ run(function()
 		end,
 		Tooltip = 'Automatically uses SpiritCatcher abilities when they are ready'
 	})
+
+	task.defer(validateHardcodedAutoKit, AutoSpiritCatcher, {'SPIRIT_CATCHER_ABILITY', 'SPIRIT_CATCHER'})
 end)
 
 run(function()
@@ -36833,6 +36789,8 @@ run(function()
 		end,
 		Tooltip = 'Automatically uses Trapper abilities when they are ready'
 	})
+
+	task.defer(validateHardcodedAutoKit, AutoTrapper, {'TRAPPER_ABILITY', 'TRAPPER'})
 end)
 
 run(function()
@@ -36844,6 +36802,8 @@ run(function()
 		end,
 		Tooltip = 'Automatically uses Gompy abilities when they are ready'
 	})
+
+	task.defer(validateHardcodedAutoKit, AutoGompy, {'GHOST_CATCHER_ABILITY', 'GHOST_CATCHER'})
 end)
 
 run(function()
@@ -36855,6 +36815,8 @@ run(function()
 		end,
 		Tooltip = 'Automatically uses Jack abilities when they are ready'
 	})
+
+	task.defer(validateHardcodedAutoKit, AutoJack, {'OIL_MAN_ABILITY', 'OIL_MAN'})
 end)
 
 run(function()
@@ -36866,6 +36828,8 @@ run(function()
 		end,
 		Tooltip = 'Automatically uses Ares abilities when they are ready'
 	})
+
+	task.defer(validateHardcodedAutoKit, AutoAres, {'ARES_ABILITY', 'ARES'})
 end)
 
 run(function()
@@ -36877,6 +36841,8 @@ run(function()
 		end,
 		Tooltip = 'Automatically uses Santa abilities when they are ready'
 	})
+
+	task.defer(validateHardcodedAutoKit, AutoSanta, {'SANTA_ABILITY', 'SANTA'})
 end)
 
 run(function()
@@ -36888,6 +36854,8 @@ run(function()
 		end,
 		Tooltip = 'Automatically uses Smoke abilities when they are ready'
 	})
+
+	task.defer(validateHardcodedAutoKit, AutoSmoke, {'SMOKE_ABILITY', 'SMOKE'})
 end)
 
 run(function()
@@ -36899,6 +36867,8 @@ run(function()
 		end,
 		Tooltip = 'Automatically uses Yeti abilities when they are ready'
 	})
+
+	task.defer(validateHardcodedAutoKit, AutoYeti, {'YETI_ABILITY', 'YETI'})
 end)
 
 run(function()
@@ -36910,6 +36880,8 @@ run(function()
 		end,
 		Tooltip = 'Automatically uses Frosty abilities when they are ready'
 	})
+
+	task.defer(validateHardcodedAutoKit, AutoFrosty, {'FROSTY_ABILITY', 'FROSTY'})
 end)
 
 run(function()
@@ -36921,6 +36893,8 @@ run(function()
 		end,
 		Tooltip = 'Automatically uses Aery abilities when they are ready'
 	})
+
+	task.defer(validateHardcodedAutoKit, AutoAery, {'AERY_ABILITY', 'AERY'})
 end)
 
 run(function()
@@ -36932,6 +36906,8 @@ run(function()
 		end,
 		Tooltip = 'Automatically uses Alchemist abilities when they are ready'
 	})
+
+	task.defer(validateHardcodedAutoKit, AutoAlchemist, {'ALCHEMIST_ABILITY', 'ALCHEMIST'})
 end)
 
 run(function()
@@ -36943,6 +36919,8 @@ run(function()
 		end,
 		Tooltip = 'Automatically uses Crocowolf abilities when they are ready'
 	})
+
+	task.defer(validateHardcodedAutoKit, AutoCrocowolf, {'CROCOWOLF_ABILITY', 'CROCOWOLF'})
 end)
 
 run(function()
@@ -36954,6 +36932,8 @@ run(function()
 		end,
 		Tooltip = 'Automatically uses Conqueror abilities when they are ready'
 	})
+
+	task.defer(validateHardcodedAutoKit, AutoConqueror, {'CONQUEROR_ABILITY', 'CONQUEROR'})
 end)
 
 
@@ -36966,6 +36946,8 @@ run(function()
 		end,
 		Tooltip = 'Automatically uses MerchantMarco abilities when they are ready'
 	})
+
+	task.defer(validateHardcodedAutoKit, AutoMerchantMarco, {'MERCHANT_MARCO_ABILITY', 'MERCHANT_MARCO'})
 end)
 
 run(function()
@@ -36977,6 +36959,8 @@ run(function()
 		end,
 		Tooltip = 'Automatically uses DinoTamerDom abilities when they are ready'
 	})
+
+	task.defer(validateHardcodedAutoKit, AutoDinoTamerDom, {'DINO_TAMER_ABILITY', 'DINO_TAMER'})
 end)
 
 run(function()
@@ -36988,6 +36972,8 @@ run(function()
 		end,
 		Tooltip = 'Automatically uses Zephyr abilities when they are ready'
 	})
+
+	task.defer(validateHardcodedAutoKit, AutoZephyr, {'WIND_WALKER_ABILITY', 'WIND_WALKER'})
 end)
 
 run(function()
@@ -36999,6 +36985,8 @@ run(function()
 		end,
 		Tooltip = 'Automatically uses VoidRegent abilities when they are ready'
 	})
+
+	task.defer(validateHardcodedAutoKit, AutoVoidRegent, {'REGENT_ABILITY', 'REGENT'})
 end)
 
 run(function()
@@ -37010,6 +36998,8 @@ run(function()
 		end,
 		Tooltip = 'Automatically uses Lumen abilities when they are ready'
 	})
+
+	task.defer(validateHardcodedAutoKit, AutoLumen, {'LUMEN_ABILITY', 'LUMEN'})
 end)
 
 run(function()
@@ -37021,6 +37011,8 @@ run(function()
 		end,
 		Tooltip = 'Automatically uses Agni abilities when they are ready'
 	})
+
+	task.defer(validateHardcodedAutoKit, AutoAgni, {'AGNI_ABILITY', 'AGNI'})
 end)
 
 run(function()
@@ -37032,6 +37024,8 @@ run(function()
 		end,
 		Tooltip = 'Automatically uses Bekzat abilities when they are ready'
 	})
+
+	task.defer(validateHardcodedAutoKit, AutoBekzat, {'BEKZAT_ABILITY', 'BEKZAT'})
 end)
 
 run(function()
@@ -37043,6 +37037,8 @@ run(function()
 		end,
 		Tooltip = 'Automatically uses DeathAdder abilities when they are ready'
 	})
+
+	task.defer(validateHardcodedAutoKit, AutoDeathAdder, {'DEATH_ADDER_ABILITY', 'DEATH_ADDER'})
 end)
 
 run(function()
@@ -37054,6 +37050,8 @@ run(function()
 		end,
 		Tooltip = 'Automatically uses Nazar abilities when they are ready'
 	})
+
+	task.defer(validateHardcodedAutoKit, AutoNazar, {'NAZAR_ABILITY', 'NAZAR'})
 end)
 
 run(function()
@@ -37065,6 +37063,8 @@ run(function()
 		end,
 		Tooltip = 'Automatically uses Nyoka abilities when they are ready'
 	})
+
+	task.defer(validateHardcodedAutoKit, AutoNyoka, {'NYOKA_ABILITY', 'NYOKA'})
 end)
 
 run(function()
@@ -37076,6 +37076,8 @@ run(function()
 		end,
 		Tooltip = 'Automatically uses Sheila abilities when they are ready'
 	})
+
+	task.defer(validateHardcodedAutoKit, AutoSheila, {'SHEILA_ABILITY', 'SHEILA'})
 end)
 
 run(function()
@@ -37087,6 +37089,8 @@ run(function()
 		end,
 		Tooltip = 'Automatically uses Silas abilities when they are ready'
 	})
+
+	task.defer(validateHardcodedAutoKit, AutoSilas, {'SILAS_ABILITY', 'SILAS'})
 end)
 
 run(function()
@@ -37098,6 +37102,8 @@ run(function()
 		end,
 		Tooltip = 'Automatically uses Styx abilities when they are ready'
 	})
+
+	task.defer(validateHardcodedAutoKit, AutoStyx, {'STYX_ABILITY', 'STYX'})
 end)
 
 run(function()
@@ -37109,6 +37115,8 @@ run(function()
 		end,
 		Tooltip = 'Automatically uses Terra abilities when they are ready'
 	})
+
+	task.defer(validateHardcodedAutoKit, AutoTerra, {'TERRA_ABILITY', 'TERRA'})
 end)
 
 run(function()
@@ -37120,6 +37128,8 @@ run(function()
 		end,
 		Tooltip = 'Automatically uses Umbra abilities when they are ready'
 	})
+
+	task.defer(validateHardcodedAutoKit, AutoUmbra, {'UMBRA_ABILITY', 'UMBRA'})
 end)
 
 run(function()
@@ -37131,6 +37141,8 @@ run(function()
 		end,
 		Tooltip = 'Automatically uses Umeko abilities when they are ready'
 	})
+
+	task.defer(validateHardcodedAutoKit, AutoUmeko, {'UMEKO_ABILITY', 'UMEKO'})
 end)
 
 run(function()
@@ -37142,6 +37154,8 @@ run(function()
 		end,
 		Tooltip = 'Automatically uses Warden abilities when they are ready'
 	})
+
+	task.defer(validateHardcodedAutoKit, AutoWarden, {'WARDEN_ABILITY', 'WARDEN'})
 end)
 
 run(function()
@@ -37153,6 +37167,8 @@ run(function()
 		end,
 		Tooltip = 'Automatically uses Whim abilities when they are ready'
 	})
+
+	task.defer(validateHardcodedAutoKit, AutoWhim, {'WHIM_ABILITY', 'WHIM'})
 end)
 
 run(function()
@@ -37164,6 +37180,8 @@ run(function()
 		end,
 		Tooltip = 'Automatically uses Wren abilities when they are ready'
 	})
+
+	task.defer(validateHardcodedAutoKit, AutoWren, {'WREN_ABILITY', 'WREN'})
 end)
 
 
@@ -37176,6 +37194,8 @@ run(function()
 		end,
 		Tooltip = 'Automatically uses Yamini abilities when they are ready'
 	})
+
+	task.defer(validateHardcodedAutoKit, AutoYamini, {'YAMINI_ABILITY', 'YAMINI'})
 end)
 
 run(function()
@@ -37187,6 +37207,8 @@ run(function()
 		end,
 		Tooltip = 'Automatically uses Zenith abilities when they are ready'
 	})
+
+	task.defer(validateHardcodedAutoKit, AutoZenith, {'ZENITH_ABILITY', 'ZENITH'})
 end)
 
 run(function()
@@ -37198,4 +37220,25 @@ run(function()
 		end,
 		Tooltip = 'Automatically uses Zola abilities when they are ready'
 	})
+
+	task.defer(validateHardcodedAutoKit, AutoZola, {'ZOLA_ABILITY', 'ZOLA'})
+end)
+
+
+run(function()
+    local KitVisibility = kits:CreateModule({
+        Name = 'Kit module visibility', Category = 'Auto',
+        Function = function() end,
+        Tooltip = 'Unverified kit automations are hidden by default'
+    })
+    KitVisibility:CreateButton({
+        Name = 'Show all modules',
+        Function = function()
+            showUnverifiedKits = true
+            for _, module in unverifiedKitModules do
+                if module.Object then module.Object.Visible = true end
+            end
+            notif('Kits', 'Showing unverified kit modules; failures will be reported when enabled', 5, 'warning')
+        end
+    })
 end)
