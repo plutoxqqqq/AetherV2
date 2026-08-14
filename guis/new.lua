@@ -8081,7 +8081,7 @@ function mainapi:CreateChangelogs()
 	addBlur(window); addCorner(window); makeDraggable(window)
 	local title = Instance.new('TextLabel')
 	title.Size, title.Position, title.BackgroundTransparency = UDim2.new(1, -47, 0, 40), UDim2.fromOffset(12, 0), 1
-	title.Text, title.TextColor3, title.TextSize, title.FontFace = 'Changelog — Latest Update', uipallet.Text, 14, uipallet.Font
+	title.Text, title.TextColor3, title.TextSize, title.FontFace = 'AetherV2 Update', uipallet.Text, 14, uipallet.Font
 	title.TextXAlignment, title.Parent = Enum.TextXAlignment.Left, window
 	local close = addCloseButton(window)
 	local notes = Instance.new('ScrollingFrame')
@@ -8092,13 +8092,21 @@ function mainapi:CreateChangelogs()
 	local body = Instance.new('TextLabel')
 	body.Size, body.Position, body.AutomaticSize = UDim2.new(1, -28, 0, 0), UDim2.fromOffset(14, 12), Enum.AutomaticSize.Y
 	body.BackgroundTransparency, body.RichText = 1, true
-	body.Text = [=[<b>AetherV2 refresh</b>
-• Added HitReg calculator with reversible Killaura tuning.
-• Added Krystal, Sigrid, Grim Reaper, and Zephyr compatibility to Fly and Speed.
-• Stabilized Target Info and repaired Breaker's automatic tool selection.
-• Added AutoClicker's attack toggle and hardcoded Auto modules for every remaining kit.
-• Replaced GodMode with Blatant DeathTP.
-• Removed BreakerV2, InfiniteFly, and MP3Player Spotify mode.]=]
+	body.Text = [=[<b><font color="#d378ff">BedWars</font></b>
+<font color="#63dc82">[+]</font> Added “MultiAction” to Exploits, allowing multiple actions at once, such as placing blocks while using Killaura.
+<font color="#63dc82">[+]</font> Added “AutoEnchant” to Inventory, which automatically repairs and uses the enchanting table.
+<font color="#63dc82">[+]</font> Added “QuickChatWheel” to Utility, which adds configurable text presets around BedWars’ emote wheel.
+<font color="#6aa9ff">[^]</font> Renamed DeathTP to “RecoveryTP”.
+<font color="#6aa9ff">[^]</font> Merged the visual modules into one highly customizable Render module named “Theme”.
+<font color="#ffd45e">[!]</font> Fixed Killaura not swinging faster with the Fury Potion.
+<font color="#ffd45e">[!]</font> Fixed StreamRemover and ACModView’s “Remove disguises”.
+<font color="#ff6969">[-]</font> Removed the standalone modules Atmosphere, TimeChanger, Shader, AuroraSky, StormMode, Bloom, AbyssalDepths, and IRLReplica.
+    Their functionality now exists in “Theme”.
+
+<b><font color="#d378ff">General</font></b>
+<font color="#63dc82">[+]</font> Added LowHealthVignette to Legit, displaying a subtle screen-edge warning at low health.
+<font color="#6aa9ff">[^]</font> Expanded the Keystrokes overlay with mouse-click and spacebar support.
+<font color="#6aa9ff">[^]</font> Slightly improved startup times through auto-execute.]=]
 	body.TextColor3, body.TextSize, body.LineHeight = Color3.fromRGB(170, 170, 170), 13, 1.25
 	body.FontFace, body.TextXAlignment, body.TextYAlignment, body.TextWrapped, body.Parent = Font.fromEnum(Enum.Font.Roboto), Enum.TextXAlignment.Left, Enum.TextYAlignment.Top, true, notes
 	close.MouseButton1Click:Connect(function() window.Visible = false end)
