@@ -24657,18 +24657,21 @@ run(function()
         pcall(function()
             inventoryRemotes():Get('SetObservedChest'):SendToServer(folder)
         end)
+        local requestBudget = 8
         for _, entry in contents do
             if not AutoBank.Enabled then break end
             if entry:IsA('Accessory') and table.find(Whitelist.ListEnabled, entry.Name)
                 and (not itemType or entry.Name == itemType) then
                 local amount = math.max(entry:GetAttribute('Amount') or 1, 1)
                 for _ = 1, amount do
-                    if not AutoBank.Enabled or not entry.Parent then break end
+                    if not AutoBank.Enabled or not entry.Parent or requestBudget <= 0 then break end
                     pcall(function()
                         inventoryRemotes():Get('ChestGetItem'):CallServer(folder, entry)
                     end)
+                    requestBudget -= 1
                 end
             end
+            if requestBudget <= 0 then break end
         end
         pcall(function()
             inventoryRemotes():Get('SetObservedChest'):SendToServer(nil)
@@ -24753,11 +24756,15 @@ run(function()
                 addDisplayEntry(itemType)
             end
 
-            -- The skybox stash has to be re-asserted every frame: the server keeps trying to drop
-            -- the items back down, so a slower loop lets them fall into the world. Chest mode does
-            -- no work on the render thread; its display is refreshed by the throttled main loop.
-            AutoBank:Clean(runService.PreRender:Connect(function()
+            -- Holding physics objects does not need to run on the render thread. Updating at 20Hz
+            -- keeps them in the local simulation bubble without adding work to every rendered
+            -- frame (the old PreRender handler was a major FPS cost with a large stash).
+            local holdAccumulator = 0
+            AutoBank:Clean(runService.Heartbeat:Connect(function(delta)
                 if Mode.Value == 'Skybox' then
+                    holdAccumulator += delta
+                    if holdAccumulator < 0.05 then return end
+                    holdAccumulator = 0
                     for index, drop in droppedItems do
                         -- Item drops are tagged, but recent BedWars builds parent them directly
                         -- to Workspace instead of the legacy ItemDrops folder.
@@ -24868,7 +24875,10 @@ run(function()
                     end
                 end
 
-                task.wait(0.1)
+                -- Five passes per second are enough for inventory/shop state while avoiding
+                -- continuous remote bursts and UI layout work. Withdrawals are budgeted above
+                -- and naturally continue on the next pass for large chest stacks.
+                task.wait(0.2)
             until not AutoBank.Enabled
         end,
         Tooltip = 'Stores resources somewhere safe, in your personal chest or held above the map until a shop'
@@ -37682,4 +37692,3 @@ run(function()
         Tooltip = "Minimum time between block placements to avoid rate limits."
     })
 end)
-
