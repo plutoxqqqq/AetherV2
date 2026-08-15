@@ -7441,18 +7441,30 @@ function mainapi:CreateSearch()
 		self.Legit.Window.Visible = true
 		self.Legit.Window.Position = UDim2.new(0.5, -350, 0.5, -194)
 	end)
-	search:GetPropertyChangedSignal('Text'):Connect(function()
+	local searchGeneration = 0
+	local searchResults = {}
+	local function clearSearchResults()
 		for _, v in children:GetChildren() do
 			if v:IsA('TextButton') then
 				v:Destroy()
 			end
 		end
-		if search.Text == '' then return end
+		table.clear(searchResults)
+	end
+	local function updateSearch(query, generation)
+		if generation ~= searchGeneration then return end
+		clearSearchResults()
+		if query == '' then return end
 
 		for i, v in self.Modules do
-			if i:lower():find(search.Text:lower()) then
+			if generation ~= searchGeneration then return end
+			-- Search text is not a Lua pattern. Besides producing surprising matches,
+			-- pattern metacharacters such as an unmatched '[' used to terminate this
+			-- callback and could take the executor UI down with it.
+			if i:lower():find(query, 1, true) then
 				local button = v.Object:Clone()
-				button.Bind:Destroy()
+				local bind = button:FindFirstChild('Bind')
+				if bind then bind:Destroy() end
 				button.MouseButton1Click:Connect(function()
 					v:Toggle()
 				end)
@@ -7477,18 +7489,38 @@ function mainapi:CreateSearch()
 				end)
 
 				button.Parent = children
-				task.spawn(function()
-					repeat
-						for _, v2 in {'Text', 'TextColor3', 'BackgroundColor3'} do
-							button[v2] = v.Object[v2]
-						end
-						button.UIGradient.Color = v.Object.UIGradient.Color
-						button.UIGradient.Enabled = v.Object.UIGradient.Enabled
-						button.Dots.Dots.ImageColor3 = v.Object.Dots.Dots.ImageColor3
-						task.wait()
-					until not button.Parent
-				end)
+				table.insert(searchResults, {button, v.Object})
 			end
+		end
+	end
+	search:GetPropertyChangedSignal('Text'):Connect(function()
+		searchGeneration += 1
+		local generation = searchGeneration
+		local query = search.Text:lower()
+		-- Coalesce rapid keystrokes. Rebuilding and cloning every module once per
+		-- character caused large allocation spikes on slower clients.
+		task.delay(0.05, function()
+			updateSearch(query, generation)
+		end)
+	end)
+	-- One throttled synchronizer replaces a render-rate coroutine per result.
+	-- Protected descendant lookups also tolerate modules with a custom row shape.
+	task.spawn(function()
+		while searchbkg.Parent do
+			for _, result in searchResults do
+				local button, source = result[1], result[2]
+				if button.Parent and source.Parent then
+					pcall(function()
+						button.Text = source.Text
+						button.TextColor3 = source.TextColor3
+						button.BackgroundColor3 = source.BackgroundColor3
+						button.UIGradient.Color = source.UIGradient.Color
+						button.UIGradient.Enabled = source.UIGradient.Enabled
+						button.Dots.Dots.ImageColor3 = source.Dots.Dots.ImageColor3
+					end)
+				end
+			end
+			task.wait(0.1)
 		end
 	end)
 	windowlist:GetPropertyChangedSignal('AbsoluteContentSize'):Connect(function()
