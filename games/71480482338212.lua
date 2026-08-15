@@ -2664,7 +2664,7 @@ run(function()
     LegitAura = SilentAura:CreateToggle({Name = 'Swing only'})
     SilentAim = SilentAura:CreateToggle({
         Name = 'Silent Aim',
-        Tooltip = 'Silently aims while keeping natural-looking camera movement.',
+        Tooltip = 'Uses catvape\'s aiming technology to silently aim while looking legit',
         Default = true,
         Function = function(callback)
             Area.Object.Visible = not callback
@@ -5415,7 +5415,7 @@ run(function()
         grappling_hook = function(item, pos, dir)
             launchProjectile(item, pos, 'grappling_hook_projectile', 140, dir)
         end,
-        jadeHammer = function(item, _, dir)
+        jade_hammer = function(item, _, dir)
             if not bedwars.AbilityController:canUseAbility(item.itemType..'_jump') then
                 repeat task.wait() until bedwars.AbilityController:canUseAbility(item.itemType..'_jump') or not LongJump.Enabled
             end
@@ -5455,10 +5455,7 @@ run(function()
     for _, v in {'stone_dao', 'iron_dao', 'diamond_dao', 'emerald_dao'} do
         LongJumpMethods[v] = LongJumpMethods.wood_dao
     end
-    for _, hammer in {'jade_hammer_1', 'jade_hammer_2', 'jade_hammer_3'} do
-        LongJumpMethods[hammer] = LongJumpMethods.jadeHammer
-    end
-    LongJumpMethods.void_axe = LongJumpMethods.jadeHammer
+    LongJumpMethods.void_axe = LongJumpMethods.jade_hammer
     LongJumpMethods.siege_tnt = LongJumpMethods.tnt
     LongJumpMethods.pirate_gunpowder_barrel = LongJumpMethods.tnt
     
@@ -16228,7 +16225,7 @@ run(function()
     })
 
     Streamer = AutoElder:CreateToggle({
-		Name = 'Legit interaction',
+    	Name = 'Streamer mode',
     	Tooltip = 'Useful for when ur screensharing',
     	Function = function(call)
     		pcall(function()
@@ -17211,7 +17208,7 @@ run(function()
 
     Limit = AutoMetal:CreateToggle({Name = 'Limit to item'})
     StreamerMode = AutoMetal:CreateToggle({
-		Name = 'Legit interaction',
+    	Name = 'Streamer mode',
     	Function = function(call)
     		pcall(function()
     			Duration.Object.Visible = not call
@@ -17632,7 +17629,7 @@ run(function()
     })
 
     Streamer = AutoStar:CreateToggle({
-		Name = 'Legit interaction',
+    	Name = 'Streamer mode',
     	Function = function(call)
     		pcall(function()
     			Delay.Object.Visible = not call
