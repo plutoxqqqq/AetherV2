@@ -37694,3 +37694,167 @@ run(function()
         end
     })
 end)
+
+-- my own modules
+
+
+--[[
+    CeilingBypass
+    Exploits the ceiling‑clamping mechanic to prevent anti‑cheat lagback.
+    When upward velocity exceeds the threshold, a collidable part is briefly placed
+    above the head, forcing a legal stop. The part is then removed.
+]]
+run(function()
+    local CeilingBypass
+    local VelocityThreshold
+    local BlockOffset
+    local Lifetime
+    local Enabled
+
+    local ceilingPart = nil
+    local active = false
+    local frameConnection = nil
+
+    -- Create or reuse the ceiling part
+    local function getCeilingPart()
+        if ceilingPart and ceilingPart.Parent then
+            return ceilingPart
+        end
+        local part = Instance.new("Part")
+        part.Name = "CeilingBypassPart"
+        part.Size = Vector3.new(4, 0.2, 4)   -- wide and thin
+        part.Anchored = true
+        part.CanCollide = true
+        part.Transparency = 1
+        part.Material = Enum.Material.SmoothPlastic
+        part.CanQuery = false
+        part.Parent = workspace
+        ceilingPart = part
+        return part
+    end
+
+    -- Deactivate the shield
+    local function deactivate()
+        if ceilingPart then
+            ceilingPart.CanCollide = false
+            ceilingPart.CFrame = CFrame.new(0, -9999, 0)
+        end
+        active = false
+    end
+
+    -- Activate shield: place part above head for one frame
+    local function activate(headPosition)
+        if active then return end
+        local part = getCeilingPart()
+        local headTop = headPosition + Vector3.new(0, 0.5, 0)  -- top of head
+        part.CFrame = CFrame.new(headTop + Vector3.new(0, BlockOffset.Value, 0))
+        part.CanCollide = true
+        active = true
+        -- Deactivate after a very short time (the physics tick)
+        task.delay(Lifetime.Value, function()
+            if CeilingBypass and CeilingBypass.Enabled then
+                deactivate()
+            end
+        end)
+    end
+
+    -- Main loop: runs every frame and checks velocity
+    local function onHeartbeat()
+        if not CeilingBypass.Enabled then
+            deactivate()
+            return
+        end
+        if not entitylib.isAlive then
+            deactivate()
+            return
+        end
+        local root = entitylib.character.RootPart
+        if not root then
+            deactivate()
+            return
+        end
+        local head = entitylib.character.Head
+        if not head then
+            deactivate()
+            return
+        end
+
+        local velY = root.AssemblyLinearVelocity.Y
+        if velY > VelocityThreshold.Value then
+            activate(head.Position)
+        else
+            deactivate()
+        end
+    end
+
+    CeilingBypass = vape.Categories.Exploits:CreateModule({
+        Name = "CeilingBypass",
+        Tooltip = "Prevents lagback by creating a temporary ceiling above your head when you jump too high",
+        Function = function(callback)
+            if callback then
+                active = false
+                -- Clean up any old part
+                if ceilingPart then
+                    ceilingPart:Destroy()
+                    ceilingPart = nil
+                end
+                -- Start the frame loop
+                if frameConnection then
+                    frameConnection:Disconnect()
+                end
+                frameConnection = runService.Heartbeat:Connect(onHeartbeat)
+                CeilingBypass:Clean(function()
+                    deactivate()
+                    if frameConnection then
+                        frameConnection:Disconnect()
+                        frameConnection = nil
+                    end
+                    if ceilingPart then
+                        ceilingPart:Destroy()
+                        ceilingPart = nil
+                    end
+                end)
+            else
+                deactivate()
+                if frameConnection then
+                    frameConnection:Disconnect()
+                    frameConnection = nil
+                end
+                if ceilingPart then
+                    ceilingPart:Destroy()
+                    ceilingPart = nil
+                end
+            end
+        end
+    })
+
+    -- Options
+    VelocityThreshold = CeilingBypass:CreateSlider({
+        Name = "Velocity Threshold",
+        Min = 30,
+        Max = 120,
+        Default = 55,
+        Suffix = " studs/s",
+        Tooltip = "Upward speed above which the ceiling activates. Set just above your natural jump power."
+    })
+    BlockOffset = CeilingBypass:CreateSlider({
+        Name = "Ceiling Offset",
+        Min = 0.05,
+        Max = 0.5,
+        Default = 0.1,
+        Decimal = 2,
+        Suffix = " studs",
+        Tooltip = "How far above the head the ceiling part is placed. Smaller = catches earlier."
+    })
+    Lifetime = CeilingBypass:CreateSlider({
+        Name = "Part Lifetime",
+        Min = 0.02,
+        Max = 0.2,
+        Default = 0.05,
+        Decimal = 3,
+        Suffix = " seconds",
+        Tooltip = "How long the ceiling part remains collidable. It only needs one physics tick."
+    })
+end)
+
+
