@@ -1399,7 +1399,30 @@ run(function()
 		local legitCheck = type(wallcheck) == 'function' and wallcheck or nil
 		local visited, unvisited, distances, air, path = {}, {{0, blockpos, 0}}, {[blockpos] = 0}, {}, {}
 		local depths, visibility = {[blockpos] = 0}, {}
-
+		local function push(value)
+			table.insert(unvisited, value)
+			local index = #unvisited
+			while index > 1 do
+				local parent = math.floor(index / 2)
+				if unvisited[parent][1] <= value[1] then break end
+				unvisited[index], index = unvisited[parent], parent
+			end
+			unvisited[index] = value
+		end
+		local function pop()
+			local root, tail = unvisited[1], table.remove(unvisited)
+			if #unvisited > 0 then
+				local index = 1
+				while index * 2 <= #unvisited do
+					local child = index * 2
+					if child < #unvisited and unvisited[child + 1][1] < unvisited[child][1] then child += 1 end
+					if unvisited[child][1] >= tail[1] then break end
+					unvisited[index], index = unvisited[child], child
+				end
+				unvisited[index] = tail
+			end
+			return root
+		end
 
 		local function isNodeVisible(pos)
 			if visibility[pos] == nil then
@@ -1409,9 +1432,9 @@ run(function()
 		end
 
 		for _ = 1, (legitCheck and 300 or 10000) do
-			local _, node = next(unvisited)
+			local node = pop()
 			if not node then break end
-			table.remove(unvisited, 1)
+			if node[1] ~= distances[node[2]] then continue end
 			visited[node[2]] = true
 
 			for _, side in sides do
@@ -1434,7 +1457,7 @@ run(function()
 
 				local curdist = (method and method(block, side) or getBlockHits(block, side)) + node[1]
 				if curdist < (distances[side] or math.huge) then
-					table.insert(unvisited, {curdist, side, node[3] + 1})
+					push({curdist, side, node[3] + 1})
 					distances[side] = curdist
 					depths[side] = node[3] + 1
 					path[side] = node[2]
@@ -1470,17 +1493,6 @@ run(function()
 			end
 		end
 
-		-- Match the reference Legit fallback without starting another search.
-		if not pos and legitCheck then
-			local depth = math.huge
-			for node, dcost in distances do
-				if node ~= blockpos and isNodeVisible(node) then
-					local d = depths[node]
-					if d < depth or (d == depth and dcost < cost) then pos, cost, depth = node, dcost, d end
-				end
-			end
-		end
-
 		if pos then
 			cache[blockpos] = {
 				pos,
@@ -1492,6 +1504,7 @@ run(function()
 		end
 		return nil
 	end
+	bedwars.calculateBreakPath = calculatePath
 
 	bedwars.placeBlock = function(pos, item)
 		if getItem(item) then
@@ -15060,7 +15073,7 @@ end)
 
 run(function()
     local QuickChatWheel, AllMessages, TeamMessages, Cooldown
-    local overlay, nativeWheel, page, lastSend, wheelHeld = nil, nil, 1, 0, false
+    local overlay, nativeWheel, page, lastSend = nil, nil, 1, 0
     local function entries()
         local result = {}
         for _, message in AllMessages.ListEnabled do table.insert(result, {Text = message, Team = false}) end
@@ -15079,24 +15092,10 @@ run(function()
             replicatedStorage.DefaultChatSystemChatEvents.SayMessageRequest:FireServer(entry.Text, entry.Team and 'Team' or 'All')
         end
     end
-    local function wheelCandidate(object)
-        if not object:IsA('GuiObject') then return false end
-        local name = object.Name:lower()
-        -- BedWars has used EmoteWheel, EmoteMenu and ShortcutWheel across UI revisions.
-        return (name:find('emote') and (name:find('wheel') or name:find('menu'))) or name:find('shortcutwheel')
-    end
     local function findNative()
         for _, object in lplr.PlayerGui:GetDescendants() do
-            if wheelCandidate(object) then return object end
+            if object:IsA('GuiObject') and object.Name:lower():find('emote') and object.Name:lower():find('wheel') then return object end
         end
-    end
-    local function nativeVisible()
-        local object = nativeWheel
-        while object and object ~= lplr.PlayerGui do
-            if object:IsA('GuiObject') and not object.Visible then return false end
-            object = object.Parent
-        end
-        return nativeWheel ~= nil and nativeWheel.Parent ~= nil
     end
     local function render()
         if not overlay then return end
@@ -15124,30 +15123,16 @@ run(function()
     QuickChatWheel = vape.Categories.Utility:CreateModule({
         Name = 'QuickChatWheel',
         Function = function(enabled)
-            if not enabled then wheelHeld = false; nativeWheel = nil; if overlay then overlay:Destroy(); overlay = nil end return end
+            if not enabled then if overlay then overlay:Destroy(); overlay = nil end return end
             overlay = Instance.new('Frame'); overlay.Name = 'AetherQuickChatOuterRing'; overlay.BackgroundTransparency = 1; overlay.Visible = false; overlay.ZIndex = 20; overlay.Parent = vape.gui; render()
-            local function updateVisible()
-                if overlay then overlay.Visible = wheelHeld or nativeVisible() end
+            local function refreshNative()
+                nativeWheel = findNative()
+                overlay.Visible = nativeWheel ~= nil and nativeWheel.Visible
             end
-            nativeWheel = findNative()
-            updateVisible()
-            -- Discovery is event-driven. The previous RenderStepped fallback walked every PlayerGui
-            -- descendant every frame whenever detection missed, which caused the wheel's extreme lag.
-            QuickChatWheel:Clean(lplr.PlayerGui.DescendantAdded:Connect(function(object)
-                if not nativeWheel and wheelCandidate(object) then nativeWheel = object; updateVisible() end
-            end))
-            QuickChatWheel:Clean(lplr.PlayerGui.DescendantRemoving:Connect(function(object)
-                if object == nativeWheel then nativeWheel = nil; updateVisible() end
-            end))
-            QuickChatWheel:Clean(inputService.InputBegan:Connect(function(input, processed)
-                if not processed and input.KeyCode == Enum.KeyCode.T then wheelHeld = true; updateVisible() end
-            end))
-            QuickChatWheel:Clean(inputService.InputEnded:Connect(function(input)
-                if input.KeyCode == Enum.KeyCode.T then wheelHeld = false; updateVisible() end
-            end))
-            QuickChatWheel:Clean(runService.Heartbeat:Connect(function()
-                -- Visibility checks only follow a handful of ancestors and never allocate a new list.
-                updateVisible()
+            QuickChatWheel:Clean(lplr.PlayerGui.DescendantAdded:Connect(function() task.defer(refreshNative) end))
+            QuickChatWheel:Clean(lplr.PlayerGui.DescendantRemoving:Connect(function(object) if object == nativeWheel then nativeWheel = nil; overlay.Visible = false end end))
+            QuickChatWheel:Clean(runService.RenderStepped:Connect(function()
+                if not nativeWheel or not nativeWheel.Parent then refreshNative() else overlay.Visible = nativeWheel.Visible end
             end))
             QuickChatWheel:Clean(inputService.InputChanged:Connect(function(input)
                 if overlay.Visible and input.UserInputType == Enum.UserInputType.MouseWheel and input.Position.Z ~= 0 then page += input.Position.Z > 0 and -1 or 1; render() end
@@ -26617,7 +26602,7 @@ end)
 run(function()
 	local Breaker, Mode, Range, Angle, AutoTool, BreakSpeed, UpdateRate, Custom
 	local Bed, Tesla, Hive, LuckyBlock, IronOre, Effect, CustomHealth, Animation, SelfBreak, InstantBreak, LimitItem, BreakerType
-	local generation, lock, pending, nextHit, nextScan, nextValidate = 0, nil, false, 0, 0, 0
+	local generation, lock, pending, nextHit = 0, nil, false, 0
 	local visuals = {}
 	local healthVisual
 	local draw
@@ -26722,27 +26707,30 @@ run(function()
 		end
 		return false
 	end
-	-- Target acquisition deliberately does no pathfinding. The reference Breaker picked a block
-	-- cheaply, then asked breakBlock for a way in only for that one block. Keep the scan bounded so
-	-- a large tagged-block collection cannot turn one acquisition pass into a frame hitch.
+	local function compute(block, legit)
+		if legit and not visible(block) then return end
+		local method = legit and breakmethods[Mode.Value] or breakmethods.Health
+		local entry, cost, path, depth = bedwars.calculateBreakPath(block, block.Position, method, Angle.Value, legit and visible or nil, nil)
+		if not entry then return end
+		local route = routeFrom(entry, path, block.Position)
+		if not route or routeOwnedBySelf(route) then return end
+		return {Final = block, Entry = entry, Path = path, Route = route, CurrentIndex = 1, Cost = cost or math.huge, Hits = depth or math.huge, Score = legit and (Mode.Value == 'Health' and health(block) or (block.Position - entitylib.character.RootPart.Position).Magnitude) or (cost or math.huge)}
+	end
 	local function choose()
 		local position = entitylib.character.RootPart.Position
-		local legit, inspected = BreakerType.Value == 'Legit', 0
+		local legit = BreakerType.Value == 'Legit'
 		for _, category in priority do
 			if category.Option() then
-				local best, bestScore
-				for _, block in categoryBlocks(category) do
-					inspected += 1
-					if inspected > 128 then break end
-					if breakable(block, position) and (SelfBreak.Enabled or tonumber(block:GetAttribute('PlacedByUserId')) ~= lplr.UserId) and (not legit or visible(block)) then
-						local score = Mode.Value == 'Health' and -health(block) or (block.Position - position).Magnitude
-						if not bestScore or score < bestScore then best, bestScore = block, score end
-					end
-				end
-				if best then
-					return {Final = best, Route = {best.Position}, CurrentIndex = 1, Category = category.Name, Score = bestScore}
-				end
-				if inspected > 128 then break end
+				local candidates = {}
+				for _, block in categoryBlocks(category) do if breakable(block, position) then local candidate = compute(block, legit); if candidate then table.insert(candidates, candidate) end end end
+				table.sort(candidates, function(a, b)
+					if a.Score ~= b.Score then return a.Score < b.Score end
+					local ap, bp = a.Final.Position, b.Final.Position
+					if ap.X ~= bp.X then return ap.X < bp.X end
+					if ap.Y ~= bp.Y then return ap.Y < bp.Y end
+					return ap.Z < bp.Z
+				end)
+				if candidates[1] then candidates[1].Category = category.Name; return candidates[1] end
 			end
 		end
 	end
@@ -26806,23 +26794,14 @@ run(function()
 		end
 	end
 	local function hitBlock(block, token)
-		nextHit = tick() + .1
 		equipTool(block)
 		if not itemAllowed(block) then return end
-		local entry, path, final, request = bedwars.breakBlock(block,
+		local _, _, _, request = bedwars.breakBlock(block,
 			function() return Breaker.Enabled and token == generation and Effect.Enabled end,
 			function() return Breaker.Enabled and token == generation and Effect.Enabled and Animation.Enabled end,
-			CustomHealth.Enabled and customHealthbar or nil, AutoTool.Enabled,
-			breakmethods[Mode.Value], Angle.Value, BreakerType.Value == 'Legit' and visible or nil)
-		if entry and path and final and lock then
-			local route = routeFrom(entry, path, final)
-			if route and not routeOwnedBySelf(route) then lock.Route, lock.CurrentIndex = route, 1; draw() end
-		end
+			CustomHealth.Enabled and customHealthbar or nil, AutoTool.Enabled, breakmethods.Health, Angle.Value, BreakerType.Value == 'Legit' and visible or nil)
 		if not request then nextHit = tick() + .1; return end
-		pending = true
-		-- Update Rate controls only the cheap request loop. Graph/path discovery is capped at ten
-		-- attempts per second even with Instant Break and a 120 Hz configured update rate.
-		nextHit = tick() + (InstantBreak.Enabled and .1 or math.max(BreakSpeed.Value, .1))
+		pending = true; nextHit = tick() + (InstantBreak.Enabled and .03 or math.max(BreakSpeed.Value, 0.01))
 		local completed = false
 		local function finish(result)
 			if token == generation then
@@ -26840,25 +26819,17 @@ run(function()
 		if not enabled then return end
 		task.spawn(function()
 			while Breaker.Enabled and token == generation do
-				if not entitylib.isAlive then unlock(); nextScan = tick() + .5; task.wait(.05); continue end
-				if lock and tick() >= nextValidate then
-					nextValidate = tick() + .1
-					if not lockValid() then unlock(); nextScan = tick() + .15 end
-				end
-				if not lock and tick() >= nextScan then
-					lock = choose()
-					nextScan = tick() + (lock and .25 or .75)
-					draw()
-				end
+				if not entitylib.isAlive then unlock(); task.wait(.05); continue end
+				if not lockValid() then unlock(); lock = choose(); draw() end
 				local block = currentBlock()
 				if block and not pending and tick() >= nextHit then hitBlock(block, token) end
 				task.wait(1 / math.max(UpdateRate.Value, 1))
 			end
 			unlock()
 		end)
-	end, Tooltip = 'Breaks prioritized targets with a bounded, locked path', ExtraText = function() return BreakerType.Value..(lock and ' | '..lock.Category..' '..lock.CurrentIndex..'/'..#lock.Route or ' | Searching') end})
+	end, Tooltip = 'Breaks prioritized targets with locked legitimate or weighted paths', ExtraText = function() return BreakerType.Value..(lock and ' | '..lock.Category..' '..lock.CurrentIndex..'/'..#lock.Route or ' | Searching') end})
 	local function settingsChanged() unlock() end
-	Mode = Breaker:CreateDropdown({Name = 'Break mode', List = {'Health', 'Distance'}, Default = 'Health', Tooltip = 'Health selects the strongest target; Distance selects the nearest', Function = settingsChanged})
+	Mode = Breaker:CreateDropdown({Name = 'Break mode', List = {'Health', 'Distance'}, Default = 'Health', Tooltip = 'Legit selection only; Blatant always chooses the cheapest path', Function = settingsChanged})
 	Range = Breaker:CreateSlider({Name = 'Break range', Min = 1, Max = 30, Default = 30, Suffix = function(value) return value == 1 and 'stud' or 'studs' end, Function = settingsChanged})
 	BreakSpeed = Breaker:CreateSlider({Name = 'Break speed', Min = 0, Max = .3, Default = .25, Decimal = 100, Suffix = 'seconds'})
 	Angle = Breaker:CreateSlider({Name = 'Max angle', Min = 1, Max = 360, Default = 120, Function = settingsChanged})
@@ -26875,7 +26846,7 @@ run(function()
 	SelfBreak = Breaker:CreateToggle({Name = 'Self Break', Function = settingsChanged})
 	InstantBreak = Breaker:CreateToggle({Name = 'Instant Break', Tooltip = 'Uses the native result cadence without adding a retry freeze'})
 	AutoTool = Breaker:CreateToggle({Name = 'Auto Tool', Tooltip = 'Equips the strongest compatible tool before Limit to items is checked'})
-	BreakerType = Breaker:CreateDropdown({Name = 'Breaker Type', List = {'Blatant', 'Legit'}, Default = 'Blatant', Tooltip = 'Blatant may break through cover; Legit only selects visible targets', Function = settingsChanged})
+	BreakerType = Breaker:CreateDropdown({Name = 'Breaker Type', List = {'Blatant', 'Legit'}, Default = 'Blatant', Tooltip = 'Blatant uses cheapest weighted paths; Legit only selects visible targets', Function = settingsChanged})
 	LimitItem = Breaker:CreateToggle({Name = 'Limit to items', Tooltip = 'Only breaks after the compatible tool is equipped'})
 end)
 
