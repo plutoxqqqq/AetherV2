@@ -8405,6 +8405,9 @@ function mainapi:Load(skipgui, profile)
 						if merged.Options[name] == nil then merged.Options[name] = value end
 					end
 				end
+				-- Retire the legacy key after merging it so the next save cannot carry two
+				-- independent module records forward and accidentally re-enable the alias.
+				savedata.Modules[alias] = nil
 			end
 			if merged then savedata.Modules[target] = merged end
 		end
