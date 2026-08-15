@@ -3128,13 +3128,7 @@ function mainapi:SortModules()
 	end
 
 	for _, sort in sorting do
-		table.sort(sort, function(a, b)
-			local fava, favb = self.Modules[a].Favourited, self.Modules[b].Favourited
-			if (fava and true) ~= (favb and true) then
-				return fava and true or false
-			end
-			return a < b
-		end)
+		table.sort(sort)
 		for i, v in sort do
 			local module = self.Modules[v]
 			module.Index = i
@@ -3491,6 +3485,21 @@ function mainapi:CreateGUI()
 		button.Parent = bar
 		addCorner(button, UDim.new(1, 0))
 		addTooltip(button, 'Open overlays menu')
+		local homebutton = Instance.new('TextButton')
+		homebutton.Name = 'AetherV2Home'
+		homebutton.Size = UDim2.fromOffset(22, 22)
+		homebutton.Position = UDim2.fromOffset(8, 8)
+		homebutton.BackgroundTransparency = 1
+		homebutton.AutoButtonColor = false
+		homebutton.Text = '⌂'
+		homebutton.TextColor3 = color.Light(uipallet.Main, 0.37)
+		homebutton.TextSize = 18
+		homebutton.FontFace = uipallet.Font
+		homebutton.Parent = bar
+		addTooltip(homebutton, 'AetherV2 Home')
+		homebutton.MouseButton1Click:Connect(function()
+			if mainapi.Online then mainapi.Online:Open() end
+		end)
 		local shadow = Instance.new('TextButton')
 		shadow.Name = 'Shadow'
 		shadow.Size = UDim2.new(1, 0, 1, -5)
@@ -4445,7 +4454,9 @@ function mainapi:CreateCategory(categorysettings)
 		mainapi:Remove(modulesettings.Name)
 		local moduleapi = {
 			Enabled = false,
-			Favourited = false,
+			Favorited = false,
+			Favourited = false, -- legacy config/API alias
+			FavoriteIndex = nil,
 			Options = {},
 			Bind = {},
 			Tags = {},
@@ -4553,7 +4564,7 @@ function mainapi:CreateCategory(categorysettings)
 		favsheen.Color = ColorSequence.new(favGold, Color3.fromRGB(214, 148, 34))
 		favsheen.Parent = favstroke
 		local favourite = Instance.new('TextButton')
-		favourite.Name = 'Favourite'
+		favourite.Name = 'Favorite'
 		favourite.Size = UDim2.fromOffset(20, 20)
 		favourite.Position = UDim2.new(1, -60, 0, 10)
 		favourite.AnchorPoint = Vector2.new(1, 0)
@@ -4568,7 +4579,7 @@ function mainapi:CreateCategory(categorysettings)
 		favourite.FontFace = uipallet.Font
 		favourite.Parent = modulebutton
 		addCorner(favourite, UDim.new(1, 0))
-		addTooltip(favourite, 'Favourite (pins to top + adds to the Favourites tab)')
+		addTooltip(favourite, 'Favorite')
 		local favscale = Instance.new('UIScale')
 		favscale.Parent = favourite
 		-- instant skips the colour tween; used on bulk paths (config loads)
@@ -4637,7 +4648,8 @@ function mainapi:CreateCategory(categorysettings)
 			end)
 		end
 
-		function moduleapi:SetFavourite(state, silent)
+		function moduleapi:SetFavorite(state, silent)
+			local order = typeof(state) == 'number' and state or nil
 			state = state and true or false
 			-- Early-out when nothing changes: config loads call SetFavourite on
 			-- every module, and re-sorting all categories for each unchanged
@@ -4646,7 +4658,10 @@ function mainapi:CreateCategory(categorysettings)
 				updateFavouriteVisual(true)
 				return
 			end
+			self.Favorited = state
 			self.Favourited = state
+			self.FavoriteIndex = state and (order or ((mainapi.FavoriteCount or 0) + 1)) or nil
+			if self.FavoriteIndex then mainapi.FavoriteCount = math.max(mainapi.FavoriteCount or 0, self.FavoriteIndex) end
 			updateFavouriteVisual(silent)
 			mainapi:SortModules()
 			-- Hand the ordered favourites list + the Favourites tab to the central
@@ -4665,6 +4680,7 @@ function mainapi:CreateCategory(categorysettings)
 				playFavouriteBurst(state)
 			end
 		end
+		moduleapi.SetFavourite = moduleapi.SetFavorite
 		favourite.MouseEnter:Connect(function()
 			-- tweenstwo so this doesn't cancel the star colour tween, which is
 			-- keyed on the same object in the primary tween table.
@@ -4680,7 +4696,7 @@ function mainapi:CreateCategory(categorysettings)
 			}):Play()
 		end)
 		favourite.MouseButton1Click:Connect(function()
-			moduleapi:SetFavourite(not moduleapi.Favourited)
+			moduleapi:SetFavorite(not moduleapi.Favorited)
 		end)
 		local bindicon = Instance.new('ImageLabel')
 		bindicon.Name = 'Icon'
@@ -7425,18 +7441,30 @@ function mainapi:CreateSearch()
 		self.Legit.Window.Visible = true
 		self.Legit.Window.Position = UDim2.new(0.5, -350, 0.5, -194)
 	end)
-	search:GetPropertyChangedSignal('Text'):Connect(function()
+	local searchGeneration = 0
+	local searchResults = {}
+	local function clearSearchResults()
 		for _, v in children:GetChildren() do
 			if v:IsA('TextButton') then
 				v:Destroy()
 			end
 		end
-		if search.Text == '' then return end
+		table.clear(searchResults)
+	end
+	local function updateSearch(query, generation)
+		if generation ~= searchGeneration then return end
+		clearSearchResults()
+		if query == '' then return end
 
 		for i, v in self.Modules do
-			if i:lower():find(search.Text:lower()) then
+			if generation ~= searchGeneration then return end
+			-- Search text is not a Lua pattern. Besides producing surprising matches,
+			-- pattern metacharacters such as an unmatched '[' used to terminate this
+			-- callback and could take the executor UI down with it.
+			if i:lower():find(query, 1, true) then
 				local button = v.Object:Clone()
-				button.Bind:Destroy()
+				local bind = button:FindFirstChild('Bind')
+				if bind then bind:Destroy() end
 				button.MouseButton1Click:Connect(function()
 					v:Toggle()
 				end)
@@ -7461,18 +7489,38 @@ function mainapi:CreateSearch()
 				end)
 
 				button.Parent = children
-				task.spawn(function()
-					repeat
-						for _, v2 in {'Text', 'TextColor3', 'BackgroundColor3'} do
-							button[v2] = v.Object[v2]
-						end
-						button.UIGradient.Color = v.Object.UIGradient.Color
-						button.UIGradient.Enabled = v.Object.UIGradient.Enabled
-						button.Dots.Dots.ImageColor3 = v.Object.Dots.Dots.ImageColor3
-						task.wait()
-					until not button.Parent
-				end)
+				table.insert(searchResults, {button, v.Object})
 			end
+		end
+	end
+	search:GetPropertyChangedSignal('Text'):Connect(function()
+		searchGeneration += 1
+		local generation = searchGeneration
+		local query = search.Text:lower()
+		-- Coalesce rapid keystrokes. Rebuilding and cloning every module once per
+		-- character caused large allocation spikes on slower clients.
+		task.delay(0.05, function()
+			updateSearch(query, generation)
+		end)
+	end)
+	-- One throttled synchronizer replaces a render-rate coroutine per result.
+	-- Protected descendant lookups also tolerate modules with a custom row shape.
+	task.spawn(function()
+		while searchbkg.Parent do
+			for _, result in searchResults do
+				local button, source = result[1], result[2]
+				if button.Parent and source.Parent then
+					pcall(function()
+						button.Text = source.Text
+						button.TextColor3 = source.TextColor3
+						button.BackgroundColor3 = source.BackgroundColor3
+						button.UIGradient.Color = source.UIGradient.Color
+						button.UIGradient.Enabled = source.UIGradient.Enabled
+						button.Dots.Dots.ImageColor3 = source.Dots.Dots.ImageColor3
+					end)
+				end
+			end
+			task.wait(0.1)
 		end
 	end)
 	windowlist:GetPropertyChangedSignal('AbsoluteContentSize'):Connect(function()
@@ -8073,6 +8121,42 @@ function mainapi:CreateKits()
 	})
 end
 
+function mainapi:CreateOnline()
+	local api = {}
+	local window = Instance.new('Frame')
+	window.Name = 'AetherV2Home'
+	window.Size = UDim2.fromOffset(260, 190)
+	window.Position = UDim2.new(0.5, -130, 0.5, -95)
+	window.BackgroundColor3 = uipallet.Main
+	window.Visible = false
+	window.Parent = scaledgui
+	addBlur(window); addCorner(window); addWindowStroke(window); makeDraggable(window)
+	local title = Instance.new('TextLabel')
+	title.Size, title.Position = UDim2.new(1, -46, 0, 40), UDim2.fromOffset(12, 0)
+	title.BackgroundTransparency, title.Text = 1, 'AetherV2 Home'
+	title.TextColor3, title.TextSize, title.FontFace = uipallet.Text, 15, uipallet.Font
+	title.TextXAlignment, title.Parent = Enum.TextXAlignment.Left, window
+	local close = addCloseButton(window)
+	local description = Instance.new('TextLabel')
+	description.Size, description.Position = UDim2.new(1, -24, 0, 96), UDim2.fromOffset(12, 48)
+	description.BackgroundTransparency = 1
+	description.Text = 'Welcome to AetherV2.\n\nUse Search to find modules, Profiles to manage local and public configs, and the star on a module to add it to Favourites.'
+	description.TextColor3, description.TextSize, description.FontFace = color.Dark(uipallet.Text, 0.18), 13, uipallet.Font
+	description.TextWrapped, description.TextXAlignment, description.TextYAlignment = true, Enum.TextXAlignment.Left, Enum.TextYAlignment.Top
+	description.Parent = window
+	local status = Instance.new('TextLabel')
+	status.Size, status.Position = UDim2.new(1, -24, 0, 24), UDim2.new(0, 12, 1, -32)
+	status.BackgroundTransparency, status.Text = 1, 'Local client • no external account service'
+	status.TextColor3, status.TextSize, status.FontFace = color.Dark(uipallet.Text, 0.43), 11, uipallet.Font
+	status.TextXAlignment, status.Parent = Enum.TextXAlignment.Left, window
+	function api:Open() window.Visible = true end
+	function api:Close() window.Visible = false end
+	close.MouseButton1Click:Connect(function() api:Close() end)
+	mainapi:Clean(window)
+	self.Online = api
+	return api
+end
+
 function mainapi:CreateChangelogs()
 	local api = {}
 	local window = Instance.new('Frame')
@@ -8081,7 +8165,7 @@ function mainapi:CreateChangelogs()
 	addBlur(window); addCorner(window); makeDraggable(window)
 	local title = Instance.new('TextLabel')
 	title.Size, title.Position, title.BackgroundTransparency = UDim2.new(1, -47, 0, 40), UDim2.fromOffset(12, 0), 1
-	title.Text, title.TextColor3, title.TextSize, title.FontFace = 'Changelog — Latest Update', uipallet.Text, 14, uipallet.Font
+	title.Text, title.TextColor3, title.TextSize, title.FontFace = 'AetherV2 Update', uipallet.Text, 14, uipallet.Font
 	title.TextXAlignment, title.Parent = Enum.TextXAlignment.Left, window
 	local close = addCloseButton(window)
 	local notes = Instance.new('ScrollingFrame')
@@ -8092,13 +8176,21 @@ function mainapi:CreateChangelogs()
 	local body = Instance.new('TextLabel')
 	body.Size, body.Position, body.AutomaticSize = UDim2.new(1, -28, 0, 0), UDim2.fromOffset(14, 12), Enum.AutomaticSize.Y
 	body.BackgroundTransparency, body.RichText = 1, true
-	body.Text = [=[<b>AetherV2 refresh</b>
-• Added HitReg calculator with reversible Killaura tuning.
-• Added Krystal, Sigrid, Grim Reaper, and Zephyr compatibility to Fly and Speed.
-• Stabilized Target Info and repaired Breaker's automatic tool selection.
-• Added AutoClicker's attack toggle and hardcoded Auto modules for every remaining kit.
-• Replaced GodMode with Blatant DeathTP.
-• Removed BreakerV2, InfiniteFly, and MP3Player Spotify mode.]=]
+	body.Text = [=[<b><font color="#d378ff">BedWars</font></b>
+<font color="#63dc82">[+]</font> Added “MultiAction” to Exploits, allowing multiple actions at once, such as placing blocks while using Killaura.
+<font color="#63dc82">[+]</font> Added “AutoEnchant” to Inventory, which automatically repairs and uses the enchanting table.
+<font color="#63dc82">[+]</font> Added “QuickChatWheel” to Utility, which adds configurable text presets around BedWars’ emote wheel.
+<font color="#6aa9ff">[^]</font> Renamed DeathTP to “RecoveryTP”.
+<font color="#6aa9ff">[^]</font> Merged the visual modules into one highly customizable Render module named “Theme”.
+<font color="#ffd45e">[!]</font> Fixed Killaura not swinging faster with the Fury Potion.
+<font color="#ffd45e">[!]</font> Fixed StreamRemover and ACModView’s “Remove disguises”.
+<font color="#ff6969">[-]</font> Removed the standalone modules Atmosphere, TimeChanger, Shader, AuroraSky, StormMode, Bloom, AbyssalDepths, and IRLReplica.
+    Their functionality now exists in “Theme”.
+
+<b><font color="#d378ff">General</font></b>
+<font color="#63dc82">[+]</font> Added LowHealthVignette to Legit, displaying a subtle screen-edge warning at low health.
+<font color="#6aa9ff">[^]</font> Expanded the Keystrokes overlay with mouse-click and spacebar support.
+<font color="#6aa9ff">[^]</font> Slightly improved startup times through auto-execute.]=]
 	body.TextColor3, body.TextSize, body.LineHeight = Color3.fromRGB(170, 170, 170), 13, 1.25
 	body.FontFace, body.TextXAlignment, body.TextYAlignment, body.TextWrapped, body.Parent = Font.fromEnum(Enum.Font.Roboto), Enum.TextXAlignment.Left, Enum.TextYAlignment.Top, true, notes
 	close.MouseButton1Click:Connect(function() window.Visible = false end)
@@ -8274,6 +8366,7 @@ function mainapi:Load(skipgui, profile)
 		end
 
 		if not skipgui then
+			if guidata.Categories.Favourites and not guidata.Categories.Favorites then guidata.Categories.Favorites = guidata.Categories.Favourites end
 			self.Keybind = guidata.Keybind
 			for i, v in guidata.Categories do
 				local object = self.Categories[i]
@@ -8345,11 +8438,13 @@ function mainapi:Load(skipgui, profile)
 						if merged.Options[name] == nil then merged.Options[name] = value end
 					end
 				end
+				savedata.Modules[alias] = nil
 			end
 			if merged then savedata.Modules[target] = merged end
 		end
 		mergeModuleConfig('AutoClicker', {'AutoClickerV2'})
 		mergeModuleConfig('BlockIn', {'Block-In', 'BlockInV2'})
+		mergeModuleConfig('RecoveryTP', {'DeathTP'})
 
 		for i, v in savedata.Categories do
 			local object = self.Categories[i]
@@ -8401,8 +8496,8 @@ function mainapi:Load(skipgui, profile)
 			end
 			object:SetBind(v.Bind or {})
 			object.Object.Bind.Visible = #(v.Bind or {}) > 0
-			if object.SetFavourite then
-				object:SetFavourite(v.Favourited, true)
+			if object.SetFavorite then
+				object:SetFavorite(v.Favorited or v.Favourited, true)
 			end
 		end
 		-- Reinstate the saved order of the Favourites tab now that every module's
@@ -8628,7 +8723,8 @@ function mainapi:Save(newprofile)
 	for i, v in self.Modules do
 		savedata.Modules[i] = {
 			Enabled = v.Enabled,
-			Favourited = v.Favourited,
+			Favorited = v.Favorited and (v.FavoriteIndex or 1) or (v.Favourited and 1 or nil),
+			Favourited = v.Favorited or v.Favourited,
 			Bind = v.Bind.Button and {Mobile = true, X = v.Bind.Button.Position.X.Offset, Y = v.Bind.Button.Position.Y.Offset} or v.Bind,
 			Options = mainapi:SaveOptions(v, true)
 		}
@@ -8981,7 +9077,7 @@ mainapi:CreateCategory({
 })
 
 --[[
-	Favourites (rebuilt from scratch)
+	Favorites (adapted from the supplied reference implementation)
 
 	Everything favourite-related routes through one controller stored at
 	mainapi.Favourites. A module's star click / config load calls
@@ -9003,7 +9099,7 @@ mainapi:CreateCategory({
 do
 	local favGold = Color3.fromRGB(255, 200, 60)
 	local favCategory = mainapi:CreateCategory({
-		Name = 'Favourites',
+		Name = 'Favorites',
 		Icon = getcustomasset('aetherv2/assets/new/allowedicon.png'),
 		Size = UDim2.fromOffset(15, 14)
 	})
@@ -9014,6 +9110,7 @@ do
 		Rows = {}   -- [name] = {Object = TextButton, Connections = {RBXScriptConnection}}
 	}
 	mainapi.Favourites = controller
+	mainapi.Favorites = controller
 
 	-- Header row: a subtle section label with a live gold count on the right.
 	local header = Instance.new('Frame')
@@ -9377,6 +9474,7 @@ mainapi:Clean(targets.Update)
 
 mainapi:CreateLegit()
 mainapi:CreateKits()
+mainapi:CreateOnline()
 mainapi:CreateChangelogs()
 -- Route every `vape.Categories.Legit:CreateModule` / `vape.Categories.Kits:CreateModule`
 -- registration into the matching window (opened via its search-bar icon) instead of a
