@@ -8253,18 +8253,23 @@ end)
 
 run(function()
     local Theme, Preset, LockTime, ClockTime, RemoveClouds, Custom
-    local Brightness, Exposure, ShadowSoftness, Diffuse, Specular
+    local Brightness, Exposure, Shadows, ShadowSoftness, Diffuse, Specular, Latitude, Technology
     local Ambient, OutdoorAmbient, TopShift, BottomShift
     local AtmosphereEnabled, AtmosphereColor, AtmosphereDecay, Density, Offset, Glare, Haze
     local BloomEnabled, BloomIntensity, BloomSize, BloomThreshold
     local ColorEnabled, Tint, Saturation, Contrast, ColorBrightness
     local RaysEnabled, RaysIntensity, RaysSpread, DepthEnabled, FarIntensity, FocusDistance, NearIntensity
-    local CloudsEnabled, CloudCover, CloudDensity, CloudColor
+    local CloudsEnabled, CloudCover, CloudSize, CloudDensity, CloudTransparency, CloudColor
+	local SkyEnabled, Skybox, SunTexture, MoonTexture, Stars, SunSize, MoonSize
+	local WaterColor, WaterReflectance, WaterTransparency, WaterWaveSize, WaterWaveSpeed, BelowMapWater
     local created, preserved, lightingOriginal = {}, {}, {}
 	local cloudOriginal
+	local terrainOriginal = {}
+	local workspaceCloudOriginal = setmetatable({}, {__mode = 'k'})
     local applying = false
 
-    local lightingProperties = {'Ambient', 'Brightness', 'ColorShift_Bottom', 'ColorShift_Top', 'EnvironmentDiffuseScale', 'EnvironmentSpecularScale', 'ExposureCompensation', 'GlobalShadows', 'OutdoorAmbient', 'ShadowSoftness', 'ClockTime'}
+    local lightingProperties = {'Ambient', 'Brightness', 'ColorShift_Bottom', 'ColorShift_Top', 'EnvironmentDiffuseScale', 'EnvironmentSpecularScale', 'ExposureCompensation', 'GlobalShadows', 'OutdoorAmbient', 'ShadowSoftness', 'ClockTime', 'GeographicLatitude', 'Technology'}
+	local terrainProperties = {'WaterColor', 'WaterReflectance', 'WaterTransparency', 'WaterWaveSize', 'WaterWaveSpeed'}
     local effectClasses = {Sky = true, Atmosphere = true, BloomEffect = true, DepthOfFieldEffect = true, ColorCorrectionEffect = true, SunRaysEffect = true}
     local presets = {
         Default = {ClockTime = 14, Brightness = 2, Exposure = 0, Ambient = Color3.fromRGB(128,128,128), Outdoor = Color3.fromRGB(128,128,128), Atmosphere = false, Bloom = false},
@@ -8299,6 +8304,13 @@ run(function()
 			end
 		end
 		cloudOriginal = nil
+		local terrain = workspace:FindFirstChildOfClass('Terrain')
+		if terrain then for property, value in terrainOriginal do safeSet(terrain, property, value) end end
+		table.clear(terrainOriginal)
+		for object, state in workspaceCloudOriginal do
+			if object.Parent then object.Size, object.Transparency = state.Size, state.Transparency end
+		end
+		table.clear(workspaceCloudOriginal)
     end
     local function add(class, properties)
         local object = Instance.new(class)
@@ -8309,9 +8321,9 @@ run(function()
         return object
     end
     local function profileValue(profile, key, custom)
-        if Custom.Enabled then return custom end
-        local value = profile[key]
-        return value == nil and custom or value
+		-- Presets populate the controls; rendering always reads those controls so every
+		-- preset remains manually adjustable without requiring a second mode switch.
+		return custom
     end
     local function apply()
         if not Theme or not Theme.Enabled or applying then return end
@@ -8324,7 +8336,9 @@ run(function()
         safeSet(lightingService, 'ShadowSoftness', ShadowSoftness.Value)
         safeSet(lightingService, 'EnvironmentDiffuseScale', Diffuse.Value)
         safeSet(lightingService, 'EnvironmentSpecularScale', Specular.Value)
-        safeSet(lightingService, 'GlobalShadows', true)
+        safeSet(lightingService, 'GlobalShadows', Shadows.Enabled)
+		safeSet(lightingService, 'GeographicLatitude', Latitude.Value)
+		if Technology.Value ~= 'Current' then safeSet(lightingService, 'Technology', Enum.Technology[Technology.Value]) end
         safeSet(lightingService, 'Ambient', profileValue(profile, 'Ambient', colorValue(Ambient)))
         safeSet(lightingService, 'OutdoorAmbient', profileValue(profile, 'Outdoor', colorValue(OutdoorAmbient)))
         safeSet(lightingService, 'ColorShift_Top', colorValue(TopShift))
@@ -8339,26 +8353,81 @@ run(function()
         if ColorEnabled.Enabled then add('ColorCorrectionEffect', {TintColor = colorValue(Tint), Saturation = profileValue(profile, 'Saturation', Saturation.Value), Contrast = profileValue(profile, 'Contrast', Contrast.Value), Brightness = ColorBrightness.Value}) end
         if RaysEnabled.Enabled then add('SunRaysEffect', {Intensity = RaysIntensity.Value, Spread = RaysSpread.Value}) end
         if DepthEnabled.Enabled then add('DepthOfFieldEffect', {FarIntensity = FarIntensity.Value, FocusDistance = FocusDistance.Value, InFocusRadius = FocusDistance.Value, NearIntensity = NearIntensity.Value}) end
+		if SkyEnabled.Enabled then
+			local texture = Skybox.ListEnabled[1] or ''
+			add('Sky', {
+				SkyboxBk = texture, SkyboxDn = texture, SkyboxFt = texture,
+				SkyboxLf = texture, SkyboxRt = texture, SkyboxUp = texture,
+				SunTextureId = SunTexture.ListEnabled[1] or '', MoonTextureId = MoonTexture.ListEnabled[1] or '',
+				StarCount = Stars.Value, SunAngularSize = SunSize.Value, MoonAngularSize = MoonSize.Value
+			})
+		end
 
         local terrain = workspace:FindFirstChildOfClass('Terrain')
         if terrain then
+			safeSet(terrain, 'WaterColor', colorValue(WaterColor))
+			safeSet(terrain, 'WaterReflectance', WaterReflectance.Value)
+			safeSet(terrain, 'WaterTransparency', WaterTransparency.Value)
+			safeSet(terrain, 'WaterWaveSize', WaterWaveSize.Value)
+			safeSet(terrain, 'WaterWaveSpeed', WaterWaveSpeed.Value)
             local clouds = terrain:FindFirstChildOfClass('Clouds')
             if RemoveClouds.Enabled then
                 if clouds then safeSet(clouds, 'Enabled', false) end
             elseif CloudsEnabled.Enabled then
                 if not clouds then clouds = Instance.new('Clouds'); clouds.Name = 'AetherThemeClouds'; clouds.Parent = terrain; table.insert(created, clouds) end
-                safeSet(clouds, 'Enabled', true); safeSet(clouds, 'Cover', CloudCover.Value); safeSet(clouds, 'Density', CloudDensity.Value); safeSet(clouds, 'Color', colorValue(CloudColor))
+                safeSet(clouds, 'Enabled', true); safeSet(clouds, 'Cover', CloudCover.Value); safeSet(clouds, 'Density', CloudDensity.Value * (1 - CloudTransparency.Value)); safeSet(clouds, 'Color', colorValue(CloudColor))
             end
         end
+		if BelowMapWater.Enabled and workspace.FallenPartsDestroyHeight > -50000 then
+			local water = Instance.new('Part')
+			water.Name = 'AetherThemeBelowMapWater'
+			water.Anchored, water.CanCollide, water.CanTouch, water.CanQuery = true, false, false, false
+			water.Material, water.Color, water.Transparency = Enum.Material.Water, colorValue(WaterColor), WaterTransparency.Value
+			water.Size = Vector3.new(2048, math.max(WaterWaveSize.Value * 10, 1), 2048)
+			water.Position = Vector3.new(0, workspace.FallenPartsDestroyHeight + 24, 0)
+			water.Parent = workspace
+			table.insert(created, water)
+		end
+		for _, object in workspace:GetDescendants() do
+			if object:IsA('BasePart') and object.Name:lower():find('cloud', 1, true) then
+				workspaceCloudOriginal[object] = workspaceCloudOriginal[object] or {Size = object.Size, Transparency = object.Transparency}
+				local original = workspaceCloudOriginal[object]
+				object.Size = original.Size * CloudSize.Value
+				object.Transparency = RemoveClouds.Enabled and 1 or math.clamp(original.Transparency + CloudTransparency.Value, 0, 1)
+			end
+		end
         applying = false
     end
     local function changed() if Theme and Theme.Enabled then apply() end end
+	local function populatePreset(name)
+		local profile = presets[name]
+		if not profile or not ClockTime then changed(); return end
+		applying = true
+		for option, key in {
+			[ClockTime] = 'ClockTime', [Brightness] = 'Brightness', [Exposure] = 'Exposure',
+			[Density] = 'Density', [Offset] = 'Offset', [Glare] = 'Glare', [Haze] = 'Haze',
+			[BloomIntensity] = 'BloomIntensity', [BloomSize] = 'BloomSize', [BloomThreshold] = 'BloomThreshold',
+			[Saturation] = 'Saturation', [Contrast] = 'Contrast'
+		} do
+			if profile[key] ~= nil then option:SetValue(profile[key]) end
+		end
+		for option, key in {[Ambient] = 'Ambient', [OutdoorAmbient] = 'Outdoor', [AtmosphereColor] = 'AtmosphereColor', [AtmosphereDecay] = 'Decay'} do
+			local value = profile[key]
+			if value then local h, s, v = value:ToHSV(); option:SetValue(h, s, v) end
+		end
+		for option, key in {[AtmosphereEnabled] = 'Atmosphere', [BloomEnabled] = 'Bloom'} do
+			if profile[key] ~= nil and option.Enabled ~= profile[key] then option:Toggle() end
+		end
+		applying = false
+		changed()
+	end
 
     Theme = vape.Categories.Render:CreateModule({Name = 'Theme', Function = function(enabled)
         if enabled then
             for _, property in lightingProperties do remember(lightingService, property, lightingOriginal) end
             for _, object in lightingService:GetChildren() do if effectClasses[object.ClassName] then table.insert(preserved, {Object = object, Parent = object.Parent}); object.Parent = game end end
             local terrain = workspace:FindFirstChildOfClass('Terrain')
+			if terrain then for _, property in terrainProperties do remember(terrain, property, terrainOriginal) end end
             local clouds = terrain and terrain:FindFirstChildOfClass('Clouds')
 			if clouds then
 				cloudOriginal = {Object = clouds, Properties = {}}
@@ -8368,17 +8437,24 @@ run(function()
 			end
             apply()
             Theme:Clean(lightingService:GetPropertyChangedSignal('ClockTime'):Connect(function() if Theme.Enabled and LockTime.Enabled and not applying then apply() end end))
+			Theme:Clean(lplr.CharacterAdded:Connect(function() task.defer(apply) end))
+			Theme:Clean(workspace.DescendantAdded:Connect(function(object)
+				if not object.Name:find('AetherTheme', 1, true) and (object:IsA('Clouds') or (object:IsA('BasePart') and object.Name:lower():find('cloud', 1, true))) then task.defer(apply) end
+			end))
         else restore() end
     end, Tooltip = 'One customizable world-lighting, atmosphere, sky and post-processing theme'})
-    Preset = Theme:CreateDropdown({Name = 'Preset', List = {'Default','Shader','Realistic','Blavish','Aurora','Storm','Abyssal','Sunset','Night'}, Default = 'Realistic', Function = changed})
-    Custom = Theme:CreateToggle({Name = 'Custom overrides', Tooltip = 'Use every slider and color below instead of the selected preset values', Function = changed})
+    Preset = Theme:CreateDropdown({Name = 'Preset', List = {'Realistic','Blavish','Custom','Default','Shader','Aurora','Storm','Abyssal','Sunset','Night'}, Default = 'Realistic', Function = function(value) task.defer(populatePreset, value) end})
+    Custom = Theme:CreateToggle({Name = 'Manual adjustments', Default = true, Tooltip = 'Preset controls remain editable; retained for older Theme configurations', Function = changed})
     LockTime = Theme:CreateToggle({Name = 'Lock time', Default = true, Function = changed})
     ClockTime = Theme:CreateSlider({Name = 'Clock time', Min = 0, Max = 24, Default = 14, Decimal = 10, Suffix = 'h', Function = changed})
     Brightness = Theme:CreateSlider({Name = 'Brightness', Min = 0, Max = 10, Default = 2, Decimal = 100, Function = changed})
     Exposure = Theme:CreateSlider({Name = 'Exposure', Min = -3, Max = 3, Default = 0, Decimal = 100, Function = changed})
+    Shadows = Theme:CreateToggle({Name = 'Shadows', Default = true, Function = changed})
     ShadowSoftness = Theme:CreateSlider({Name = 'Shadow softness', Min = 0, Max = 1, Default = .2, Decimal = 100, Function = changed})
     Diffuse = Theme:CreateSlider({Name = 'Diffuse scale', Min = 0, Max = 1, Default = .8, Decimal = 100, Function = changed})
     Specular = Theme:CreateSlider({Name = 'Specular scale', Min = 0, Max = 1, Default = .8, Decimal = 100, Function = changed})
+	Latitude = Theme:CreateSlider({Name = 'Latitude', Min = -90, Max = 90, Default = 41, Decimal = 10, Function = changed})
+	Technology = Theme:CreateDropdown({Name = 'Technology', List = {'Current','Compatibility','Voxel','ShadowMap','Future'}, Default = 'Current', Function = changed})
     Ambient = Theme:CreateColorSlider({Name = 'Ambient', DefaultValue = .6, Function = changed})
     OutdoorAmbient = Theme:CreateColorSlider({Name = 'Outdoor ambient', DefaultValue = .6, Function = changed})
     TopShift = Theme:CreateColorSlider({Name = 'Top color shift', DefaultValue = 0, Function = changed})
@@ -8406,11 +8482,26 @@ run(function()
     FarIntensity = Theme:CreateSlider({Name = 'Far blur', Min = 0, Max = 1, Default = .1, Decimal = 100, Function = changed})
     FocusDistance = Theme:CreateSlider({Name = 'Focus distance', Min = 0, Max = 200, Default = 30, Function = changed})
     NearIntensity = Theme:CreateSlider({Name = 'Near blur', Min = 0, Max = 1, Default = 0, Decimal = 100, Function = changed})
+	SkyEnabled = Theme:CreateToggle({Name = 'Sky', Default = true, Function = changed})
+	Skybox = Theme:CreateTextList({Name = 'Skybox', Default = {''}, Function = changed})
+	SunTexture = Theme:CreateTextList({Name = 'Sun texture', Default = {''}, Function = changed})
+	MoonTexture = Theme:CreateTextList({Name = 'Moon texture', Default = {''}, Function = changed})
+	Stars = Theme:CreateSlider({Name = 'Stars', Min = 0, Max = 5000, Default = 3000, Function = changed})
+	SunSize = Theme:CreateSlider({Name = 'Sun angular size', Min = 0, Max = 21, Default = 21, Decimal = 10, Function = changed})
+	MoonSize = Theme:CreateSlider({Name = 'Moon angular size', Min = 0, Max = 21, Default = 11, Decimal = 10, Function = changed})
     RemoveClouds = Theme:CreateToggle({Name = 'Remove clouds', Function = changed})
     CloudsEnabled = Theme:CreateToggle({Name = 'Custom clouds', Default = true, Function = changed})
     CloudCover = Theme:CreateSlider({Name = 'Cloud cover', Min = 0, Max = 1, Default = .5, Decimal = 100, Function = changed})
+	CloudSize = Theme:CreateSlider({Name = 'Cloud size', Min = .25, Max = 4, Default = 1, Decimal = 100, Function = changed})
     CloudDensity = Theme:CreateSlider({Name = 'Cloud density', Min = 0, Max = 1, Default = .7, Decimal = 100, Function = changed})
+	CloudTransparency = Theme:CreateSlider({Name = 'Cloud transparency', Min = 0, Max = 1, Default = 0, Decimal = 100, Function = changed})
     CloudColor = Theme:CreateColorSlider({Name = 'Cloud color', DefaultValue = 0, Function = changed})
+	WaterColor = Theme:CreateColorSlider({Name = 'Water color', DefaultHue = .55, DefaultSat = .6, DefaultValue = .7, Function = changed})
+	WaterReflectance = Theme:CreateSlider({Name = 'Water reflectance', Min = 0, Max = 1, Default = 1, Decimal = 100, Function = changed})
+	WaterTransparency = Theme:CreateSlider({Name = 'Water transparency', Min = 0, Max = 1, Default = .3, Decimal = 100, Function = changed})
+	WaterWaveSize = Theme:CreateSlider({Name = 'Water wave size', Min = 0, Max = 1, Default = .15, Decimal = 100, Function = changed})
+	WaterWaveSpeed = Theme:CreateSlider({Name = 'Water wave speed', Min = 0, Max = 100, Default = 10, Decimal = 10, Function = changed})
+	BelowMapWater = Theme:CreateToggle({Name = 'Below-map water', Tooltip = 'Adds a non-colliding visual water plane above the destroy height when the map supports it', Function = changed})
     vape.Libraries.aetherTheme = Theme
 end)
 
@@ -9202,6 +9293,7 @@ run(function()
     local LowHealthVignette, Threshold, WarningColor, Intensity, Pulse, Heartbeat
     local gui, heartbeatSound
     local edges = {}
+	local previousCleanup = shared.AetherLowHealthVignetteCleanup
 
     local function cleanup()
         if heartbeatSound then
@@ -9215,6 +9307,8 @@ run(function()
         end
         table.clear(edges)
     end
+	if type(previousCleanup) == 'function' then pcall(previousCleanup) end
+	shared.AetherLowHealthVignetteCleanup = cleanup
 
     local function effectiveHealth(character, humanoid)
         local shield = 0
@@ -9308,6 +9402,10 @@ run(function()
                     heartbeatSound:Stop()
                 end
             end))
+			LowHealthVignette:Clean(function()
+				cleanup()
+				if shared.AetherLowHealthVignetteCleanup == cleanup then shared.AetherLowHealthVignetteCleanup = nil end
+			end)
         end,
         Tooltip = 'Shows a shield-aware screen-edge warning while your effective health is low'
     })
@@ -9324,7 +9422,7 @@ run(function()
     local function layout()
         if not Keystrokes.Children then return end
         local width = ShowMouse.Enabled and 182 or 110
-        local height = ShowSpace.Enabled and 107 or 78
+        local height = (ShowSpace.Enabled or (ShowMouse.Enabled and ShowCPS.Enabled)) and 107 or 78
         Keystrokes.Children.Size = UDim2.fromOffset(width, height)
     end
     local function make(id, position, size, text, input)
@@ -9375,8 +9473,11 @@ run(function()
     Style = Keystrokes:CreateDropdown({Name = 'Key Style', List = {'Keyboard','Arrow'}, Function = rebuild})
     Color = Keystrokes:CreateColorSlider({Name = 'Color', DefaultValue = 0, DefaultOpacity = 0.5, Function = function(h,s,v,o) for _, entry in keys do if not entry.Pressed then entry.Key.BackgroundColor3 = Color3.fromHSV(h,s,v); entry.Key.BackgroundTransparency = 1-o end end end})
     ShowSpace = Keystrokes:CreateToggle({Name = 'Show Spacebar', Default = true, Function = rebuild})
-    ShowMouse = Keystrokes:CreateToggle({Name = 'Show Mouse', Function = rebuild})
-    ShowCPS = Keystrokes:CreateToggle({Name = 'Show CPS', Function = rebuild})
+    ShowMouse = Keystrokes:CreateToggle({Name = 'Show Mouse', Function = function(enabled)
+		if ShowCPS and ShowCPS.Object then ShowCPS.Object.Visible = enabled end
+		rebuild()
+	end})
+    ShowCPS = Keystrokes:CreateToggle({Name = 'Show CPS', Visible = false, Function = rebuild})
 end)
 
 

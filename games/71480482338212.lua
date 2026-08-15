@@ -2664,7 +2664,7 @@ run(function()
     LegitAura = SilentAura:CreateToggle({Name = 'Swing only'})
     SilentAim = SilentAura:CreateToggle({
         Name = 'Silent Aim',
-        Tooltip = 'Uses catvape\'s aiming technology to silently aim while looking legit',
+        Tooltip = 'Uses Aether trajectory prediction to silently aim while looking legit',
         Default = true,
         Function = function(callback)
             Area.Object.Visible = not callback
