@@ -37699,162 +37699,148 @@ end)
 
 
 --[[
-    CeilingBypass
-    Exploits the ceiling‑clamping mechanic to prevent anti‑cheat lagback.
-    When upward velocity exceeds the threshold, a collidable part is briefly placed
-    above the head, forcing a legal stop. The part is then removed.
+    AntiLagbackBypass
+    Places a real block above your head when upward velocity exceeds threshold,
+    forcing a legal ceiling stop. The block is immediately broken.
 ]]
 run(function()
-    local CeilingBypass
+    local AntiLagbackBypass
     local VelocityThreshold
     local BlockOffset
-    local Lifetime
-    local Enabled
+    local CooldownTime
 
-    local ceilingPart = nil
-    local active = false
-    local frameConnection = nil
+    local lastPlace = 0
+    local placedBlock = nil
+    local placedPos = nil
 
-    -- Create or reuse the ceiling part
-    local function getCeilingPart()
-        if ceilingPart and ceilingPart.Parent then
-            return ceilingPart
-        end
-        local part = Instance.new("Part")
-        part.Name = "CeilingBypassPart"
-        part.Size = Vector3.new(4, 0.2, 4)   -- wide and thin
-        part.Anchored = true
-        part.CanCollide = true
-        part.Transparency = 1
-        part.Material = Enum.Material.SmoothPlastic
-        part.CanQuery = false
-        part.Parent = workspace
-        ceilingPart = part
-        return part
-    end
-
-    -- Deactivate the shield
-    local function deactivate()
-        if ceilingPart then
-            ceilingPart.CanCollide = false
-            ceilingPart.CFrame = CFrame.new(0, -9999, 0)
-        end
-        active = false
-    end
-
-    -- Activate shield: place part above head for one frame
-    local function activate(headPosition)
-        if active then return end
-        local part = getCeilingPart()
-        local headTop = headPosition + Vector3.new(0, 0.5, 0)  -- top of head
-        part.CFrame = CFrame.new(headTop + Vector3.new(0, BlockOffset.Value, 0))
-        part.CanCollide = true
-        active = true
-        -- Deactivate after a very short time (the physics tick)
-        task.delay(Lifetime.Value, function()
-            if CeilingBypass and CeilingBypass.Enabled then
-                deactivate()
+    -- Get a block we can place (prefer wool, then any block)
+    local function getPlaceableBlock()
+        local wool = getWool()
+        if wool then return wool end
+        for _, item in store.inventory.inventory.items do
+            local meta = bedwars.ItemMeta[item.itemType]
+            if meta and meta.block and (item.amount or 0) > 0 then
+                return item.itemType
             end
-        end)
+        end
+        return nil
     end
 
-    -- Main loop: runs every frame and checks velocity
-    local function onHeartbeat()
-        if not CeilingBypass.Enabled then
-            deactivate()
+    -- Place a block at the given world position
+    local function placeTemporaryBlock(pos)
+        local blockType = getPlaceableBlock()
+        if not blockType then return false end
+        -- Place it
+        local success = pcall(bedwars.placeBlock, pos, blockType, false) -- no effect
+        if success then
+            placedPos = pos
+            return true
+        end
+        return false
+    end
+
+    -- Break the placed block
+    local function removeTemporaryBlock()
+        if placedPos then
+            local block = getPlacedBlock(placedPos)
+            if block then
+                pcall(bedwars.breakBlock, block, false, nil, true) -- break silently
+            end
+            placedPos = nil
+        end
+    end
+
+    -- Main check
+    local function checkVelocity()
+        if not AntiLagbackBypass.Enabled then
+            removeTemporaryBlock()
             return
         end
         if not entitylib.isAlive then
-            deactivate()
+            removeTemporaryBlock()
             return
         end
         local root = entitylib.character.RootPart
         if not root then
-            deactivate()
+            removeTemporaryBlock()
             return
         end
         local head = entitylib.character.Head
         if not head then
-            deactivate()
+            removeTemporaryBlock()
             return
         end
 
         local velY = root.AssemblyLinearVelocity.Y
         if velY > VelocityThreshold.Value then
-            activate(head.Position)
+            local now = tick()
+            if now - lastPlace < CooldownTime.Value then
+                return
+            end
+            -- Calculate position just above the head
+            local headTop = head.Position + Vector3.new(0, 0.5, 0)
+            local blockPos = bedwars.BlockController:getBlockPosition(headTop + Vector3.new(0, BlockOffset.Value, 0)) * 3
+            -- Check if block already exists there
+            if getPlacedBlock(blockPos) then
+                return
+            end
+            -- Place the block
+            if placeTemporaryBlock(blockPos) then
+                lastPlace = now
+                -- Schedule removal after a very short time (one physics tick)
+                task.delay(0.05, function()
+                    if AntiLagbackBypass.Enabled then
+                        removeTemporaryBlock()
+                    end
+                end)
+            end
         else
-            deactivate()
+            -- If velocity drops, remove any lingering block
+            removeTemporaryBlock()
         end
     end
 
-    CeilingBypass = vape.Categories.Exploits:CreateModule({
-        Name = "CeilingBypass",
-        Tooltip = "Prevents lagback by creating a temporary ceiling above your head when you jump too high",
+    AntiLagbackBypass = vape.Categories.Exploits:CreateModule({
+        Name = "AntiLagbackBypass",
+        Tooltip = "Places a real block above your head when jumping too high, forcing a legal stop and bypassing lagback.",
         Function = function(callback)
             if callback then
-                active = false
-                -- Clean up any old part
-                if ceilingPart then
-                    ceilingPart:Destroy()
-                    ceilingPart = nil
-                end
-                -- Start the frame loop
-                if frameConnection then
-                    frameConnection:Disconnect()
-                end
-                frameConnection = runService.Heartbeat:Connect(onHeartbeat)
-                CeilingBypass:Clean(function()
-                    deactivate()
-                    if frameConnection then
-                        frameConnection:Disconnect()
-                        frameConnection = nil
-                    end
-                    if ceilingPart then
-                        ceilingPart:Destroy()
-                        ceilingPart = nil
-                    end
-                end)
+                lastPlace = 0
+                -- Start the loop
+                AntiLagbackBypass:Clean(runService.Heartbeat:Connect(checkVelocity))
+                AntiLagbackBypass:Clean(removeTemporaryBlock) -- cleanup on disable
             else
-                deactivate()
-                if frameConnection then
-                    frameConnection:Disconnect()
-                    frameConnection = nil
-                end
-                if ceilingPart then
-                    ceilingPart:Destroy()
-                    ceilingPart = nil
-                end
+                removeTemporaryBlock()
             end
         end
     })
 
     -- Options
-    VelocityThreshold = CeilingBypass:CreateSlider({
+    VelocityThreshold = AntiLagbackBypass:CreateSlider({
         Name = "Velocity Threshold",
         Min = 30,
         Max = 120,
         Default = 55,
         Suffix = " studs/s",
-        Tooltip = "Upward speed above which the ceiling activates. Set just above your natural jump power."
+        Tooltip = "Upward speed above which the ceiling block is placed. Set just above natural jump power."
     })
-    BlockOffset = CeilingBypass:CreateSlider({
+    BlockOffset = AntiLagbackBypass:CreateSlider({
         Name = "Ceiling Offset",
-        Min = 0.05,
-        Max = 0.5,
-        Default = 0.1,
+        Min = 0.1,
+        Max = 1,
+        Default = 0.3,
         Decimal = 2,
         Suffix = " studs",
-        Tooltip = "How far above the head the ceiling part is placed. Smaller = catches earlier."
+        Tooltip = "How far above the head the block is placed. Smaller catches earlier, but may clip."
     })
-    Lifetime = CeilingBypass:CreateSlider({
-        Name = "Part Lifetime",
-        Min = 0.02,
-        Max = 0.2,
-        Default = 0.05,
+    CooldownTime = AntiLagbackBypass:CreateSlider({
+        Name = "Cooldown",
+        Min = 0.05,
+        Max = 1,
+        Default = 0.1,
         Decimal = 3,
         Suffix = " seconds",
-        Tooltip = "How long the ceiling part remains collidable. It only needs one physics tick."
+        Tooltip = "Minimum time between block placements to avoid rate limits."
     })
 end)
-
 
