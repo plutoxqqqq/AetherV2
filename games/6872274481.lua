@@ -1947,6 +1947,21 @@ local Attacking
 -- list shared so movement/clutch modules cannot silently drift back to supporting only one tier.
 local jadeHammerNames = {'jade_hammer_3', 'jade_hammer_2', 'jade_hammer_1', 'jade_hammer'}
 
+local function getJadeAbility(item)
+	if not item then return end
+	-- Tiered hammers are inventory upgrades, but BedWars versions disagree on whether
+	-- their ability id is tiered as well. Prefer the tier id and fall back to the stable
+	-- legacy id used by the controller.
+	local abilities = {item.itemType..'_jump', 'jade_hammer_jump'}
+	for _, ability in abilities do
+		local ok, ready = pcall(bedwars.AbilityController.canUseAbility, bedwars.AbilityController, ability, {
+			disableBlockedAbilityAlert = true
+		})
+		if ok and ready then return ability end
+	end
+	return abilities[1]
+end
+
 --[[
     Combat
 ]]
@@ -8434,21 +8449,22 @@ run(function()
         local root = entitylib.character.RootPart
         local direction = target.RootPart.Position - root.Position
         if direction.Magnitude <= 0.01 then return end
+        local ability = getJadeAbility(hammer)
         switchItem(hammer.tool, 0.1)
-        pcall(bedwars.AbilityController.useAbility, bedwars.AbilityController, hammer.itemType..'_jump', newproxy(true), {
+        pcall(bedwars.AbilityController.useAbility, bedwars.AbilityController, ability, newproxy(true), {
             direction = direction.Unit * math.huge,
             origin = root.Position,
             target = target.RootPart.Position,
             weapon = hammer.itemType
         })
         task.wait(Delay.Value)
-        waitForCooldown(hammer.itemType..'_jump', generation)
+        waitForCooldown(ability, generation)
     end
 
     local function teleportSlam(target, hammer, generation)
         local character, root, humanoid = entitylib.character, entitylib.character.RootPart, entitylib.character.Humanoid
         if not character or not root or not humanoid or not target.RootPart then return end
-        local ability = hammer.itemType..'_jump'
+        local ability = getJadeAbility(hammer)
         hideCharacter(character)
         lockCamera()
 		local targetOrigin = target.RootPart.Position
@@ -8536,7 +8552,7 @@ run(function()
                             Players = Targets.Players.Enabled,
                             NPCs = Targets.NPCs.Enabled
                         })
-                        local ability = hammer and hammer.itemType..'_jump'
+                        local ability = hammer and getJadeAbility(hammer)
                         if target and abilityReady(ability) then runJob(target, hammer) end
                     end
                     task.wait(0.05)
@@ -8686,12 +8702,14 @@ run(function()
             launchProjectile(item, pos, 'grappling_hook_projectile', 140, dir)
         end,
         jadeHammer = function(item, _, dir)
-            if not bedwars.AbilityController:canUseAbility(item.itemType..'_jump') then
-                repeat task.wait() until bedwars.AbilityController:canUseAbility(item.itemType..'_jump') or not LongJump.Enabled
+            local ability = getJadeAbility(item)
+            if not bedwars.AbilityController:canUseAbility(ability) then
+                repeat task.wait() ability = getJadeAbility(item) until bedwars.AbilityController:canUseAbility(ability) or not LongJump.Enabled
             end
 
-            if bedwars.AbilityController:canUseAbility(item.itemType..'_jump') and LongJump.Enabled then
-                bedwars.AbilityController:useAbility(item.itemType..'_jump')
+            if bedwars.AbilityController:canUseAbility(ability) and LongJump.Enabled then
+                switchItem(item.tool, 0.1)
+                bedwars.AbilityController:useAbility(ability)
                 JumpSpeed = 1.4 * Value.Value
                 JumpTick = tick() + 2.5
                 Direction = Vector3.new(dir.X, 0, dir.Z).Unit
@@ -13079,7 +13097,8 @@ run(function()
     end
     -- Enchant metadata is absent in some queues.  The old direct iteration threw before
     -- CreateModule was reached, which made AutoEnchant disappear from the menu entirely.
-    for key, meta in (bedwars.EnchantMeta or {}) do table.insert(enchantNames, displayName(key, meta)) end
+    local enchantMeta = type(bedwars.EnchantMeta) == 'table' and bedwars.EnchantMeta or {}
+    for key, meta in pairs(enchantMeta) do table.insert(enchantNames, displayName(key, meta)) end
     if #enchantNames == 0 then
         enchantNames = {'Critical Strike', 'Fire', 'Life Steal', 'Shield Gen', 'Static', 'Updraft', 'Wind'}
     end
@@ -29652,10 +29671,12 @@ run(function()
 
 	local function desiredTransparency()
 		local camera = workspace.CurrentCamera
-		local root = watchedCharacter and watchedCharacter:FindFirstChild('HumanoidRootPart')
 		-- A partial third-person value must never make the local body/view accessories
-		-- leak back into first person.
-		return camera and root and (camera.CFrame.Position - root.Position).Magnitude < 1.5
+		-- leak back into first person. Camera-to-root distance is unreliable for tall
+		-- avatars; Camera.Focus is Roblox's actual first-person zoom reference.
+		local firstPerson = camera and ((camera.CFrame.Position - camera.Focus.Position).Magnitude <= 1
+			or lplr.CameraMode == Enum.CameraMode.LockFirstPerson)
+		return firstPerson
 			and 1 or Amount.Value / 100
 	end
 

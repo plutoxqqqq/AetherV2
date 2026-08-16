@@ -6264,32 +6264,60 @@ end)
 
 run(function()
     local NoCameraCollision
+    local Mode
     local originalMode
-    local applying = false
+    local renderName = 'AetherNoCameraCollision'
+    local distance = 12
+
+    local function stopManual()
+		runService:UnbindFromRenderStep(renderName)
+	end
+
+    local function startManual()
+		stopManual()
+		distance = math.clamp((gameCamera.CFrame.Position - gameCamera.Focus.Position).Magnitude, 0.5, lplr.CameraMaxZoomDistance)
+		NoCameraCollision:Clean(inputService.InputChanged:Connect(function(input)
+			if input.UserInputType == Enum.UserInputType.MouseWheel then
+				distance = math.clamp(distance - input.Position.Z * math.max(distance * 0.15, 1), 0.5, lplr.CameraMaxZoomDistance)
+			end
+		end))
+		runService:BindToRenderStep(renderName, Enum.RenderPriority.Camera.Value + 1, function()
+			if distance <= 1 then return end
+			local focus, look = gameCamera.Focus, gameCamera.CFrame.LookVector
+			gameCamera.CFrame = CFrame.lookAlong(focus.Position - look * distance, look)
+		end)
+		NoCameraCollision:Clean(stopManual)
+	end
 
     NoCameraCollision = vape.Categories.Utility:CreateModule({
 	Name = 'NoCameraCollision',
 	Function = function(callback)
+	    stopManual()
 	    if callback then
 		originalMode = lplr.DevCameraOcclusionMode
 		local success = pcall(function()
-		    applying = true
-		    lplr.DevCameraOcclusionMode = Enum.DevCameraOcclusionMode.Invisicam
-		    applying = false
+		    lplr.DevCameraOcclusionMode = Mode.Value == 'Manual' and Enum.DevCameraOcclusionMode.Zoom or Enum.DevCameraOcclusionMode.Invisicam
 		end)
 		if not success then
 		    notif('NoCameraCollision', 'Camera occlusion mode is unavailable in this game.', 5, 'warning')
 		    NoCameraCollision:Toggle()
 		    return
 		end
+		if Mode.Value == 'Manual' then startManual() end
 	    elseif originalMode then
-		applying = true
 		pcall(function() lplr.DevCameraOcclusionMode = originalMode end)
-		applying = false
 		originalMode = nil
 	    end
 	end,
-	Tooltip = 'Uses Roblox camera invisicam so walls and boxes never force the camera to zoom in'
+	Tooltip = 'Prevents walls from forcing the third-person camera to zoom in'
+    })
+    Mode = NoCameraCollision:CreateDropdown({
+	Name = 'Mode',
+	List = {'Manual', 'Invisicam'},
+	Tooltip = 'Manual bypasses camera collision without making obstructing blocks transparent',
+	Function = function()
+		if NoCameraCollision.Enabled then NoCameraCollision:Toggle(); NoCameraCollision:Toggle() end
+	end
     })
 end)
 
