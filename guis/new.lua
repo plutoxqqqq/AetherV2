@@ -450,6 +450,10 @@ local function downloadFile(path, func)
 	if not isfile(path) then
 		createDownloader(path)
 		local suc, res = pcall(function()
+			local catAsset = path:match('^aetherv2/assets/new/catvape%-(.+)%.png$')
+			if catAsset then
+				return game:HttpGet('https://raw.githubusercontent.com/MaxlaserTech/CatV6/main/assets/new/'..catAsset..'.png', true)
+			end
 			return game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..readfile('aetherv2/profiles/commit.txt')..'/'..select(1, path:gsub('aetherv2/', '')), true)
 		end)
 		if not suc or res == '404: Not Found' then
@@ -3487,16 +3491,16 @@ function mainapi:CreateGUI()
 		addTooltip(button, 'Open overlays menu')
 		local homebutton = Instance.new('TextButton')
 		homebutton.Name = 'AetherV2Home'
-		homebutton.Size = UDim2.fromOffset(22, 22)
+		homebutton.Size = UDim2.fromOffset(42, 22)
 		homebutton.Position = UDim2.fromOffset(8, 8)
 		homebutton.BackgroundTransparency = 1
 		homebutton.AutoButtonColor = false
-		homebutton.Text = '⌂'
+		homebutton.Text = 'Home'
 		homebutton.TextColor3 = color.Light(uipallet.Main, 0.37)
-		homebutton.TextSize = 18
+		homebutton.TextSize = 12
 		homebutton.FontFace = uipallet.Font
 		homebutton.Parent = bar
-		addTooltip(homebutton, 'AetherV2 Home')
+		addTooltip(homebutton, 'Home')
 		homebutton.MouseButton1Click:Connect(function()
 			if mainapi.Online then mainapi.Online:Open() end
 		end)
@@ -4565,21 +4569,25 @@ function mainapi:CreateCategory(categorysettings)
 		favsheen.Parent = favstroke
 		local favourite = Instance.new('TextButton')
 		favourite.Name = 'Favorite'
-		favourite.Size = UDim2.fromOffset(20, 20)
-		favourite.Position = UDim2.new(1, -60, 0, 10)
+		favourite.Size = UDim2.fromOffset(18, 21)
+		favourite.Position = UDim2.new(1, -57, 0, 9)
 		favourite.AnchorPoint = Vector2.new(1, 0)
-		favourite.BackgroundColor3 = Color3.new(1, 1, 1)
-		favourite.BackgroundTransparency = 0.92
+		favourite.BackgroundTransparency = 1
 		favourite.BorderSizePixel = 0
 		favourite.AutoButtonColor = false
 		favourite.Visible = false
-		favourite.Text = '★'
-		favourite.TextColor3 = color.Dark(uipallet.Text, 0.43)
-		favourite.TextSize = 13
-		favourite.FontFace = uipallet.Font
+		favourite.Text = ''
 		favourite.Parent = modulebutton
-		addCorner(favourite, UDim.new(1, 0))
-		addTooltip(favourite, 'Favorite')
+		addTooltip(favourite, 'Add module to favorites')
+		local favouriteicon = Instance.new('ImageLabel')
+		favouriteicon.Name = 'Icon'
+		favouriteicon.Size = UDim2.fromOffset(16, 15)
+		favouriteicon.AnchorPoint = Vector2.new(0.5, 0.5)
+		favouriteicon.Position = UDim2.fromScale(0.5, 0.5)
+		favouriteicon.BackgroundTransparency = 1
+		favouriteicon.Image = getcustomasset('aetherv2/assets/new/catvape-star.png')
+		favouriteicon.ImageColor3 = color.Dark(uipallet.Text, 0.43)
+		favouriteicon.Parent = favourite
 		local favscale = Instance.new('UIScale')
 		favscale.Parent = favourite
 		-- instant skips the colour tween; used on bulk paths (config loads)
@@ -4588,12 +4596,13 @@ function mainapi:CreateCategory(categorysettings)
 			local starcolor = moduleapi.Favourited and favGold
 				or ((hovered or modulechildren.Visible) and color.Dark(uipallet.Text, 0.16) or color.Dark(uipallet.Text, 0.43))
 			favourite.Visible = moduleapi.Favourited or hovered or modulechildren.Visible
+			favouriteicon.ImageColor3 = starcolor
 			if instant then
 				favourite.TextColor3 = starcolor
 				favstroke.Enabled = moduleapi.Favourited
 				favstroke.Transparency = moduleapi.Favourited and 0.35 or 1
 			else
-				tween:Tween(favourite, uipallet.Tween, {TextColor3 = starcolor})
+				tween:Tween(favouriteicon, uipallet.Tween, {ImageColor3 = starcolor})
 			end
 		end
 		moduleapi.UpdateFavouriteVisual = updateFavouriteVisual
@@ -8123,37 +8132,60 @@ end
 
 function mainapi:CreateOnline()
 	local api = {}
+	-- CatVape's compact Online card is used as the visual language for Home:
+	-- branded header, circular identity asset, raised information rows and a status chip.
 	local window = Instance.new('Frame')
 	window.Name = 'AetherV2Home'
-	window.Size = UDim2.fromOffset(260, 190)
-	window.Position = UDim2.new(0.5, -130, 0.5, -95)
+	window.Size = UDim2.fromOffset(208, 320)
+	window.Position = UDim2.new(0.5, -104, 0.5, -160)
 	window.BackgroundColor3 = uipallet.Main
-	window.Visible = false
-	window.Parent = scaledgui
+	window.Visible, window.Parent = false, scaledgui
 	addBlur(window); addCorner(window); addWindowStroke(window); makeDraggable(window)
+	local logo = Instance.new('ImageLabel')
+	logo.Name = 'Icon'; logo.Size = UDim2.fromOffset(16, 16); logo.Position = UDim2.fromOffset(10, 10)
+	logo.BackgroundTransparency = 1; logo.Image = getcustomasset('aetherv2/assets/new/catvape-onlineicon.png')
+	logo.ImageColor3 = Color3.fromHSV(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value); logo.Parent = window
 	local title = Instance.new('TextLabel')
-	title.Size, title.Position = UDim2.new(1, -46, 0, 40), UDim2.fromOffset(12, 0)
+	title.Size, title.Position = UDim2.fromOffset(140, 38), UDim2.fromOffset(36, 0)
 	title.BackgroundTransparency, title.Text = 1, 'AetherV2 Home'
-	title.TextColor3, title.TextSize, title.FontFace = uipallet.Text, 15, uipallet.Font
+	title.TextColor3, title.TextSize, title.FontFace = uipallet.Text, 14, uipallet.Font
 	title.TextXAlignment, title.Parent = Enum.TextXAlignment.Left, window
 	local close = addCloseButton(window)
-	local description = Instance.new('TextLabel')
-	description.Size, description.Position = UDim2.new(1, -24, 0, 96), UDim2.fromOffset(12, 48)
-	description.BackgroundTransparency = 1
-	description.Text = 'Welcome to AetherV2.\n\nUse Search to find modules, Profiles to manage local and public configs, and the star on a module to add it to Favourites.'
-	description.TextColor3, description.TextSize, description.FontFace = color.Dark(uipallet.Text, 0.18), 13, uipallet.Font
-	description.TextWrapped, description.TextXAlignment, description.TextYAlignment = true, Enum.TextXAlignment.Left, Enum.TextYAlignment.Top
-	description.Parent = window
+	local divider = Instance.new('Frame')
+	divider.Size, divider.Position = UDim2.new(1, 0, 0, 1), UDim2.fromOffset(0, 38)
+	divider.BorderSizePixel, divider.BackgroundColor3, divider.BackgroundTransparency, divider.Parent = 0, color.Light(uipallet.Main, 0.15), 0.5, window
+	local avatar = Instance.new('ImageLabel')
+	avatar.Size, avatar.Position = UDim2.fromOffset(52, 52), UDim2.fromOffset(78, 52)
+	avatar.BackgroundColor3, avatar.BorderSizePixel = color.Light(uipallet.Main, 0.05), 0
+	avatar.Image, avatar.ScaleType, avatar.Parent = getcustomasset('aetherv2/assets/new/catvape-onlineicon.png'), Enum.ScaleType.Fit, window
+	addCorner(avatar, UDim.new(1, 0))
+	local welcome = Instance.new('TextLabel')
+	welcome.Size, welcome.Position = UDim2.new(1, -16, 0, 24), UDim2.fromOffset(8, 116)
+	welcome.BackgroundTransparency, welcome.Text = 1, 'Welcome to AetherV2'
+	welcome.TextColor3, welcome.TextSize, welcome.FontFace, welcome.Parent = uipallet.Text, 16, uipallet.FontSemiBold, window
+	local function row(y, heading, value)
+		local frame = Instance.new('Frame'); frame.Size, frame.Position = UDim2.fromOffset(192, 46), UDim2.fromOffset(8, y)
+		frame.BackgroundColor3, frame.BorderSizePixel, frame.Parent = color.Light(uipallet.Main, 0.035), 0, window; addCorner(frame)
+		local label = Instance.new('TextLabel'); label.Size, label.Position = UDim2.new(1, -20, 0, 18), UDim2.fromOffset(10, 5)
+		label.BackgroundTransparency, label.Text, label.TextColor3, label.TextSize, label.FontFace = 1, heading, uipallet.Text, 12, uipallet.FontSemiBold
+		label.TextXAlignment, label.Parent = Enum.TextXAlignment.Left, frame
+		local detail = label:Clone(); detail.Position, detail.Text, detail.TextColor3, detail.TextSize, detail.FontFace = UDim2.fromOffset(10, 23), value, color.Dark(uipallet.Text, 0.32), 11, uipallet.Font; detail.Parent = frame
+	end
+	local executorName = 'Unknown executor'
+	pcall(function()
+		executorName = identifyexecutor and select(1, identifyexecutor()) or executorName
+	end)
+	row(154, 'Executor', tostring(executorName))
+	row(208, 'Client', 'AetherV2 '..tostring(mainapi.Version))
 	local status = Instance.new('TextLabel')
-	status.Size, status.Position = UDim2.new(1, -24, 0, 24), UDim2.new(0, 12, 1, -32)
-	status.BackgroundTransparency, status.Text = 1, 'Local client • no external account service'
-	status.TextColor3, status.TextSize, status.FontFace = color.Dark(uipallet.Text, 0.43), 11, uipallet.Font
-	status.TextXAlignment, status.Parent = Enum.TextXAlignment.Left, window
+	status.Size, status.Position = UDim2.fromOffset(192, 34), UDim2.fromOffset(8, 270)
+	status.BackgroundColor3, status.Text = color.Light(uipallet.Main, 0.035), '●  LOCAL CLIENT'
+	status.TextColor3, status.TextSize, status.FontFace, status.Parent = Color3.fromRGB(99, 220, 130), 11, uipallet.FontSemiBold, window
+	addCorner(status)
 	function api:Open() window.Visible = true end
 	function api:Close() window.Visible = false end
 	close.MouseButton1Click:Connect(function() api:Close() end)
-	mainapi:Clean(window)
-	self.Online = api
+	mainapi:Clean(window); self.Online = api
 	return api
 end
 
@@ -8179,7 +8211,6 @@ function mainapi:CreateChangelogs()
 	body.Text = [=[<b><font color="#d378ff">BedWars</font></b>
 <font color="#63dc82">[+]</font> Added “MultiAction” to Exploits, allowing multiple actions at once, such as placing blocks while using Killaura.
 <font color="#63dc82">[+]</font> Added “AutoEnchant” to Inventory, which automatically repairs and uses the enchanting table.
-<font color="#63dc82">[+]</font> Added “QuickChatWheel” to Utility, which adds configurable text presets around BedWars’ emote wheel.
 <font color="#6aa9ff">[^]</font> Renamed DeathTP to “RecoveryTP”.
 <font color="#6aa9ff">[^]</font> Merged the visual modules into one highly customizable Render module named “Theme”.
 <font color="#ffd45e">[!]</font> Fixed Killaura not swinging faster with the Fury Potion.
