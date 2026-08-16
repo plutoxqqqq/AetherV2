@@ -781,10 +781,6 @@ local function downloadFile(path, func)
 	if not isfile(path) then
 		createDownloader(path)
 		local suc, res = pcall(function()
-			local catAsset = path:match('^aetherv2/assets/new/catvape%-(.+)%.png$')
-			if catAsset then
-				return game:HttpGet('https://raw.githubusercontent.com/MaxlaserTech/CatV6/main/assets/new/'..catAsset..'.png', true)
-			end
 			return game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..readfile('aetherv2/profiles/commit.txt')..'/'..select(1, path:gsub('aetherv2/', '')), true)
 		end)
 		if not suc or res == '404: Not Found' then
@@ -5162,14 +5158,18 @@ function mainapi:CreateCategory(categorysettings)
 		favourite.Text = ''
 		favourite.Parent = modulebutton
 		addTooltip(favourite, 'Favourite (pins to top + adds to the Favourites tab)')
-		local favouriteicon = Instance.new('ImageLabel')
+		-- Draw the star ourselves instead of depending on the old CatV6 bitmap.  Apart
+		-- from avoiding an asset download, a text glyph scales cleanly with the UI.
+		local favouriteicon = Instance.new('TextLabel')
 		favouriteicon.Name = 'Icon'
 		favouriteicon.Size = UDim2.fromOffset(16, 15)
 		favouriteicon.AnchorPoint = Vector2.new(0.5, 0.5)
 		favouriteicon.Position = UDim2.fromScale(0.5, 0.5)
 		favouriteicon.BackgroundTransparency = 1
-		favouriteicon.Image = getcustomasset('aetherv2/assets/new/catvape-star.png')
-		favouriteicon.ImageColor3 = color.Dark(uipallet.Text, 0.43)
+		favouriteicon.Font = Enum.Font.GothamBold
+		favouriteicon.Text = '★'
+		favouriteicon.TextScaled = true
+		favouriteicon.TextColor3 = color.Dark(uipallet.Text, 0.43)
 		favouriteicon.Parent = favourite
 		local favscale = Instance.new('UIScale')
 		favscale.Parent = favourite
@@ -5179,13 +5179,13 @@ function mainapi:CreateCategory(categorysettings)
 			local starcolor = moduleapi.Favourited and favGold
 				or ((hovered or settingsOpen) and color.Dark(uipallet.Text, 0.16) or color.Dark(uipallet.Text, 0.43))
 			favourite.Visible = moduleapi.Favourited or hovered or settingsOpen
-			favouriteicon.ImageColor3 = starcolor
+			favouriteicon.TextColor3 = starcolor
 			if instant then
 				favourite.TextColor3 = starcolor
 				favstroke.Enabled = moduleapi.Favourited
 				favstroke.Transparency = moduleapi.Favourited and 0.1 or 1
 			else
-				tween:Tween(favouriteicon, uipallet.Tween, {ImageColor3 = starcolor})
+				tween:Tween(favouriteicon, uipallet.Tween, {TextColor3 = starcolor})
 			end
 		end
 		moduleapi.UpdateFavouriteVisual = updateFavouriteVisual
