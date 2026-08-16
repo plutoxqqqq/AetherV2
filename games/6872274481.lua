@@ -1962,6 +1962,28 @@ local function getJadeAbility(item)
 	return abilities[1]
 end
 
+-- Equipping an inventory instance is not the same as pressing the hammer.  In particular,
+-- useAbility by itself skips the Jade tool/controller input path in current BedWars builds.
+-- Send the real primary-input edge after equipping so the controller creates the movement
+-- state that the server expects (and that its movement checks use to permit the launch).
+local function activateJadeTool(item)
+	if not item or not item.tool then return false end
+	switchItem(item.tool, 0.1)
+	local center = gameCamera.ViewportSize / 2
+	local fired = pcall(function()
+		local virtualInput = game:GetService('VirtualInputManager')
+		if inputService.TouchEnabled then
+			virtualInput:SendTouchEvent(0, Enum.UserInputState.Begin, center.X, center.Y)
+			virtualInput:SendTouchEvent(0, Enum.UserInputState.End, center.X, center.Y)
+		else
+			virtualInput:SendMouseButtonEvent(center.X, center.Y, 0, true, game, 0)
+			virtualInput:SendMouseButtonEvent(center.X, center.Y, 0, false, game, 0)
+		end
+	end)
+	if not fired and mouse1click then fired = pcall(mouse1click) end
+	return fired
+end
+
 --[[
     Combat
 ]]
@@ -8397,16 +8419,10 @@ run(function()
     end
 
     local function lockCamera()
-        local look = gameCamera.CFrame.LookVector
-        local pitch = math.asin(math.clamp(look.Y, -1, 1))
+        local locked = gameCamera.CFrame.Rotation
         runService:UnbindFromRenderStep(cameraBind)
         runService:BindToRenderStep(cameraBind, Enum.RenderPriority.Camera.Value + 1, function()
-            local cameraLook = gameCamera.CFrame.LookVector
-            local horizontal = Vector3.new(cameraLook.X, 0, cameraLook.Z)
-            if horizontal.Magnitude < 0.001 then return end
-            horizontal = horizontal.Unit
-            local direction = Vector3.new(horizontal.X * math.cos(pitch), math.sin(pitch), horizontal.Z * math.cos(pitch))
-            gameCamera.CFrame = CFrame.lookAlong(gameCamera.CFrame.Position, direction)
+            gameCamera.CFrame = CFrame.new(gameCamera.CFrame.Position) * locked
         end)
     end
 
@@ -8428,12 +8444,21 @@ run(function()
         end)
     end
 
+    local abilityReady
     local function useHammer(hammer, ability)
+        local fired = activateJadeTool(hammer)
+        local deadline = tick() + 0.75
+        repeat task.wait() until not abilityReady(ability) or tick() >= deadline
+        if not abilityReady(ability) then return true end
+
+        -- Virtual input can be unavailable on some executors. Preserve the controller call as
+        -- a fallback, but never claim a cast succeeded merely because the input API did not throw.
         local success, result = pcall(bedwars.AbilityController.useAbility, bedwars.AbilityController, ability)
         if not success or result == false then tapScreen() end
+        return (fired or success) and result ~= false
     end
 
-    local function abilityReady(ability)
+    function abilityReady(ability)
         local success, ready = pcall(bedwars.AbilityController.canUseAbility, bedwars.AbilityController, ability, {
             disableBlockedAbilityAlert = true
         })
@@ -8475,7 +8500,7 @@ run(function()
         character:PivotTo(character:GetPivot() + Vector3.new(0, 200, 0))
         root.AssemblyLinearVelocity = Vector3.zero
         switchItem(hammer.tool, 0.1)
-        useHammer(hammer, ability)
+        if not useHammer(hammer, ability) then return end
 		-- FloorMaterial can retain its pre-teleport value for one simulation step. Waiting
 		-- for the airborne state prevents a job from completing before the slam starts.
 		local airborneDeadline = tick() + 1
@@ -8552,8 +8577,9 @@ run(function()
                             Players = Targets.Players.Enabled,
                             NPCs = Targets.NPCs.Enabled
                         })
-                        local ability = hammer and getJadeAbility(hammer)
-                        if target and abilityReady(ability) then runJob(target, hammer) end
+                        -- Do not gate the visible TP/lock job on canUseAbility. Unknown tier ids
+                        -- can report false even though primary tool input is accepted.
+                        if target then runJob(target, hammer) end
                     end
                     task.wait(0.05)
                 until not JadeInstaKill.Enabled or scannerGeneration ~= scanGeneration
@@ -8708,8 +8734,21 @@ run(function()
             end
 
             if bedwars.AbilityController:canUseAbility(ability) and LongJump.Enabled then
-                switchItem(item.tool, 0.1)
-                bedwars.AbilityController:useAbility(ability)
+                -- The primary-input path starts Jade's local movement controller. Starting our
+                -- carry after a bare useAbility call made the server see impossible motion and
+                -- rubber-band it, just as it would for a dao whose dash handler never ran.
+                if not activateJadeTool(item) then
+					bedwars.AbilityController:useAbility(ability)
+				end
+				local function stillReady()
+					local ok, ready = pcall(bedwars.AbilityController.canUseAbility, bedwars.AbilityController, ability, {
+						disableBlockedAbilityAlert = true
+					})
+					return ok and ready
+				end
+				local deadline = tick() + 0.75
+				repeat task.wait() until not stillReady() or tick() >= deadline or not LongJump.Enabled
+				if not LongJump.Enabled or stillReady() then return end
                 JumpSpeed = 1.4 * Value.Value
                 JumpTick = tick() + 2.5
                 Direction = Vector3.new(dir.X, 0, dir.Z).Unit
@@ -29667,32 +29706,24 @@ run(function()
 	local originals = setmetatable({}, {__mode = 'k'})
 	local watchedCharacter
 	local descendantConnection
-	local renderName = 'AetherTransparentCharacter'
 
 	local function desiredTransparency()
-		local camera = workspace.CurrentCamera
-		-- A partial third-person value must never make the local body/view accessories
-		-- leak back into first person. Camera-to-root distance is unreliable for tall
-		-- avatars; Camera.Focus is Roblox's actual first-person zoom reference.
-		local firstPerson = camera and ((camera.CFrame.Position - camera.Focus.Position).Magnitude <= 1
-			or lplr.CameraMode == Enum.CameraMode.LockFirstPerson)
-		return firstPerson
-			and 1 or Amount.Value / 100
+		return Amount.Value / 100
 	end
 
 	local function applyTransparency(char)
 		if not char or char ~= watchedCharacter or not Amount then return end
 		for _, obj in char:GetDescendants() do
 			if obj:IsA('BasePart') then
-				if originals[obj] == nil then originals[obj] = obj.LocalTransparencyModifier end
-				obj.LocalTransparencyModifier = desiredTransparency()
+				if originals[obj] == nil then originals[obj] = obj.Transparency end
+				obj.Transparency = desiredTransparency()
 			end
 		end
 	end
 
 	local function restoreTransparency()
 		for obj, value in originals do
-			if obj.Parent then obj.LocalTransparencyModifier = value end
+			if obj.Parent then obj.Transparency = value end
 		end
 		table.clear(originals)
 	end
@@ -29709,8 +29740,8 @@ run(function()
 				if obj:IsA('BasePart') and char == watchedCharacter and TransparentCharacter.Enabled then
 					task.defer(function()
 						if obj.Parent and char == watchedCharacter and TransparentCharacter.Enabled then
-							if originals[obj] == nil then originals[obj] = obj.LocalTransparencyModifier end
-							obj.LocalTransparencyModifier = desiredTransparency()
+							if originals[obj] == nil then originals[obj] = obj.Transparency end
+							obj.Transparency = desiredTransparency()
 						end
 					end)
 				end
@@ -29725,21 +29756,10 @@ run(function()
 			if callback then
 				watchCharacter(lplr.Character)
 				TransparentCharacter:Clean(lplr.CharacterAdded:Connect(watchCharacter))
-				runService:UnbindFromRenderStep(renderName)
-				runService:BindToRenderStep(renderName, Enum.RenderPriority.Last.Value, function()
-					-- Roblox's camera transparency controller also writes this property. Reapply
-					-- at Last priority so first-person, hotbar/viewmodel, and camera updates have
-					-- already finished, without rescanning descendants every frame.
-					local value = desiredTransparency()
-					for obj in originals do
-						if obj.Parent and obj.LocalTransparencyModifier ~= value then
-							obj.LocalTransparencyModifier = value
-						end
-					end
-				end)
-				TransparentCharacter:Clean(function() runService:UnbindFromRenderStep(renderName) end)
+				-- Use Transparency rather than fighting Roblox's camera controller over
+				-- LocalTransparencyModifier every render step. The camera can now interpolate its
+				-- own first-person fade normally, so scroll zoom remains smooth.
 			else
-				runService:UnbindFromRenderStep(renderName)
 				if descendantConnection then descendantConnection:Disconnect(); descendantConnection = nil end
 				restoreTransparency()
 				watchedCharacter = nil
