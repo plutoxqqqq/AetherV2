@@ -1943,9 +1943,6 @@ local LongJump
 local longJumpActivation = Instance.new('BindableEvent')
 vape:Clean(longJumpActivation)
 local Attacking
--- Jade was changed from one hammer into three tiered item types. Keep the compatibility
--- list shared so movement/clutch modules cannot silently drift back to supporting only one tier.
-local jadeHammerNames = {'jade_hammer_3', 'jade_hammer_2', 'jade_hammer_1', 'jade_hammer'}
 
 --[[
     Combat
@@ -4511,7 +4508,7 @@ run(function()
 
     local function jadeClutch(root)
         local item
-        for _, hammer in jadeHammerNames do
+        for _, hammer in {'jade_hammer_3', 'jade_hammer_2', 'jade_hammer_1'} do
             item = getItem(hammer)
             if item then break end
         end
@@ -8328,235 +8325,65 @@ run(function()
         Tooltip = 'Only attacks while swinging manually'
     })
 end)
--- Jade hammer execution has two strategies. TP performs the stock slam while following a
--- moving target; Spoof keeps the server-side damage-scaling payload and never moves the character.
+-- Jade's tiered hammers now apply their kit damage from the jump ability payload.  Keep this
+-- isolated from LongJump: it only selects a target and asks the stock controller to cast, so
+-- respawns/controller recreation do not leave a controller hook behind.
 run(function()
     local JadeInstaKill
-    local Mode
     local Range
     local Delay
-    local Targets
-    local FasterFall
-    local Gravity
-    local busy = false
-    local jobGeneration = 0
-    local scanGeneration = 0
-    local hidden = setmetatable({}, {__mode = 'k'})
-    local anchored = setmetatable({}, {__mode = 'k'})
-    local cameraBind = 'AetherJadeCameraLock'
-    local followBind = 'AetherJadeTargetFollow'
+    local hammerNames = {'jade_hammer_3', 'jade_hammer_2', 'jade_hammer_1'}
 
     local function getHammer()
-        -- InstaKill deliberately requires one of the current tiered hammers. The legacy
-        -- jade_hammer entry stays supported by LongJump, but is not a valid damage tool here.
-        for index = 1, 3 do
-            local item = getItem(jadeHammerNames[index])
+        for _, name in hammerNames do
+            local item = getItem(name)
             if item and item.tool then return item end
         end
     end
 
-    local function cleanupCharacter()
-        runService:UnbindFromRenderStep(cameraBind)
-        runService:UnbindFromRenderStep(followBind)
-        for part, value in hidden do
-            if part.Parent then part.LocalTransparencyModifier = value end
-        end
-        for part in anchored do
-            if part.Parent then part.Anchored = false end
-        end
-        table.clear(hidden)
-        table.clear(anchored)
-        busy = false
-    end
-
-    local function hideCharacter(character)
-        for _, object in character:GetDescendants() do
-            if object:IsA('BasePart') then
-                if hidden[object] == nil then
-                    hidden[object] = object.LocalTransparencyModifier
-                    anchored[object] = object.Anchored
-                end
-                object.LocalTransparencyModifier = 1
-            end
-        end
-    end
-
-    local function lockCamera()
-        local look = gameCamera.CFrame.LookVector
-        local pitch = math.asin(math.clamp(look.Y, -1, 1))
-        runService:UnbindFromRenderStep(cameraBind)
-        runService:BindToRenderStep(cameraBind, Enum.RenderPriority.Camera.Value + 1, function()
-            local cameraLook = gameCamera.CFrame.LookVector
-            local horizontal = Vector3.new(cameraLook.X, 0, cameraLook.Z)
-            if horizontal.Magnitude < 0.001 then return end
-            horizontal = horizontal.Unit
-            local direction = Vector3.new(horizontal.X * math.cos(pitch), math.sin(pitch), horizontal.Z * math.cos(pitch))
-            gameCamera.CFrame = CFrame.lookAlong(gameCamera.CFrame.Position, direction)
-        end)
-    end
-
-    local function tapScreen()
-        local center = gameCamera.ViewportSize / 2
-        if mouse1click then
-            pcall(mouse1click)
-            return
-        end
-        pcall(function()
-            local virtualInput = game:GetService('VirtualInputManager')
-            if inputService.TouchEnabled then
-                virtualInput:SendTouchEvent(0, Enum.UserInputState.Begin, center.X, center.Y)
-                virtualInput:SendTouchEvent(0, Enum.UserInputState.End, center.X, center.Y)
-            else
-                virtualInput:SendMouseButtonEvent(center.X, center.Y, 0, true, game, 0)
-                virtualInput:SendMouseButtonEvent(center.X, center.Y, 0, false, game, 0)
-            end
-        end)
-    end
-
-    local function useHammer(hammer, ability)
-        local success, result = pcall(bedwars.AbilityController.useAbility, bedwars.AbilityController, ability)
-        if not success or result == false then tapScreen() end
-    end
-
-    local function abilityReady(ability)
-        local success, ready = pcall(bedwars.AbilityController.canUseAbility, bedwars.AbilityController, ability, {
-            disableBlockedAbilityAlert = true
-        })
-        return success and ready
-    end
-
-    local function waitForCooldown(ability, generation)
-        repeat task.wait(0.05)
-        until not JadeInstaKill.Enabled or generation ~= jobGeneration or not entitylib.isAlive or abilityReady(ability)
-    end
-
-    local function spoof(target, hammer, generation)
-        local root = entitylib.character.RootPart
-        local direction = target.RootPart.Position - root.Position
-        if direction.Magnitude <= 0.01 then return end
-        switchItem(hammer.tool, 0.1)
-        pcall(bedwars.AbilityController.useAbility, bedwars.AbilityController, hammer.itemType..'_jump', newproxy(true), {
-            direction = direction.Unit * math.huge,
-            origin = root.Position,
-            target = target.RootPart.Position,
-            weapon = hammer.itemType
-        })
-        task.wait(Delay.Value)
-        waitForCooldown(hammer.itemType..'_jump', generation)
-    end
-
-    local function teleportSlam(target, hammer, generation)
-        local character, root, humanoid = entitylib.character, entitylib.character.RootPart, entitylib.character.Humanoid
-        if not character or not root or not humanoid or not target.RootPart then return end
-        local ability = hammer.itemType..'_jump'
-        hideCharacter(character)
-        lockCamera()
-
-        -- Move vertically from the current position first. The follow lock below then mirrors
-        -- only the target's horizontal movement while preserving our live fall height.
-        character:PivotTo(character:GetPivot() + Vector3.new(0, 200, 0))
-        root.AssemblyLinearVelocity = Vector3.zero
-        switchItem(hammer.tool, 0.1)
-        useHammer(hammer, ability)
-
-        local started = tick()
-        runService:UnbindFromRenderStep(followBind)
-        runService:BindToRenderStep(followBind, Enum.RenderPriority.Character.Value + 1, function(dt)
-            if generation ~= jobGeneration or not JadeInstaKill.Enabled or not root.Parent or not target.RootPart or not target.RootPart.Parent then return end
-            -- Equipping can parent a new Handle after the initial hide pass.
-            hideCharacter(character)
-            local targetPosition = target.RootPart.Position
-            root.CFrame = CFrame.new(targetPosition.X, root.Position.Y, targetPosition.Z) * root.CFrame.Rotation
-            local velocity = root.AssemblyLinearVelocity
-            local targetVelocity = target.RootPart.AssemblyLinearVelocity
-            local extraFall = FasterFall.Enabled and Gravity.Value * dt or 0
-            root.AssemblyLinearVelocity = Vector3.new(targetVelocity.X, velocity.Y - extraFall, targetVelocity.Z)
-        end)
-
-        repeat task.wait()
-        until not JadeInstaKill.Enabled
-            or generation ~= jobGeneration
-            or not entitylib.isAlive
-            or not target.RootPart
-            or not target.RootPart.Parent
-            or humanoid.FloorMaterial ~= Enum.Material.Air
-            or tick() - started > 10
-
-        runService:UnbindFromRenderStep(followBind)
-        if JadeInstaKill.Enabled and generation == jobGeneration then
-            waitForCooldown(ability, generation)
-        end
-    end
-
-    local function runJob(target, hammer)
-        busy = true
-        jobGeneration += 1
-        local generation = jobGeneration
-        local success, err = xpcall(function()
-            if Mode.Value == 'TP' then
-                teleportSlam(target, hammer, generation)
-            else
-                spoof(target, hammer, generation)
-            end
-        end, debug and debug.traceback or tostring)
-        cleanupCharacter()
-        if not success then warn('[AetherV2] JadeInstaKill:', err) end
-    end
-
-    JadeInstaKill = vape.Categories.Exploits:CreateModule({
+    JadeInstaKill = vape.Categories.Kits:CreateModule({
         Name = 'JadeInstaKill',
         Function = function(callback)
-            jobGeneration += 1
-            scanGeneration += 1
-            local scannerGeneration = scanGeneration
-            if not callback then
-                cleanupCharacter()
-                return
-            end
-            task.spawn(function()
-                repeat
-                    if not busy and entitylib.isAlive then
-                        local hammer = getHammer()
-                        local target = hammer and entitylib.EntityPosition({
-                            Origin = entitylib.character.RootPart.Position,
-                            Range = Range.Value,
-                            Part = 'RootPart',
-                            Players = Targets.Players.Enabled,
-                            NPCs = Targets.NPCs.Enabled
-                        })
-                        local ability = hammer and hammer.itemType..'_jump'
-                        if target and abilityReady(ability) then runJob(target, hammer) end
+            if not callback then return end
+            repeat
+                if entitylib.isAlive then
+                    local hammer = getHammer()
+                    local target = hammer and entitylib.EntityPosition({
+                        Origin = entitylib.character.RootPart.Position,
+                        Range = Range.Value,
+                        Part = 'RootPart',
+                        Players = true
+                    })
+                    if target then
+                        local ability = hammer.itemType..'_jump'
+                        local ready, allowed = pcall(bedwars.AbilityController.canUseAbility, bedwars.AbilityController, ability, {disableBlockedAbilityAlert = true})
+                        if ready and allowed then
+                            switchItem(hammer.tool, 0.1)
+                            local origin = entitylib.character.RootPart.Position
+                            local direction = target.RootPart.Position - origin
+                            if direction.Magnitude > 0.01 then
+                                -- The updated server derives hammer impact damage from the supplied
+                                -- movement magnitude. Infinity is intentional: all three tiered Jade
+                                -- items reach the server's lethal clamp in one accepted cast.
+                                pcall(bedwars.AbilityController.useAbility, bedwars.AbilityController, ability, newproxy(true), {
+                                    direction = direction.Unit * math.huge,
+                                    origin = origin,
+                                    target = target.RootPart.Position,
+                                    weapon = hammer.itemType
+                                })
+                                task.wait(Delay.Value)
+                            end
+                        end
                     end
-                    task.wait(0.05)
-                until not JadeInstaKill.Enabled or scannerGeneration ~= scanGeneration
-                if not JadeInstaKill.Enabled then cleanupCharacter() end
-            end)
+                end
+                task.wait(0.05)
+            until not JadeInstaKill.Enabled
         end,
-        Tooltip = 'TP performs a tracked Jade slam; Spoof submits the lethal damage payload without teleporting'
+        Tooltip = 'Uses the damage scaling on Jade hammer tiers against the nearest player'
     })
-    Mode = JadeInstaKill:CreateDropdown({
-        Name = 'Mode',
-        List = {'TP', 'Spoof'},
-        Function = function(value)
-            local visible = value == 'TP'
-            if Delay and Delay.Object then Delay.Object.Visible = not visible end
-            if FasterFall and FasterFall.Object then FasterFall.Object.Visible = visible end
-            if Gravity and Gravity.Object then Gravity.Object.Visible = visible and FasterFall.Enabled end
-        end
-    })
-    Targets = JadeInstaKill:CreateTargets({Players = true, NPCs = true})
     Range = JadeInstaKill:CreateSlider({Name = 'Range', Min = 1, Max = 30, Default = 18, Suffix = ' studs'})
-    Delay = JadeInstaKill:CreateSlider({Name = 'Spoof delay', Min = 0.1, Max = 1, Default = 0.25, Decimal = 100, Suffix = ' seconds', Visible = false})
-    FasterFall = JadeInstaKill:CreateToggle({
-        Name = 'Increase gravity',
-        Default = true,
-        Function = function(value)
-            if Gravity and Gravity.Object then Gravity.Object.Visible = Mode.Value == 'TP' and value end
-        end
-    })
-    Gravity = JadeInstaKill:CreateSlider({Name = 'Extra gravity', Min = 0, Max = 500, Default = 180, Suffix = ' studs/s²'})
+    Delay = JadeInstaKill:CreateSlider({Name = 'Delay', Min = 0.1, Max = 1, Default = 0.25, Decimal = 100, Suffix = ' seconds'})
 end)
-
 run(function()
     local Value
     local CameraDir
@@ -8713,7 +8540,7 @@ run(function()
     for _, v in {'stone_dao', 'iron_dao', 'diamond_dao', 'emerald_dao'} do
         LongJumpMethods[v] = LongJumpMethods.wood_dao
     end
-    for _, hammer in jadeHammerNames do
+    for _, hammer in {'jade_hammer_1', 'jade_hammer_2', 'jade_hammer_3'} do
         LongJumpMethods[hammer] = LongJumpMethods.jadeHammer
     end
     LongJumpMethods.void_axe = LongJumpMethods.jadeHammer
@@ -13065,12 +12892,7 @@ run(function()
     local function displayName(key, meta)
         return tostring((type(meta) == 'table' and (meta.displayName or meta.name)) or key):gsub('_', ' ')
     end
-    -- Enchant metadata is absent in some queues.  The old direct iteration threw before
-    -- CreateModule was reached, which made AutoEnchant disappear from the menu entirely.
-    for key, meta in (bedwars.EnchantMeta or {}) do table.insert(enchantNames, displayName(key, meta)) end
-    if #enchantNames == 0 then
-        enchantNames = {'Critical Strike', 'Fire', 'Life Steal', 'Shield Gen', 'Static', 'Updraft', 'Wind'}
-    end
+    for key, meta in bedwars.EnchantMeta do table.insert(enchantNames, displayName(key, meta)) end
     table.sort(enchantNames)
     local function amount(itemType)
         local total = 0
@@ -13107,7 +12929,7 @@ run(function()
         local state = bedwars.Store:getState()
         local enchant = state.Bedwars and state.Bedwars.enchant or lplr:GetAttribute('Enchant')
         if type(enchant) == 'table' then enchant = enchant.enchant or enchant.type end
-        return enchant and displayName(enchant, (bedwars.EnchantMeta or {})[enchant]) or ''
+        return enchant and displayName(enchant, bedwars.EnchantMeta[enchant]) or ''
     end
     local function wanted(name)
         for _, selected in Preferred.ListEnabled do if selected == name then return true end end
@@ -15319,6 +15141,97 @@ run(function()
 	FireRate = AutoShoot:CreateTwoSlider({Name = 'Fire Rate', Min = 0, Max = 1, DefaultMin = 0.05, DefaultMax = 0.12, Decimal = 100})
 	SwitchDelay = AutoShoot:CreateSlider({Name = 'Switch Delay', Min = 0, Max = 1, Decimal = 100, Suffix = 'seconds', Default = 0.02})
 end)
+run(function()
+    local QuickChatWheel, AllMessages, TeamMessages, Cooldown
+    local overlay, nativeWheel, nativeVisible, page, lastSend = nil, nil, nil, 1, 0
+    local function entries()
+        local result = {}
+        for _, message in AllMessages.ListEnabled do table.insert(result, {Text = message, Team = false}) end
+        for _, message in TeamMessages.ListEnabled do table.insert(result, {Text = message, Team = true}) end
+        return result
+    end
+    local function send(entry)
+        if tick() - lastSend < Cooldown.Value then return end
+        lastSend = tick()
+        if textChatService.ChatVersion == Enum.ChatVersion.TextChatService then
+            local channels = textChatService:FindFirstChild('TextChannels')
+            local channel = entry.Team and channels and (channels:FindFirstChild('RBXTeam'..tostring(lplr.Team and lplr.Team.Name or '')) or channels:FindFirstChild('RBXTeam'))
+                or textChatService.ChatInputBarConfiguration.TargetTextChannel
+            if channel then pcall(channel.SendAsync, channel, entry.Text) end
+        else
+            replicatedStorage.DefaultChatSystemChatEvents.SayMessageRequest:FireServer(entry.Text, entry.Team and 'Team' or 'All')
+        end
+    end
+    local function findNative()
+        for _, object in lplr.PlayerGui:GetDescendants() do
+            if object:IsA('GuiObject') and object.Name:lower():find('emote') and object.Name:lower():find('wheel') then return object end
+        end
+    end
+    local function render()
+        if not overlay then return end
+        overlay:ClearAllChildren()
+        local list, perPage = entries(), 8
+        local pages = math.max(math.ceil(#list / perPage), 1); page = math.clamp(page, 1, pages)
+        local compact = gameCamera.ViewportSize.X < 700 or gameCamera.ViewportSize.Y < 500
+        overlay.Size = compact and UDim2.fromOffset(190, 260) or UDim2.fromOffset(520, 520)
+        overlay.Position = UDim2.fromScale(0.5, 0.5); overlay.AnchorPoint = Vector2.new(0.5, 0.5)
+        for slot = 1, perPage do
+            local entry = list[(page - 1) * perPage + slot]; if not entry then continue end
+            local button = Instance.new('TextButton'); button.Size = UDim2.fromOffset(compact and 170 or 130, 34)
+            if compact then button.Position = UDim2.fromOffset(10, (slot - 1) * 30)
+            else local angle = math.rad((slot - 1) * 45 - 90); button.Position = UDim2.fromOffset(195 + math.cos(angle) * 185, 243 + math.sin(angle) * 185) end
+            button.Text = (entry.Team and '[TEAM] ' or '')..entry.Text; button.TextScaled = true; button.BackgroundColor3 = Color3.fromRGB(25, 25, 30); button.TextColor3 = Color3.new(1, 1, 1); button.Parent = overlay
+            button.Activated:Connect(function() send(entry) end)
+        end
+        if pages > 1 then
+            for _, data in {{'<', -1, 200}, {'>', 1, 280}} do
+                local arrow = Instance.new('TextButton'); arrow.Size = UDim2.fromOffset(36, 28); arrow.Position = UDim2.fromOffset(data[3], 480); arrow.Text = data[1]; arrow.Parent = overlay
+                arrow.Activated:Connect(function() page = page + data[2]; if page < 1 then page = pages elseif page > pages then page = 1 end; render() end)
+            end
+        end
+    end
+    QuickChatWheel = vape.Categories.Utility:CreateModule({
+        Name = 'QuickChatWheel',
+        Function = function(enabled)
+            if not enabled then if overlay then overlay:Destroy(); overlay = nil end return end
+            overlay = Instance.new('Frame'); overlay.Name = 'AetherQuickChatOuterRing'; overlay.BackgroundTransparency = 1; overlay.Visible = false; overlay.ZIndex = 20; overlay.Parent = vape.gui; render()
+            local function watchNative(object)
+                if nativeVisible then nativeVisible:Disconnect(); nativeVisible = nil end
+                nativeWheel = object
+                overlay.Visible = object ~= nil and object.Visible
+                if object then
+                    nativeVisible = object:GetPropertyChangedSignal('Visible'):Connect(function()
+                        if overlay then overlay.Visible = object.Visible end
+                    end)
+                    QuickChatWheel:Clean(nativeVisible)
+                end
+            end
+            local function refreshNative()
+                nativeWheel = findNative()
+                watchNative(nativeWheel)
+            end
+            refreshNative()
+            QuickChatWheel:Clean(lplr.PlayerGui.DescendantAdded:Connect(function(object)
+                if not nativeWheel and object:IsA('GuiObject') then
+                    local name = object.Name:lower()
+                    if name:find('emote') and name:find('wheel') then watchNative(object) end
+                end
+            end))
+            QuickChatWheel:Clean(lplr.PlayerGui.DescendantRemoving:Connect(function(object)
+                if object == nativeWheel then watchNative(nil) end
+            end))
+            QuickChatWheel:Clean(inputService.InputChanged:Connect(function(input)
+                if overlay.Visible and input.UserInputType == Enum.UserInputType.MouseWheel and input.Position.Z ~= 0 then page += input.Position.Z > 0 and -1 or 1; render() end
+            end))
+        end,
+        Tooltip = 'Adds a non-destructive quick-chat outer ring to the native T emote wheel'
+    })
+    AllMessages = QuickChatWheel:CreateTextList({Name = 'All-chat messages', Default = {'On my way!', 'Need help!', 'Defend the bed!', 'Good game!'}, Function = render})
+    TeamMessages = QuickChatWheel:CreateTextList({Name = 'Team-chat messages', Default = {'Rush now!', 'Get diamonds!', 'Get emeralds!'}, Function = render})
+    Cooldown = QuickChatWheel:CreateSlider({Name = 'Cooldown', Min = 1, Max = 10, Default = 3, Decimal = 10, Suffix = 's'})
+end)
+
+
 run(function()
     local AutoToxic
     local GG
@@ -29638,21 +29551,12 @@ run(function()
 	local descendantConnection
 	local renderName = 'AetherTransparentCharacter'
 
-	local function desiredTransparency()
-		local camera = workspace.CurrentCamera
-		local root = watchedCharacter and watchedCharacter:FindFirstChild('HumanoidRootPart')
-		-- A partial third-person value must never make the local body/view accessories
-		-- leak back into first person.
-		return camera and root and (camera.CFrame.Position - root.Position).Magnitude < 1.5
-			and 1 or Amount.Value / 100
-	end
-
 	local function applyTransparency(char)
 		if not char or char ~= watchedCharacter or not Amount then return end
 		for _, obj in char:GetDescendants() do
 			if obj:IsA('BasePart') then
 				if originals[obj] == nil then originals[obj] = obj.LocalTransparencyModifier end
-				obj.LocalTransparencyModifier = desiredTransparency()
+				obj.LocalTransparencyModifier = Amount.Value / 100
 			end
 		end
 	end
@@ -29677,7 +29581,7 @@ run(function()
 					task.defer(function()
 						if obj.Parent and char == watchedCharacter and TransparentCharacter.Enabled then
 							if originals[obj] == nil then originals[obj] = obj.LocalTransparencyModifier end
-							obj.LocalTransparencyModifier = desiredTransparency()
+							obj.LocalTransparencyModifier = Amount.Value / 100
 						end
 					end)
 				end
@@ -29697,7 +29601,7 @@ run(function()
 					-- Roblox's camera transparency controller also writes this property. Reapply
 					-- at Last priority so first-person, hotbar/viewmodel, and camera updates have
 					-- already finished, without rescanning descendants every frame.
-					local value = desiredTransparency()
+					local value = Amount.Value / 100
 					for obj in originals do
 						if obj.Parent and obj.LocalTransparencyModifier ~= value then
 							obj.LocalTransparencyModifier = value

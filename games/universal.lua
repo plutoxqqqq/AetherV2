@@ -6267,21 +6267,30 @@ run(function()
     local originalMode
     local applying = false
 
+    local function applyMode()
+	if applying or not NoCameraCollision.Enabled then return end
+	if lplr.DevCameraOcclusionMode ~= Enum.DevCameraOcclusionMode.Invisicam then
+	    applying = true
+	    lplr.DevCameraOcclusionMode = Enum.DevCameraOcclusionMode.Invisicam
+	    applying = false
+	end
+    end
+
     NoCameraCollision = vape.Categories.Utility:CreateModule({
 	Name = 'NoCameraCollision',
 	Function = function(callback)
 	    if callback then
 		originalMode = lplr.DevCameraOcclusionMode
-		local success = pcall(function()
-		    applying = true
-		    lplr.DevCameraOcclusionMode = Enum.DevCameraOcclusionMode.Invisicam
-		    applying = false
-		end)
+		local success = pcall(applyMode)
 		if not success then
 		    notif('NoCameraCollision', 'Camera occlusion mode is unavailable in this game.', 5, 'warning')
 		    NoCameraCollision:Toggle()
 		    return
 		end
+		NoCameraCollision:Clean(lplr:GetPropertyChangedSignal('DevCameraOcclusionMode'):Connect(function()
+		    pcall(applyMode)
+		end))
+		NoCameraCollision:Clean(lplr.CharacterAdded:Connect(function() task.defer(function() pcall(applyMode) end) end))
 	    elseif originalMode then
 		applying = true
 		pcall(function() lplr.DevCameraOcclusionMode = originalMode end)
