@@ -31,8 +31,19 @@ end
 
 local vape
 local compile = loadstring
+local compileCache = type(shared.AetherCompileCache) == 'table' and shared.AetherCompileCache or {}
+local watermark = '--This watermark is used to delete the file if its cached, remove it to make the file persist after vape updates.\n'
+local function compileKey(source)
+	return source:sub(1, #watermark) == watermark and source:sub(#watermark + 1) or source
+end
 local loadstring = function(...)
-	local res, err = compile(...)
+	local source, chunkName = ...
+	local key = compileKey(source)
+	local res, err = compileCache[key], nil
+	if not res then
+		res, err = compile(source, chunkName)
+		if res then compileCache[key] = res end
+	end
 	if err and vape then
 		vape:CreateNotification('AetherV2', 'Failed to load : '..err, 30, 'alert')
 	end
@@ -595,6 +606,8 @@ end
 -- screen comes down so nothing is left frozen on it, the reason goes to the console AND to a Roblox
 -- notification so the user can actually report it, and only then does it raise.
 local function failLoad(message)
+	table.clear(compileCache)
+	shared.AetherCompileCache = nil
 	closeLoadingScreen()
 	warn('[AetherV2] Load failed: '..tostring(message))
 	pcall(function()
@@ -664,7 +677,7 @@ local function payloadProblem(path, body)
 	if lowered:find('<!doctype html') or lowered:find('<html') then
 		return 'received an HTML error page instead of the file'
 	end
-	if path:sub(-4) == '.lua' and not compile(body, path) then
+	if path:sub(-4) == '.lua' and not loadstring(body, path) then
 		return 'the downloaded file did not compile'
 	end
 	return nil
@@ -697,18 +710,20 @@ end
 local function downloadFile(path, func)
 	-- Heal a broken cache before trusting it. Without this, one interrupted write means the script
 	-- never loads again on that machine, however many times it is re-injected.
-	if isfile(path) and path:sub(-4) == '.lua' and not compile(readfile(path), path) then
+	local exists = isfile(path)
+	if exists and path:sub(-4) == '.lua' and not loadstring(readfile(path), path) then
 		warn('[AetherV2] Cached '..path..' is unusable, downloading it again')
 		delfile(path)
+		exists = false
 	end
-	if not isfile(path) then
+	if not exists then
 		setPhaseProgress('Downloading '..path, 0.15)
 		local body, problem = fetchFile(path)
 		if not body then
 			failLoad('Could not download '..path..' - '..tostring(problem))
 		end
 		if path:sub(-4) == '.lua' then
-			body = '--This watermark is used to delete the file if its cached, remove it to make the file persist after vape updates.\n'..body
+			body = watermark..body
 		end
 		writefile(path, body)
 		setPhaseProgress('Downloaded '..path, 0.75)
@@ -784,7 +799,7 @@ end
 -- we build the menu without it. The chunk is not killed; if it does finish later, its modules are
 -- added and their saved settings re-applied.
 local function runWatchedChunk(source, chunkName, label, timeout, optional, ...)
-	local chunk = compile(source, chunkName)
+	local chunk = loadstring(source, chunkName)
 	if not chunk then
 		local message = 'Failed to compile '..chunkName
 		if optional then
@@ -841,6 +856,10 @@ local function finishLoading()
 	local loaded, loadError = xpcall(function()
 		vape:Load()
 	end, debug.traceback)
+	-- Source strings can be hundreds of kilobytes. They are only useful during startup validation;
+	-- release both keys and compiled closures as soon as all startup chunks have run.
+	table.clear(compileCache)
+	shared.AetherCompileCache = nil
 	if not loaded then
 		failLoad(loadError)
 	end
@@ -919,7 +938,9 @@ local function finishLoading()
 	end
 
 	setLoadingStatus('Finished loading', 1)
-	task.delay(2, closeLoadingScreen)
+	-- The old two-second victory pause made an already-ready menu feel slow. Let the loading
+	-- screen's own closer perform its fade immediately after the final status is rendered.
+	task.defer(closeLoadingScreen)
 end
 
 if not isfile('aetherv2/profiles/gui.txt') then

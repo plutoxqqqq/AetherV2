@@ -3,6 +3,25 @@ local license = ... or {}
 local globalenv = (getgenv and getgenv()) or _G
 license.Whitelist = globalenv.whitelist or license.Whitelist
 
+-- A cached Lua file used to be compiled once to validate it and then compiled again moments later
+-- to execute it.  The GUI and game chunks are large, so that duplicate parser/codegen work was a
+-- noticeable part of every warm start.  Share validated chunks with main.lua for this one load.
+local nativeLoadstring = loadstring
+local compileCache = {}
+shared.AetherCompileCache = compileCache
+local watermark = '--This watermark is used to delete the file if its cached, remove it to make the file persist after vape updates.\n'
+local function compileKey(source)
+	return source:sub(1, #watermark) == watermark and source:sub(#watermark + 1) or source
+end
+local function cachedLoadstring(source, chunkName)
+	local key = compileKey(source)
+	local cached = compileCache[key]
+	if cached then return cached end
+	local chunk, err = nativeLoadstring(source, chunkName)
+	if chunk then compileCache[key] = chunk end
+	return chunk, err
+end
+
 local cloneref = cloneref or function(ref) return ref end
 local isfile = isfile or function(file)
 	local suc, res = pcall(function()
@@ -541,6 +560,8 @@ end
 -- A load that dies here used to leave the loading screen sitting on the user's face forever, with
 -- the reason only in the console. Take the screen down and say what happened.
 local function failLoad(message)
+	table.clear(compileCache)
+	shared.AetherCompileCache = nil
 	if _G.AetherV2CloseLoadingScreen then
 		pcall(_G.AetherV2CloseLoadingScreen)
 	elseif _G.AetherV2LoadingScreen then
@@ -573,7 +594,7 @@ local function payloadProblem(path, body)
 	if lowered:find('<!doctype html') or lowered:find('<html') then
 		return 'received an HTML error page instead of the file'
 	end
-	if path:sub(-4) == '.lua' and not loadstring(body, path) then
+	if path:sub(-4) == '.lua' and not cachedLoadstring(body, path) then
 		return 'the downloaded file did not compile'
 	end
 	return nil
@@ -608,18 +629,20 @@ end
 
 local function storeFile(path, body)
 	if path:sub(-4) == '.lua' then
-		body = '--This watermark is used to delete the file if its cached, remove it to make the file persist after vape updates.\n'..body
+		body = watermark..body
 	end
 	writefile(path, body)
 end
 
 local function downloadFile(path, func)
 	-- Heal a broken cache instead of trusting it forever.
-	if isfile(path) and path:sub(-4) == '.lua' and not loadstring(readfile(path), path) then
+	local exists = isfile(path)
+	if exists and path:sub(-4) == '.lua' and not cachedLoadstring(readfile(path), path) then
 		warn('[AetherV2] Cached '..path..' is unusable, downloading it again')
 		delfile(path)
+		exists = false
 	end
-	if not isfile(path) then
+	if not exists then
 		if not license.Closet then
 			_G.AetherV2SetLoadingStatus('Downloading '..path, 0.35)
 		end
@@ -703,6 +726,13 @@ end
 -- silently became 'main' - which then looked like an update and wiped the entire install. On a flaky
 -- connection that happened on every injection. A lookup that fails now changes nothing at all.
 local function resolveCommit()
+	-- Reinjection in the same client should not repeat three update endpoints. The first injection
+	-- still performs the normal live check; this short in-memory reuse never survives a new client
+	-- session and therefore does not make persistent installs miss updates.
+	local recent = shared.AetherResolvedCommit
+	if type(recent) == 'table' and type(recent.Commit) == 'string' and os.clock() - (recent.CheckedAt or 0) < 60 then
+		return recent.Commit
+	end
 	local sources = {
 		{Url = 'https://api.github.com/repos/plutoxqqqq/AetherV2/commits/main', Pattern = '"sha"%s*:%s*"(%x+)"'},
 		{Url = 'https://github.com/plutoxqqqq/AetherV2/commits/main.atom', Pattern = 'Commit/(%x+)'},
@@ -715,7 +745,9 @@ local function resolveCommit()
 		if suc and type(body) == 'string' then
 			local found = body:match(source.Pattern)
 			if found and #found >= 40 then
-				return found:sub(1, 40)
+				found = found:sub(1, 40)
+				shared.AetherResolvedCommit = {Commit = found, CheckedAt = os.clock()}
+				return found
 			end
 		end
 	end
@@ -1007,6 +1039,8 @@ local versionData = readfile("aetherv2/version.txt")
 local maintenance = versionData:match("maintenance%s*=%s*([^\r\n]+)")
 
 if maintenance and maintenance:match("^%s*true%s*$") then
+	table.clear(compileCache)
+	shared.AetherCompileCache = nil
 	local StarterGui = game:GetService("StarterGui")
 
 	pcall(function()
@@ -1031,7 +1065,7 @@ _G.AetherV2SetLoadingStatus('Preparing loading artwork...', 0.70)
 pcall(downloadFile, 'aetherv2/assets/new/loading.png')
 
 _G.AetherV2SetLoadingStatus('Loading main script', 0.82)
-local mainChunk = loadstring(downloadFile('aetherv2/main.lua'), 'main')
+local mainChunk = cachedLoadstring(downloadFile('aetherv2/main.lua'), 'main')
 if not mainChunk then
 	-- The cache heal above should have caught this, so if it still will not compile the copy on
 	-- GitHub is genuinely broken - say so instead of erroring on a nil call with the screen up.
