@@ -9640,19 +9640,12 @@ general:CreateButton({
 	Function = function()
 		mainapi:Uninject()
 	end,
-	Tooltip = 'Removes vape from the current game'
+	Tooltip = 'Removes Aether from the current game'
 })
 general:CreateButton({
 	Name = 'Reinject',
-	Function = function()
-		shared.vapereload = true
-		if shared.VapeDeveloper then
-			loadstring(readfile('aetherv2/main.lua'), 'main')(license)
-		else
-			loadstring(game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..readfile('aetherv2/profiles/commit.txt')..'/main.lua', true), 'main')(license)
-		end
-	end,
-	Tooltip = 'Reloads vape for debugging purposes'
+	Function = reloadAether,
+	Tooltip = 'Reloads Aether for debugging purposes'
 })
 local updatingModules = false
 general:CreateButton({
