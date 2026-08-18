@@ -3167,38 +3167,6 @@ function mainapi:CreateGUI()
 	addCorner(window)
 	addWindowStroke(window)
 	makeDraggable(window)
-	-- Compact Aether wordmark
-	local logo = Instance.new('TextLabel')
-	logo.Name = 'VapeLogo'
-	logo.Size = UDim2.fromOffset(82, 22)
-	logo.Position = UDim2.fromOffset(13, 8)
-	logo.BackgroundTransparency = 1
-	logo.Text = 'AETHER'
-	logo.TextXAlignment = Enum.TextXAlignment.Left
-	logo.TextColor3 = select(3, uipallet.Main:ToHSV()) > 0.5 and uipallet.Text or Color3.new(1, 1, 1)
-	logo.TextSize = 14
-	logo.FontFace = Font.fromEnum(Enum.Font.Gotham, Enum.FontWeight.Bold)
-	logo.Parent = window
-	local logoaccent = Instance.new('Frame')
-	logoaccent.Name = 'Accent'
-	logoaccent.Size = UDim2.fromOffset(2, 16)
-	logoaccent.Position = UDim2.fromOffset(-5, 3)
-	logoaccent.BorderSizePixel = 0
-	logoaccent.BackgroundColor3 = Color3.fromHSV(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value)
-	logoaccent.Parent = logo
-	addCorner(logoaccent, UDim.new(1, 0))
-	local logov4 = Instance.new('TextLabel')
-	logov4.Name = 'V4Logo'
-	logov4.Size = UDim2.fromOffset(22, 16)
-	logov4.Position = UDim2.new(1, -24, 0, 3)
-	logov4.BackgroundTransparency = 0
-	logov4.BackgroundColor3 = Color3.fromHSV(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value)
-	logov4.Text = 'V2'
-	logov4.TextColor3 = mainapi:TextColor(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value)
-	logov4.TextSize = 10
-	logov4.FontFace = Font.fromEnum(Enum.Font.Gotham, Enum.FontWeight.Bold)
-	logov4.Parent = logo
-	addCorner(logov4, UDim.new(0, 4))
 	local children = Instance.new('Frame')
 	children.Name = 'Children'
 	children.Size = UDim2.new(1, 0, 1, -33)
