@@ -3176,8 +3176,8 @@ function mainapi:CreateGUI()
 	-- Aether logo
 	local wordmark = Instance.new('ImageLabel')
 	wordmark.Name = 'AetherLogo'
-	wordmark.Size = UDim2.fromOffset(92, 28)
-	wordmark.Position = UDim2.new(0, 12, 0.5, -14)
+	wordmark.Size = UDim2.fromOffset(96, 29)
+	wordmark.Position = UDim2.fromOffset(10, 4)
 	wordmark.BackgroundTransparency = 1
 	wordmark.Image = getcustomasset('aetherv2/assets/new/aetherlogo.png')
 	wordmark.ScaleType = Enum.ScaleType.Fit
@@ -3185,8 +3185,8 @@ function mainapi:CreateGUI()
 
 	local v2badge = Instance.new('ImageLabel')
 	v2badge.Name = 'V2Badge'
-	v2badge.Size = UDim2.fromOffset(14, 10)
-	v2badge.Position = UDim2.new(0, 106, 0.5, 4)
+	v2badge.Size = UDim2.fromOffset(12, 8)
+	v2badge.Position = UDim2.fromOffset(108, 25)
 	v2badge.BackgroundTransparency = 1
 	v2badge.Image = getcustomasset('aetherv2/assets/new/v2.png')
 	v2badge.ScaleType = Enum.ScaleType.Fit
