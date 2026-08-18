@@ -9093,11 +9093,6 @@ mainapi:CreateCategory({
 	Icon = getcustomasset('aetherv2/assets/new/inventoryicon.png'),
 	Size = UDim2.fromOffset(15, 14)
 })
-mainapi:CreateCategory({
-	Name = 'Minigames',
-	Icon = getcustomasset('aetherv2/assets/new/miniicon.png'),
-	Size = UDim2.fromOffset(19, 12)
-})
 
 --[[
 	Favorites (adapted from the supplied reference implementation)
