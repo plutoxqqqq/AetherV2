@@ -3174,30 +3174,23 @@ function mainapi:CreateGUI()
 	makeDraggable(window)
 
 	-- Aether logo
-	local logo = Instance.new('Frame')
-	logo.Name = 'AetherLogo'
-	logo.Size = UDim2.fromOffset(120, 30)
-	logo.Position = UDim2.new(0.5, -60, 0, 5)
-	logo.BackgroundTransparency = 1
-	logo.Parent = window
-
 	local wordmark = Instance.new('ImageLabel')
-	wordmark.Name = 'Wordmark'
-	wordmark.Size = UDim2.fromOffset(88, 26)
-	wordmark.Position = UDim2.fromOffset(8, 0)
+	wordmark.Name = 'AetherLogo'
+	wordmark.Size = UDim2.fromOffset(92, 28)
+	wordmark.Position = UDim2.new(0, 12, 0.5, -14)
 	wordmark.BackgroundTransparency = 1
 	wordmark.Image = getcustomasset('aetherv2/assets/new/aetherlogo.png')
 	wordmark.ScaleType = Enum.ScaleType.Fit
-	wordmark.Parent = logo
+	wordmark.Parent = window
 
 	local v2badge = Instance.new('ImageLabel')
 	v2badge.Name = 'V2Badge'
-	v2badge.Size = UDim2.fromOffset(16, 11)
-	v2badge.Position = UDim2.fromOffset(96, 15)
+	v2badge.Size = UDim2.fromOffset(14, 10)
+	v2badge.Position = UDim2.new(0, 106, 0.5, 4)
 	v2badge.BackgroundTransparency = 1
 	v2badge.Image = getcustomasset('aetherv2/assets/new/v2.png')
 	v2badge.ScaleType = Enum.ScaleType.Fit
-	v2badge.Parent = logo
+	v2badge.Parent = window
 
 local children = Instance.new('Frame')			
 	local children = Instance.new('Frame')
