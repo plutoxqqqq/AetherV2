@@ -8263,49 +8263,6 @@ run(function()
 	end
     end
 
-    MurderMystery = vape.Categories.Minigames:CreateModule({
-	Name = 'MurderMystery',
-	Function = function(callback)
-		if callback then
-			oldtargetable, oldgetcolor = entitylib.targetCheck, entitylib.getEntityColor
-			entitylib.getEntityColor = function(ent)
-				ent = ent.Player
-				if not (ent and vape.Categories.Main.Options['Use team color'].Enabled) then
-					return
-				end
-				if isFriend(ent, true) then
-					return Color3.fromHSV(
-						vape.Categories.Friends.Options['Friends color'].Hue,
-						vape.Categories.Friends.Options['Friends color'].Sat,
-						vape.Categories.Friends.Options['Friends color'].Value
-					)
-				end
-				return murderer == ent and Color3.new(1, 0.3, 0.3) or sheriff == ent and Color3.new(0, 0.5, 1) or nil
-			end
-			entitylib.targetCheck = function(ent)
-				if ent.Player and isFriend(ent.Player) then
-					return false
-				end
-				if murderer == lplr then
-					return true
-				end
-				return murderer == ent.Player or sheriff == ent.Player
-			end
-			for _, v in playersService:GetPlayers() do
-				playerAdded(v)
-			end
-			MurderMystery:Clean(playersService.PlayerAdded:Connect(playerAdded))
-			entitylib.refresh()
-		else
-			entitylib.getEntityColor = oldgetcolor
-			entitylib.targetCheck = oldtargetable
-			entitylib.refresh()
-		end
-	end,
-	Tooltip = 'Automatic murder mystery teaming based on equipped roblox tools',
-    })
-end)
-
 --[[
     Legit
 ]]
