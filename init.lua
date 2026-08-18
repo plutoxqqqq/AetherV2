@@ -523,7 +523,7 @@ local function buildNewLoadingScreen(screen)
 end
 
 local function createLoadingScreen()
-	if isLoadingScreenDisabled() then return nil end
+	if license.Closet or isLoadingScreenDisabled() then return nil end
 	-- Per-GUI loading screens: only 'new' and 'newer' show one at all.
 	local gui = selectedGui()
 	if gui ~= 'new' and gui ~= 'newer' then return nil end
