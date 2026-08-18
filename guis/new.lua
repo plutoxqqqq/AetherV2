@@ -3167,6 +3167,39 @@ function mainapi:CreateGUI()
 	addCorner(window)
 	addWindowStroke(window)
 	makeDraggable(window)
+	window.Parent = clickgui
+	addBlur(window)
+	addCorner(window)
+	addWindowStroke(window)
+	makeDraggable(window)
+
+	-- Aether logo
+	local logo = Instance.new('Frame')
+	logo.Name = 'AetherLogo'
+	logo.Size = UDim2.fromOffset(100, 24)
+	logo.Position = UDim2.fromOffset(10, 7)
+	logo.BackgroundTransparency = 1
+	logo.Parent = window
+
+	local wordmark = Instance.new('ImageLabel')
+	wordmark.Name = 'Wordmark'
+	wordmark.Size = UDim2.fromOffset(67, 20)
+	wordmark.Position = UDim2.fromOffset(0, 2)
+	wordmark.BackgroundTransparency = 1
+	wordmark.Image = getcustomasset('aetherv2/assets/new/aetherlogo.png')
+	wordmark.ScaleType = Enum.ScaleType.Fit
+	wordmark.Parent = logo
+
+	local v2badge = Instance.new('ImageLabel')
+	v2badge.Name = 'V2Badge'
+	v2badge.Size = UDim2.fromOffset(23, 16)
+	v2badge.Position = UDim2.fromOffset(72, 4)
+	v2badge.BackgroundTransparency = 1
+	v2badge.Image = getcustomasset('aetherv2/assets/new/v2.png')
+	v2badge.ScaleType = Enum.ScaleType.Fit
+	v2badge.Parent = logo
+
+local children = Instance.new('Frame')			
 	local children = Instance.new('Frame')
 	children.Name = 'Children'
 	children.Size = UDim2.new(1, 0, 1, -33)
