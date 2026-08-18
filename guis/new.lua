@@ -11028,7 +11028,7 @@ local function keybindStart(inputObj)
 			if checkKeybinds(mainapi.HeldKeybinds, v.Bind, inputObj.KeyCode.Name) then
 				toggled = true
 				if mainapi.ToggleNotifications.Enabled then
-					mainapi:CreateNotification(i, not v.Enabled and "<font color='#5AFF5A'>Enabled</font>" or "<font color='#FF5A5A'>Disabled</font>", 0.75)
+					mainapi:CreateNotification("<b>"..i.."</b>", not v.Enabled and "<font color='#5AFF5A'>Enabled</font>" or "<font color='#FF5A5A'>Disabled</font>", 0.75)
 				end
 				if mainapi.PushUndo then mainapi:PushUndo(v) end
 				v:Toggle(true)
@@ -11040,7 +11040,7 @@ local function keybindStart(inputObj)
 			for i, v in panel.Modules do
 				if v.Bind and checkKeybinds(mainapi.HeldKeybinds, v.Bind, inputObj.KeyCode.Name) then
 					if mainapi.ToggleNotifications.Enabled then
-						mainapi:CreateNotification(i, not v.Enabled and "<font color='#5AFF5A'>Enabled</font>" or "<font color='#FF5A5A'>Disabled</font>", 0.75)
+						mainapi:CreateNotification("<b>"..i.."</b>", not v.Enabled and "<font color='#5AFF5A'>Enabled</font>" or "<font color='#FF5A5A'>Disabled</font>", 0.75)
 					end
 					v:Toggle()
 				end
