@@ -220,7 +220,7 @@ end)
 run(function()
 	local AutoGamble
 	
-	AutoGamble = vape.Categories.Minigames:CreateModule({
+	AutoGamble = vape.Categories.Utility:CreateModule({
 		Name = 'AutoGamble',
 		Function = function(callback)
 			if callback then
@@ -954,7 +954,7 @@ run(function()
 		savedFullLeaderboards = nil
 	end
 
-	LeaderboardSpoof = vape.Categories.Minigames:CreateModule({
+	LeaderboardSpoof = vape.Categories.Render:CreateModule({
 		Name = "LeaderboardSpoof",
 		Function = function(enabled)
 			if enabled then doDispatch() else doRevert() end
@@ -1438,7 +1438,7 @@ run(function()
 		if ppLoop then task.cancel(ppLoop) ppLoop = nil end
 	end
 
-	PlayerProfileSpoof = vape.Categories.Minigames:CreateModule({
+	PlayerProfileSpoof = vape.Categories.Render:CreateModule({
 		Name = "PlayerProfileSpoof",
 		Function = function(callback)
 			if callback then ppStartLoop() else ppCleanup() end
@@ -1537,7 +1537,7 @@ run(function()
         originalWins = nil
     end
 
-    SetPlayerWins = vape.Categories.Minigames:CreateModule({
+    SetPlayerWins = vape.Categories.Render:CreateModule({
         Name = "SetPlayerWins",
         Function = function(state)
             if state then
@@ -1578,7 +1578,7 @@ run(function()
         DoesExist = nil,
     }
 
-    WinstreakSpoofer = vape.Categories.Minigames:CreateModule({
+    WinstreakSpoofer = vape.Categories.Render:CreateModule({
         Name = 'WinstreakSpoofer',
         Tooltip = 'Modifies/Adds your winstreak (client‑sided)',
         Function = function(callback)
@@ -1990,7 +1990,7 @@ run(function()
 	end
 
 	local sbsLoop = nil
-	StatsBoardSpoof = vape.Categories.Minigames:CreateModule({
+	StatsBoardSpoof = vape.Categories.Render:CreateModule({
 		Name = "StatsBoardSpoof",
 		Tooltip = "Spoof your StatsBoard display (client-sided only)",
 		Function = function(enabled)
@@ -2191,7 +2191,7 @@ run(function()
         end
     end
 
-    LARPKits = vape.Categories.Minigames:CreateModule({
+    LARPKits = vape.Categories.Render:CreateModule({
         Name = "LARPKits",
         Tooltip = "Client‑side only – moves kits visually to 'Owned' in lobby",
         Function = function(callback)
