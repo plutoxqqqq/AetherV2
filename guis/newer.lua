@@ -3858,9 +3858,20 @@ function mainapi:CreateGUI()
 		-- touch and gamepad, and it is also the one that goes quiet on some executor-hosted
 		-- ScreenGuis, which is what left these tabs dead to a plain mouse click. A normal click
 		-- fires both, so the second one inside the same moment is dropped.
-	button.MouseButton1Click:Connect(function()
-		optionapi:Toggle()
-	end)
+local lastClick = 0
+
+local function clicked()
+	local now = os.clock()
+	if now - lastClick < 0.05 then
+		return
+	end
+
+	lastClick = now
+	optionapi:Toggle()
+end
+
+button.Activated:Connect(clicked)
+button.MouseButton1Click:Connect(clicked)
 
 		categoryapi.Buttons[categorysettings.Name] = optionapi
 
