@@ -7,6 +7,10 @@ on:
     paths:
       - .github/scripts/apply_kit_rework.py
       - .github/workflows/apply-kits-rework.yml
+  pull_request:
+    branches:
+      - main
+    types: [opened, reopened, synchronize]
 
 permissions:
   contents: write
