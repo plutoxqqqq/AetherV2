@@ -36512,6 +36512,14 @@ run(function()
     local SWING_WINDOW = 0.3
     local ATTEMPT_COOLDOWN = 0.35
 
+    local voidRay = RaycastParams.new()
+    voidRay.FilterType = Enum.RaycastFilterType.Exclude
+    voidRay.RespectCanCollide = true
+
+    local rayCharacter
+    local swingMarker
+    local swingSeenAt = -math.huge
+
     local function getSoulPosition(soul)
         if not soul or not soul.Parent then
             return nil
@@ -36532,42 +36540,51 @@ run(function()
         return part and part.Position or nil
     end
 
-    -- Same void boundary idea used by AutoVoidDrop.
-    -- Calculated once instead of scanning every frame.
-    local function getVoidHeight()
-        local lowestpoint = math.huge
-
-        for _, block in store.blocks do
-            if block and block.Parent and block:IsA('BasePart') then
-                local point = (block.Position.Y - (block.Size.Y / 2)) - 50
-                if point < lowestpoint then
-                    lowestpoint = point
-                end
-            end
-        end
-
-        return lowestpoint ~= math.huge and lowestpoint or nil
-    end
-
-    local function isFallingIntoVoid(root, voidHeight)
-        if not root or not voidHeight then
+    local function isFallingIntoVoid(root)
+        if not root or root.AssemblyLinearVelocity.Y >= -2 then
             return false
         end
 
-        -- Require actual downward movement as well as being below
-        -- AutoVoidDrop's map threshold.
-        return root.AssemblyLinearVelocity.Y < -2
-            and root.Position.Y < voidHeight
+        -- Refresh the ray filter after every respawn.
+        if rayCharacter ~= lplr.Character then
+            rayCharacter = lplr.Character
+            voidRay.FilterDescendantsInstances = rayCharacter and {rayCharacter} or {}
+        end
+
+        -- If we are moving downwards and there is no collidable ground
+        -- reasonably below us, treat the fall as a void fall.
+        --
+        -- This deliberately triggers much earlier than AutoVoidDrop's
+        -- "50 studs below the lowest block" threshold so Evelynn still
+        -- has time to save us.
+        return workspace:Raycast(
+            root.Position,
+            Vector3.new(0, -80, 0),
+            voidRay
+        ) == nil
+    end
+
+    local function updateSwingState()
+        local controller = bedwars.SwordController
+        if not controller then
+            return
+        end
+
+        local current = controller.lastSwing or 0
+
+        -- Do not subtract controller.lastSwing from our own timestamp.
+        -- Other modules/controllers may write lastSwing using a different
+        -- clock. Instead, detect when the value changes and timestamp that
+        -- change ourselves.
+        if current ~= swingMarker then
+            swingMarker = current
+            swingSeenAt = os.clock()
+        end
     end
 
     local function isSwinging()
-        local controller = bedwars.SwordController
-        if not controller then
-            return false
-        end
-
-        local lastSwing = controller.lastSwing or 0
-        return (tick() - lastSwing) <= SWING_WINDOW
+        return store.hand.toolType == 'sword'
+            and (os.clock() - swingSeenAt) <= SWING_WINDOW
     end
 
     local function findNearestTarget()
@@ -36611,8 +36628,7 @@ run(function()
 
         local targetPosition = target.RootPart.Position
 
-        -- Horizontal rotation only, so facing a player above/below us
-        -- does not tilt or modify vertical positioning.
+        -- Horizontal rotation only.
         root.CFrame = CFrame.lookAt(
             root.Position,
             Vector3.new(
@@ -36629,9 +36645,8 @@ run(function()
         end
 
         task.spawn(function()
-            -- useSpirit teleports us. Wait for that movement instead of
-            -- rotating before the teleport has actually happened.
-            local deadline = tick() + 0.4
+            -- Wait for useSpirit to actually move us before facing.
+            local deadline = os.clock() + 0.4
 
             repeat
                 task.wait()
@@ -36641,10 +36656,11 @@ run(function()
                 end
 
                 local root = entitylib.character.RootPart
+
                 if root and (root.Position - startPosition).Magnitude > 3 then
                     break
                 end
-            until tick() >= deadline
+            until os.clock() >= deadline
 
             if AutoEvelynn.Enabled then
                 faceNearestTarget()
@@ -36683,6 +36699,14 @@ run(function()
 
             local souls = collection('EvelynnSoul', AutoEvelynn)
 
+            -- Initialise the swing tracker with the controller's current value
+            -- so enabling the module does not count an old swing as a new one.
+            swingMarker = bedwars.SwordController
+                and bedwars.SwordController.lastSwing
+                or 0
+
+            swingSeenAt = -math.huge
+
             task.spawn(function()
                 repeat
                     task.wait()
@@ -36692,7 +36716,6 @@ run(function()
                     return
                 end
 
-                local voidHeight = getVoidHeight()
                 local pendingSoul
                 local pendingSince
                 local lastAttempt = 0
@@ -36701,72 +36724,59 @@ run(function()
                     if entitylib.isAlive and bedwars.SpiritAssassinController then
                         local root = entitylib.character.RootPart
 
-                        -- Recalculate if the module was enabled before
-                        -- the map block cache became available.
-                        if OnlyFalling.Enabled and not voidHeight then
-                            voidHeight = getVoidHeight()
-                        end
+                        updateSwingState()
 
-                        local allowed = true
+                        local soul = findNearestSoul(souls, root)
 
-                        if OnlyFalling.Enabled
-                            and not isFallingIntoVoid(root, voidHeight) then
-                            allowed = false
-                        end
+                        if soul then
+                            local now = os.clock()
 
-                        if OnlySwinging.Enabled
-                            and not isSwinging() then
-                            allowed = false
-                        end
+                            -- Start the delay when this soul becomes available.
+                            -- Falling/swinging are activation conditions, not
+                            -- delay conditions, so temporarily not satisfying
+                            -- them must NOT restart the timer.
+                            if pendingSoul ~= soul then
+                                pendingSoul = soul
+                                pendingSince = now
+                            end
 
-                        if allowed then
-                            local soul = findNearestSoul(souls, root)
+                            local delayReady = pendingSince
+                                and (now - pendingSince) >= Delay.Value
 
-                            if soul then
-                                -- Delay starts once this soul actually becomes
-                                -- eligible, not simply when it first spawned.
-                                if pendingSoul ~= soul then
-                                    pendingSoul = soul
-                                    pendingSince = tick()
-                                end
+                            local conditionsReady =
+                                (not OnlyFalling.Enabled or isFallingIntoVoid(root))
+                                and
+                                (not OnlySwinging.Enabled or isSwinging())
 
-                                if pendingSince
-                                    and (tick() - pendingSince) >= Delay.Value
-                                    and (tick() - lastAttempt) >= ATTEMPT_COOLDOWN then
+                            if delayReady
+                                and conditionsReady
+                                and soul.Parent
+                                and (now - lastAttempt) >= ATTEMPT_COOLDOWN then
 
-                                    lastAttempt = tick()
+                                lastAttempt = now
 
-                                    -- Revalidate immediately before activation.
-                                    if soul.Parent
-                                        and (not OnlyFalling.Enabled
-                                            or isFallingIntoVoid(root, voidHeight))
-                                        and (not OnlySwinging.Enabled
-                                            or isSwinging()) then
+                                -- Revalidate immediately before use.
+                                if (not OnlyFalling.Enabled or isFallingIntoVoid(root))
+                                    and (not OnlySwinging.Enabled or isSwinging()) then
 
-                                        local startPosition = root.Position
+                                    local startPosition = root.Position
 
-                                        local success = pcall(function()
-                                            bedwars.SpiritAssassinController:useSpirit(
-                                                lplr,
-                                                soul
-                                            )
-                                        end)
+                                    local success = pcall(function()
+                                        bedwars.SpiritAssassinController:useSpirit(
+                                            lplr,
+                                            soul
+                                        )
+                                    end)
 
-                                        if success and FaceTarget.Enabled then
-                                            faceAfterRecall(startPosition)
-                                        end
+                                    if success and FaceTarget.Enabled then
+                                        faceAfterRecall(startPosition)
                                     end
-
-                                    pendingSoul = nil
-                                    pendingSince = nil
                                 end
-                            else
+
                                 pendingSoul = nil
                                 pendingSince = nil
                             end
                         else
-                            -- The delay begins again once all selected
-                            -- conditions become valid.
                             pendingSoul = nil
                             pendingSince = nil
                         end
