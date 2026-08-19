@@ -36799,7 +36799,7 @@ run(function()
 
     OnlySwinging = AutoEvelynn:CreateToggle({
         Name = 'Only while swinging',
-        Tooltip = 'Only teleports while manually swinging
+        Tooltip = 'Only teleports while manually swinging'
     })
 
     FaceTarget = AutoEvelynn:CreateToggle({
