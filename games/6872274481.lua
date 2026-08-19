@@ -36502,38 +36502,311 @@ run(function()
 end)
 
 run(function()
-	local AutoSpiritAssassin
-	local Range, Delay
+    local AutoEvelynn
+    local Delay
+    local OnlyFalling
+    local OnlySwinging
+    local FaceTarget
 
-	AutoSpiritAssassin = kits:CreateModule({
-		Name = 'AutoSpiritAssassin',
-		Category = 'Auto',
-		Function = function(callback)
-			if not callback then return end
-			kitCollector(AutoSpiritAssassin, 'EvelynnSoul', function() return Range.Value end, function() return Delay.Value end, function(soul)
-				bedwars.SpiritAssassinController:useSpirit(lplr, soul)
-			end)
-		end,
-		Tooltip = 'Uses the spirits Evelynn leaves on the players she kills'
-	})
+    local EVELYNN_RANGE = 120
+    local SWING_WINDOW = 0.3
+    local ATTEMPT_COOLDOWN = 0.35
 
-	Range = AutoSpiritAssassin:CreateSlider({
-		Name = 'Range',
-		Min = 1,
-		Max = 200,
-		Default = 120,
-		Suffix = function(val)
-			return val <= 1 and 'stud' or 'studs'
-		end
-	})
-	Delay = AutoSpiritAssassin:CreateSlider({
-		Name = 'Delay',
-		Min = 0,
-		Max = 2,
-		Default = 0.1,
-		Decimal = 10,
-		Suffix = 'seconds'
-	})
+    local function getSoulPosition(soul)
+        if not soul or not soul.Parent then
+            return nil
+        end
+
+        if soul:IsA('BasePart') then
+            return soul.Position
+        end
+
+        if soul:IsA('Model') then
+            local success, pivot = pcall(soul.GetPivot, soul)
+            if success then
+                return pivot.Position
+            end
+        end
+
+        local part = soul:FindFirstChildWhichIsA('BasePart', true)
+        return part and part.Position or nil
+    end
+
+    -- Same void boundary idea used by AutoVoidDrop.
+    -- Calculated once instead of scanning every frame.
+    local function getVoidHeight()
+        local lowestpoint = math.huge
+
+        for _, block in store.blocks do
+            if block and block.Parent and block:IsA('BasePart') then
+                local point = (block.Position.Y - (block.Size.Y / 2)) - 50
+                if point < lowestpoint then
+                    lowestpoint = point
+                end
+            end
+        end
+
+        return lowestpoint ~= math.huge and lowestpoint or nil
+    end
+
+    local function isFallingIntoVoid(root, voidHeight)
+        if not root or not voidHeight then
+            return false
+        end
+
+        -- Require actual downward movement as well as being below
+        -- AutoVoidDrop's map threshold.
+        return root.AssemblyLinearVelocity.Y < -2
+            and root.Position.Y < voidHeight
+    end
+
+    local function isSwinging()
+        local controller = bedwars.SwordController
+        if not controller then
+            return false
+        end
+
+        local lastSwing = controller.lastSwing or 0
+        return (tick() - lastSwing) <= SWING_WINDOW
+    end
+
+    local function findNearestTarget()
+        if not entitylib.isAlive then
+            return nil
+        end
+
+        local root = entitylib.character.RootPart
+        local closest
+        local closestDistance = math.huge
+
+        for _, entity in entitylib.List do
+            if entity.Targetable
+                and entity.Player
+                and entity.RootPart
+                and entity.RootPart.Parent then
+
+                local distance = (entity.RootPart.Position - root.Position).Magnitude
+
+                if distance < closestDistance then
+                    closest = entity
+                    closestDistance = distance
+                end
+            end
+        end
+
+        return closest
+    end
+
+    local function faceNearestTarget()
+        if not FaceTarget.Enabled or not entitylib.isAlive then
+            return
+        end
+
+        local root = entitylib.character.RootPart
+        local target = findNearestTarget()
+
+        if not root or not target or not target.RootPart then
+            return
+        end
+
+        local targetPosition = target.RootPart.Position
+
+        -- Horizontal rotation only, so facing a player above/below us
+        -- does not tilt or modify vertical positioning.
+        root.CFrame = CFrame.lookAt(
+            root.Position,
+            Vector3.new(
+                targetPosition.X,
+                root.Position.Y,
+                targetPosition.Z
+            )
+        )
+    end
+
+    local function faceAfterRecall(startPosition)
+        if not FaceTarget.Enabled then
+            return
+        end
+
+        task.spawn(function()
+            -- useSpirit teleports us. Wait for that movement instead of
+            -- rotating before the teleport has actually happened.
+            local deadline = tick() + 0.4
+
+            repeat
+                task.wait()
+
+                if not AutoEvelynn.Enabled or not entitylib.isAlive then
+                    return
+                end
+
+                local root = entitylib.character.RootPart
+                if root and (root.Position - startPosition).Magnitude > 3 then
+                    break
+                end
+            until tick() >= deadline
+
+            if AutoEvelynn.Enabled then
+                faceNearestTarget()
+            end
+        end)
+    end
+
+    local function findNearestSoul(souls, root)
+        local closest
+        local closestDistance = math.huge
+
+        for _, soul in souls do
+            local position = getSoulPosition(soul)
+
+            if position then
+                local distance = (position - root.Position).Magnitude
+
+                if distance <= EVELYNN_RANGE and distance < closestDistance then
+                    closest = soul
+                    closestDistance = distance
+                end
+            end
+        end
+
+        return closest
+    end
+
+    AutoEvelynn = kits:CreateModule({
+        Name = 'AutoEvelynn',
+        Category = 'Auto',
+
+        Function = function(callback)
+            if not callback then
+                return
+            end
+
+            local souls = collection('EvelynnSoul', AutoEvelynn)
+
+            task.spawn(function()
+                repeat
+                    task.wait()
+                until store.matchState ~= 0 or not AutoEvelynn.Enabled
+
+                if not AutoEvelynn.Enabled then
+                    return
+                end
+
+                local voidHeight = getVoidHeight()
+                local pendingSoul
+                local pendingSince
+                local lastAttempt = 0
+
+                repeat
+                    if entitylib.isAlive and bedwars.SpiritAssassinController then
+                        local root = entitylib.character.RootPart
+
+                        -- Recalculate if the module was enabled before
+                        -- the map block cache became available.
+                        if OnlyFalling.Enabled and not voidHeight then
+                            voidHeight = getVoidHeight()
+                        end
+
+                        local allowed = true
+
+                        if OnlyFalling.Enabled
+                            and not isFallingIntoVoid(root, voidHeight) then
+                            allowed = false
+                        end
+
+                        if OnlySwinging.Enabled
+                            and not isSwinging() then
+                            allowed = false
+                        end
+
+                        if allowed then
+                            local soul = findNearestSoul(souls, root)
+
+                            if soul then
+                                -- Delay starts once this soul actually becomes
+                                -- eligible, not simply when it first spawned.
+                                if pendingSoul ~= soul then
+                                    pendingSoul = soul
+                                    pendingSince = tick()
+                                end
+
+                                if pendingSince
+                                    and (tick() - pendingSince) >= Delay.Value
+                                    and (tick() - lastAttempt) >= ATTEMPT_COOLDOWN then
+
+                                    lastAttempt = tick()
+
+                                    -- Revalidate immediately before activation.
+                                    if soul.Parent
+                                        and (not OnlyFalling.Enabled
+                                            or isFallingIntoVoid(root, voidHeight))
+                                        and (not OnlySwinging.Enabled
+                                            or isSwinging()) then
+
+                                        local startPosition = root.Position
+
+                                        local success = pcall(function()
+                                            bedwars.SpiritAssassinController:useSpirit(
+                                                lplr,
+                                                soul
+                                            )
+                                        end)
+
+                                        if success and FaceTarget.Enabled then
+                                            faceAfterRecall(startPosition)
+                                        end
+                                    end
+
+                                    pendingSoul = nil
+                                    pendingSince = nil
+                                end
+                            else
+                                pendingSoul = nil
+                                pendingSince = nil
+                            end
+                        else
+                            -- The delay begins again once all selected
+                            -- conditions become valid.
+                            pendingSoul = nil
+                            pendingSince = nil
+                        end
+                    else
+                        pendingSoul = nil
+                        pendingSince = nil
+                    end
+
+                    task.wait(0.03)
+                until not AutoEvelynn.Enabled
+            end)
+        end,
+
+        Tooltip = 'Automatically activates nearby Evelynn spirit orbs'
+    })
+
+    Delay = AutoEvelynn:CreateSlider({
+        Name = 'Delay',
+        Min = 0,
+        Max = 2,
+        Default = 0.1,
+        Decimal = 10,
+        Suffix = 'seconds'
+    })
+
+    OnlyFalling = AutoEvelynn:CreateToggle({
+        Name = 'Only when falling',
+        Tooltip = 'Only teleports while falling into the void'
+    })
+
+    OnlySwinging = AutoEvelynn:CreateToggle({
+        Name = 'Only while swinging',
+        Tooltip = 'Only teleports while manually swinging
+    })
+
+    FaceTarget = AutoEvelynn:CreateToggle({
+        Name = 'Face target',
+        Default = true,
+        Tooltip = 'Faces the nearest enemy after teleporting'
+    })
 end)
 
 run(function()
