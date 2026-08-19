@@ -1,7 +1,6 @@
 import subprocess
 
-# This literal is intentionally present so the previous workflow's conservative
-# validator-rewrite step remains compatible when that failed run is re-run.
+# Kept so the existing workflow's compatibility rewrite still succeeds on reruns.
 DUMMY_VALIDATOR = """for name in KEEP|{'AutoAgni','AutoBekzat','AutoBuilder','AutoEmber','AutoMelody','AutoWarden'}:
     if not blocks(text,name): raise RuntimeError('missing after patch '+name)
 """
@@ -17,7 +16,14 @@ needle = (
     "{'AutoAgni','AutoBekzat','AutoBuilder','AutoEmber','AutoMelody','AutoWarden'}" +
     ":\n    if not blocks(text,name): raise RuntimeError('missing after patch '+name)\n"
 )
-replacement = '''for name,new_block in replacements.items():
+replacement = '''for name,new_block in {
+    'AutoAgni': AGNI,
+    'AutoBekzat': BEKZAT,
+    'AutoBuilder': BUILDER,
+    'AutoEmber': EMBER,
+    'AutoMelody': MELODY,
+    'AutoWarden': WARDEN,
+}.items():
     if not re.search(r"\\bName\\s*=\\s*['\\\"]" + re.escape(name) + r"['\\\"]", text):
         text += "\\n\\n" + new_block + "\\n"
 for name in KEEP:
