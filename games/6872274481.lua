@@ -6798,193 +6798,19 @@ run(function()
 end)
 
 run(function()
-    local AutoKaida
-    local Targets
-    local SwingRange
-    local AttackRange
-    local Sort
-    local Limit
-    local Swing
-    local Mouse
-    local GUI
-    local Perfect
-    local Distance
-    local Spell, SpellMode, SpellCharge, SpellRange
-    local casting = 0
-
-	local function spellTarget()
-		local origin = entitylib.character.RootPart.Position
-		if SpellMode.Value == 'Camera' then
-			local point = bedwars.AbilityIndicatorUtil:calculateBlockTargetPoint(gameCamera.CFrame.Position, gameCamera.CFrame.LookVector, 300, nil, {allowArenaBarrierTarget = false})
-			return point and (point - origin).Magnitude <= SpellRange.Value and point or nil
-		end
-		local ent = entitylib.EntityPosition({Range = SpellRange.Value, Part = 'RootPart', Players = Targets.Players.Enabled, NPCs = Targets.NPCs.Enabled, Sort = sortmethods[Sort.Value]})
-		if not ent then return end
-		local point = bedwars.AbilityIndicatorUtil:calculateBlockTargetPoint(ent.RootPart.Position + Vector3.new(0, 3, 0), Vector3.new(0, -1, 0), 30, nil, {allowArenaBarrierTarget = false})
-		return point and (point - origin).Magnitude <= SpellRange.Value and point or ent.RootPart.Position
-	end
-
-	local function castSpell()
-		local target = spellTarget()
-		if not target or not bedwars.AbilityController:canUseAbility('summoner_start_charging', {disableBlockedAbilityAlert = true}) then return end
-		casting = tick() + 6
-		bedwars.AbilityController:useAbility('summoner_start_charging', nil, {targetPosition = target})
-		local level = bedwars.SummonerUtil.summoner_getPlayerSpellLevel(lplr) or 1
-		local duration = math.max(bedwars.SummonerUtil.summoner_getTotalCastTimeRequired(level) * (SpellCharge.Value / 100), bedwars.SummonerKitBalance.SPELL_MINIMUM_CAST_TIME)
-		local deadline = tick() + duration
-		repeat task.wait() until tick() >= deadline or not AutoKaida.Enabled or not entitylib.isAlive or not bedwars.SummonerKitController:isPlayerCastingSpell(lplr)
-		if AutoKaida.Enabled and entitylib.isAlive and bedwars.SummonerKitController:isPlayerCastingSpell(lplr) then bedwars.AbilityController:useAbility('summoner_finish_charging') end
-		casting = 0
-	end
-
-    local function getAttackData()
-        local claw = (Limit.Enabled and store.hand.tool and store.hand) or not Limit.Enabled and getItem('summoner_claw', nil, true)
-        if claw and claw.tool.Name:find('summoner_claw') then
-            if Mouse.Enabled and not inputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) then
-                return false
-            end
-            if GUI.Enabled and bedwars.AppController:isLayerOpen(bedwars.UILayers.MAIN) then
-                return false
-            end
-            return claw
-        end
-        return false
-    end
-
-    AutoKaida = kits:CreateModule({
-        Name = 'AutoKaida',
-        Category = 'Auto',
-        Function = function(callback)
-            if callback then
-                repeat
-                    if entitylib.isAlive and store.equippedKit == 'summoner' then
-						if Spell.Enabled and tick() > casting and not bedwars.SummonerKitController:isPlayerCastingSpell(lplr) then task.spawn(castSpell) end
-					end
-                    if entitylib.isAlive and (workspace:GetServerTimeNow() - bedwars.SummonerClawHandController.lastAttackTime) > bedwars.SummonerKitBalance.CLAW_COOLDOWN then
-                        local claw = getAttackData()
-                        if claw then
-                            local ent = entitylib.EntityPosition({
-                                Range = SwingRange.Value,
-                                Wallcheck = Targets.Walls.Enabled or nil,
-                                Part = 'RootPart',
-                                Players = Targets.Players.Enabled,
-                                NPCs = Targets.NPCs.Enabled,
-                                Sort = sortmethods[Sort.Value]
-                            })
-                            if ent then
-                                local selfpos = entitylib.character.RootPart.Position
-                                local dir = CFrame.lookAt(selfpos, ent.RootPart.Position).LookVector
-                                local delta = (ent.RootPart.Position - selfpos)
-
-                                if Perfect.Enabled and not Spell.Enabled and (selfpos - ent.RootPart.Position).Magnitude <= Distance.Value then
-                                    if bedwars.AbilityController:canUseAbility('summoner_start_charging') and bedwars.AbilityController:canUseAbility('summoner_finish_charging') then
-                                        bedwars.AbilityController:useAbility('summoner_start_charging')
-                                        task.wait(0.5)
-                                        bedwars.AbilityController:useAbility('summoner_finish_charging')
-                                        if not Swing.Enabled then
-                                            continue
-                                        end
-                                    end
-                                end
-
-                                if not Swing.Enabled then
-                                    local active = false
-                                    for _, v in workspace:QueryDescendants('#Summoner_SummonCircle') do
-                                        local pivot = v:FindFirstChild('Pivot')
-                                        if pivot and math.floor(pivot.Position.X) == math.floor(entitylib.character.RootPart.Position.X) and math.floor(pivot.Position.Z) == math.floor(entitylib.character.RootPart.Position.Z) then
-                                            active = true
-                                            break
-                                        end
-                                    end
-                                    if active then
-                                        task.wait()
-                                        continue
-                                    end
-                                end
-
-                                if (selfpos - ent.RootPart.Position).Magnitude <= AttackRange.Value then
-                                    bedwars.Client:Get('SummonerClawAttackRequest'):SendToServer({
-                                        position = selfpos + dir * math.max(delta.Magnitude - 16.399, 0),
-                                        direction = dir,
-                                        clientTime = workspace:GetServerTimeNow()
-                                    })
-                                end
-                                bedwars.SummonerClawHandController.lastAttackTime = workspace:GetServerTimeNow()
-                                bedwars.SummonerClawController:clawAttack(lplr, selfpos, dir, claw.tool.Name)
-                            end
-                        end
-                    end
-                    task.wait(0.1)
-                until not AutoKaida.Enabled
-			else
-				casting = 0
-            end
-        end
-    })
-
-    Targets = AutoKaida:CreateTargets({Players = true})
-    SwingRange = AutoKaida:CreateSlider({
-        Name = 'Swing Range',
-        Min = 1,
-        Max = 32,
-        Default = 32,
-        Suffix = function(val)
-            return val <= 1 and 'stud' or 'studs'
-        end
-    })
-    AttackRange = AutoKaida:CreateSlider({
-        Name = 'Attack Range',
-        Min = 1,
-        Max = 32,
-        Default = 32,
-        Suffix = function(val)
-            return val <= 1 and 'stud' or 'studs'
-        end
-    })
-    local methods = {'Damage', 'Distance'}
-    for i in sortmethods do
-        if not table.find(methods, i) then
-            table.insert(methods, i)
-        end
-    end
-    Sort = AutoKaida:CreateDropdown({
-        Name = 'Target mode',
-        List = methods,
-        Default = methods[2]
-    })
-    Mouse = AutoKaida:CreateToggle({Name = 'Require mouse down'})
-    GUI = AutoKaida:CreateToggle({Name = 'GUI check'})
-    Swing = AutoKaida:CreateToggle({
-        Name = 'Swing during ability',
-        Default = true,
-        Tooltip = 'Continue claw attacks while charging ability'
-    })
-    Limit = AutoKaida:CreateToggle({Name = 'Limit to items'})
-    Perfect = AutoKaida:CreateToggle({
-        Name = 'Perfect ability',
-        Function = function(callback)
-            pcall(function()
-                Distance.Object.Visible = callback
-            end)
-        end
-    })
-    Distance = AutoKaida:CreateSlider({
-        Name = 'Distance',
-	Min = 3,
-	Max = 15,
-	Default = 6,
-	Visible = false,
-	Suffix = function(val)
-		return val <= 1 and 'stud' or 'studs'
-	end,
-        Darker = true
-    })
-    Spell = AutoKaida:CreateToggle({Name = 'Auto summon', Function = function(enabled)
-        if SpellMode then SpellMode.Object.Visible = enabled; SpellCharge.Object.Visible = enabled; SpellRange.Object.Visible = enabled end
-    end, Tooltip = 'Charges and places Kaida summon circles automatically.'})
-    SpellMode = AutoKaida:CreateDropdown({Name = 'Summon at', List = {'Target', 'Camera'}, Visible = false, Darker = true})
-    SpellCharge = AutoKaida:CreateSlider({Name = 'Charge', Min = 1, Max = 100, Default = 100, Suffix = '%', Visible = false, Darker = true})
-    SpellRange = AutoKaida:CreateSlider({Name = 'Summon Range', Min = 1, Max = 39, Default = 39, Suffix = ' studs', Visible = false, Darker = true})
+	local AutoKaida
+	AutoKaida = kits:CreateModule({
+		Name = 'AutoKaida',
+		Category = 'Auto',
+		Function = function(callback)
+			if callback then
+				notif('AutoKaida', 'Wait for next update', 3, 'warning')
+				task.defer(function() if AutoKaida.Enabled then AutoKaida:Toggle() end end)
+			end
+		end,
+		Tooltip = 'Wait for next update',
+		ExtraText = function() return 'Wait for next update' end
+	})
 end)
 
 run(function()
@@ -32629,486 +32455,97 @@ end
 
 run(function()
 	local AutoBeekeeper
-	local Collect, CollectRange, CollectDelay, LimitItem
-	local Deposit, DepositRange, DepositDelay
-
 	AutoBeekeeper = kits:CreateModule({
 		Name = 'AutoBeekeeper',
 		Category = 'Auto',
 		Function = function(callback)
-			if not callback then return end
-			local hives = collection('beehive', AutoBeekeeper)
-			repeat
-				if entitylib.isAlive then
-					local position = entitylib.character.RootPart.Position
-
-					if Collect.Enabled and (not LimitItem.Enabled or (store.hand.tool and store.hand.tool.Name == 'bee_net')) then
-						for _, bee in collectionService:GetTagged('bee') do
-							if not AutoBeekeeper.Enabled then break end
-							local part = bee.PrimaryPart or (bee:IsA('BasePart') and bee)
-							if part and (position - part.Position).Magnitude <= CollectRange.Value then
-								pcall(function()
-									bedwars.Handler:Get('PickUpBee'):Fire('SendToServer', {beeId = bee:GetAttribute('BeeId')})
-								end)
-								if CollectDelay.Value > 0 then
-									task.wait(CollectDelay.Value)
-								end
-							end
-						end
-					end
-
-					-- Only ever deposits into a hive you placed, and stops the moment the last bee
-					-- leaves the inventory so a full hive is not prompted over and over.
-					if Deposit.Enabled and getItem('bee') then
-						for _, hive in hives do
-							if not AutoBeekeeper.Enabled or not getItem('bee') then break end
-							if hive.Parent and (hive:GetAttribute('Level') or 0) < 10
-								and hive:GetAttribute('PlacedByUserId') == lplr.UserId
-								and (position - hive.Position).Magnitude <= DepositRange.Value then
-								local prompt = hive:FindFirstChildWhichIsA('ProximityPrompt', true)
-								if prompt and fireproximityprompt then
-									pcall(fireproximityprompt, prompt)
-									if DepositDelay.Value > 0 then
-										task.wait(DepositDelay.Value)
-									end
-								end
-							end
-						end
-					end
-				end
-				task.wait(0.1)
-			until not AutoBeekeeper.Enabled
+			if callback then
+				notif('AutoBeekeeper', 'Wait for next update', 3, 'warning')
+				task.defer(function() if AutoBeekeeper.Enabled then AutoBeekeeper:Toggle() end end)
+			end
 		end,
-		Tooltip = 'Collects nearby bees and deposits them into your own hives'
-	})
-
-	Collect = AutoBeekeeper:CreateToggle({
-		Name = 'Collect bees',
-		Default = true,
-		Function = function(callback)
-			pcall(function()
-				CollectRange.Object.Visible = callback
-				CollectDelay.Object.Visible = callback
-				LimitItem.Object.Visible = callback
-			end)
-		end
-	})
-	CollectRange = AutoBeekeeper:CreateSlider({
-		Name = 'Collect Range',
-		Min = 1,
-		Max = 22,
-		Default = 20,
-		Darker = true,
-		Suffix = function(val)
-			return val <= 1 and 'stud' or 'studs'
-		end
-	})
-	CollectDelay = AutoBeekeeper:CreateSlider({
-		Name = 'Collect delay',
-		Min = 0,
-		Max = 2,
-		Decimal = 100,
-		Default = 0.1,
-		Darker = true,
-		Suffix = 'seconds'
-	})
-	LimitItem = AutoBeekeeper:CreateToggle({
-		Name = 'Limit to item',
-		Darker = true,
-		Tooltip = 'Only collects while the bee net is held'
-	})
-	Deposit = AutoBeekeeper:CreateToggle({
-		Name = 'Deposit bees',
-		Default = true,
-		Function = function(callback)
-			pcall(function()
-				DepositRange.Object.Visible = callback
-				DepositDelay.Object.Visible = callback
-			end)
-		end,
-		Tooltip = 'Automatically puts the bees into a beehive'
-	})
-	DepositRange = AutoBeekeeper:CreateSlider({
-		Name = 'Deposit Range',
-		Min = 1,
-		Max = 14,
-		Default = 14,
-		Darker = true,
-		Suffix = function(val)
-			return val <= 1 and 'stud' or 'studs'
-		end
-	})
-	DepositDelay = AutoBeekeeper:CreateSlider({
-		Name = 'Deposit Delay',
-		Min = 0,
-		Max = 2,
-		Decimal = 100,
-		Default = 0.1,
-		Darker = true,
-		Suffix = 'seconds'
+		Tooltip = 'Wait for next update',
+		ExtraText = function() return 'Wait for next update' end
 	})
 end)
 
 run(function()
 	local AutoDavey
-	local JumpOnImpact, BreakOnImpact, LegitSwitch, LimitItems
-	local oldLaunchSelf, oldStartAiming
-	local function canBreak()
-		if not LimitItems.Enabled then return true end
-		local meta = store.hand.tool and bedwars.ItemMeta[store.hand.tool.Name]
-		return meta and meta.breakBlock ~= nil
-	end
-	local function breakCannon(block)
-		local deadline = tick() + 0.6 + (store.ping.total or 0)
-		repeat
-			if not AutoDavey.Enabled or not entitylib.isAlive or not block.Parent or not canBreak() or (block.Position - entitylib.character.RootPart.Position).Magnitude > 30 then return end
-			bedwars.breakBlock(block, true, true, nil, LegitSwitch.Enabled)
-			task.wait(0.1)
-		until tick() > deadline
-	end
-
 	AutoDavey = kits:CreateModule({
 		Name = 'AutoDavey',
 		Category = 'Auto',
 		Function = function(callback)
 			if callback then
-				if not bedwars.CannonHandController then
-					notif('AutoDavey', 'The cannon controller is unavailable.', 5, 'warning')
-					AutoDavey:Toggle()
-					return
-				end
-				oldLaunchSelf = bedwars.CannonHandController.launchSelf
-				if bedwars.CannonController and bedwars.CannonController.startAiming then
-					oldStartAiming = bedwars.CannonController.startAiming
-					bedwars.CannonController.startAiming = function(self, block, ...)
-						local result = oldStartAiming(self, block, ...)
-						if AutoDavey.Enabled and BreakOnImpact.Enabled and block and block.Parent and canBreak() and getBlockHits(block, block.Position) > 1 then task.spawn(breakCannon, block) end
-						return result
-					end
-				end
-				bedwars.CannonHandController.launchSelf = function(...)
-					local results = {oldLaunchSelf(...)}
-					-- The cannon we were fired from is the second argument. Reading the character
-					-- here is guarded because the launch can outlive it.
-					local _, block = ...
-
-					if AutoDavey.Enabled and BreakOnImpact.Enabled and typeof(block) == 'Instance' then
-						task.delay(0.02, function()
-							if block.Parent and entitylib.isAlive and canBreak() then task.spawn(breakCannon, block) end
-						end)
-					end
-
-					if AutoDavey.Enabled and JumpOnImpact.Enabled then
-						pcall(function()
-							if entitylib.isAlive then
-								entitylib.character.Humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-							end
-						end)
-					end
-
-					return unpack(results)
-				end
-			elseif oldLaunchSelf then
-				if bedwars.CannonHandController then
-					bedwars.CannonHandController.launchSelf = oldLaunchSelf
-				end
-				oldLaunchSelf = nil
-				if oldStartAiming and bedwars.CannonController then bedwars.CannonController.startAiming = oldStartAiming end
-				oldStartAiming = nil
+				notif('AutoDavey', 'Wait for next update', 3, 'warning')
+				task.defer(function() if AutoDavey.Enabled then AutoDavey:Toggle() end end)
 			end
 		end,
-		Tooltip = 'Breaks the cannon and/or jumps the moment it launches you'
+		Tooltip = 'Wait for next update',
+		ExtraText = function() return 'Wait for next update' end
 	})
-
-	JumpOnImpact = AutoDavey:CreateToggle({Name = 'Jump on impact'})
-	BreakOnImpact = AutoDavey:CreateToggle({Name = 'Break on impact', Default = true})
-	LegitSwitch = AutoDavey:CreateToggle({Name = 'Legit switch'})
-	LimitItems = AutoDavey:CreateToggle({Name = 'Limit to items', Tooltip = 'Only breaks while a valid breaking tool is held.'})
 end)
 
 run(function()
 	local AutoDrill
-	local AutoCollect, NotifyCollect, CollectDelay
-	local AutoAttack, LegitRange, Range, AttackDelay, Targets, Sort
-	local attackCooldowns, collectCooldowns = {}, {}
-
-	local function drillPart(drill)
-		return drill.PrimaryPart or drill:FindFirstChild('RootPart') or drill:FindFirstChildWhichIsA('BasePart')
-	end
-
-	-- Drills come from both the tag and the kit's own tablet list; the two overlap, so they are
-	-- merged through a seen-set rather than iterated one after the other.
-	local function getDrills(tracked)
-		local drills, seen = {}, {}
-		local sources = {tracked}
-		if bedwars.DrillTabletController and bedwars.DrillTabletController.drillList then
-			table.insert(sources, bedwars.DrillTabletController.drillList)
-		end
-		for _, source in sources do
-			for _, drill in source do
-				if typeof(drill) == 'Instance' and not seen[drill]
-					and drill:GetAttribute('PlacedByUserId') == lplr.UserId and drillPart(drill) then
-					seen[drill] = true
-					table.insert(drills, drill)
-				end
-			end
-		end
-		return drills
-	end
-
-	local function updateAttackOptions()
-		pcall(function()
-			local on = AutoAttack.Enabled
-			LegitRange.Object.Visible = on
-			Range.Object.Visible = on and not LegitRange.Enabled
-			AttackDelay.Object.Visible = on
-			Targets.Object.Visible = on
-			Sort.Object.Visible = on
-		end)
-	end
-
 	AutoDrill = kits:CreateModule({
 		Name = 'AutoDrill',
 		Category = 'Auto',
 		Function = function(callback)
-			if not callback then
-				table.clear(attackCooldowns)
-				table.clear(collectCooldowns)
-				return
+			if callback then
+				notif('AutoDrill', 'Wait for next update', 3, 'warning')
+				task.defer(function() if AutoDrill.Enabled then AutoDrill:Toggle() end end)
 			end
-
-			local tracked = collection('Drill', AutoDrill)
-			repeat task.wait() until (store.matchState ~= 0 and store.equippedKit == 'drill') or not AutoDrill.Enabled
-
-			repeat
-				if entitylib.isAlive and store.equippedKit == 'drill' then
-					local now = tick()
-					for _, drill in getDrills(tracked) do
-						local part = drillPart(drill)
-						if not part then continue end
-
-						if AutoCollect.Enabled and ((drill:GetAttribute('diamond') or 0) + (drill:GetAttribute('emerald') or 0)) > 0
-							and (collectCooldowns[drill] or 0) < now then
-							local ok = pcall(function()
-								bedwars.Handler:Get('ExtractFromDrill'):Fire('SendToServer', {drill = drill})
-							end)
-							if ok and NotifyCollect.Enabled then
-								notif('AutoDrill', 'Collected drill resources', 4)
-							end
-							collectCooldowns[drill] = now + CollectDelay.Value
-						end
-
-						if AutoAttack.Enabled and (attackCooldowns[drill] or 0) < now then
-							local target = entitylib.EntityPosition({
-								Origin = part.Position,
-								Range = LegitRange.Enabled and 10 or Range.Value,
-								Part = 'RootPart',
-								Players = Targets.Players.Enabled,
-								NPCs = Targets.NPCs.Enabled,
-								Sort = sortmethods[Sort.Value]
-							})
-							if target then
-								targetinfo.Targets[target] = now + 1
-								if pcall(function()
-									bedwars.Handler:Get('DrillAttack'):Fire('SendToServer', {targetPosition = target.RootPart.Position})
-								end) then
-									attackCooldowns[drill] = now + AttackDelay.Value
-								end
-							end
-						end
-					end
-				end
-				task.wait(0.1)
-			until not AutoDrill.Enabled
 		end,
-		Tooltip = 'Collects resources from your drills and attacks with them'
+		Tooltip = 'Wait for next update',
+		ExtraText = function() return 'Wait for next update' end
 	})
-
-	AutoCollect = AutoDrill:CreateToggle({
-		Name = 'Auto collect',
-		Default = true,
-		Function = function(callback)
-			pcall(function()
-				NotifyCollect.Object.Visible = callback
-				CollectDelay.Object.Visible = callback
-			end)
-		end
-	})
-	NotifyCollect = AutoDrill:CreateToggle({Name = 'Notify on collect', Darker = true})
-	CollectDelay = AutoDrill:CreateSlider({
-		Name = 'Collect delay',
-		Min = 0.1,
-		Max = 3,
-		Default = 0.5,
-		Decimal = 10,
-		Darker = true,
-		Suffix = 'seconds'
-	})
-	AutoAttack = AutoDrill:CreateToggle({
-		Name = 'Auto attack',
-		Function = function()
-			updateAttackOptions()
-		end
-	})
-	LegitRange = AutoDrill:CreateToggle({
-		Name = 'Legit Range',
-		Darker = true,
-		Function = function()
-			updateAttackOptions()
-		end
-	})
-	Range = AutoDrill:CreateSlider({
-		Name = 'Range',
-		Min = 1,
-		Max = 10,
-		Default = 10,
-		Darker = true,
-		Suffix = function(val)
-			return val <= 1 and 'stud' or 'studs'
-		end
-	})
-	AttackDelay = AutoDrill:CreateSlider({
-		Name = 'Attack delay',
-		Min = 0.1,
-		Max = 1,
-		Default = 0.3,
-		Decimal = 100,
-		Darker = true,
-		Suffix = 'seconds'
-	})
-	Targets = AutoDrill:CreateTargets({Players = true, NPCs = true})
-	local methods = {'Distance', 'Health', 'Damage'}
-	for i in sortmethods do
-		if not table.find(methods, i) then
-			table.insert(methods, i)
-		end
-	end
-	Sort = AutoDrill:CreateDropdown({
-		Name = 'Sort',
-		List = methods,
-		Default = 'Distance'
-	})
-	updateAttackOptions()
 end)
 
 run(function()
 	local AutoRagnar
-	local Range
-
 	AutoRagnar = kits:CreateModule({
 		Name = 'AutoRagnar',
 		Category = 'Auto',
 		Function = function(callback)
-			if not callback then return end
-			repeat
-				if entitylib.isAlive and store.equippedKit == 'berserker' and bedwars.AbilityController then
-					pcall(function()
-						if bedwars.AbilityController:canUseAbility('berserker_rage') and nearBreakableBed(Range.Value) then
-							bedwars.AbilityController:useAbility('berserker_rage')
-						end
-					end)
-				end
-				task.wait(0.1)
-			until not AutoRagnar.Enabled
+			if callback then
+				notif('AutoRagnar', 'Wait for next update', 3, 'warning')
+				task.defer(function() if AutoRagnar.Enabled then AutoRagnar:Toggle() end end)
+			end
 		end,
-		Tooltip = 'Uses Berserker Rage as soon as you are near an enemy bed'
-	})
-
-	Range = AutoRagnar:CreateSlider({
-		Name = 'Bed range',
-		Min = 1,
-		Max = 60,
-		Default = 22,
-		Suffix = function(val)
-			return val <= 1 and 'stud' or 'studs'
-		end
+		Tooltip = 'Wait for next update',
+		ExtraText = function() return 'Wait for next update' end
 	})
 end)
 
 run(function()
 	local AutoKrystal
-	local Range
-
-	-- Krystal (glacial skater) freezes whoever is defending the bed. The ability id has moved
-	-- between builds, so every known spelling is tried and the first the game accepts is used.
-	local ABILITIES = {'glacial_skater_freeze', 'GLACIAL_SKATER_FREEZE', 'ice_blast', 'freeze'}
-
 	AutoKrystal = kits:CreateModule({
 		Name = 'AutoKrystal',
 		Category = 'Auto',
 		Function = function(callback)
-			if not callback then return end
-			repeat
-				if entitylib.isAlive and store.equippedKit == 'glacial_skater' and bedwars.AbilityController
-					and nearBreakableBed(Range.Value) then
-					for _, ability in ABILITIES do
-						local used = false
-						pcall(function()
-							if bedwars.AbilityController:canUseAbility(ability) then
-								bedwars.AbilityController:useAbility(ability)
-								used = true
-							end
-						end)
-						if used then break end
-					end
-				end
-				task.wait(0.1)
-			until not AutoKrystal.Enabled
+			if callback then
+				notif('AutoKrystal', 'Wait for next update', 3, 'warning')
+				task.defer(function() if AutoKrystal.Enabled then AutoKrystal:Toggle() end end)
+			end
 		end,
-		Tooltip = 'Uses the freeze ability while you are on an enemy bed defence'
-	})
-
-	Range = AutoKrystal:CreateSlider({
-		Name = 'Bed range',
-		Min = 1,
-		Max = 60,
-		Default = 22,
-		Suffix = function(val)
-			return val <= 1 and 'stud' or 'studs'
-		end
+		Tooltip = 'Wait for next update',
+		ExtraText = function() return 'Wait for next update' end
 	})
 end)
 
 run(function()
 	local AutoVanessa
-	local oldGetChargeTime, oldOverchargeStartTime, chargeHook, controller
-
 	AutoVanessa = kits:CreateModule({
 		Name = 'AutoVanessa',
 		Category = 'Auto',
 		Function = function(callback)
-			if not callback then
-				if controller and oldGetChargeTime and controller.getChargeTime == chargeHook then
-					controller.getChargeTime = oldGetChargeTime
-					controller.overchargeStartTime = oldOverchargeStartTime
-				end
-				controller, oldGetChargeTime, oldOverchargeStartTime, chargeHook = nil, nil, nil, nil
-				return
+			if callback then
+				notif('AutoVanessa', 'Wait for next update', 3, 'warning')
+				task.defer(function() if AutoVanessa.Enabled then AutoVanessa:Toggle() end end)
 			end
-
-			AutoVanessa:Clean(task.spawn(function()
-				local found
-				repeat
-					task.wait()
-					found = bedwars.TripleShotProjectileController
-				until found or not AutoVanessa.Enabled
-				if not found or not AutoVanessa.Enabled then return end
-
-				if typeof(found.getChargeTime) ~= 'function' then return end
-				controller = found
-				oldGetChargeTime = found.getChargeTime
-				oldOverchargeStartTime = found.overchargeStartTime
-				-- Returning nothing makes the controller treat the bow as already fully charged,
-				-- and backdating overchargeStartTime keeps the triple shot armed.
-				chargeHook = function(...)
-					if AutoVanessa.Enabled then return end
-					return oldGetChargeTime(...)
-				end
-				found.getChargeTime = chargeHook
-				found.overchargeStartTime = tick()
-			end))
 		end,
-		Tooltip = 'Fully charges the bow instantly and keeps triple shot armed as Vanessa'
+		Tooltip = 'Wait for next update',
+		ExtraText = function() return 'Wait for next update' end
 	})
 end)
 
@@ -33717,9 +33154,23 @@ run(function()
 				local function dropHeld()
 					while AutoCyber.Enabled and drone.Parent and drone:GetAttribute('HeldItem') do
 						pcall(function()
+							local generator = DropMode.Value == 'Generator' and teamGenerator() or nil
+							if generator and generator.PrimaryPart and drone.PrimaryPart then
+								local goal = generator.PrimaryPart.Position + Vector3.new(0, 3, 0)
+								local deadline = os.clock() + 3
+								repeat
+									local offset = goal - drone.PrimaryPart.Position
+									if offset.Magnitude <= 3 then break end
+									drone.PrimaryPart.CanCollide = false
+									drone.PrimaryPart.AssemblyLinearVelocity = Vector3.zero
+									drone.PrimaryPart.AssemblyAngularVelocity = Vector3.zero
+									drone.PrimaryPart.CFrame = CFrame.lookAt(drone.PrimaryPart.Position + offset.Unit * math.min(2.5, offset.Magnitude), goal)
+									task.wait(0.03)
+								until not AutoCyber.Enabled or not drone.Parent or os.clock() >= deadline
+							end
 							bedwars.Handler:Get('DropDroneItem'):Fire('SendToServer', {
-								direction = Vector3.new(1000, 10, 0),
-								position = drone.PrimaryPart.Position
+								direction = generator and Vector3.zero or Vector3.new(1000, 10, 0),
+								position = generator and generator.PrimaryPart.Position or drone.PrimaryPart.Position
 							})
 						end)
 						task.wait(0.1)
@@ -33902,13 +33353,13 @@ run(function()
 				task.wait()
 			until not AutoCyber.Enabled
 		end,
-		Tooltip = 'Sends the Cyber drone out to steal resources for you'
+		Tooltip = 'Collects resources with the Cyber drone and returns held items to your team generator'
 	})
 
 	DropMode = AutoCyber:CreateDropdown({
 		Name = 'Drop mode',
 		List = {'Player', 'Generator'},
-		Default = 'Player',
+		Default = 'Generator',
 		Tooltip = 'Where a stolen split ends up'
 	})
 	Whitelist = AutoCyber:CreateTextList({
@@ -33980,534 +33431,106 @@ run(function()
 end)
 
 run(function()
-	local AutoBuilder
-	local Animation, BedCheck, LimitItem
-	local Blacklist
-
-	-- Nearest bed we are NOT allowed to break, i.e. our own - that is the one worth fortifying
-	-- around. Returns nil when there is no such bed, which the caller has to handle: a match
-	-- where our bed is already gone used to throw here on the first pass.
-	local function ownBed(position)
-		local best, bestmag = nil, math.huge
-		local team = lplr:GetAttribute('Team') or -1
-		for _, bed in collectionService:GetTagged('bed') do
-			local mag = (position - bed.Position).Magnitude
-			if mag < bestmag and bed:GetAttribute('Team'..team..'NoBreak') then
-				best, bestmag = bed, mag
-			end
-		end
-		return best
-	end
-
-	AutoBuilder = kits:CreateModule({
-		Name = 'AutoBuilder',
-		Category = 'Auto',
-		Function = function(callback)
-			if not callback then return end
-			repeat task.wait() until (store.matchState ~= 0 and store.equippedKit == 'builder') or not AutoBuilder.Enabled
-			if not AutoBuilder.Enabled then return end
-
-			-- Only blocks somebody placed can be fortified, and the attribute is not set on the
-			-- frame the block appears, hence the deferred insert.
-			local blocks = collection('block', AutoBuilder, function(tab, obj)
-				task.delay(0, function()
-					if obj and obj.Parent and not obj:GetAttribute('NoBreak') and obj:GetAttribute('PlacedByUserId') ~= nil then
-						table.insert(tab, obj)
-					end
-				end)
-			end)
-
-			repeat
-				local hammer = getItem('hammer')
-				local holding = store.hand.tool and store.hand.tool.Name == 'hammer'
-				if entitylib.isAlive and hammer and (not LimitItem.Enabled or holding) then
-					local position = entitylib.character.RootPart.Position
-					local bed = BedCheck.Enabled and ownBed(position) or nil
-
-					-- Bed check on with no bed of ours left means there is nothing to fortify
-					-- around, so skip the pass rather than fortifying the whole map.
-					if not BedCheck.Enabled or bed then
-						for _, block in blocks do
-							if not AutoBuilder.Enabled then break end
-							if block.Parent and (not bed or (bed.Position - block.Position).Magnitude <= 30) then
-								local name = block.Name
-								if name:find('wool_') then
-									name = 'wool'
-								end
-								if not table.find(Blacklist.ListEnabled, name) and not block:FindFirstChild('BuilderFortify') then
-									pcall(function()
-										bedwars.Handler:Get('FortifyBlock'):Fire('SendToServer', ({getPlacedBlock(block.Position)})[2])
-										if Animation.Enabled then
-											bedwars.GameAnimationUtil:playAnimation(lplr, bedwars.GameAnimationUtil:getAssetId(bedwars.AnimationType.BUILDER_HAMMER_HIT), {
-												fadeInTime = 0.02
-											})
-											bedwars.SoundManager:playSound(bedwars.SoundList.FORTIFY_BLOCK, entitylib.character.RootPart.Position)
-										end
-									end)
-								end
-							end
-						end
-					end
-				end
-				task.wait(0.1)
-			until not AutoBuilder.Enabled
-		end,
-		Tooltip = 'Fortifies placed blocks with the builder hammer'
-	})
-
-	BedCheck = AutoBuilder:CreateToggle({
-		Name = 'Bed Check',
-		Tooltip = 'Only fortifies blocks within 30 studs of your own bed'
-	})
-	Animation = AutoBuilder:CreateToggle({
-		Name = 'Animation',
-		Default = true,
-		Tooltip = 'Plays the hammer swing and the fortify sound'
-	})
-	LimitItem = AutoBuilder:CreateToggle({
-		Name = 'Limit to items',
-		Default = true,
-		Tooltip = 'Only fortifies while the hammer is actually held'
-	})
-	Blacklist = AutoBuilder:CreateTextList({
-		Name = 'Blacklists',
-		Placeholder = 'block',
-		Default = {'cannon', 'wool'}
-	})
+\tlocal AutoBuilder
+\tlocal Legit, Range
+\tAutoBuilder=kits:CreateModule({
+\t\tName='AutoBuilder', Category='Auto',
+\t\tFunction=function(callback)
+\t\t\tif not callback then return end
+\t\t\trepeat task.wait() until (store.matchState~=0 and store.equippedKit=='builder') or not AutoBuilder.Enabled
+\t\t\tif not AutoBuilder.Enabled then return end
+\t\t\tlocal objs=collection('block',AutoBuilder,function(tab,obj)
+\t\t\t\ttask.defer(function() if obj and obj.Parent and not obj:GetAttribute('NoBreak') and obj:GetAttribute('PlacedByUserId')~=nil then table.insert(tab,obj) end end)
+\t\t\tend)
+\t\t\trepeat
+\t\t\t\tif entitylib.isAlive then
+\t\t\t\t\tlocal hammer=getItem('hammer')
+\t\t\t\t\tlocal held=store.hand.tool and store.hand.tool.Name=='hammer'
+\t\t\t\t\tif hammer and (not Legit.Enabled or held) then
+\t\t\t\t\t\tlocal origin=entitylib.character.RootPart.Position
+\t\t\t\t\t\tfor _,block in objs do
+\t\t\t\t\t\t\tif not AutoBuilder.Enabled then break end
+\t\t\t\t\t\t\tif block.Parent and (block.Position-origin).Magnitude<=Range.Value and not block:FindFirstChild('BuilderFortify') then
+\t\t\t\t\t\t\t\tlocal _,pos=getPlacedBlock(block.Position)
+\t\t\t\t\t\t\t\tif pos then
+\t\t\t\t\t\t\t\t\tpcall(function() bedwars.Handler:Get('FortifyBlock'):Fire('SendToServer',pos) end)
+\t\t\t\t\t\t\t\t\tif Legit.Enabled then pcall(function()
+\t\t\t\t\t\t\t\t\t\tbedwars.GameAnimationUtil:playAnimation(lplr,bedwars.GameAnimationUtil:getAssetId(bedwars.AnimationType.BUILDER_HAMMER_HIT),{fadeInTime=0.02})
+\t\t\t\t\t\t\t\t\t\tbedwars.SoundManager:playSound(bedwars.SoundList.FORTIFY_BLOCK,origin)
+\t\t\t\t\t\t\t\t\tend) end
+\t\t\t\t\t\t\t\t\ttask.wait(Legit.Enabled and 0.12 or 0.03)
+\t\t\t\t\t\t\t\tend
+\t\t\t\t\t\t\tend
+\t\t\t\t\t\tend
+\t\t\t\t\tend
+\t\t\t\tend
+\t\t\t\ttask.wait(0.05)
+\t\t\tuntil not AutoBuilder.Enabled
+\t\tend,
+\t\tTooltip='Automatically reinforces nearby placed blocks'
+\t})
+\tLegit=AutoBuilder:CreateToggle({Name='Legit',Default=true,Tooltip='Requires the hammer to be held and plays normal effects'})
+\tRange=AutoBuilder:CreateSlider({Name='Range',Min=1,Max=30,Default=18,Suffix=' studs'})
 end)
 
 run(function()
 	local AutoCaitlyn
-	local Mode, Range, MinHP
-	local TargetPriorities
-	local activeSession
-
-	local function asEntity(value)
-		return typeof(value) == 'Instance' and entitylib.getEntity(value) or nil
-	end
-
-	-- Contracts key their target by player, but a rejoin can leave a stale Player object behind,
-	-- so a name match is accepted as well.
-	local function contractFor(contracts, ent)
-		for _, contract in contracts do
-			if contract.target == ent.Player or (contract.target and ent.Player and contract.target.Name == ent.Player.Name) then
-				return contract
-			end
-		end
-		return nil
-	end
-
-	local function reachable(wallcheck)
-		local targets = {}
-		for _, ent in entitylib.AllPosition({
-			Part = 'RootPart',
-			Players = true,
-			Range = Range.Value,
-			Wallcheck = wallcheck
-		}) do
-			if ent.Player and not (ent.Player.Team and ent.Player.Team.Name == 'Spectators') then
-				targets[ent.Player] = ent
-				targets[ent.Character] = ent
-			end
-		end
-		return targets
-	end
-
-	-- Cached for a second: this is asked once per candidate contract, several times a second.
-	local function hasBed(session, plr)
-		local ok, team = pcall(bedwars.TeamController.getPlayerTeam, bedwars.TeamController, plr)
-		local teamId = (ok and team and team.id) or plr:GetAttribute('Team')
-		if teamId == nil then return true end
-
-		local cached = session.beds[teamId]
-		if cached and cached[2] > tick() then
-			return cached[1]
-		end
-
-		local found
-		ok, found = pcall(bedwars.BedwarsController.getTeamBed, bedwars.BedwarsController, teamId)
-		local result = not ok or (found and found.Parent ~= nil) or false
-		session.beds[teamId] = {result, tick() + 1}
-		return result
-	end
-
-	-- How worth taking a contract is. Reward first, then how close the target is to dying,
-	-- then how reachable they are - a contract on somebody across the map is worth less than
-	-- one on whoever is hitting you right now.
-	local function score(session, contract, targets)
-		local ent = targets[contract.target]
-		if not ent then return nil end
-
-		local health = ent.Humanoid.Health
-		local distance = (entitylib.character.RootPart.Position - ent.RootPart.Position).Magnitude
-		local total = 30 + ((tonumber(contract.rewardValue) or 0) * 35)
-		total += (1 - math.clamp(health / math.max(ent.Humanoid.MaxHealth, 1), 0, 1)) * 35
-		total += math.max(1 - (distance / Range.Value), 0) * 20
-
-		if health <= MinHP.Value then total += 20 end
-		if (session.threats[ent.Player] or 0) > tick() then total += 30 end
-		if ent.Character:GetAttribute('BleedSource') == lplr.UserId then total += 25 end
-		if not hasBed(session, ent.Player) then total += 20 end
-
-		local reward = contract.rewardExplanation
-		if type(reward) == 'table' then
-			total += (reward.assassin and 10 or 0) + (reward.kitClass and 8 or 0) + (reward.gear and 6 or 0)
-		end
-		return total, ent
-	end
-
-	local function bestContract(session, contracts)
-		local bounty = false
-		for _, contract in contracts do
-			if contract.rewardValue ~= nil or contract.rewardUpgrade ~= nil then
-				bounty = true
-				break
-			end
-		end
-		if not bounty then return nil, false end
-
-		local targets = reachable(true)
-		local current, currentScore
-		if session.priorityId ~= nil then
-			for _, contract in contracts do
-				if contract.id == session.priorityId then
-					current, currentScore = contract, score(session, contract, targets)
-					break
-				end
-			end
-		end
-
-		local best, bestScore
-		for _, contract in contracts do
-			local value = score(session, contract, targets)
-			if value and (not bestScore or value > bestScore) then
-				best, bestScore = contract, value
-			end
-		end
-
-		-- Hysteresis: a marginally better contract is not worth dropping the one already picked.
-		if current and currentScore and best ~= current and bestScore < currentScore + 15 then
-			best = current
-		end
-
-		session.priorityId = best and best.id or nil
-		return best, true
-	end
-
-	local function hitContract(session, contracts)
-		local hit = session.lastHit
-		if hit and hit[2] > tick() then
-			local ent = reachable(false)[hit[1].Player]
-			if ent == hit[1] then
-				if Mode.Value == 'On Low' and ent.Humanoid.Health >= MinHP.Value then
-					return nil
-				end
-				return contractFor(contracts, ent)
-			end
-		end
-		session.lastHit = nil
-		return nil
-	end
-
-	local function selectContract(session, contract)
-		if contract and not (session.pendingId == contract.id and session.pendingUntil > tick()) then
-			bedwars.Handler:Get('BloodAssassinSelectContract'):Fire('SendToServer', {
-				contractId = contract.id
-			})
-			session.pendingId = contract.id
-			session.pendingUntil = tick() + 1
-		end
-	end
-
-	local function update(session)
-		if not entitylib.isAlive or store.matchState ~= 1 or store.equippedKit ~= 'blood_assassin' then
-			session.lastHit, session.pendingId, session.priorityId = nil, nil, nil
-			return
-		end
-
-		local kit = bedwars.Store:getState().Kit
-		if not kit or kit.activeContract then
-			session.pendingId = nil
-			session.priorityId = kit and kit.activeContract and kit.activeContract.id or nil
-			return
-		end
-
-		if session.pendingId and session.pendingUntil > tick() then return end
-		session.pendingId = nil
-
-		local contracts = kit.availableContracts
-		if not contracts or #contracts == 0 then return end
-
-		local contract
-		if TargetPriorities.Enabled then
-			local available
-			contract, available = bestContract(session, contracts)
-			if not available then
-				contract = hitContract(session, contracts)
-			end
-		else
-			session.priorityId = nil
-			contract = hitContract(session, contracts)
-		end
-		selectContract(session, contract)
-	end
-
 	AutoCaitlyn = kits:CreateModule({
 		Name = 'AutoCaitlyn',
 		Category = 'Auto',
 		Function = function(callback)
-			if not callback then
-				activeSession = nil
-				return
-			end
-
-			local session = {beds = {}, nextUpdate = 0, pendingUntil = 0, threats = {}}
-			activeSession = session
-
-			AutoCaitlyn:Clean(vapeEvents.EntityDamageEvent.Event:Connect(function(damage)
-				if activeSession ~= session then return end
-				local source = asEntity(damage.fromEntity)
-				if damage.entityInstance == lplr.Character and source and source.Player then
-					session.threats[source.Player] = tick() + 3
-				elseif damage.fromEntity == lplr.Character or damage.fromEntity == lplr then
-					local victim = asEntity(damage.entityInstance)
-					if victim then
-						session.lastHit = {victim, tick() + 1}
-					end
-				end
-			end))
-
-			AutoCaitlyn:Clean(vapeEvents.BedwarsBedBreak.Event:Connect(function()
-				table.clear(session.beds)
-			end))
-			AutoCaitlyn:Clean(entitylib.Events.LocalAdded:Connect(function()
-				session.lastHit, session.pendingId = nil, nil
-			end))
-			AutoCaitlyn:Clean(entitylib.Events.LocalRemoved:Connect(function()
-				session.lastHit, session.pendingId, session.priorityId = nil, nil, nil
-			end))
-
-			repeat
-				if tick() >= session.nextUpdate then
-					session.nextUpdate = tick() + 0.2
-					pcall(update, session)
-				end
-				task.wait(0.05)
-			until not AutoCaitlyn.Enabled or activeSession ~= session
-
-			if activeSession == session then
-				activeSession = nil
+			if callback then
+				notif('AutoCaitlyn', 'Wait for next update', 3, 'warning')
+				task.defer(function() if AutoCaitlyn.Enabled then AutoCaitlyn:Toggle() end end)
 			end
 		end,
-		Tooltip = 'Takes the blood assassin contract on whoever is worth killing'
-	})
-
-	Mode = AutoCaitlyn:CreateDropdown({
-		Name = 'Contract mode',
-		List = {'On Hit', 'On Low'},
-		Default = 'On Low',
-		Tooltip = 'On Hit - contracts whoever you start hitting\nOn Low - waits until they are low',
-		Function = function(value)
-			pcall(function()
-				MinHP.Object.Visible = value == 'On Low'
-			end)
-		end
-	})
-	MinHP = AutoCaitlyn:CreateSlider({
-		Name = 'Minimum Health',
-		Min = 1,
-		Max = 100,
-		Default = 30,
-		Darker = true,
-		Tooltip = 'How low they have to be before contracting'
-	})
-	Range = AutoCaitlyn:CreateSlider({
-		Name = 'Range',
-		Min = 1,
-		Max = 50,
-		Default = 50,
-		Suffix = function(val)
-			return val <= 1 and 'stud' or 'studs'
-		end
-	})
-	TargetPriorities = AutoCaitlyn:CreateToggle({
-		Name = 'Target Priorities',
-		Tooltip = 'Scores every contract by reward, health, distance and bed state instead of only who you hit',
-		Function = function()
-			if activeSession then
-				activeSession.priorityId = nil
-			end
-		end
+		Tooltip = 'Wait for next update',
+		ExtraText = function() return 'Wait for next update' end
 	})
 end)
 
 run(function()
 	local AutoElder
-	local Streamer, Animation
-	local Range, Delay
-	local cooldowns = {}
-
-	local legit = getFunctionRange(bedwars.EldertreeController and bedwars.EldertreeController.createTreeOrbInteraction) or 10
-
-	local function orbPart(orb)
-		return orb:FindFirstChild('Spirit') or orb.PrimaryPart or (orb:IsA('BasePart') and orb) or nil
-	end
-
 	AutoElder = kits:CreateModule({
 		Name = 'AutoElder',
 		Category = 'Auto',
 		Function = function(callback)
-			if not callback then
-				table.clear(cooldowns)
-				return
+			if callback then
+				notif('AutoElder', 'Wait for next update', 3, 'warning')
+				task.defer(function() if AutoElder.Enabled then AutoElder:Toggle() end end)
 			end
-
-			AutoElder:Clean(proximityPromptService.PromptShown:Connect(function(prompt)
-				if Streamer.Enabled and prompt.Name == 'treeOrb' then
-					task.delay(0.1, prompt.InputHoldBegin, prompt)
-				end
-			end))
-
-			repeat
-				if not Streamer.Enabled and entitylib.isAlive then
-					local position = entitylib.character.RootPart.Position
-					for _, orb in collectionService:GetTagged('treeOrb') do
-						if not AutoElder.Enabled then break end
-						local part = orbPart(orb)
-						if part and tick() > (cooldowns[orb] or 0) and (position - part.Position).Magnitude <= Range.Value then
-							if Delay.Value > 0 then
-								task.wait(Delay.Value)
-							end
-							-- Re-checked after the wait: the orb can be gone, or we can have
-							-- walked away from it, in the time the delay took.
-							if orb.Parent and part.Parent and entitylib.isAlive
-								and (entitylib.character.RootPart.Position - part.Position).Magnitude <= Range.Value then
-								pcall(function()
-									if Animation.Enabled then
-										bedwars.GameAnimationUtil:playAnimation(lplr.Character, bedwars.AnimationType.PUNCH)
-										bedwars.ViewmodelController:playAnimation(bedwars.AnimationType.FP_USE_ITEM)
-										bedwars.SoundManager:playSound(bedwars.SoundList.CROP_HARVEST)
-									end
-									if bedwars.Handler:Get('ConsumeTreeOrb'):Fire('CallServer', {treeOrbSecret = orb:GetAttribute('TreeOrbSecret')}) then
-										orb:Destroy()
-									end
-								end)
-								cooldowns[orb] = tick() + 1
-							end
-						end
-					end
-				end
-				task.wait(0.1)
-			until not AutoElder.Enabled
 		end,
-		Tooltip = 'Collects the eldertree orbs around you'
-	})
-
-	Streamer = AutoElder:CreateToggle({
-		Name = 'Legit interaction',
-		Tooltip = 'Holds the orb\'s own prompt instead of firing the remote - slower, but it looks exactly like collecting one by hand',
-		Function = function(callback)
-			pcall(function()
-				Delay.Object.Visible = not callback
-				Range.Object.Visible = not callback
-				Animation.Object.Visible = not callback
-			end)
-		end
-	})
-	Animation = AutoElder:CreateToggle({
-		Name = 'Animation',
-		Default = true,
-		Tooltip = 'Plays the collect animation'
-	})
-	Range = AutoElder:CreateSlider({
-		Name = 'Range',
-		Min = 1,
-		Max = 20,
-		Default = 12,
-		Suffix = function(val)
-			return val > 1 and 'studs' or 'stud'
-		end
-	})
-	AutoElder:CreateButton({
-		Name = 'Sync to legit range',
-		Function = function()
-			Range:SetValue(legit)
-		end,
-		Tooltip = 'Puts the range back to what the kit actually reaches'
-	})
-	Delay = AutoElder:CreateSlider({
-		Name = 'Delay',
-		Min = 0,
-		Max = 1,
-		Default = 0.2,
-		Decimal = 100,
-		Suffix = function(val)
-			return val > 1 and 'secs' or 'sec'
-		end
+		Tooltip = 'Wait for next update',
+		ExtraText = function() return 'Wait for next update' end
 	})
 end)
 
 run(function()
-	local AutoEmber
-	local Targets, Range, Delay, LimitItem
-
-	AutoEmber = kits:CreateModule({
-		Name = 'AutoEmber',
-		Category = 'Auto',
-		Function = function(callback)
-			if not callback then return end
-			local last = 0
-			repeat
-				if entitylib.isAlive then
-					local saber = getItem('infernal_saber')
-					if saber and (not LimitItem.Enabled or (store.hand.tool and store.hand.tool == saber.tool))
-						and (Delay.Value <= 0 or (os.clock() - last) >= Delay.Value)
-						and entitylib.EntityPosition({
-							Range = Range.Value,
-							Part = 'RootPart',
-							Players = Targets.Players.Enabled,
-							NPCs = Targets.NPCs.Enabled
-						}) then
-						pcall(function()
-							bedwars.Handler:Get('HellBladeRelease'):Fire('SendToServer', {
-								chargeTime = 1,
-								weapon = saber,
-								player = lplr
-							})
-						end)
-						last = os.clock()
-					end
-				end
-				task.wait()
-			until not AutoEmber.Enabled
-		end,
-		Tooltip = 'Releases the infernal saber charge whenever somebody is in range'
-	})
-
-	Targets = AutoEmber:CreateTargets({
-		Players = true,
-		NPCs = false
-	})
-	Delay = AutoEmber:CreateSlider({
-		Name = 'Delay',
-		Min = 0,
-		Max = 1,
-		Default = 0.1,
-		Decimal = 100
-	})
-	Range = AutoEmber:CreateSlider({
-		Name = 'Range',
-		Min = 1,
-		Max = 22,
-		Default = 22,
-		Suffix = function(val)
-			return val <= 1 and 'stud' or 'studs'
-		end
-	})
-	LimitItem = AutoEmber:CreateToggle({
-		Name = 'Limit to item',
-		Tooltip = 'Only releases while the saber is actually held'
-	})
+\tlocal AutoEmber
+\tlocal Targets, Range, Legit
+\tAutoEmber=kits:CreateModule({
+\t\tName='AutoEmber', Category='Auto',
+\t\tFunction=function(callback)
+\t\t\tif not callback then return end
+\t\t\tlocal nextUse=0
+\t\t\trepeat
+\t\t\t\tif entitylib.isAlive and store.equippedKit=='ember' then
+\t\t\t\t\tlocal saber=getItem('infernal_saber')
+\t\t\t\t\tlocal held=saber and store.hand.tool and store.hand.tool==saber.tool
+\t\t\t\t\tlocal ent=saber and entitylib.EntityPosition({Range=Range.Value,Part='RootPart',Players=Targets.Players.Enabled,NPCs=Targets.NPCs.Enabled,Wallcheck=Targets.Walls.Enabled or nil,Sort=sortmethods.Distance}) or nil
+\t\t\t\t\tif ent and (not Legit.Enabled or held) and os.clock()>=nextUse then
+\t\t\t\t\t\tpcall(function() bedwars.Handler:Get('HellBladeRelease'):Fire('SendToServer',{chargeTime=1,weapon=saber,player=lplr}) end)
+\t\t\t\t\t\tnextUse=os.clock()+0.12
+\t\t\t\t\tend
+\t\t\t\tend
+\t\t\t\ttask.wait(0.03)
+\t\t\tuntil not AutoEmber.Enabled
+\t\tend,
+\t\tTooltip='Automatically uses Ember saber against nearby selected targets'
+\t})
+\tTargets=AutoEmber:CreateTargets({Players=true,NPCs=true,Walls=true})
+\tRange=AutoEmber:CreateSlider({Name='Range',Min=1,Max=22,Default=22,Suffix=' studs'})
+\tLegit=AutoEmber:CreateToggle({Name='Legit',Default=true,Tooltip='Only activates while the infernal saber is held'})
 end)
 
 run(function()
@@ -34679,28 +33702,17 @@ end)
 
 run(function()
 	local AutoHephaestus
-	local nextRepair = 0
-
 	AutoHephaestus = kits:CreateModule({
 		Name = 'AutoHephaestus',
 		Category = 'Auto',
 		Function = function(callback)
-			if not callback then return end
-			AutoHephaestus:Clean(runService.Heartbeat:Connect(function()
-				if tick() < nextRepair or store.equippedKit ~= 'tinker' then return end
-				pcall(function()
-					-- Never mid-fight: repairing cancels the swing, so it waits a second after
-					-- the last attack before spending the ability.
-					if bedwars.TinkerKitController and bedwars.TinkerKitController.mounted
-						and bedwars.AbilityController:canUseAbility('tinker_self_repair')
-						and (workspace:GetServerTimeNow() - (bedwars.SwordController.lastAttack or 0)) > 1 then
-						nextRepair = tick() + 0.5
-						bedwars.AbilityController:useAbility('tinker_self_repair')
-					end
-				end)
-			end))
+			if callback then
+				notif('AutoHephaestus', 'Wait for next update', 3, 'warning')
+				task.defer(function() if AutoHephaestus.Enabled then AutoHephaestus:Toggle() end end)
+			end
 		end,
-		Tooltip = 'Repairs the Tinker machine whenever the self repair ability is up and you are not swinging'
+		Tooltip = 'Wait for next update',
+		ExtraText = function() return 'Wait for next update' end
 	})
 end)
 
@@ -34812,117 +33824,18 @@ end)
 
 run(function()
 	local AutoLani
-	local Delay, UseEnemy, Enemy, Friend
-
 	AutoLani = kits:CreateModule({
 		Name = 'AutoLani',
 		Category = 'Auto',
 		Function = function(callback)
-			if not callback then return end
-			-- The ability's start time is an attribute, so a change on it is the only reliable
-			-- "the scepter just came up" signal.
-			local last = lplr:GetAttribute('PaladinStartTime') or 0
-			repeat
-				local now = lplr:GetAttribute('PaladinStartTime') or 0
-				if now ~= last then
-					local wanted = UseEnemy.Enabled and Enemy.Value or Friend.Value
-					local target = wanted ~= 'None' and playersService:FindFirstChild(wanted) or nil
-					if target then
-						task.delay(Delay.Value, function()
-							if AutoLani.Enabled and target.Parent == playersService then
-								pcall(function()
-									bedwars.Handler:Get('PaladinAbilityRequest'):Fire('SendToServer', {target = target})
-								end)
-							end
-						end)
-					end
-				end
-				last = now
-				task.wait(0.1)
-			until not AutoLani.Enabled
-		end,
-		Tooltip = 'Puts the scepter of light on the player you pick every time it comes up'
-	})
-
-	local friends, enemies = {'None'}, {'None'}
-	local connections = {}
-
-	local function rebuild()
-		table.clear(friends)
-		table.clear(enemies)
-		table.insert(friends, 'None')
-		table.insert(enemies, 'None')
-		for _, plr in playersService:GetPlayers() do
-			if plr:GetAttribute('Team') == lplr:GetAttribute('Team') then
-				table.insert(friends, plr.Name)
-			elseif plr.Team and plr.Team.Name ~= 'Spectators' then
-				table.insert(enemies, plr.Name)
+			if callback then
+				notif('AutoLani', 'Wait for next update', 3, 'warning')
+				task.defer(function() if AutoLani.Enabled then AutoLani:Toggle() end end)
 			end
-		end
-		Friend:Change(friends)
-		Enemy:Change(enemies)
-	end
-
-	local function watch(plr)
-		if connections[plr] then
-			connections[plr]:Disconnect()
-		end
-		connections[plr] = plr:GetAttributeChangedSignal('Team'):Connect(rebuild)
-		rebuild()
-	end
-
-	Friend = AutoLani:CreateDropdown({
-		Name = 'Selected Player',
-		List = {'None'},
-		Default = 'None',
-		Tooltip = 'Teammate to put the ability on'
-	})
-	Enemy = AutoLani:CreateDropdown({
-		Name = 'Selected Enemy',
-		List = {'None'},
-		Default = 'None',
-		Visible = false,
-		Tooltip = 'Enemy to put the ability on'
-	})
-	UseEnemy = AutoLani:CreateToggle({
-		Name = 'Use enemy',
-		Tooltip = 'Uses the ability on somebody on another team instead of a teammate',
-		Function = function(callback)
-			pcall(function()
-				Enemy.Object.Visible = callback
-				Friend.Object.Visible = not callback
-			end)
-		end
-	})
-	Delay = AutoLani:CreateSlider({
-		Name = 'Delay',
-		Min = 1,
-		Max = 20,
-		Default = 5,
-		Decimal = 10,
-		Suffix = function(val)
-			return val <= 1 and 'sec' or 'secs'
 		end,
-		Tooltip = 'How long after the ability comes up before it is used'
+		Tooltip = 'Wait for next update',
+		ExtraText = function() return 'Wait for next update' end
 	})
-
-	for _, plr in playersService:GetPlayers() do
-		watch(plr)
-	end
-	vape:Clean(playersService.PlayerAdded:Connect(watch))
-	vape:Clean(playersService.PlayerRemoving:Connect(function(plr)
-		if connections[plr] then
-			connections[plr]:Disconnect()
-			connections[plr] = nil
-		end
-		rebuild()
-	end))
-	vape:Clean(function()
-		for _, connection in connections do
-			connection:Disconnect()
-		end
-		table.clear(connections)
-	end)
 end)
 
 run(function()
@@ -34980,213 +33893,82 @@ end)
 
 run(function()
 	local AutoMartin
-	local Targets, Range
-
 	AutoMartin = kits:CreateModule({
 		Name = 'AutoMartin',
 		Category = 'Auto',
 		Function = function(callback)
-			if not callback then return end
-			repeat
-				if entitylib.isAlive and entitylib.EntityPosition({
-					Range = Range.Value,
-					Part = 'RootPart',
-					Wallcheck = Targets.Walls.Enabled or nil,
-					Players = Targets.Players.Enabled,
-					NPCs = Targets.NPCs.Enabled,
-					Sort = sortmethods.Distance
-				}) then
-					pcall(function()
-						if bedwars.AbilityController:canUseAbility('cactus_fire') then
-							bedwars.AbilityController:useAbility('cactus_fire')
-						end
-					end)
-				end
-				task.wait(0.1)
-			until not AutoMartin.Enabled
+			if callback then
+				notif('AutoMartin', 'Wait for next update', 3, 'warning')
+				task.defer(function() if AutoMartin.Enabled then AutoMartin:Toggle() end end)
+			end
 		end,
-		Tooltip = 'Fires the cactus wild growth whenever somebody is in range'
-	})
-
-	Targets = AutoMartin:CreateTargets({
-		Players = true,
-		Walls = true
-	})
-	Range = AutoMartin:CreateSlider({
-		Name = 'Range',
-		Min = 1,
-		Max = 22,
-		Default = 22,
-		Suffix = function(val)
-			return val <= 1 and 'stud' or 'studs'
-		end
+		Tooltip = 'Wait for next update',
+		ExtraText = function() return 'Wait for next update' end
 	})
 end)
 
 run(function()
-	local AutoMelody
-	local Range, SelfHeal, TeammateHeal
-
-	AutoMelody = kits:CreateModule({
-		Name = 'AutoMelody',
-		Category = 'Auto',
-		Function = function(callback)
-			if not callback then return end
-			repeat
-				local mag, hp, target = Range.Value, math.huge, nil
-				if entitylib.isAlive then
-					local position = entitylib.character.RootPart.Position
-					local myTeam = lplr:GetAttribute('Team')
-					for _, ent in entitylib.List do
-						if ent.Player and ent.Health < ent.MaxHealth then
-							local isSelf = ent.Player == lplr
-							-- Both sides have to actually have a team. Comparing two nils reads
-							-- as "same team", which before either was assigned one meant healing
-							-- whoever happened to be closest, enemies included.
-							local mate = not isSelf and myTeam ~= nil and ent.Player:GetAttribute('Team') == myTeam
-							if (isSelf and SelfHeal.Enabled) or (mate and TeammateHeal.Enabled) then
-								local distance = (position - ent.RootPart.Position).Magnitude
-								if distance <= mag and ent.Health < hp then
-									mag, hp, target = distance, ent.Health, ent
-								end
-							end
-						end
-					end
-				end
-
-				if target and getItem('guitar') then
-					pcall(function()
-						bedwars.Handler:Get('GuitarHeal'):Fire('SendToServer', {healTarget = target.Character})
-					end)
-				end
-
-				task.wait(0.1)
-			until not AutoMelody.Enabled
-		end,
-		Tooltip = 'Plays the guitar at whoever is hurt and nearest'
-	})
-
-	SelfHeal = AutoMelody:CreateToggle({Name = 'Self Heal', Default = true})
-	TeammateHeal = AutoMelody:CreateToggle({Name = 'Teammate Heal', Default = true})
-	Range = AutoMelody:CreateSlider({
-		Name = 'Range',
-		Min = 1,
-		Max = 30,
-		Default = 30,
-		Suffix = function(val)
-			return val <= 1 and 'stud' or 'studs'
-		end
-	})
+\tlocal AutoMelody
+\tlocal SelfHeal, TeammateHeal, Delay, Legit, HealthThreshold, Range
+\tlocal function hp(char)
+\t\tlocal hum=char and char:FindFirstChildWhichIsA('Humanoid')
+\t\treturn hum and hum.MaxHealth>0 and hum.Health/hum.MaxHealth or 1
+\tend
+\tlocal function teammate(origin)
+\t\tlocal best,besthp,bestdist=nil,math.huge,math.huge
+\t\tfor _,p in playersService:GetPlayers() do
+\t\t\tif p~=lplr and p:GetAttribute('Team')==lplr:GetAttribute('Team') and p.Character then
+\t\t\t\tlocal root=p.Character.PrimaryPart or p.Character:FindFirstChild('HumanoidRootPart')
+\t\t\t\tlocal ph=hp(p.Character); local dist=root and (root.Position-origin).Magnitude or math.huge
+\t\t\t\tif dist<=Range.Value and ph<1 and (ph<besthp or (ph==besthp and dist<bestdist)) then best,besthp,bestdist=p,ph,dist end
+\t\t\tend
+\t\tend
+\t\treturn best,besthp
+\tend
+\tAutoMelody=kits:CreateModule({
+\t\tName='AutoMelody', Category='Auto',
+\t\tFunction=function(callback)
+\t\t\tif not callback then return end
+\t\t\tlocal nextHeal=0
+\t\t\trepeat
+\t\t\t\tif entitylib.isAlive and store.equippedKit=='melody' and os.clock()>=nextHeal then
+\t\t\t\t\tlocal guitar=getItem('guitar'); local held=guitar and store.hand.tool and store.hand.tool==guitar.tool
+\t\t\t\t\tif guitar and (not Legit.Enabled or held) then
+\t\t\t\t\t\tlocal target,targethp=teammate(entitylib.character.RootPart.Position)
+\t\t\t\t\t\tlocal selfLow=SelfHeal.Enabled and hp(lplr.Character)<=HealthThreshold.Value/100
+\t\t\t\t\t\tlocal teamLow=TeammateHeal.Enabled and target and targethp<=HealthThreshold.Value/100
+\t\t\t\t\t\tif target and (selfLow or teamLow) then
+\t\t\t\t\t\t\tpcall(function() bedwars.Handler:Get('PlayGuitar'):Fire('SendToServer',{healTarget=target.Character}) end)
+\t\t\t\t\t\t\tnextHeal=os.clock()+Delay.Value
+\t\t\t\t\t\tend
+\t\t\t\t\tend
+\t\t\t\tend
+\t\t\t\ttask.wait(0.05)
+\t\t\tuntil not AutoMelody.Enabled
+\t\tend,
+\t\tTooltip='Automatically uses Melody guitar to heal injured teammates and trigger self-healing'
+\t})
+\tSelfHeal=AutoMelody:CreateToggle({Name='Self',Default=true})
+\tTeammateHeal=AutoMelody:CreateToggle({Name='Teammates',Default=true})
+\tDelay=AutoMelody:CreateSlider({Name='Delay',Min=0,Max=2,Default=0.1,Decimal=10,Suffix=' seconds'})
+\tLegit=AutoMelody:CreateToggle({Name='Legit',Default=true,Tooltip='Only heals while the guitar is held'})
+\tHealthThreshold=AutoMelody:CreateSlider({Name='Health threshold',Min=1,Max=100,Default=70,Suffix='%'})
+\tRange=AutoMelody:CreateSlider({Name='Range',Min=1,Max=30,Default=30,Suffix=' studs'})
 end)
 
 run(function()
 	local AutoMetal
-	local LimitItem, Streamer, Animation
-	local Range, Delay
-	local cooldowns = {}
-
-	local legit = getFunctionRange(bedwars.HiddenMetalController and bedwars.HiddenMetalController.onKitLocalActivated) or 12
-
-	local function metalPart(metal)
-		return metal:FindFirstChild('Part') or metal.PrimaryPart or (metal:IsA('BasePart') and metal) or nil
-	end
-
-	local function holding()
-		return store.hand.tool and store.hand.tool.Name == 'metal_detector'
-	end
-
 	AutoMetal = kits:CreateModule({
 		Name = 'AutoMetal',
 		Category = 'Auto',
 		Function = function(callback)
-			if not callback then
-				table.clear(cooldowns)
-				return
+			if callback then
+				notif('AutoMetal', 'Wait for next update', 3, 'warning')
+				task.defer(function() if AutoMetal.Enabled then AutoMetal:Toggle() end end)
 			end
-
-			AutoMetal:Clean(proximityPromptService.PromptShown:Connect(function(prompt)
-				if Streamer.Enabled and prompt.Name == 'hidden-metal-prompt' and (not LimitItem.Enabled or holding()) then
-					task.delay(0.1, prompt.InputHoldBegin, prompt)
-				end
-			end))
-
-			repeat
-				if not Streamer.Enabled and entitylib.isAlive and (not LimitItem.Enabled or holding()) then
-					local position = entitylib.character.RootPart.Position
-					for _, metal in collectionService:GetTagged('hidden-metal') do
-						if not AutoMetal.Enabled then break end
-						local part = metalPart(metal)
-						if part and tick() > (cooldowns[metal] or 0) and (position - part.Position).Magnitude <= Range.Value then
-							if Delay.Value > 0 then
-								task.wait(Delay.Value)
-							end
-							if metal.Parent and part.Parent and entitylib.isAlive
-								and (entitylib.character.RootPart.Position - part.Position).Magnitude <= Range.Value then
-								pcall(function()
-									if Animation.Enabled then
-										bedwars.GameAnimationUtil:playAnimation(lplr.Character, bedwars.AnimationType.SHOVEL_DIG)
-										bedwars.SoundManager:playSound(bedwars.SoundList.SNAP_TRAP_CONSUME_MARK)
-									end
-									bedwars.Handler:Get('CollectCollectableEntity'):Fire('SendToServer', {
-										id = metal:GetAttribute('Id')
-									})
-								end)
-								cooldowns[metal] = tick() + 1
-							end
-						end
-					end
-				end
-				task.wait(0.1)
-			until not AutoMetal.Enabled
 		end,
-		Tooltip = 'Digs up the buried metal the detector finds'
-	})
-
-	LimitItem = AutoMetal:CreateToggle({
-		Name = 'Limit to item',
-		Tooltip = 'Only digs while the detector is actually held'
-	})
-	Streamer = AutoMetal:CreateToggle({
-		Name = 'Legit interaction',
-		Tooltip = 'Holds the metal\'s own prompt instead of firing the remote - slower, but it looks exactly like digging one up by hand',
-		Function = function(callback)
-			pcall(function()
-				Delay.Object.Visible = not callback
-				Range.Object.Visible = not callback
-				Animation.Object.Visible = not callback
-			end)
-		end
-	})
-	Animation = AutoMetal:CreateToggle({
-		Name = 'Animation',
-		Default = true,
-		Tooltip = 'Plays the dig animation'
-	})
-	Range = AutoMetal:CreateSlider({
-		Name = 'Range',
-		Min = 1,
-		Max = 20,
-		Default = math.clamp(legit, 1, 20),
-		Suffix = function(val)
-			return val > 1 and 'studs' or 'stud'
-		end
-	})
-	AutoMetal:CreateButton({
-		Name = 'Sync to legit range',
-		Function = function()
-			Range:SetValue(legit)
-		end,
-		Tooltip = 'Puts the range back to what the kit actually reaches'
-	})
-	Delay = AutoMetal:CreateSlider({
-		Name = 'Delay',
-		Min = 0,
-		Max = 1,
-		Default = 0.2,
-		Decimal = 100,
-		Suffix = function(val)
-			return val > 1 and 'secs' or 'sec'
-		end
+		Tooltip = 'Wait for next update',
+		ExtraText = function() return 'Wait for next update' end
 	})
 end)
 
@@ -35268,311 +34050,65 @@ end)
 
 run(function()
 	local AutoNoelle
-	local Notify, LimitItem
-	local Dropdowns = {}
-
-	local SLIMES = {'Frosty Slime', 'Heal Slime', 'Sticky Slime', 'Void Slime'}
-
-	-- Slimes are named `<Type>Slime_<owner>` in the folder, so the display name is that with the
-	-- owner stripped and a space put back in.
-	local function ourSlimes()
-		local found = {}
-		local folder = workspace:FindFirstChild('SlimeModelFolder')
-		if not folder then return found end
-		for _, model in folder:GetChildren() do
-			local data = model:FindFirstChild('SlimeData')
-			data = data and data.Value or nil
-			if data and data.Tamer and data.Tamer.Value == lplr.UserId then
-				table.insert(found, {
-					Data = data,
-					Model = model,
-					Name = model.Name:gsub('_'..lplr.Name, ''):gsub('Slime', ' Slime')
-				})
-			end
-		end
-		return found
-	end
-
-	local function playerNamed(label)
-		for _, plr in playersService:GetPlayers() do
-			if (plr.DisplayName..' ('..plr.Name..')') == label then
-				return plr
-			end
-		end
-		return nil
-	end
-
 	AutoNoelle = kits:CreateModule({
 		Name = 'AutoNoelle',
 		Category = 'Auto',
 		Function = function(callback)
-			if not callback then return end
-			repeat
-				if entitylib.isAlive and (not LimitItem.Enabled or (store.hand.tool and store.hand.tool.Name == 'slime_tamer_flute')) then
-					for _, slime in ourSlimes() do
-						if not AutoNoelle.Enabled then break end
-						local dropdown = Dropdowns[slime.Name]
-						local target = dropdown and dropdown.Value ~= 'None' and playerNamed(dropdown.Value) or nil
-						if target and slime.Data.Following and slime.Data.Following.Value ~= target.UserId then
-							pcall(function()
-								bedwars.Handler:Get('RequestMoveSlime'):Fire('CallServerAsync', {
-									slimeId = slime.Data:GetAttribute('Id'),
-									targetPlayerUserId = target.UserId
-								}):andThen(function(success)
-									if not success then return end
-									slime.Data.Following.Value = target.UserId
-									if Notify.Enabled then
-										notif('AutoNoelle', 'Directed '..slime.Name..' to '..target.DisplayName..' ('..target.Name..')', 5)
-									end
-								end)
-							end)
-						end
-					end
-				end
-				task.wait(0.5)
-			until not AutoNoelle.Enabled
-		end,
-		Tooltip = 'Keeps each of your slimes following the player you picked for it'
-	})
-
-	Notify = AutoNoelle:CreateToggle({Name = 'Notify on direct'})
-	LimitItem = AutoNoelle:CreateToggle({
-		Name = 'Limit to item',
-		Tooltip = 'Only redirects while the flute is actually held'
-	})
-	for _, name in SLIMES do
-		Dropdowns[name] = AutoNoelle:CreateDropdown({
-			Name = name..' Target',
-			List = {'None'},
-			Default = 'None',
-			Tooltip = 'Teammate to send the '..name:lower()..' to'
-		})
-	end
-
-	-- One rebuild for every dropdown, off one list: the per-player append the reference build
-	-- used added a name again on every team change and never removed anyone who left.
-	local teammates = {'None'}
-	local connections = {}
-
-	local function rebuild()
-		table.clear(teammates)
-		table.insert(teammates, 'None')
-		for _, plr in playersService:GetPlayers() do
-			if plr:GetAttribute('Team') == lplr:GetAttribute('Team') then
-				table.insert(teammates, plr.DisplayName..' ('..plr.Name..')')
+			if callback then
+				notif('AutoNoelle', 'Wait for next update', 3, 'warning')
+				task.defer(function() if AutoNoelle.Enabled then AutoNoelle:Toggle() end end)
 			end
-		end
-		for _, dropdown in Dropdowns do
-			dropdown:Change(teammates)
-		end
-	end
-
-	local function watch(plr)
-		if connections[plr] then
-			connections[plr]:Disconnect()
-		end
-		connections[plr] = plr:GetAttributeChangedSignal('Team'):Connect(rebuild)
-		rebuild()
-	end
-
-	for _, plr in playersService:GetPlayers() do
-		watch(plr)
-	end
-	vape:Clean(playersService.PlayerAdded:Connect(watch))
-	vape:Clean(playersService.PlayerRemoving:Connect(function(plr)
-		if connections[plr] then
-			connections[plr]:Disconnect()
-			connections[plr] = nil
-		end
-		rebuild()
-	end))
-	vape:Clean(function()
-		for _, connection in connections do
-			connection:Disconnect()
-		end
-		table.clear(connections)
-	end)
+		end,
+		Tooltip = 'Wait for next update',
+		ExtraText = function() return 'Wait for next update' end
+	})
 end)
 
 run(function()
 	local AutoNyx
-	local Targets, Range
-
 	AutoNyx = kits:CreateModule({
 		Name = 'AutoNyx',
 		Category = 'Auto',
 		Function = function(callback)
-			if not callback then return end
-			AutoNyx:Clean(vapeEvents.EntityDamageEvent.Event:Connect(function(damage)
-				-- damageType 0 is a melee hit. Only ours counts, and only while somebody is
-				-- still close enough for the ability to land on them.
-				if damage.damageType ~= 0 then return end
-				if not damage.fromEntity or damage.fromEntity.Name ~= lplr.Name then return end
-				pcall(function()
-					if entitylib.EntityPosition({
-						Range = Range.Value,
-						Part = 'RootPart',
-						Players = Targets.Players.Enabled,
-						NPCs = Targets.NPCs.Enabled
-					}) and bedwars.AbilityController:canUseAbility('midnight') then
-						bedwars.AbilityController:useAbility('midnight')
-					end
-				end)
-			end))
+			if callback then
+				notif('AutoNyx', 'Wait for next update', 3, 'warning')
+				task.defer(function() if AutoNyx.Enabled then AutoNyx:Toggle() end end)
+			end
 		end,
-		Tooltip = 'Uses midnight the moment you land a melee hit on somebody'
-	})
-
-	Targets = AutoNyx:CreateTargets({
-		Players = true,
-		NPCs = false
-	})
-	Range = AutoNyx:CreateSlider({
-		Name = 'Range',
-		Min = 1,
-		Max = 30,
-		Default = 14.4,
-		Decimal = 10,
-		Suffix = function(val)
-			return val <= 1 and 'stud' or 'studs'
-		end
+		Tooltip = 'Wait for next update',
+		ExtraText = function() return 'Wait for next update' end
 	})
 end)
 
 run(function()
 	local AutoPyro
-	local Toggles = {}
-
-	local UPGRADES = {'Range', 'Heat', 'Power'}
-
 	AutoPyro = kits:CreateModule({
 		Name = 'AutoPyro',
 		Category = 'Auto',
 		Function = function(callback)
-			if not callback then return end
-			repeat
-				local flamethrower = getItem('flamethrower')
-				if flamethrower and flamethrower.tool then
-					for _, name in UPGRADES do
-						if not AutoPyro.Enabled then break end
-						-- Read the toggle rather than removing the entry from the list. The
-						-- reference build table.remove'd out of the very list it was iterating,
-						-- which both skipped an upgrade and permanently lost it for the session.
-						if Toggles[name] and Toggles[name].Enabled then
-							pcall(function()
-								local key = name:lower()
-								local tier = flamethrower.tool:GetAttribute(key) or -1
-								if tier >= 3 then return end
-								local meta = bedwars.PyroUpgradeMeta[key]
-								local wanted = meta and meta.tiers[tier + 2]
-								if not wanted then return end
-								local currency = getItem(wanted.currency)
-								if currency and currency.amount >= wanted.price then
-									bedwars.Handler:Get('UpgradeFlamethrower'):Fire('CallServer', key)
-									task.wait(0.1)
-								end
-							end)
-						end
-					end
-				end
-				task.wait(0.1)
-			until not AutoPyro.Enabled
+			if callback then
+				notif('AutoPyro', 'Wait for next update', 3, 'warning')
+				task.defer(function() if AutoPyro.Enabled then AutoPyro:Toggle() end end)
+			end
 		end,
-		Tooltip = 'Buys the next flamethrower upgrade as soon as it is affordable'
+		Tooltip = 'Wait for next update',
+		ExtraText = function() return 'Wait for next update' end
 	})
-
-	for _, name in UPGRADES do
-		Toggles[name] = AutoPyro:CreateToggle({
-			Name = 'Buy '..name,
-			Default = true
-		})
-	end
 end)
 
 run(function()
 	local AutoRamil
-	local Targets, Sort
-	local Range, MovingTornado, MovingRange
-
 	AutoRamil = kits:CreateModule({
 		Name = 'AutoRamil',
 		Category = 'Auto',
 		Function = function(callback)
-			if not callback then return end
-			repeat
-				if entitylib.isAlive and store.equippedKit == 'airbender' then
-					local position = entitylib.character.RootPart.Position
-					local ent = entitylib.EntityPosition({
-						Origin = position,
-						Range = math.max(Range.Value, MovingTornado.Enabled and MovingRange.Value or 0),
-						Part = 'RootPart',
-						Wallcheck = Targets.Walls.Enabled or nil,
-						Players = Targets.Players.Enabled,
-						NPCs = Targets.NPCs.Enabled,
-						Sort = sortmethods[Sort.Value]
-					})
-
-					if ent then
-						local distance = (position - ent.RootPart.Position).Magnitude
-						pcall(function()
-							if distance <= Range.Value and bedwars.AbilityController:canUseAbility('airbender_tornado') then
-								bedwars.AbilityController:useAbility('airbender_tornado')
-							end
-							if MovingTornado.Enabled and distance <= MovingRange.Value
-								and bedwars.AbilityController:canUseAbility('airbender_moving_tornado') then
-								bedwars.AbilityController:useAbility('airbender_moving_tornado')
-							end
-						end)
-					end
-				end
-				task.wait()
-			until not AutoRamil.Enabled
+			if callback then
+				notif('AutoRamil', 'Wait for next update', 3, 'warning')
+				task.defer(function() if AutoRamil.Enabled then AutoRamil:Toggle() end end)
+			end
 		end,
-		Tooltip = 'Throws the airbender tornado at whoever comes into range'
-	})
-
-	Targets = AutoRamil:CreateTargets({
-		Players = true,
-		NPCs = false
-	})
-	local methods = {'Damage', 'Distance'}
-	for name in sortmethods do
-		if not table.find(methods, name) then
-			table.insert(methods, name)
-		end
-	end
-	Sort = AutoRamil:CreateDropdown({
-		Name = 'Target Mode',
-		List = methods,
-		Default = 'Distance'
-	})
-	Range = AutoRamil:CreateSlider({
-		Name = 'Range',
-		Min = 1,
-		Max = 25,
-		Default = 25,
-		Suffix = function(val)
-			return val <= 1 and 'stud' or 'studs'
-		end
-	})
-	MovingTornado = AutoRamil:CreateToggle({
-		Name = 'Use Moving Tornado',
-		Function = function(callback)
-			pcall(function()
-				MovingRange.Object.Visible = callback
-			end)
-		end
-	})
-	MovingRange = AutoRamil:CreateSlider({
-		Name = 'Tornado Range',
-		Min = 1,
-		Max = 35,
-		Default = 25,
-		Darker = true,
-		Visible = false,
-		Suffix = function(val)
-			return val <= 1 and 'stud' or 'studs'
-		end
+		Tooltip = 'Wait for next update',
+		ExtraText = function() return 'Wait for next update' end
 	})
 end)
 
@@ -35631,422 +34167,65 @@ end)
 
 run(function()
 	local AutoStarCollector
-	local Streamer, Animation
-	local Range, Delay
-	local cooldowns = {}
-
 	AutoStarCollector = kits:CreateModule({
 		Name = 'AutoStarCollector',
 		Category = 'Auto',
 		Function = function(callback)
-			if not callback then
-				table.clear(cooldowns)
-				return
+			if callback then
+				notif('AutoStarCollector', 'Wait for next update', 3, 'warning')
+				task.defer(function() if AutoStarCollector.Enabled then AutoStarCollector:Toggle() end end)
 			end
-
-			AutoStarCollector:Clean(proximityPromptService.PromptShown:Connect(function(prompt)
-				if Streamer.Enabled and prompt.Name == 'stars_ProximityPrompt' then
-					task.delay(0.1, prompt.InputHoldBegin, prompt)
-				end
-			end))
-
-			repeat
-				if not Streamer.Enabled and entitylib.isAlive then
-					local position = entitylib.character.RootPart.Position
-					for _, star in collectionService:GetTagged('stars') do
-						if not AutoStarCollector.Enabled then break end
-						local part = star.PrimaryPart or (star:IsA('BasePart') and star) or nil
-						if part and tick() > (cooldowns[star] or 0) and (position - part.Position).Magnitude <= Range.Value then
-							if Delay.Value > 0 then
-								task.wait(Delay.Value)
-							end
-							if star.Parent and part.Parent and entitylib.isAlive
-								and (entitylib.character.RootPart.Position - part.Position).Magnitude <= Range.Value then
-								pcall(function()
-									if Animation.Enabled then
-										bedwars.GameAnimationUtil:playAnimation(lplr.Character, bedwars.AnimationType.PUNCH)
-										bedwars.ViewmodelController:playAnimation(bedwars.AnimationType.FP_USE_ITEM)
-									end
-									bedwars.StarCollectorController:collectEntity(lplr, star, star.Name)
-								end)
-								cooldowns[star] = tick() + 1
-							end
-						end
-					end
-				end
-				task.wait(0.1)
-			until not AutoStarCollector.Enabled
 		end,
-		Tooltip = 'Collects the stars that drop around you'
-	})
-
-	Streamer = AutoStarCollector:CreateToggle({
-		Name = 'Legit interaction',
-		Tooltip = 'Holds the star\'s own prompt instead of calling the controller - slower, but it looks exactly like collecting one by hand',
-		Function = function(callback)
-			pcall(function()
-				Delay.Object.Visible = not callback
-				Range.Object.Visible = not callback
-				Animation.Object.Visible = not callback
-			end)
-		end
-	})
-	Animation = AutoStarCollector:CreateToggle({
-		Name = 'Animation',
-		Default = true,
-		Tooltip = 'Plays the collect animation'
-	})
-	Range = AutoStarCollector:CreateSlider({
-		Name = 'Range',
-		Min = 1,
-		Max = 20,
-		Default = 12,
-		Suffix = function(val)
-			return val > 1 and 'studs' or 'stud'
-		end
-	})
-	Delay = AutoStarCollector:CreateSlider({
-		Name = 'Delay',
-		Min = 0,
-		Max = 1,
-		Default = 0.2,
-		Decimal = 100,
-		Suffix = function(val)
-			return val > 1 and 'secs' or 'sec'
-		end
+		Tooltip = 'Wait for next update',
+		ExtraText = function() return 'Wait for next update' end
 	})
 end)
 
 run(function()
 	local AutoTaliyah
-	local Iron, Emerald, Diamond
-	local Amount
-
-	-- The shop the chicken is bought from has to be one we are actually stood at, so this is
-	-- the same nearby-shop lookup AutoBuy uses.
-	local function nearbyShop()
-		if not entitylib.isAlive then return nil end
-		local position = entitylib.character.RootPart.Position
-		for _, npc in store.shop do
-			if npc.Shop and npc.RootPart and (npc.RootPart.Position - position).Magnitude <= 20 then
-				return npc.Id
-			end
-		end
-		return nil
-	end
-
 	AutoTaliyah = kits:CreateModule({
 		Name = 'AutoTaliyah',
 		Category = 'Auto',
 		Function = function(callback)
-			if not callback then return end
-			local item = nil
-			pcall(function()
-				item = bedwars.Shop.getShopItem('chicken_shop_item', lplr)
-			end)
-			if not item then
-				notif('AutoTaliyah', 'The chicken shop item is unavailable.', 5, 'warning')
-				AutoTaliyah:Toggle()
-				return
+			if callback then
+				notif('AutoTaliyah', 'Wait for next update', 3, 'warning')
+				task.defer(function() if AutoTaliyah.Enabled then AutoTaliyah:Toggle() end end)
 			end
-
-			repeat
-				local shopId = nearbyShop()
-				if shopId then
-					pcall(function()
-						local price = bedwars.TaliyahUtil:getPrice()
-						local wanted = (price.currency == 'iron' and Iron.Enabled)
-							or (price.currency == 'emerald' and Emerald.Enabled)
-							or (price.currency == 'diamond' and Diamond.Enabled)
-						if not wanted or price.price < Amount.Value then return end
-
-						bedwars.Handler:Get('BedwarsPurchaseItem'):Fire('CallServerAsync', {
-							shopItem = item,
-							shopId = shopId
-						}):andThen(function(success)
-							if not success then return end
-							bedwars.SoundManager:playSound(bedwars.SoundList.BEDWARS_PURCHASE_ITEM)
-							bedwars.Store:dispatch({
-								type = 'BedwarsAddItemPurchased',
-								itemType = item.itemType
-							})
-							bedwars.BedwarsShopController.alreadyPurchasedMap[item.itemType] = true
-						end)
-					end)
-				end
-				task.wait(0.1)
-			until not AutoTaliyah.Enabled
 		end,
-		Tooltip = 'Sells the Taliyah chicken while you are at a shop and it is going for what you asked'
-	})
-
-	Iron = AutoTaliyah:CreateToggle({
-		Name = 'Iron',
-		Default = true,
-		Tooltip = 'Sells while the chicken pays out in iron'
-	})
-	Emerald = AutoTaliyah:CreateToggle({
-		Name = 'Emerald',
-		Default = true,
-		Tooltip = 'Sells while the chicken pays out in emeralds'
-	})
-	Diamond = AutoTaliyah:CreateToggle({
-		Name = 'Diamond',
-		Default = true,
-		Tooltip = 'Sells while the chicken pays out in diamonds'
-	})
-	Amount = AutoTaliyah:CreateSlider({
-		Name = 'Amount',
-		Min = 1,
-		Max = 1000,
-		Default = 2,
-		Tooltip = 'Only sells once the payout is at least this much'
+		Tooltip = 'Wait for next update',
+		ExtraText = function() return 'Wait for next update' end
 	})
 end)
 
 run(function()
 	local AutoUma
-	local Range, Animation, LimitItem
-	local AutoSummon, HealSpirit, AttackSpirit
-	local TargetItemDrops, Emerald, Diamond
-
-	-- The staff we are going to throw with, plus a switch to it when Limit to item is off.
-	local function getStaff()
-		if LimitItem.Enabled then
-			local hand = store.hand.tool
-			return (hand and hand.Name == 'spirit_staff') and getItem('spirit_staff') or nil
-		end
-		local item = getItem('spirit_staff')
-		if item then
-			switchItem(item, 0)
-		end
-		return item
-	end
-
-	local function nearestDrop(position, drops)
-		local best, bestmag = nil, Range.Value + 1
-		for _, drop in drops do
-			if drop.Parent and ((drop.Name == 'emerald' and Emerald.Enabled) or (drop.Name == 'diamond' and Diamond.Enabled)) then
-				local distance = (position - drop.Position).Magnitude
-				if distance <= bestmag and not entitylib.Wallcheck(position, drop.Position, {gameCamera, lplr.Character, drop}) then
-					best, bestmag = drop, distance
-				end
-			end
-		end
-		return best
-	end
-
 	AutoUma = kits:CreateModule({
 		Name = 'AutoUma',
 		Category = 'Auto',
 		Function = function(callback)
-			if not callback then return end
-			local drops = collection('ItemDrop', AutoUma)
-			repeat
-				if entitylib.isAlive and TargetItemDrops.Enabled then
-					local staff = getStaff()
-					if staff then
-						local attack = lplr:GetAttribute('ReadySummonedAttackSpirits') or 0
-						local heal = lplr:GetAttribute('ReadySummonedHealSpirits') or 0
-
-						if AutoSummon.Enabled and getItem('summon_stone') then
-							pcall(function()
-								if AttackSpirit.Enabled and attack < 1 then
-									bedwars.AbilityController:useAbility('summon_attack_spirit')
-								end
-								if HealSpirit.Enabled and heal < 1 then
-									bedwars.AbilityController:useAbility('summon_heal_spirit')
-								end
-							end)
-						end
-
-						if (attack + heal) > 0 then
-							local position = entitylib.character.RootPart.Position
-							local drop = nearestDrop(position, drops)
-							if drop then
-								pcall(function()
-									local origin = position + Vector3.new(0, 2, 0)
-									-- Arced upwards by a fifth of the distance, which is what
-									-- makes a spirit thrown across a gap actually land on the drop.
-									local aim = drop.Position + Vector3.new(0, (position - drop.Position).Magnitude / 5, 0)
-									local direction = CFrame.lookAt(position, aim).LookVector * 100
-
-									bedwars.Handler:Get('ProjectileFire').Remote.instance:InvokeServer(
-										staff,
-										nil,
-										attack > 0 and 'attack_spirit' or 'heal_spirit',
-										origin,
-										position,
-										direction,
-										httpService:GenerateGUID(),
-										{
-											drawDurationSeconds = 1,
-											shotId = httpService:GenerateGUID(false)
-										},
-										workspace:GetServerTimeNow() - 0.045
-									)
-
-									if Animation.Enabled then
-										bedwars.GameAnimationUtil:playAnimation(lplr.Character, bedwars.AnimationType.WIZARD_BALL_CAST)
-										bedwars.SoundManager:playSound(bedwars.SoundList.SPIRIT_SUMMONER_CHANGE_AFFINITY, {})
-									end
-								end)
-								task.wait(1.5)
-							end
-						end
-					end
-				end
-				task.wait(0.1)
-			until not AutoUma.Enabled
+			if callback then
+				notif('AutoUma', 'Wait for next update', 3, 'warning')
+				task.defer(function() if AutoUma.Enabled then AutoUma:Toggle() end end)
+			end
 		end,
-		Tooltip = 'Throws summoned spirits at the emeralds and diamonds around you'
+		Tooltip = 'Wait for next update',
+		ExtraText = function() return 'Wait for next update' end
 	})
-
-	Range = AutoUma:CreateSlider({
-		Name = 'Range',
-		Min = 1,
-		Max = 80,
-		Default = 50,
-		Suffix = function(val)
-			return val <= 1 and 'stud' or 'studs'
-		end
-	})
-	Animation = AutoUma:CreateToggle({Name = 'Animation', Default = true})
-	LimitItem = AutoUma:CreateToggle({
-		Name = 'Limit to item',
-		Default = true,
-		Tooltip = 'Only throws while the spirit staff is actually held, instead of switching to it'
-	})
-	AutoSummon = AutoUma:CreateToggle({
-		Name = 'Auto Summon',
-		Tooltip = 'Spends summon stones to keep a spirit ready',
-		Function = function(callback)
-			pcall(function()
-				AttackSpirit.Object.Visible = callback
-				HealSpirit.Object.Visible = callback
-			end)
-		end
-	})
-	HealSpirit = AutoUma:CreateToggle({
-		Name = 'Use heal spirit',
-		Default = true,
-		Visible = false,
-		Darker = true
-	})
-	AttackSpirit = AutoUma:CreateToggle({
-		Name = 'Use attack spirit',
-		Default = true,
-		Visible = false,
-		Darker = true
-	})
-	TargetItemDrops = AutoUma:CreateToggle({
-		Name = 'Target item drops',
-		Default = true,
-		Function = function(callback)
-			pcall(function()
-				Emerald.Object.Visible = callback
-				Diamond.Object.Visible = callback
-			end)
-		end
-	})
-	Emerald = AutoUma:CreateToggle({Name = 'Emerald', Default = true, Darker = true})
-	Diamond = AutoUma:CreateToggle({Name = 'Diamond', Default = true, Darker = true})
 end)
 
 run(function()
 	local AutoWhisper
-	local Heal, Threshold
-	local Fly, Level
-
 	AutoWhisper = kits:CreateModule({
 		Name = 'AutoWhisper',
 		Category = 'Auto',
 		Function = function(callback)
-			if not callback then return end
-			repeat task.wait() until store.matchState ~= 0 or not AutoWhisper.Enabled
-			if not AutoWhisper.Enabled then return end
-
-			-- The lowest block on the map, which is where the void starts for practical
-			-- purposes. Level is how far below that the owl is allowed to let you fall before
-			-- it lifts, so a low setting catches you late and a high one catches you early.
-			local floor = math.huge
-			for _, block in store.blocks do
-				local point = block.Position.Y - (block.Size.Y / 2)
-				if point < floor then
-					floor = point
-				end
+			if callback then
+				notif('AutoWhisper', 'Wait for next update', 3, 'warning')
+				task.defer(function() if AutoWhisper.Enabled then AutoWhisper:Toggle() end end)
 			end
-			if floor == math.huge then floor = 0 end
-
-			repeat
-				local now = workspace:GetServerTimeNow()
-				local liftReady = Fly.Enabled and (now - (lplr:GetAttribute('OwlLiftReadyTime') or 0)) > 0
-				local healReady = Heal.Enabled and (now - (lplr:GetAttribute('OwlHealReadyTime') or 0)) > 0
-
-				if liftReady or healReady then
-					for _, owl in collectionService:GetTagged('Owl') do
-						if owl:GetAttribute('Owner') ~= lplr.UserId then continue end
-						local plr = playersService:GetPlayerByUserId(owl:GetAttribute('Target'))
-						local char = plr and plr.Character
-						local root = char and char:FindFirstChild('HumanoidRootPart')
-						if char and root then
-							pcall(function()
-								if liftReady and root.Velocity.Y < -10 and root.Position.Y < (floor - Level.Value) then
-									bedwars.AbilityController:useAbility('OWL_LIFT')
-								end
-								local health = char:GetAttribute('Health')
-								local maxHealth = char:GetAttribute('MaxHealth')
-								if healReady and (Threshold.Value >= 100 or (type(health) == 'number' and type(maxHealth) == 'number'
-									and maxHealth > 0 and (health / maxHealth) <= (Threshold.Value / 100))) then
-									bedwars.AbilityController:useAbility('OWL_HEAL')
-								end
-							end)
-						end
-						break
-					end
-				end
-				task.wait(0.1)
-			until not AutoWhisper.Enabled
 		end,
-		Tooltip = 'Spends the owl\'s lift and heal on whoever it is following'
-	})
-
-	Heal = AutoWhisper:CreateToggle({
-		Name = 'Heal',
-		Default = true,
-		Function = function(callback)
-			pcall(function()
-				Threshold.Object.Visible = callback
-			end)
-		end
-	})
-	Threshold = AutoWhisper:CreateSlider({
-		Name = 'Health',
-		Min = 1,
-		Max = 100,
-		Default = 99,
-		Suffix = '%',
-		Darker = true
-	})
-	Fly = AutoWhisper:CreateToggle({
-		Name = 'Fly',
-		Default = true,
-		Function = function(callback)
-			pcall(function()
-				Level.Object.Visible = callback
-			end)
-		end
-	})
-	Level = AutoWhisper:CreateSlider({
-		Name = 'Level',
-		Min = 1,
-		Max = 100,
-		Default = 50,
-		Darker = true,
-		Suffix = function(val)
-			return val <= 1 and 'stud' or 'studs'
-		end,
-		Tooltip = 'How far below the lowest block on the map the lift waits before catching you'
+		Tooltip = 'Wait for next update',
+		ExtraText = function() return 'Wait for next update' end
 	})
 end)
 
@@ -36226,15 +34405,15 @@ local function kitCollector(module, source, range, delay, action)
 end
 
 run(function()
-	local AutoBattery
+	local AutoColbat
 	local Range, Delay
 
-	AutoBattery = kits:CreateModule({
-		Name = 'AutoBattery',
+	AutoColbat = kits:CreateModule({
+		Name = 'AutoColbat',
 		Category = 'Auto',
 		Function = function(callback)
 			if not callback then return end
-			kitCollector(AutoBattery, function()
+			kitCollector(AutoColbat, function()
 				return bedwars.BatteryEffectsController and bedwars.BatteryEffectsController.liveBatteries or nil
 			end, function() return Range.Value end, function() return Delay.Value end, function(_, id)
 				local info = bedwars.BatteryEffectsController:getBatteryInfo(id)
@@ -36247,10 +34426,10 @@ run(function()
 				bedwars.Handler:Get('ConsumeBattery'):Fire('SendToServer', {batteryId = id})
 			end)
 		end,
-		Tooltip = 'Drains the batteries you walk over'
+		Tooltip = 'Automatically collects nearby batteries'
 	})
 
-	Range = AutoBattery:CreateSlider({
+	Range = AutoColbat:CreateSlider({
 		Name = 'Range',
 		Min = 1,
 		Max = 30,
@@ -36259,7 +34438,7 @@ run(function()
 			return val <= 1 and 'stud' or 'studs'
 		end
 	})
-	Delay = AutoBattery:CreateSlider({
+	Delay = AutoColbat:CreateSlider({
 		Name = 'Delay',
 		Min = 0,
 		Max = 2,
@@ -36347,157 +34526,49 @@ end)
 
 run(function()
 	local AutoFarmer
-	local Range, Delay, Animation
-
 	AutoFarmer = kits:CreateModule({
 		Name = 'AutoFarmer',
 		Category = 'Auto',
 		Function = function(callback)
-			if not callback then return end
-			kitCollector(AutoFarmer, 'HarvestableCrop', function() return Range.Value end, function() return Delay.Value end, function(crop)
-				if bedwars.Handler:Get('HarvestCrop'):Fire('CallServer', {position = bedwars.BlockController:getBlockPosition(crop.Position)}) and Animation.Enabled then
-					bedwars.GameAnimationUtil:playAnimation(lplr.Character, bedwars.AnimationType.PUNCH)
-					bedwars.SoundManager:playSound(bedwars.SoundList.CROP_HARVEST)
-				end
-			end)
+			if callback then
+				notif('AutoFarmer', 'Wait for next update', 3, 'warning')
+				task.defer(function() if AutoFarmer.Enabled then AutoFarmer:Toggle() end end)
+			end
 		end,
-		Tooltip = 'Harvests the crops Cletus grows as soon as they are ready'
-	})
-
-	Range = AutoFarmer:CreateSlider({
-		Name = 'Range',
-		Min = 1,
-		Max = 30,
-		Default = 10,
-		Suffix = function(val)
-			return val <= 1 and 'stud' or 'studs'
-		end
-	})
-	Delay = AutoFarmer:CreateSlider({
-		Name = 'Delay',
-		Min = 0,
-		Max = 2,
-		Default = 0.5,
-		Decimal = 10,
-		Suffix = 'seconds'
-	})
-	Animation = AutoFarmer:CreateToggle({
-		Name = 'Animation',
-		Default = true,
-		Tooltip = 'Plays the harvest swing and sound'
+		Tooltip = 'Wait for next update',
+		ExtraText = function() return 'Wait for next update' end
 	})
 end)
 
 run(function()
 	local AutoFisherman
-	local controller, original, hooked
-
 	AutoFisherman = kits:CreateModule({
 		Name = 'AutoFisherman',
 		Category = 'Auto',
 		Function = function(callback)
-			if not callback then
-				if controller and original and controller.startMinigame == hooked then
-					controller.startMinigame = original
-				end
-				controller, original, hooked = nil, nil, nil
-				return
+			if callback then
+				notif('AutoFisherman', 'Wait for next update', 3, 'warning')
+				task.defer(function() if AutoFisherman.Enabled then AutoFisherman:Toggle() end end)
 			end
-
-			-- The controller is built with the match, so wait for it rather than give up on a
-			-- module switched on in the lobby.
-			local target = bedwars.FishingMinigameController
-			while not target and AutoFisherman.Enabled do
-				task.wait(0.1)
-				target = bedwars.FishingMinigameController
-			end
-			if not AutoFisherman.Enabled or not target or typeof(target.startMinigame) ~= 'function' then return end
-
-			controller, original = target, target.startMinigame
-			-- The minigame reports its result through the callback it is handed, so answering
-			-- that with a win and never starting the minigame at all is the whole trick.
-			hooked = function(_, _, result)
-				if AutoFisherman.Enabled and type(result) == 'function' then
-					return result({win = true})
-				end
-				return original(_, _, result)
-			end
-			controller.startMinigame = hooked
 		end,
-		Tooltip = 'Wins the fishing minigame the moment it opens'
-	})
-end)
-
-run(function()
-	local AutoJailor
-	local Range, Delay
-
-	AutoJailor = kits:CreateModule({
-		Name = 'AutoJailor',
-		Category = 'Auto',
-		Function = function(callback)
-			if not callback then return end
-			kitCollector(AutoJailor, 'jailor_soul', function() return Range.Value end, function() return Delay.Value end, function(soul)
-				bedwars.JailorController:collectEntity(lplr, soul, 'JailorSoul')
-			end)
-		end,
-		Tooltip = 'Collects the souls the jailor drops'
-	})
-
-	Range = AutoJailor:CreateSlider({
-		Name = 'Range',
-		Min = 1,
-		Max = 60,
-		Default = 20,
-		Suffix = function(val)
-			return val <= 1 and 'stud' or 'studs'
-		end
-	})
-	Delay = AutoJailor:CreateSlider({
-		Name = 'Delay',
-		Min = 0,
-		Max = 2,
-		Default = 0.1,
-		Decimal = 10,
-		Suffix = 'seconds'
+		Tooltip = 'Wait for next update',
+		ExtraText = function() return 'Wait for next update' end
 	})
 end)
 
 run(function()
 	local AutoPinata
-	local Range, Delay
-
 	AutoPinata = kits:CreateModule({
 		Name = 'AutoPinata',
 		Category = 'Auto',
 		Function = function(callback)
-			if not callback then return end
-			-- The tag carries our own name, so this only ever finds our own pinata.
-			kitCollector(AutoPinata, lplr.Name..':pinata', function() return Range.Value end, function() return Delay.Value end, function(pinata)
-				if getItem('candy') then
-					bedwars.Handler:Get('DepositCoins'):Fire('CallServer', pinata)
-				end
-			end)
+			if callback then
+				notif('AutoPinata', 'Wait for next update', 3, 'warning')
+				task.defer(function() if AutoPinata.Enabled then AutoPinata:Toggle() end end)
+			end
 		end,
-		Tooltip = 'Banks your candy into your pinata whenever you walk past it'
-	})
-
-	Range = AutoPinata:CreateSlider({
-		Name = 'Range',
-		Min = 1,
-		Max = 30,
-		Default = 6,
-		Suffix = function(val)
-			return val <= 1 and 'stud' or 'studs'
-		end
-	})
-	Delay = AutoPinata:CreateSlider({
-		Name = 'Delay',
-		Min = 0,
-		Max = 2,
-		Default = 0.2,
-		Decimal = 10,
-		Suffix = 'seconds'
+		Tooltip = 'Wait for next update',
+		ExtraText = function() return 'Wait for next update' end
 	})
 end)
 
@@ -36921,133 +34992,33 @@ end)
 
 run(function()
 	local AutoWarlock
-	local Targets, Range, LimitItem
-	local linked
-
 	AutoWarlock = kits:CreateModule({
 		Name = 'AutoWarlock',
 		Category = 'Auto',
 		Function = function(callback)
-			if not callback then
-				linked = nil
-				return
+			if callback then
+				notif('AutoWarlock', 'Wait for next update', 3, 'warning')
+				task.defer(function() if AutoWarlock.Enabled then AutoWarlock:Toggle() end end)
 			end
-			repeat
-				local holding = store.hand.tool and store.hand.tool.Name == 'warlock_staff'
-				if entitylib.isAlive and (holding or not LimitItem.Enabled) then
-					local ent = entitylib.EntityPosition({
-						Range = Range.Value,
-						Part = 'RootPart',
-						Wallcheck = Targets.Walls.Enabled or nil,
-						Players = Targets.Players.Enabled,
-						NPCs = Targets.NPCs.Enabled
-					})
-
-					-- Only re-link on a change of target: the remote is a round trip, and asking
-					-- for the link we already hold ten times a second is what made this rubber-band.
-					if ent and ent.Character ~= linked then
-						local accepted = false
-						pcall(function()
-							accepted = bedwars.Handler:Get('WarlockLinkTarget'):Fire('CallServer', {
-								target = ent.Character
-							}) and true or false
-						end)
-						linked = accepted and ent.Character or nil
-					elseif not ent then
-						linked = nil
-					end
-				else
-					linked = nil
-				end
-				task.wait(0.1)
-			until not AutoWarlock.Enabled
 		end,
-		Tooltip = 'Keeps the warlock staff linked to whoever is nearest'
-	})
-
-	Targets = AutoWarlock:CreateTargets({
-		Players = true,
-		NPCs = true
-	})
-	Range = AutoWarlock:CreateSlider({
-		Name = 'Range',
-		Min = 1,
-		Max = 60,
-		Default = 30,
-		Suffix = function(val)
-			return val <= 1 and 'stud' or 'studs'
-		end
-	})
-	LimitItem = AutoWarlock:CreateToggle({
-		Name = 'Limit to item',
-		Default = true,
-		Tooltip = 'Only links while the warlock staff is actually held'
+		Tooltip = 'Wait for next update',
+		ExtraText = function() return 'Wait for next update' end
 	})
 end)
 
 run(function()
 	local AutoWizard
-	local Targets, Sort, Range
-
 	AutoWizard = kits:CreateModule({
 		Name = 'AutoWizard',
 		Category = 'Auto',
 		Function = function(callback)
-			if not callback then return end
-			repeat
-				-- Which spell the wizard is holding is an attribute, so this follows a staff
-				-- swap without needing to know what the spells are called.
-				local ability = entitylib.isAlive and lplr:GetAttribute('WizardAbility')
-				if ability then
-					local ready = false
-					pcall(function()
-						ready = bedwars.AbilityController and bedwars.AbilityController:canUseAbility(ability) or false
-					end)
-					if ready then
-						local ent = entitylib.EntityPosition({
-							Range = Range.Value,
-							Part = 'RootPart',
-							Wallcheck = Targets.Walls.Enabled or nil,
-							Players = Targets.Players.Enabled,
-							NPCs = Targets.NPCs.Enabled,
-							Sort = sortmethods[Sort.Value]
-						})
-						if ent then
-							pcall(function()
-								bedwars.AbilityController:useAbility(ability, newproxy(true), {target = ent.RootPart.Position})
-							end)
-						end
-					end
-				end
-				task.wait(0.1)
-			until not AutoWizard.Enabled
+			if callback then
+				notif('AutoWizard', 'Wait for next update', 3, 'warning')
+				task.defer(function() if AutoWizard.Enabled then AutoWizard:Toggle() end end)
+			end
 		end,
-		Tooltip = 'Casts whichever wizard spell you are holding at whoever is in range'
-	})
-
-	Targets = AutoWizard:CreateTargets({
-		Players = true,
-		NPCs = false
-	})
-	local methods = {'Damage', 'Distance'}
-	for name in sortmethods do
-		if not table.find(methods, name) then
-			table.insert(methods, name)
-		end
-	end
-	Sort = AutoWizard:CreateDropdown({
-		Name = 'Target Mode',
-		List = methods,
-		Default = 'Health'
-	})
-	Range = AutoWizard:CreateSlider({
-		Name = 'Range',
-		Min = 1,
-		Max = 80,
-		Default = 50,
-		Suffix = function(val)
-			return val <= 1 and 'stud' or 'studs'
-		end
+		Tooltip = 'Wait for next update',
+		ExtraText = function() return 'Wait for next update' end
 	})
 end)
 
@@ -37127,632 +35098,736 @@ local function runHardcodedAutoKit(module, kitId, abilities, targets, range, int
 end
 
 run(function()
-	local AutoBarbarian
-	AutoBarbarian = kits:CreateModule({
-		Name = 'AutoBarbarian', Category = 'Auto',
-		Function = function(callback)
-			if callback then runHardcodedAutoKit(AutoBarbarian, 'barbarian', {'BARBARIAN_ABILITY', 'BARBARIAN'}, true, 30, 0.1) end
-		end,
-		Tooltip = 'Automatically uses Barbarian abilities when they are ready'
-	})
-
-	task.defer(validateHardcodedAutoKit, AutoBarbarian, {'BARBARIAN_ABILITY', 'BARBARIAN'})
-end)
-
-run(function()
-	local AutoBaker
-	AutoBaker = kits:CreateModule({
-		Name = 'AutoBaker', Category = 'Auto',
-		Function = function(callback)
-			if callback then runHardcodedAutoKit(AutoBaker, 'baker', {'BAKER_ABILITY', 'BAKER'}, true, 30, 0.1) end
-		end,
-		Tooltip = 'Automatically uses Baker abilities when they are ready'
-	})
-
-	task.defer(validateHardcodedAutoKit, AutoBaker, {'BAKER_ABILITY', 'BAKER'})
-end)
-
-run(function()
-	local AutoArcher
-	AutoArcher = kits:CreateModule({
-		Name = 'AutoArcher', Category = 'Auto',
-		Function = function(callback)
-			if callback then runHardcodedAutoKit(AutoArcher, 'archer', {'ARCHER_ABILITY', 'ARCHER'}, true, 30, 0.1) end
-		end,
-		Tooltip = 'Automatically uses Archer abilities when they are ready'
-	})
-
-	task.defer(validateHardcodedAutoKit, AutoArcher, {'ARCHER_ABILITY', 'ARCHER'})
-end)
-
-run(function()
 	local AutoInfernalShielder
 	AutoInfernalShielder = kits:CreateModule({
-		Name = 'AutoInfernalShielder', Category = 'Auto',
+		Name = 'AutoInfernalShielder',
+		Category = 'Auto',
 		Function = function(callback)
-			if callback then runHardcodedAutoKit(AutoInfernalShielder, 'infernal_shielder', {'INFERNAL_SHIELDER_ABILITY', 'INFERNAL_SHIELDER'}, true, 30, 0.1) end
+			if callback then
+				notif('AutoInfernalShielder', 'Wait for next update', 3, 'warning')
+				task.defer(function() if AutoInfernalShielder.Enabled then AutoInfernalShielder:Toggle() end end)
+			end
 		end,
-		Tooltip = 'Automatically uses InfernalShielder abilities when they are ready'
+		Tooltip = 'Wait for next update',
+		ExtraText = function() return 'Wait for next update' end
 	})
-
-	task.defer(validateHardcodedAutoKit, AutoInfernalShielder, {'INFERNAL_SHIELDER_ABILITY', 'INFERNAL_SHIELDER'})
 end)
-
 
 run(function()
 	local AutoVulcan
 	AutoVulcan = kits:CreateModule({
-		Name = 'AutoVulcan', Category = 'Auto',
+		Name = 'AutoVulcan',
+		Category = 'Auto',
 		Function = function(callback)
-			if callback then runHardcodedAutoKit(AutoVulcan, 'vulcan', {'VULCAN_ABILITY', 'VULCAN'}, true, 30, 0.1) end
+			if callback then
+				notif('AutoVulcan', 'Wait for next update', 3, 'warning')
+				task.defer(function() if AutoVulcan.Enabled then AutoVulcan:Toggle() end end)
+			end
 		end,
-		Tooltip = 'Automatically uses Vulcan abilities when they are ready'
+		Tooltip = 'Wait for next update',
+		ExtraText = function() return 'Wait for next update' end
 	})
-
-	task.defer(validateHardcodedAutoKit, AutoVulcan, {'VULCAN_ABILITY', 'VULCAN'})
 end)
 
 run(function()
 	local AutoTrinity
 	AutoTrinity = kits:CreateModule({
-		Name = 'AutoTrinity', Category = 'Auto',
+		Name = 'AutoTrinity',
+		Category = 'Auto',
 		Function = function(callback)
-			if callback then runHardcodedAutoKit(AutoTrinity, 'trinity', {'TRINITY_ABILITY', 'TRINITY'}, true, 30, 0.1) end
+			if callback then
+				notif('AutoTrinity', 'Wait for next update', 3, 'warning')
+				task.defer(function() if AutoTrinity.Enabled then AutoTrinity:Toggle() end end)
+			end
 		end,
-		Tooltip = 'Automatically uses Trinity abilities when they are ready'
+		Tooltip = 'Wait for next update',
+		ExtraText = function() return 'Wait for next update' end
 	})
-
-	task.defer(validateHardcodedAutoKit, AutoTrinity, {'TRINITY_ABILITY', 'TRINITY'})
-end)
-
-run(function()
-	local AutoAxolotlAmy
-	AutoAxolotlAmy = kits:CreateModule({
-		Name = 'AutoAxolotlAmy', Category = 'Auto',
-		Function = function(callback)
-			if callback then runHardcodedAutoKit(AutoAxolotlAmy, 'axolotl', {'AXOLOTL_ABILITY', 'AXOLOTL'}, true, 30, 0.1) end
-		end,
-		Tooltip = 'Automatically uses AxolotlAmy abilities when they are ready'
-	})
-
-	task.defer(validateHardcodedAutoKit, AutoAxolotlAmy, {'AXOLOTL_ABILITY', 'AXOLOTL'})
 end)
 
 run(function()
 	local AutoFreiya
 	AutoFreiya = kits:CreateModule({
-		Name = 'AutoFreiya', Category = 'Auto',
+		Name = 'AutoFreiya',
+		Category = 'Auto',
 		Function = function(callback)
-			if callback then runHardcodedAutoKit(AutoFreiya, 'ice_queen', {'ICE_QUEEN_ABILITY', 'ICE_QUEEN'}, true, 30, 0.1) end
+			if callback then
+				notif('AutoFreiya', 'Wait for next update', 3, 'warning')
+				task.defer(function() if AutoFreiya.Enabled then AutoFreiya:Toggle() end end)
+			end
 		end,
-		Tooltip = 'Automatically uses Freiya abilities when they are ready'
+		Tooltip = 'Wait for next update',
+		ExtraText = function() return 'Wait for next update' end
 	})
-
-	task.defer(validateHardcodedAutoKit, AutoFreiya, {'ICE_QUEEN_ABILITY', 'ICE_QUEEN'})
 end)
 
 run(function()
 	local AutoYuzi
 	AutoYuzi = kits:CreateModule({
-		Name = 'AutoYuzi', Category = 'Auto',
+		Name = 'AutoYuzi',
+		Category = 'Auto',
 		Function = function(callback)
-			if callback then runHardcodedAutoKit(AutoYuzi, 'dasher', {'DASHER_ABILITY', 'DASHER'}, true, 30, 0.1) end
+			if callback then
+				notif('AutoYuzi', 'Wait for next update', 3, 'warning')
+				task.defer(function() if AutoYuzi.Enabled then AutoYuzi:Toggle() end end)
+			end
 		end,
-		Tooltip = 'Automatically uses Yuzi abilities when they are ready'
+		Tooltip = 'Wait for next update',
+		ExtraText = function() return 'Wait for next update' end
 	})
-
-	task.defer(validateHardcodedAutoKit, AutoYuzi, {'DASHER_ABILITY', 'DASHER'})
 end)
 
 run(function()
 	local AutoWarrior
 	AutoWarrior = kits:CreateModule({
-		Name = 'AutoWarrior', Category = 'Auto',
+		Name = 'AutoWarrior',
+		Category = 'Auto',
 		Function = function(callback)
-			if callback then runHardcodedAutoKit(AutoWarrior, 'warrior', {'WARRIOR_ABILITY', 'WARRIOR'}, true, 30, 0.1) end
+			if callback then
+				notif('AutoWarrior', 'Wait for next update', 3, 'warning')
+				task.defer(function() if AutoWarrior.Enabled then AutoWarrior:Toggle() end end)
+			end
 		end,
-		Tooltip = 'Automatically uses Warrior abilities when they are ready'
+		Tooltip = 'Wait for next update',
+		ExtraText = function() return 'Wait for next update' end
 	})
-
-	task.defer(validateHardcodedAutoKit, AutoWarrior, {'WARRIOR_ABILITY', 'WARRIOR'})
-end)
-
-run(function()
-	local AutoBountyHunter
-	AutoBountyHunter = kits:CreateModule({
-		Name = 'AutoBountyHunter', Category = 'Auto',
-		Function = function(callback)
-			if callback then runHardcodedAutoKit(AutoBountyHunter, 'bounty_hunter', {'BOUNTY_HUNTER_ABILITY', 'BOUNTY_HUNTER'}, true, 30, 0.1) end
-		end,
-		Tooltip = 'Automatically uses BountyHunter abilities when they are ready'
-	})
-
-	task.defer(validateHardcodedAutoKit, AutoBountyHunter, {'BOUNTY_HUNTER_ABILITY', 'BOUNTY_HUNTER'})
 end)
 
 run(function()
 	local AutoJade
 	AutoJade = kits:CreateModule({
-		Name = 'AutoJade', Category = 'Auto',
+		Name = 'AutoJade',
+		Category = 'Auto',
 		Function = function(callback)
-			if callback then runHardcodedAutoKit(AutoJade, 'jade', {'JADE_ABILITY', 'JADE'}, true, 30, 0.1) end
+			if callback then
+				notif('AutoJade', 'Wait for next update', 3, 'warning')
+				task.defer(function() if AutoJade.Enabled then AutoJade:Toggle() end end)
+			end
 		end,
-		Tooltip = 'Automatically uses Jade abilities when they are ready'
+		Tooltip = 'Wait for next update',
+		ExtraText = function() return 'Wait for next update' end
 	})
-
-	task.defer(validateHardcodedAutoKit, AutoJade, {'JADE_ABILITY', 'JADE'})
 end)
 
 run(function()
 	local AutoRaven
 	AutoRaven = kits:CreateModule({
-		Name = 'AutoRaven', Category = 'Auto',
+		Name = 'AutoRaven',
+		Category = 'Auto',
 		Function = function(callback)
-			if callback then runHardcodedAutoKit(AutoRaven, 'raven', {'RAVEN_ABILITY', 'RAVEN'}, true, 30, 0.1) end
+			if callback then
+				notif('AutoRaven', 'Wait for next update', 3, 'warning')
+				task.defer(function() if AutoRaven.Enabled then AutoRaven:Toggle() end end)
+			end
 		end,
-		Tooltip = 'Automatically uses Raven abilities when they are ready'
+		Tooltip = 'Wait for next update',
+		ExtraText = function() return 'Wait for next update' end
 	})
-
-	task.defer(validateHardcodedAutoKit, AutoRaven, {'RAVEN_ABILITY', 'RAVEN'})
 end)
 
 run(function()
 	local AutoSpiritCatcher
 	AutoSpiritCatcher = kits:CreateModule({
-		Name = 'AutoSpiritCatcher', Category = 'Auto',
+		Name = 'AutoSpiritCatcher',
+		Category = 'Auto',
 		Function = function(callback)
-			if callback then runHardcodedAutoKit(AutoSpiritCatcher, 'spirit_catcher', {'SPIRIT_CATCHER_ABILITY', 'SPIRIT_CATCHER'}, true, 30, 0.1) end
+			if callback then
+				notif('AutoSpiritCatcher', 'Wait for next update', 3, 'warning')
+				task.defer(function() if AutoSpiritCatcher.Enabled then AutoSpiritCatcher:Toggle() end end)
+			end
 		end,
-		Tooltip = 'Automatically uses SpiritCatcher abilities when they are ready'
+		Tooltip = 'Wait for next update',
+		ExtraText = function() return 'Wait for next update' end
 	})
-
-	task.defer(validateHardcodedAutoKit, AutoSpiritCatcher, {'SPIRIT_CATCHER_ABILITY', 'SPIRIT_CATCHER'})
 end)
 
 run(function()
 	local AutoTrapper
 	AutoTrapper = kits:CreateModule({
-		Name = 'AutoTrapper', Category = 'Auto',
+		Name = 'AutoTrapper',
+		Category = 'Auto',
 		Function = function(callback)
-			if callback then runHardcodedAutoKit(AutoTrapper, 'trapper', {'TRAPPER_ABILITY', 'TRAPPER'}, true, 30, 0.1) end
+			if callback then
+				notif('AutoTrapper', 'Wait for next update', 3, 'warning')
+				task.defer(function() if AutoTrapper.Enabled then AutoTrapper:Toggle() end end)
+			end
 		end,
-		Tooltip = 'Automatically uses Trapper abilities when they are ready'
+		Tooltip = 'Wait for next update',
+		ExtraText = function() return 'Wait for next update' end
 	})
-
-	task.defer(validateHardcodedAutoKit, AutoTrapper, {'TRAPPER_ABILITY', 'TRAPPER'})
 end)
 
 run(function()
 	local AutoGompy
 	AutoGompy = kits:CreateModule({
-		Name = 'AutoGompy', Category = 'Auto',
+		Name = 'AutoGompy',
+		Category = 'Auto',
 		Function = function(callback)
-			if callback then runHardcodedAutoKit(AutoGompy, 'ghost_catcher', {'GHOST_CATCHER_ABILITY', 'GHOST_CATCHER'}, true, 30, 0.1) end
+			if callback then
+				notif('AutoGompy', 'Wait for next update', 3, 'warning')
+				task.defer(function() if AutoGompy.Enabled then AutoGompy:Toggle() end end)
+			end
 		end,
-		Tooltip = 'Automatically uses Gompy abilities when they are ready'
+		Tooltip = 'Wait for next update',
+		ExtraText = function() return 'Wait for next update' end
 	})
-
-	task.defer(validateHardcodedAutoKit, AutoGompy, {'GHOST_CATCHER_ABILITY', 'GHOST_CATCHER'})
 end)
 
 run(function()
 	local AutoJack
 	AutoJack = kits:CreateModule({
-		Name = 'AutoJack', Category = 'Auto',
+		Name = 'AutoJack',
+		Category = 'Auto',
 		Function = function(callback)
-			if callback then runHardcodedAutoKit(AutoJack, 'oil_man', {'OIL_MAN_ABILITY', 'OIL_MAN'}, true, 30, 0.1) end
+			if callback then
+				notif('AutoJack', 'Wait for next update', 3, 'warning')
+				task.defer(function() if AutoJack.Enabled then AutoJack:Toggle() end end)
+			end
 		end,
-		Tooltip = 'Automatically uses Jack abilities when they are ready'
+		Tooltip = 'Wait for next update',
+		ExtraText = function() return 'Wait for next update' end
 	})
-
-	task.defer(validateHardcodedAutoKit, AutoJack, {'OIL_MAN_ABILITY', 'OIL_MAN'})
-end)
-
-run(function()
-	local AutoAres
-	AutoAres = kits:CreateModule({
-		Name = 'AutoAres', Category = 'Auto',
-		Function = function(callback)
-			if callback then runHardcodedAutoKit(AutoAres, 'ares', {'ARES_ABILITY', 'ARES'}, true, 30, 0.1) end
-		end,
-		Tooltip = 'Automatically uses Ares abilities when they are ready'
-	})
-
-	task.defer(validateHardcodedAutoKit, AutoAres, {'ARES_ABILITY', 'ARES'})
 end)
 
 run(function()
 	local AutoSanta
 	AutoSanta = kits:CreateModule({
-		Name = 'AutoSanta', Category = 'Auto',
+		Name = 'AutoSanta',
+		Category = 'Auto',
 		Function = function(callback)
-			if callback then runHardcodedAutoKit(AutoSanta, 'santa', {'SANTA_ABILITY', 'SANTA'}, true, 30, 0.1) end
+			if callback then
+				notif('AutoSanta', 'Wait for next update', 3, 'warning')
+				task.defer(function() if AutoSanta.Enabled then AutoSanta:Toggle() end end)
+			end
 		end,
-		Tooltip = 'Automatically uses Santa abilities when they are ready'
+		Tooltip = 'Wait for next update',
+		ExtraText = function() return 'Wait for next update' end
 	})
-
-	task.defer(validateHardcodedAutoKit, AutoSanta, {'SANTA_ABILITY', 'SANTA'})
 end)
 
 run(function()
 	local AutoSmoke
 	AutoSmoke = kits:CreateModule({
-		Name = 'AutoSmoke', Category = 'Auto',
+		Name = 'AutoSmoke',
+		Category = 'Auto',
 		Function = function(callback)
-			if callback then runHardcodedAutoKit(AutoSmoke, 'smoke', {'SMOKE_ABILITY', 'SMOKE'}, true, 30, 0.1) end
+			if callback then
+				notif('AutoSmoke', 'Wait for next update', 3, 'warning')
+				task.defer(function() if AutoSmoke.Enabled then AutoSmoke:Toggle() end end)
+			end
 		end,
-		Tooltip = 'Automatically uses Smoke abilities when they are ready'
+		Tooltip = 'Wait for next update',
+		ExtraText = function() return 'Wait for next update' end
 	})
-
-	task.defer(validateHardcodedAutoKit, AutoSmoke, {'SMOKE_ABILITY', 'SMOKE'})
 end)
 
 run(function()
 	local AutoYeti
 	AutoYeti = kits:CreateModule({
-		Name = 'AutoYeti', Category = 'Auto',
+		Name = 'AutoYeti',
+		Category = 'Auto',
 		Function = function(callback)
-			if callback then runHardcodedAutoKit(AutoYeti, 'yeti', {'YETI_ABILITY', 'YETI'}, true, 30, 0.1) end
+			if callback then
+				notif('AutoYeti', 'Wait for next update', 3, 'warning')
+				task.defer(function() if AutoYeti.Enabled then AutoYeti:Toggle() end end)
+			end
 		end,
-		Tooltip = 'Automatically uses Yeti abilities when they are ready'
+		Tooltip = 'Wait for next update',
+		ExtraText = function() return 'Wait for next update' end
 	})
-
-	task.defer(validateHardcodedAutoKit, AutoYeti, {'YETI_ABILITY', 'YETI'})
 end)
 
 run(function()
 	local AutoFrosty
 	AutoFrosty = kits:CreateModule({
-		Name = 'AutoFrosty', Category = 'Auto',
+		Name = 'AutoFrosty',
+		Category = 'Auto',
 		Function = function(callback)
-			if callback then runHardcodedAutoKit(AutoFrosty, 'frosty', {'FROSTY_ABILITY', 'FROSTY'}, true, 30, 0.1) end
+			if callback then
+				notif('AutoFrosty', 'Wait for next update', 3, 'warning')
+				task.defer(function() if AutoFrosty.Enabled then AutoFrosty:Toggle() end end)
+			end
 		end,
-		Tooltip = 'Automatically uses Frosty abilities when they are ready'
+		Tooltip = 'Wait for next update',
+		ExtraText = function() return 'Wait for next update' end
 	})
-
-	task.defer(validateHardcodedAutoKit, AutoFrosty, {'FROSTY_ABILITY', 'FROSTY'})
-end)
-
-run(function()
-	local AutoAery
-	AutoAery = kits:CreateModule({
-		Name = 'AutoAery', Category = 'Auto',
-		Function = function(callback)
-			if callback then runHardcodedAutoKit(AutoAery, 'aery', {'AERY_ABILITY', 'AERY'}, true, 30, 0.1) end
-		end,
-		Tooltip = 'Automatically uses Aery abilities when they are ready'
-	})
-
-	task.defer(validateHardcodedAutoKit, AutoAery, {'AERY_ABILITY', 'AERY'})
 end)
 
 run(function()
 	local AutoAlchemist
 	AutoAlchemist = kits:CreateModule({
-		Name = 'AutoAlchemist', Category = 'Auto',
+		Name = 'AutoAlchemist',
+		Category = 'Auto',
 		Function = function(callback)
-			if callback then runHardcodedAutoKit(AutoAlchemist, 'alchemist', {'ALCHEMIST_ABILITY', 'ALCHEMIST'}, true, 30, 0.1) end
+			if callback then
+				notif('AutoAlchemist', 'Wait for next update', 3, 'warning')
+				task.defer(function() if AutoAlchemist.Enabled then AutoAlchemist:Toggle() end end)
+			end
 		end,
-		Tooltip = 'Automatically uses Alchemist abilities when they are ready'
+		Tooltip = 'Wait for next update',
+		ExtraText = function() return 'Wait for next update' end
 	})
-
-	task.defer(validateHardcodedAutoKit, AutoAlchemist, {'ALCHEMIST_ABILITY', 'ALCHEMIST'})
 end)
 
 run(function()
 	local AutoCrocowolf
 	AutoCrocowolf = kits:CreateModule({
-		Name = 'AutoCrocowolf', Category = 'Auto',
+		Name = 'AutoCrocowolf',
+		Category = 'Auto',
 		Function = function(callback)
-			if callback then runHardcodedAutoKit(AutoCrocowolf, 'crocowolf', {'CROCOWOLF_ABILITY', 'CROCOWOLF'}, true, 30, 0.1) end
+			if callback then
+				notif('AutoCrocowolf', 'Wait for next update', 3, 'warning')
+				task.defer(function() if AutoCrocowolf.Enabled then AutoCrocowolf:Toggle() end end)
+			end
 		end,
-		Tooltip = 'Automatically uses Crocowolf abilities when they are ready'
+		Tooltip = 'Wait for next update',
+		ExtraText = function() return 'Wait for next update' end
 	})
-
-	task.defer(validateHardcodedAutoKit, AutoCrocowolf, {'CROCOWOLF_ABILITY', 'CROCOWOLF'})
 end)
 
 run(function()
 	local AutoConqueror
 	AutoConqueror = kits:CreateModule({
-		Name = 'AutoConqueror', Category = 'Auto',
+		Name = 'AutoConqueror',
+		Category = 'Auto',
 		Function = function(callback)
-			if callback then runHardcodedAutoKit(AutoConqueror, 'conqueror', {'CONQUEROR_ABILITY', 'CONQUEROR'}, true, 30, 0.1) end
+			if callback then
+				notif('AutoConqueror', 'Wait for next update', 3, 'warning')
+				task.defer(function() if AutoConqueror.Enabled then AutoConqueror:Toggle() end end)
+			end
 		end,
-		Tooltip = 'Automatically uses Conqueror abilities when they are ready'
+		Tooltip = 'Wait for next update',
+		ExtraText = function() return 'Wait for next update' end
 	})
-
-	task.defer(validateHardcodedAutoKit, AutoConqueror, {'CONQUEROR_ABILITY', 'CONQUEROR'})
 end)
-
 
 run(function()
 	local AutoMerchantMarco
 	AutoMerchantMarco = kits:CreateModule({
-		Name = 'AutoMerchantMarco', Category = 'Auto',
+		Name = 'AutoMerchantMarco',
+		Category = 'Auto',
 		Function = function(callback)
-			if callback then runHardcodedAutoKit(AutoMerchantMarco, 'merchant_marco', {'MERCHANT_MARCO_ABILITY', 'MERCHANT_MARCO'}, true, 30, 0.1) end
+			if callback then
+				notif('AutoMerchantMarco', 'Wait for next update', 3, 'warning')
+				task.defer(function() if AutoMerchantMarco.Enabled then AutoMerchantMarco:Toggle() end end)
+			end
 		end,
-		Tooltip = 'Automatically uses MerchantMarco abilities when they are ready'
+		Tooltip = 'Wait for next update',
+		ExtraText = function() return 'Wait for next update' end
 	})
-
-	task.defer(validateHardcodedAutoKit, AutoMerchantMarco, {'MERCHANT_MARCO_ABILITY', 'MERCHANT_MARCO'})
 end)
 
 run(function()
 	local AutoDinoTamerDom
 	AutoDinoTamerDom = kits:CreateModule({
-		Name = 'AutoDinoTamerDom', Category = 'Auto',
+		Name = 'AutoDinoTamerDom',
+		Category = 'Auto',
 		Function = function(callback)
-			if callback then runHardcodedAutoKit(AutoDinoTamerDom, 'dino_tamer', {'DINO_TAMER_ABILITY', 'DINO_TAMER'}, true, 30, 0.1) end
+			if callback then
+				notif('AutoDinoTamerDom', 'Wait for next update', 3, 'warning')
+				task.defer(function() if AutoDinoTamerDom.Enabled then AutoDinoTamerDom:Toggle() end end)
+			end
 		end,
-		Tooltip = 'Automatically uses DinoTamerDom abilities when they are ready'
+		Tooltip = 'Wait for next update',
+		ExtraText = function() return 'Wait for next update' end
 	})
-
-	task.defer(validateHardcodedAutoKit, AutoDinoTamerDom, {'DINO_TAMER_ABILITY', 'DINO_TAMER'})
 end)
 
 run(function()
 	local AutoZephyr
 	AutoZephyr = kits:CreateModule({
-		Name = 'AutoZephyr', Category = 'Auto',
+		Name = 'AutoZephyr',
+		Category = 'Auto',
 		Function = function(callback)
-			if callback then runHardcodedAutoKit(AutoZephyr, 'wind_walker', {'WIND_WALKER_ABILITY', 'WIND_WALKER'}, true, 30, 0.1) end
+			if callback then
+				notif('AutoZephyr', 'Wait for next update', 3, 'warning')
+				task.defer(function() if AutoZephyr.Enabled then AutoZephyr:Toggle() end end)
+			end
 		end,
-		Tooltip = 'Automatically uses Zephyr abilities when they are ready'
+		Tooltip = 'Wait for next update',
+		ExtraText = function() return 'Wait for next update' end
 	})
-
-	task.defer(validateHardcodedAutoKit, AutoZephyr, {'WIND_WALKER_ABILITY', 'WIND_WALKER'})
 end)
 
 run(function()
 	local AutoVoidRegent
 	AutoVoidRegent = kits:CreateModule({
-		Name = 'AutoVoidRegent', Category = 'Auto',
+		Name = 'AutoVoidRegent',
+		Category = 'Auto',
 		Function = function(callback)
-			if callback then runHardcodedAutoKit(AutoVoidRegent, 'regent', {'REGENT_ABILITY', 'REGENT'}, true, 30, 0.1) end
+			if callback then
+				notif('AutoVoidRegent', 'Wait for next update', 3, 'warning')
+				task.defer(function() if AutoVoidRegent.Enabled then AutoVoidRegent:Toggle() end end)
+			end
 		end,
-		Tooltip = 'Automatically uses VoidRegent abilities when they are ready'
+		Tooltip = 'Wait for next update',
+		ExtraText = function() return 'Wait for next update' end
 	})
-
-	task.defer(validateHardcodedAutoKit, AutoVoidRegent, {'REGENT_ABILITY', 'REGENT'})
 end)
 
 run(function()
 	local AutoLumen
 	AutoLumen = kits:CreateModule({
-		Name = 'AutoLumen', Category = 'Auto',
+		Name = 'AutoLumen',
+		Category = 'Auto',
 		Function = function(callback)
-			if callback then runHardcodedAutoKit(AutoLumen, 'lumen', {'LUMEN_ABILITY', 'LUMEN'}, true, 30, 0.1) end
+			if callback then
+				notif('AutoLumen', 'Wait for next update', 3, 'warning')
+				task.defer(function() if AutoLumen.Enabled then AutoLumen:Toggle() end end)
+			end
 		end,
-		Tooltip = 'Automatically uses Lumen abilities when they are ready'
+		Tooltip = 'Wait for next update',
+		ExtraText = function() return 'Wait for next update' end
 	})
-
-	task.defer(validateHardcodedAutoKit, AutoLumen, {'LUMEN_ABILITY', 'LUMEN'})
 end)
 
 run(function()
-	local AutoAgni
-	AutoAgni = kits:CreateModule({
-		Name = 'AutoAgni', Category = 'Auto',
-		Function = function(callback)
-			if callback then runHardcodedAutoKit(AutoAgni, 'agni', {'AGNI_ABILITY', 'AGNI'}, true, 30, 0.1) end
-		end,
-		Tooltip = 'Automatically uses Agni abilities when they are ready'
-	})
-
-	task.defer(validateHardcodedAutoKit, AutoAgni, {'AGNI_ABILITY', 'AGNI'})
+\tlocal AutoAgni
+\tlocal Targets, Range, OnlySwinging, Clutch
+\tlocal swingMarker, swingSeenAt = nil, -math.huge
+\tlocal ray = RaycastParams.new()
+\tray.FilterType = Enum.RaycastFilterType.Exclude
+\tray.RespectCanCollide = true
+\tlocal function updateSwing()
+\t\tlocal value = bedwars.SwordController and bedwars.SwordController.lastSwing or 0
+\t\tif value ~= swingMarker then swingMarker, swingSeenAt = value, os.clock() end
+\tend
+\tlocal function swinging() return os.clock() - swingSeenAt <= 0.3 end
+\tlocal function voidFall(root)
+\t\tif not root or root.AssemblyLinearVelocity.Y >= -2 then return false end
+\t\tray.FilterDescendantsInstances = lplr.Character and {lplr.Character} or {}
+\t\treturn workspace:Raycast(root.Position, Vector3.new(0, -80, 0), ray) == nil
+\tend
+\tlocal function activate()
+\t\tlocal ok, ready = pcall(bedwars.AbilityController.canUseAbility, bedwars.AbilityController, 'rocket_detonate', {disableBlockedAbilityAlert = true})
+\t\tif not ok or not ready then return false end
+\t\tlocal used, result = pcall(bedwars.AbilityController.useAbility, bedwars.AbilityController, 'rocket_detonate')
+\t\treturn used and result ~= false
+\tend
+\tlocal function steer(root)
+\t\tlocal land, hum = getNearGround(30), entitylib.character.Humanoid
+\t\tif not land or not hum then return end
+\t\tlocal delta = Vector3.new(land.X-root.Position.X, 0, land.Z-root.Position.Z)
+\t\tif delta.Magnitude > 0.05 then hum:Move(delta.Unit, false) end
+\tend
+\tAutoAgni = kits:CreateModule({
+\t\tName = 'AutoAgni', Category = 'Auto',
+\t\tFunction = function(callback)
+\t\t\tif not callback then return end
+\t\t\tswingMarker = bedwars.SwordController and bedwars.SwordController.lastSwing or 0
+\t\t\tswingSeenAt = -math.huge
+\t\t\tlocal nextUse = 0
+\t\t\trepeat
+\t\t\t\tif entitylib.isAlive and store.equippedKit == 'agni' then
+\t\t\t\t\tlocal root = entitylib.character.RootPart
+\t\t\t\t\tupdateSwing()
+\t\t\t\t\tif Clutch.Enabled and voidFall(root) then
+\t\t\t\t\t\tif os.clock() >= nextUse and activate() then nextUse=os.clock()+0.35 end
+\t\t\t\t\t\tsteer(root)
+\t\t\t\t\telseif not OnlySwinging.Enabled or swinging() then
+\t\t\t\t\t\tlocal ent = entitylib.EntityPosition({Range=Range.Value, Part='RootPart', Players=Targets.Players.Enabled, NPCs=Targets.NPCs.Enabled, Wallcheck=Targets.Walls.Enabled or nil, Sort=sortmethods.Distance})
+\t\t\t\t\t\tif ent and os.clock() >= nextUse and activate() then nextUse=os.clock()+0.35 end
+\t\t\t\t\tend
+\t\t\t\tend
+\t\t\t\ttask.wait(0.03)
+\t\t\tuntil not AutoAgni.Enabled
+\t\tend,
+\t\tTooltip = 'Automatically uses Agni rocket boost around selected targets; Clutch saves void falls'
+\t})
+\tTargets = AutoAgni:CreateTargets({Players=true, NPCs=true, Walls=true})
+\tRange = AutoAgni:CreateSlider({Name='Range', Min=1, Max=40, Default=12, Suffix=' studs'})
+\tOnlySwinging = AutoAgni:CreateToggle({Name='Only while swinging'})
+\tClutch = AutoAgni:CreateToggle({Name='Clutch', Default=true, Tooltip='Uses Agni while falling into the void and walks toward nearby land'})
 end)
 
 run(function()
-	local AutoBekzat
-	AutoBekzat = kits:CreateModule({
-		Name = 'AutoBekzat', Category = 'Auto',
-		Function = function(callback)
-			if callback then runHardcodedAutoKit(AutoBekzat, 'bekzat', {'BEKZAT_ABILITY', 'BEKZAT'}, true, 30, 0.1) end
-		end,
-		Tooltip = 'Automatically uses Bekzat abilities when they are ready'
-	})
-
-	task.defer(validateHardcodedAutoKit, AutoBekzat, {'BEKZAT_ABILITY', 'BEKZAT'})
+\tlocal AutoBekzat
+\tlocal Targets, Range, OnlySwinging
+\tlocal swingMarker, swingSeenAt = nil, -math.huge
+\tlocal function updateSwing()
+\t\tlocal value=bedwars.SwordController and bedwars.SwordController.lastSwing or 0
+\t\tif value~=swingMarker then swingMarker,swingSeenAt=value,os.clock() end
+\tend
+\tlocal function send(position)
+\t\tlocal ctl=bedwars.AbilityController
+\t\tif not ctl then return false end
+\t\tlocal ok,ready=pcall(ctl.canUseAbility,ctl,'SEND_FALCON',{disableBlockedAbilityAlert=true})
+\t\tif not ok or not ready then
+\t\t\tlocal iok,iready=pcall(ctl.canUseAbility,ctl,'ACTIVATE_FALCON_INDICATOR',{disableBlockedAbilityAlert=true})
+\t\t\tif iok and iready then pcall(ctl.useAbility,ctl,'ACTIVATE_FALCON_INDICATOR'); task.wait() end
+\t\tend
+\t\tok,ready=pcall(ctl.canUseAbility,ctl,'SEND_FALCON',{disableBlockedAbilityAlert=true})
+\t\tif not ok or not ready then return false end
+\t\tlocal used,result=pcall(ctl.useAbility,ctl,'SEND_FALCON',newproxy(true),{target=position})
+\t\tif not used or result==false then return false end
+\t\tpcall(function() bedwars.Handler:Get('SendFalconRequested'):Fire('SendToServer',{strikeZoneEpicenter=position}) end)
+\t\treturn true
+\tend
+\tAutoBekzat=kits:CreateModule({
+\t\tName='AutoBekzat', Category='Auto',
+\t\tFunction=function(callback)
+\t\t\tif not callback then return end
+\t\t\tswingMarker=bedwars.SwordController and bedwars.SwordController.lastSwing or 0
+\t\t\tswingSeenAt=-math.huge
+\t\t\tlocal nextUse=0
+\t\t\trepeat
+\t\t\t\tif entitylib.isAlive and (store.equippedKit=='falconer' or store.equippedKit=='bekzat') then
+\t\t\t\t\tupdateSwing()
+\t\t\t\t\tif not OnlySwinging.Enabled or os.clock()-swingSeenAt<=0.3 then
+\t\t\t\t\t\tlocal ent=entitylib.EntityPosition({Range=Range.Value,Part='RootPart',Players=Targets.Players.Enabled,NPCs=Targets.NPCs.Enabled,Wallcheck=Targets.Walls.Enabled or nil,Sort=sortmethods.Distance})
+\t\t\t\t\t\tif ent and os.clock()>=nextUse and send(ent.RootPart.Position) then nextUse=os.clock()+0.4 end
+\t\t\t\t\tend
+\t\t\t\tend
+\t\t\t\ttask.wait(0.05)
+\t\t\tuntil not AutoBekzat.Enabled
+\t\tend,
+\t\tTooltip='Automatically sends Bekzat falcon at nearby selected targets'
+\t})
+\tTargets=AutoBekzat:CreateTargets({Players=true,NPCs=true,Walls=true})
+\tRange=AutoBekzat:CreateSlider({Name='Range',Min=1,Max=80,Default=50,Suffix=' studs'})
+\tOnlySwinging=AutoBekzat:CreateToggle({Name='Only while swinging'})
 end)
 
 run(function()
 	local AutoDeathAdder
 	AutoDeathAdder = kits:CreateModule({
-		Name = 'AutoDeathAdder', Category = 'Auto',
+		Name = 'AutoDeathAdder',
+		Category = 'Auto',
 		Function = function(callback)
-			if callback then runHardcodedAutoKit(AutoDeathAdder, 'death_adder', {'DEATH_ADDER_ABILITY', 'DEATH_ADDER'}, true, 30, 0.1) end
+			if callback then
+				notif('AutoDeathAdder', 'Wait for next update', 3, 'warning')
+				task.defer(function() if AutoDeathAdder.Enabled then AutoDeathAdder:Toggle() end end)
+			end
 		end,
-		Tooltip = 'Automatically uses DeathAdder abilities when they are ready'
+		Tooltip = 'Wait for next update',
+		ExtraText = function() return 'Wait for next update' end
 	})
-
-	task.defer(validateHardcodedAutoKit, AutoDeathAdder, {'DEATH_ADDER_ABILITY', 'DEATH_ADDER'})
 end)
 
 run(function()
 	local AutoNazar
 	AutoNazar = kits:CreateModule({
-		Name = 'AutoNazar', Category = 'Auto',
+		Name = 'AutoNazar',
+		Category = 'Auto',
 		Function = function(callback)
-			if callback then runHardcodedAutoKit(AutoNazar, 'nazar', {'NAZAR_ABILITY', 'NAZAR'}, true, 30, 0.1) end
+			if callback then
+				notif('AutoNazar', 'Wait for next update', 3, 'warning')
+				task.defer(function() if AutoNazar.Enabled then AutoNazar:Toggle() end end)
+			end
 		end,
-		Tooltip = 'Automatically uses Nazar abilities when they are ready'
+		Tooltip = 'Wait for next update',
+		ExtraText = function() return 'Wait for next update' end
 	})
-
-	task.defer(validateHardcodedAutoKit, AutoNazar, {'NAZAR_ABILITY', 'NAZAR'})
 end)
 
 run(function()
 	local AutoNyoka
 	AutoNyoka = kits:CreateModule({
-		Name = 'AutoNyoka', Category = 'Auto',
+		Name = 'AutoNyoka',
+		Category = 'Auto',
 		Function = function(callback)
-			if callback then runHardcodedAutoKit(AutoNyoka, 'nyoka', {'NYOKA_ABILITY', 'NYOKA'}, true, 30, 0.1) end
+			if callback then
+				notif('AutoNyoka', 'Wait for next update', 3, 'warning')
+				task.defer(function() if AutoNyoka.Enabled then AutoNyoka:Toggle() end end)
+			end
 		end,
-		Tooltip = 'Automatically uses Nyoka abilities when they are ready'
+		Tooltip = 'Wait for next update',
+		ExtraText = function() return 'Wait for next update' end
 	})
-
-	task.defer(validateHardcodedAutoKit, AutoNyoka, {'NYOKA_ABILITY', 'NYOKA'})
 end)
 
 run(function()
 	local AutoSheila
 	AutoSheila = kits:CreateModule({
-		Name = 'AutoSheila', Category = 'Auto',
+		Name = 'AutoSheila',
+		Category = 'Auto',
 		Function = function(callback)
-			if callback then runHardcodedAutoKit(AutoSheila, 'sheila', {'SHEILA_ABILITY', 'SHEILA'}, true, 30, 0.1) end
+			if callback then
+				notif('AutoSheila', 'Wait for next update', 3, 'warning')
+				task.defer(function() if AutoSheila.Enabled then AutoSheila:Toggle() end end)
+			end
 		end,
-		Tooltip = 'Automatically uses Sheila abilities when they are ready'
+		Tooltip = 'Wait for next update',
+		ExtraText = function() return 'Wait for next update' end
 	})
-
-	task.defer(validateHardcodedAutoKit, AutoSheila, {'SHEILA_ABILITY', 'SHEILA'})
 end)
 
 run(function()
 	local AutoSilas
 	AutoSilas = kits:CreateModule({
-		Name = 'AutoSilas', Category = 'Auto',
+		Name = 'AutoSilas',
+		Category = 'Auto',
 		Function = function(callback)
-			if callback then runHardcodedAutoKit(AutoSilas, 'silas', {'SILAS_ABILITY', 'SILAS'}, true, 30, 0.1) end
+			if callback then
+				notif('AutoSilas', 'Wait for next update', 3, 'warning')
+				task.defer(function() if AutoSilas.Enabled then AutoSilas:Toggle() end end)
+			end
 		end,
-		Tooltip = 'Automatically uses Silas abilities when they are ready'
+		Tooltip = 'Wait for next update',
+		ExtraText = function() return 'Wait for next update' end
 	})
-
-	task.defer(validateHardcodedAutoKit, AutoSilas, {'SILAS_ABILITY', 'SILAS'})
 end)
 
 run(function()
 	local AutoStyx
 	AutoStyx = kits:CreateModule({
-		Name = 'AutoStyx', Category = 'Auto',
+		Name = 'AutoStyx',
+		Category = 'Auto',
 		Function = function(callback)
-			if callback then runHardcodedAutoKit(AutoStyx, 'styx', {'STYX_ABILITY', 'STYX'}, true, 30, 0.1) end
+			if callback then
+				notif('AutoStyx', 'Wait for next update', 3, 'warning')
+				task.defer(function() if AutoStyx.Enabled then AutoStyx:Toggle() end end)
+			end
 		end,
-		Tooltip = 'Automatically uses Styx abilities when they are ready'
+		Tooltip = 'Wait for next update',
+		ExtraText = function() return 'Wait for next update' end
 	})
-
-	task.defer(validateHardcodedAutoKit, AutoStyx, {'STYX_ABILITY', 'STYX'})
 end)
 
 run(function()
 	local AutoTerra
 	AutoTerra = kits:CreateModule({
-		Name = 'AutoTerra', Category = 'Auto',
+		Name = 'AutoTerra',
+		Category = 'Auto',
 		Function = function(callback)
-			if callback then runHardcodedAutoKit(AutoTerra, 'terra', {'TERRA_ABILITY', 'TERRA'}, true, 30, 0.1) end
+			if callback then
+				notif('AutoTerra', 'Wait for next update', 3, 'warning')
+				task.defer(function() if AutoTerra.Enabled then AutoTerra:Toggle() end end)
+			end
 		end,
-		Tooltip = 'Automatically uses Terra abilities when they are ready'
+		Tooltip = 'Wait for next update',
+		ExtraText = function() return 'Wait for next update' end
 	})
-
-	task.defer(validateHardcodedAutoKit, AutoTerra, {'TERRA_ABILITY', 'TERRA'})
 end)
 
 run(function()
 	local AutoUmbra
 	AutoUmbra = kits:CreateModule({
-		Name = 'AutoUmbra', Category = 'Auto',
+		Name = 'AutoUmbra',
+		Category = 'Auto',
 		Function = function(callback)
-			if callback then runHardcodedAutoKit(AutoUmbra, 'umbra', {'UMBRA_ABILITY', 'UMBRA'}, true, 30, 0.1) end
+			if callback then
+				notif('AutoUmbra', 'Wait for next update', 3, 'warning')
+				task.defer(function() if AutoUmbra.Enabled then AutoUmbra:Toggle() end end)
+			end
 		end,
-		Tooltip = 'Automatically uses Umbra abilities when they are ready'
+		Tooltip = 'Wait for next update',
+		ExtraText = function() return 'Wait for next update' end
 	})
-
-	task.defer(validateHardcodedAutoKit, AutoUmbra, {'UMBRA_ABILITY', 'UMBRA'})
 end)
 
 run(function()
 	local AutoUmeko
 	AutoUmeko = kits:CreateModule({
-		Name = 'AutoUmeko', Category = 'Auto',
+		Name = 'AutoUmeko',
+		Category = 'Auto',
 		Function = function(callback)
-			if callback then runHardcodedAutoKit(AutoUmeko, 'umeko', {'UMEKO_ABILITY', 'UMEKO'}, true, 30, 0.1) end
+			if callback then
+				notif('AutoUmeko', 'Wait for next update', 3, 'warning')
+				task.defer(function() if AutoUmeko.Enabled then AutoUmeko:Toggle() end end)
+			end
 		end,
-		Tooltip = 'Automatically uses Umeko abilities when they are ready'
+		Tooltip = 'Wait for next update',
+		ExtraText = function() return 'Wait for next update' end
 	})
-
-	task.defer(validateHardcodedAutoKit, AutoUmeko, {'UMEKO_ABILITY', 'UMEKO'})
 end)
 
 run(function()
-	local AutoWarden
-	AutoWarden = kits:CreateModule({
-		Name = 'AutoWarden', Category = 'Auto',
-		Function = function(callback)
-			if callback then runHardcodedAutoKit(AutoWarden, 'warden', {'WARDEN_ABILITY', 'WARDEN'}, true, 30, 0.1) end
-		end,
-		Tooltip = 'Automatically uses Warden abilities when they are ready'
-	})
-
-	task.defer(validateHardcodedAutoKit, AutoWarden, {'WARDEN_ABILITY', 'WARDEN'})
+\tlocal AutoWarden
+\tlocal Range, Delay
+\tAutoWarden=kits:CreateModule({
+\t\tName='AutoWarden', Category='Auto',
+\t\tFunction=function(callback)
+\t\t\tif not callback then return end
+\t\t\tkitCollector(AutoWarden,'jailor_soul',function() return Range.Value end,function() return Delay.Value end,function(soul)
+\t\t\t\tbedwars.JailorController:collectEntity(lplr,soul,'JailorSoul')
+\t\t\tend)
+\t\tend,
+\t\tTooltip='Automatically traps/collects nearby Warden souls'
+\t})
+\tRange=AutoWarden:CreateSlider({Name='Range',Min=1,Max=60,Default=20,Suffix=' studs'})
+\tDelay=AutoWarden:CreateSlider({Name='Delay',Min=0,Max=2,Default=0.1,Decimal=10,Suffix=' seconds'})
 end)
 
 run(function()
 	local AutoWhim
 	AutoWhim = kits:CreateModule({
-		Name = 'AutoWhim', Category = 'Auto',
+		Name = 'AutoWhim',
+		Category = 'Auto',
 		Function = function(callback)
-			if callback then runHardcodedAutoKit(AutoWhim, 'whim', {'WHIM_ABILITY', 'WHIM'}, true, 30, 0.1) end
+			if callback then
+				notif('AutoWhim', 'Wait for next update', 3, 'warning')
+				task.defer(function() if AutoWhim.Enabled then AutoWhim:Toggle() end end)
+			end
 		end,
-		Tooltip = 'Automatically uses Whim abilities when they are ready'
+		Tooltip = 'Wait for next update',
+		ExtraText = function() return 'Wait for next update' end
 	})
-
-	task.defer(validateHardcodedAutoKit, AutoWhim, {'WHIM_ABILITY', 'WHIM'})
 end)
 
 run(function()
 	local AutoWren
 	AutoWren = kits:CreateModule({
-		Name = 'AutoWren', Category = 'Auto',
+		Name = 'AutoWren',
+		Category = 'Auto',
 		Function = function(callback)
-			if callback then runHardcodedAutoKit(AutoWren, 'wren', {'WREN_ABILITY', 'WREN'}, true, 30, 0.1) end
+			if callback then
+				notif('AutoWren', 'Wait for next update', 3, 'warning')
+				task.defer(function() if AutoWren.Enabled then AutoWren:Toggle() end end)
+			end
 		end,
-		Tooltip = 'Automatically uses Wren abilities when they are ready'
+		Tooltip = 'Wait for next update',
+		ExtraText = function() return 'Wait for next update' end
 	})
-
-	task.defer(validateHardcodedAutoKit, AutoWren, {'WREN_ABILITY', 'WREN'})
 end)
-
 
 run(function()
 	local AutoYamini
 	AutoYamini = kits:CreateModule({
-		Name = 'AutoYamini', Category = 'Auto',
+		Name = 'AutoYamini',
+		Category = 'Auto',
 		Function = function(callback)
-			if callback then runHardcodedAutoKit(AutoYamini, 'yamini', {'YAMINI_ABILITY', 'YAMINI'}, true, 30, 0.1) end
+			if callback then
+				notif('AutoYamini', 'Wait for next update', 3, 'warning')
+				task.defer(function() if AutoYamini.Enabled then AutoYamini:Toggle() end end)
+			end
 		end,
-		Tooltip = 'Automatically uses Yamini abilities when they are ready'
+		Tooltip = 'Wait for next update',
+		ExtraText = function() return 'Wait for next update' end
 	})
-
-	task.defer(validateHardcodedAutoKit, AutoYamini, {'YAMINI_ABILITY', 'YAMINI'})
 end)
 
 run(function()
 	local AutoZenith
 	AutoZenith = kits:CreateModule({
-		Name = 'AutoZenith', Category = 'Auto',
+		Name = 'AutoZenith',
+		Category = 'Auto',
 		Function = function(callback)
-			if callback then runHardcodedAutoKit(AutoZenith, 'zenith', {'ZENITH_ABILITY', 'ZENITH'}, true, 30, 0.1) end
+			if callback then
+				notif('AutoZenith', 'Wait for next update', 3, 'warning')
+				task.defer(function() if AutoZenith.Enabled then AutoZenith:Toggle() end end)
+			end
 		end,
-		Tooltip = 'Automatically uses Zenith abilities when they are ready'
+		Tooltip = 'Wait for next update',
+		ExtraText = function() return 'Wait for next update' end
 	})
-
-	task.defer(validateHardcodedAutoKit, AutoZenith, {'ZENITH_ABILITY', 'ZENITH'})
 end)
 
 run(function()
 	local AutoZola
 	AutoZola = kits:CreateModule({
-		Name = 'AutoZola', Category = 'Auto',
+		Name = 'AutoZola',
+		Category = 'Auto',
 		Function = function(callback)
-			if callback then runHardcodedAutoKit(AutoZola, 'zola', {'ZOLA_ABILITY', 'ZOLA'}, true, 30, 0.1) end
+			if callback then
+				notif('AutoZola', 'Wait for next update', 3, 'warning')
+				task.defer(function() if AutoZola.Enabled then AutoZola:Toggle() end end)
+			end
 		end,
-		Tooltip = 'Automatically uses Zola abilities when they are ready'
+		Tooltip = 'Wait for next update',
+		ExtraText = function() return 'Wait for next update' end
 	})
-
-	task.defer(validateHardcodedAutoKit, AutoZola, {'ZOLA_ABILITY', 'ZOLA'})
 end)
-
 
 run(function()
     local KitVisibility = kits:CreateModule({
@@ -37770,4 +35845,254 @@ run(function()
             notif('Kits', 'Showing unverified kit modules; failures will be reported when enabled', 5, 'warning')
         end
     })
+end)
+
+
+run(function()
+\tlocal AutoAgni
+\tlocal Targets, Range, OnlySwinging, Clutch
+\tlocal swingMarker, swingSeenAt = nil, -math.huge
+\tlocal ray = RaycastParams.new()
+\tray.FilterType = Enum.RaycastFilterType.Exclude
+\tray.RespectCanCollide = true
+\tlocal function updateSwing()
+\t\tlocal value = bedwars.SwordController and bedwars.SwordController.lastSwing or 0
+\t\tif value ~= swingMarker then swingMarker, swingSeenAt = value, os.clock() end
+\tend
+\tlocal function swinging() return os.clock() - swingSeenAt <= 0.3 end
+\tlocal function voidFall(root)
+\t\tif not root or root.AssemblyLinearVelocity.Y >= -2 then return false end
+\t\tray.FilterDescendantsInstances = lplr.Character and {lplr.Character} or {}
+\t\treturn workspace:Raycast(root.Position, Vector3.new(0, -80, 0), ray) == nil
+\tend
+\tlocal function activate()
+\t\tlocal ok, ready = pcall(bedwars.AbilityController.canUseAbility, bedwars.AbilityController, 'rocket_detonate', {disableBlockedAbilityAlert = true})
+\t\tif not ok or not ready then return false end
+\t\tlocal used, result = pcall(bedwars.AbilityController.useAbility, bedwars.AbilityController, 'rocket_detonate')
+\t\treturn used and result ~= false
+\tend
+\tlocal function steer(root)
+\t\tlocal land, hum = getNearGround(30), entitylib.character.Humanoid
+\t\tif not land or not hum then return end
+\t\tlocal delta = Vector3.new(land.X-root.Position.X, 0, land.Z-root.Position.Z)
+\t\tif delta.Magnitude > 0.05 then hum:Move(delta.Unit, false) end
+\tend
+\tAutoAgni = kits:CreateModule({
+\t\tName = 'AutoAgni', Category = 'Auto',
+\t\tFunction = function(callback)
+\t\t\tif not callback then return end
+\t\t\tswingMarker = bedwars.SwordController and bedwars.SwordController.lastSwing or 0
+\t\t\tswingSeenAt = -math.huge
+\t\t\tlocal nextUse = 0
+\t\t\trepeat
+\t\t\t\tif entitylib.isAlive and store.equippedKit == 'agni' then
+\t\t\t\t\tlocal root = entitylib.character.RootPart
+\t\t\t\t\tupdateSwing()
+\t\t\t\t\tif Clutch.Enabled and voidFall(root) then
+\t\t\t\t\t\tif os.clock() >= nextUse and activate() then nextUse=os.clock()+0.35 end
+\t\t\t\t\t\tsteer(root)
+\t\t\t\t\telseif not OnlySwinging.Enabled or swinging() then
+\t\t\t\t\t\tlocal ent = entitylib.EntityPosition({Range=Range.Value, Part='RootPart', Players=Targets.Players.Enabled, NPCs=Targets.NPCs.Enabled, Wallcheck=Targets.Walls.Enabled or nil, Sort=sortmethods.Distance})
+\t\t\t\t\t\tif ent and os.clock() >= nextUse and activate() then nextUse=os.clock()+0.35 end
+\t\t\t\t\tend
+\t\t\t\tend
+\t\t\t\ttask.wait(0.03)
+\t\t\tuntil not AutoAgni.Enabled
+\t\tend,
+\t\tTooltip = 'Automatically uses Agni rocket boost around selected targets; Clutch saves void falls'
+\t})
+\tTargets = AutoAgni:CreateTargets({Players=true, NPCs=true, Walls=true})
+\tRange = AutoAgni:CreateSlider({Name='Range', Min=1, Max=40, Default=12, Suffix=' studs'})
+\tOnlySwinging = AutoAgni:CreateToggle({Name='Only while swinging'})
+\tClutch = AutoAgni:CreateToggle({Name='Clutch', Default=true, Tooltip='Uses Agni while falling into the void and walks toward nearby land'})
+end)
+
+
+run(function()
+\tlocal AutoBekzat
+\tlocal Targets, Range, OnlySwinging
+\tlocal swingMarker, swingSeenAt = nil, -math.huge
+\tlocal function updateSwing()
+\t\tlocal value=bedwars.SwordController and bedwars.SwordController.lastSwing or 0
+\t\tif value~=swingMarker then swingMarker,swingSeenAt=value,os.clock() end
+\tend
+\tlocal function send(position)
+\t\tlocal ctl=bedwars.AbilityController
+\t\tif not ctl then return false end
+\t\tlocal ok,ready=pcall(ctl.canUseAbility,ctl,'SEND_FALCON',{disableBlockedAbilityAlert=true})
+\t\tif not ok or not ready then
+\t\t\tlocal iok,iready=pcall(ctl.canUseAbility,ctl,'ACTIVATE_FALCON_INDICATOR',{disableBlockedAbilityAlert=true})
+\t\t\tif iok and iready then pcall(ctl.useAbility,ctl,'ACTIVATE_FALCON_INDICATOR'); task.wait() end
+\t\tend
+\t\tok,ready=pcall(ctl.canUseAbility,ctl,'SEND_FALCON',{disableBlockedAbilityAlert=true})
+\t\tif not ok or not ready then return false end
+\t\tlocal used,result=pcall(ctl.useAbility,ctl,'SEND_FALCON',newproxy(true),{target=position})
+\t\tif not used or result==false then return false end
+\t\tpcall(function() bedwars.Handler:Get('SendFalconRequested'):Fire('SendToServer',{strikeZoneEpicenter=position}) end)
+\t\treturn true
+\tend
+\tAutoBekzat=kits:CreateModule({
+\t\tName='AutoBekzat', Category='Auto',
+\t\tFunction=function(callback)
+\t\t\tif not callback then return end
+\t\t\tswingMarker=bedwars.SwordController and bedwars.SwordController.lastSwing or 0
+\t\t\tswingSeenAt=-math.huge
+\t\t\tlocal nextUse=0
+\t\t\trepeat
+\t\t\t\tif entitylib.isAlive and (store.equippedKit=='falconer' or store.equippedKit=='bekzat') then
+\t\t\t\t\tupdateSwing()
+\t\t\t\t\tif not OnlySwinging.Enabled or os.clock()-swingSeenAt<=0.3 then
+\t\t\t\t\t\tlocal ent=entitylib.EntityPosition({Range=Range.Value,Part='RootPart',Players=Targets.Players.Enabled,NPCs=Targets.NPCs.Enabled,Wallcheck=Targets.Walls.Enabled or nil,Sort=sortmethods.Distance})
+\t\t\t\t\t\tif ent and os.clock()>=nextUse and send(ent.RootPart.Position) then nextUse=os.clock()+0.4 end
+\t\t\t\t\tend
+\t\t\t\tend
+\t\t\t\ttask.wait(0.05)
+\t\t\tuntil not AutoBekzat.Enabled
+\t\tend,
+\t\tTooltip='Automatically sends Bekzat falcon at nearby selected targets'
+\t})
+\tTargets=AutoBekzat:CreateTargets({Players=true,NPCs=true,Walls=true})
+\tRange=AutoBekzat:CreateSlider({Name='Range',Min=1,Max=80,Default=50,Suffix=' studs'})
+\tOnlySwinging=AutoBekzat:CreateToggle({Name='Only while swinging'})
+end)
+
+
+run(function()
+\tlocal AutoBuilder
+\tlocal Legit, Range
+\tAutoBuilder=kits:CreateModule({
+\t\tName='AutoBuilder', Category='Auto',
+\t\tFunction=function(callback)
+\t\t\tif not callback then return end
+\t\t\trepeat task.wait() until (store.matchState~=0 and store.equippedKit=='builder') or not AutoBuilder.Enabled
+\t\t\tif not AutoBuilder.Enabled then return end
+\t\t\tlocal objs=collection('block',AutoBuilder,function(tab,obj)
+\t\t\t\ttask.defer(function() if obj and obj.Parent and not obj:GetAttribute('NoBreak') and obj:GetAttribute('PlacedByUserId')~=nil then table.insert(tab,obj) end end)
+\t\t\tend)
+\t\t\trepeat
+\t\t\t\tif entitylib.isAlive then
+\t\t\t\t\tlocal hammer=getItem('hammer')
+\t\t\t\t\tlocal held=store.hand.tool and store.hand.tool.Name=='hammer'
+\t\t\t\t\tif hammer and (not Legit.Enabled or held) then
+\t\t\t\t\t\tlocal origin=entitylib.character.RootPart.Position
+\t\t\t\t\t\tfor _,block in objs do
+\t\t\t\t\t\t\tif not AutoBuilder.Enabled then break end
+\t\t\t\t\t\t\tif block.Parent and (block.Position-origin).Magnitude<=Range.Value and not block:FindFirstChild('BuilderFortify') then
+\t\t\t\t\t\t\t\tlocal _,pos=getPlacedBlock(block.Position)
+\t\t\t\t\t\t\t\tif pos then
+\t\t\t\t\t\t\t\t\tpcall(function() bedwars.Handler:Get('FortifyBlock'):Fire('SendToServer',pos) end)
+\t\t\t\t\t\t\t\t\tif Legit.Enabled then pcall(function()
+\t\t\t\t\t\t\t\t\t\tbedwars.GameAnimationUtil:playAnimation(lplr,bedwars.GameAnimationUtil:getAssetId(bedwars.AnimationType.BUILDER_HAMMER_HIT),{fadeInTime=0.02})
+\t\t\t\t\t\t\t\t\t\tbedwars.SoundManager:playSound(bedwars.SoundList.FORTIFY_BLOCK,origin)
+\t\t\t\t\t\t\t\t\tend) end
+\t\t\t\t\t\t\t\t\ttask.wait(Legit.Enabled and 0.12 or 0.03)
+\t\t\t\t\t\t\t\tend
+\t\t\t\t\t\t\tend
+\t\t\t\t\t\tend
+\t\t\t\t\tend
+\t\t\t\tend
+\t\t\t\ttask.wait(0.05)
+\t\t\tuntil not AutoBuilder.Enabled
+\t\tend,
+\t\tTooltip='Automatically reinforces nearby placed blocks'
+\t})
+\tLegit=AutoBuilder:CreateToggle({Name='Legit',Default=true,Tooltip='Requires the hammer to be held and plays normal effects'})
+\tRange=AutoBuilder:CreateSlider({Name='Range',Min=1,Max=30,Default=18,Suffix=' studs'})
+end)
+
+
+run(function()
+\tlocal AutoEmber
+\tlocal Targets, Range, Legit
+\tAutoEmber=kits:CreateModule({
+\t\tName='AutoEmber', Category='Auto',
+\t\tFunction=function(callback)
+\t\t\tif not callback then return end
+\t\t\tlocal nextUse=0
+\t\t\trepeat
+\t\t\t\tif entitylib.isAlive and store.equippedKit=='ember' then
+\t\t\t\t\tlocal saber=getItem('infernal_saber')
+\t\t\t\t\tlocal held=saber and store.hand.tool and store.hand.tool==saber.tool
+\t\t\t\t\tlocal ent=saber and entitylib.EntityPosition({Range=Range.Value,Part='RootPart',Players=Targets.Players.Enabled,NPCs=Targets.NPCs.Enabled,Wallcheck=Targets.Walls.Enabled or nil,Sort=sortmethods.Distance}) or nil
+\t\t\t\t\tif ent and (not Legit.Enabled or held) and os.clock()>=nextUse then
+\t\t\t\t\t\tpcall(function() bedwars.Handler:Get('HellBladeRelease'):Fire('SendToServer',{chargeTime=1,weapon=saber,player=lplr}) end)
+\t\t\t\t\t\tnextUse=os.clock()+0.12
+\t\t\t\t\tend
+\t\t\t\tend
+\t\t\t\ttask.wait(0.03)
+\t\t\tuntil not AutoEmber.Enabled
+\t\tend,
+\t\tTooltip='Automatically uses Ember saber against nearby selected targets'
+\t})
+\tTargets=AutoEmber:CreateTargets({Players=true,NPCs=true,Walls=true})
+\tRange=AutoEmber:CreateSlider({Name='Range',Min=1,Max=22,Default=22,Suffix=' studs'})
+\tLegit=AutoEmber:CreateToggle({Name='Legit',Default=true,Tooltip='Only activates while the infernal saber is held'})
+end)
+
+
+run(function()
+\tlocal AutoMelody
+\tlocal SelfHeal, TeammateHeal, Delay, Legit, HealthThreshold, Range
+\tlocal function hp(char)
+\t\tlocal hum=char and char:FindFirstChildWhichIsA('Humanoid')
+\t\treturn hum and hum.MaxHealth>0 and hum.Health/hum.MaxHealth or 1
+\tend
+\tlocal function teammate(origin)
+\t\tlocal best,besthp,bestdist=nil,math.huge,math.huge
+\t\tfor _,p in playersService:GetPlayers() do
+\t\t\tif p~=lplr and p:GetAttribute('Team')==lplr:GetAttribute('Team') and p.Character then
+\t\t\t\tlocal root=p.Character.PrimaryPart or p.Character:FindFirstChild('HumanoidRootPart')
+\t\t\t\tlocal ph=hp(p.Character); local dist=root and (root.Position-origin).Magnitude or math.huge
+\t\t\t\tif dist<=Range.Value and ph<1 and (ph<besthp or (ph==besthp and dist<bestdist)) then best,besthp,bestdist=p,ph,dist end
+\t\t\tend
+\t\tend
+\t\treturn best,besthp
+\tend
+\tAutoMelody=kits:CreateModule({
+\t\tName='AutoMelody', Category='Auto',
+\t\tFunction=function(callback)
+\t\t\tif not callback then return end
+\t\t\tlocal nextHeal=0
+\t\t\trepeat
+\t\t\t\tif entitylib.isAlive and store.equippedKit=='melody' and os.clock()>=nextHeal then
+\t\t\t\t\tlocal guitar=getItem('guitar'); local held=guitar and store.hand.tool and store.hand.tool==guitar.tool
+\t\t\t\t\tif guitar and (not Legit.Enabled or held) then
+\t\t\t\t\t\tlocal target,targethp=teammate(entitylib.character.RootPart.Position)
+\t\t\t\t\t\tlocal selfLow=SelfHeal.Enabled and hp(lplr.Character)<=HealthThreshold.Value/100
+\t\t\t\t\t\tlocal teamLow=TeammateHeal.Enabled and target and targethp<=HealthThreshold.Value/100
+\t\t\t\t\t\tif target and (selfLow or teamLow) then
+\t\t\t\t\t\t\tpcall(function() bedwars.Handler:Get('PlayGuitar'):Fire('SendToServer',{healTarget=target.Character}) end)
+\t\t\t\t\t\t\tnextHeal=os.clock()+Delay.Value
+\t\t\t\t\t\tend
+\t\t\t\t\tend
+\t\t\t\tend
+\t\t\t\ttask.wait(0.05)
+\t\t\tuntil not AutoMelody.Enabled
+\t\tend,
+\t\tTooltip='Automatically uses Melody guitar to heal injured teammates and trigger self-healing'
+\t})
+\tSelfHeal=AutoMelody:CreateToggle({Name='Self',Default=true})
+\tTeammateHeal=AutoMelody:CreateToggle({Name='Teammates',Default=true})
+\tDelay=AutoMelody:CreateSlider({Name='Delay',Min=0,Max=2,Default=0.1,Decimal=10,Suffix=' seconds'})
+\tLegit=AutoMelody:CreateToggle({Name='Legit',Default=true,Tooltip='Only heals while the guitar is held'})
+\tHealthThreshold=AutoMelody:CreateSlider({Name='Health threshold',Min=1,Max=100,Default=70,Suffix='%'})
+\tRange=AutoMelody:CreateSlider({Name='Range',Min=1,Max=30,Default=30,Suffix=' studs'})
+end)
+
+
+run(function()
+\tlocal AutoWarden
+\tlocal Range, Delay
+\tAutoWarden=kits:CreateModule({
+\t\tName='AutoWarden', Category='Auto',
+\t\tFunction=function(callback)
+\t\t\tif not callback then return end
+\t\t\tkitCollector(AutoWarden,'jailor_soul',function() return Range.Value end,function() return Delay.Value end,function(soul)
+\t\t\t\tbedwars.JailorController:collectEntity(lplr,soul,'JailorSoul')
+\t\t\tend)
+\t\tend,
+\t\tTooltip='Automatically traps/collects nearby Warden souls'
+\t})
+\tRange=AutoWarden:CreateSlider({Name='Range',Min=1,Max=60,Default=20,Suffix=' studs'})
+\tDelay=AutoWarden:CreateSlider({Name='Delay',Min=0,Max=2,Default=0.1,Decimal=10,Suffix=' seconds'})
 end)
