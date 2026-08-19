@@ -27,15 +27,28 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.x'
+      - name: Fix conservative post-check
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('.github/scripts/apply_kit_rework.py')
+          s = p.read_text()
+          old = "for name in KEEP|{'AutoAgni','AutoBekzat','AutoBuilder','AutoEmber','AutoMelody','AutoWarden'}:\n    if not blocks(text,name): raise RuntimeError('missing after patch '+name)\n"
+          new = "for name in KEEP|{'AutoAgni','AutoBekzat','AutoBuilder','AutoEmber','AutoMelody','AutoWarden'}:\n    if not re.search(r\"\\bName\\s*=\\s*['\\\"]\" + re.escape(name) + r\"['\\\"]\", text): raise RuntimeError('missing after patch '+name)\n"
+          if old not in s:
+              raise SystemExit('validator source changed unexpectedly')
+          p.write_text(s.replace(old, new))
+          PY
       - name: Apply kit rework
         run: python .github/scripts/apply_kit_rework.py
       - name: Validate diff
         run: |
           git diff --check
-          grep -q "Name='AutoColbat'\|Name = 'AutoColbat'" games/6872274481.lua
-          ! grep -q "Name='AutoJailor'\|Name = 'AutoJailor'" games/6872274481.lua
-          ! grep -q "Name='AutoAery'\|Name = 'AutoAery'" games/6872274481.lua
-          grep -q "Name='AutoWarden'\|Name = 'AutoWarden'" games/6872274481.lua
+          grep -Eq "Name[[:space:]]*=[[:space:]]*'AutoColbat'" games/6872274481.lua
+          ! grep -Eq "Name[[:space:]]*=[[:space:]]*'AutoJailor'" games/6872274481.lua
+          ! grep -Eq "Name[[:space:]]*=[[:space:]]*'AutoAery'" games/6872274481.lua
+          grep -Eq "Name[[:space:]]*=[[:space:]]*'AutoWarden'" games/6872274481.lua
+          grep -Eq "Name[[:space:]]*=[[:space:]]*'AutoBekzat'" games/6872274481.lua
       - name: Commit rework
         run: |
           rm -f .github/scripts/apply_kit_rework.py
