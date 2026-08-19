@@ -8220,48 +8220,6 @@ run(function()
     })
 end)
 
---[[
-    Minigames
-]]
-
-run(function()
-    local MurderMystery
-    local murderer, sheriff, oldtargetable, oldgetcolor
-
-    local function itemAdded(v, plr)
-	if v:IsA('Tool') then
-		local check = v:FindFirstChild('IsGun') and 'sheriff' or v:FindFirstChild('KnifeServer') and 'murderer' or nil
-		check = check or v.Name:lower():find('knife') and 'murderer' or v.Name:lower():find('gun') and 'sheriff' or nil
-		if check == 'murderer' and plr ~= murderer then
-			murderer = plr
-			if plr.Character then
-				entitylib.refresh()
-			end
-		elseif check == 'sheriff' and plr ~= sheriff then
-			sheriff = plr
-			if plr.Character then
-				entitylib.refresh()
-			end
-		end
-	end
-    end
-
-    local function playerAdded(plr)
-	MurderMystery:Clean(plr.DescendantAdded:Connect(function(v)
-		itemAdded(v, plr)
-	end))
-	local pack = plr:FindFirstChildWhichIsA('Backpack')
-	if pack then
-		for _, v in pack:GetChildren() do
-			itemAdded(v, plr)
-		end
-	end
-	if plr.Character then
-		for _, v in plr.Character:GetChildren() do
-			itemAdded(v, plr)
-		end
-	end
-    end
 
 --[[
     Legit
