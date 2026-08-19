@@ -1,0 +1,43 @@
+name: Apply Kits Rework
+
+on:
+  push:
+    branches:
+      - kits-rework
+    paths:
+      - .github/scripts/apply_kit_rework.py
+      - .github/workflows/apply-kits-rework.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: kits-rework
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Apply kit rework
+        run: python .github/scripts/apply_kit_rework.py
+      - name: Validate diff
+        run: |
+          git diff --check
+          grep -q "Name='AutoColbat'\|Name = 'AutoColbat'" games/6872274481.lua
+          ! grep -q "Name='AutoJailor'\|Name = 'AutoJailor'" games/6872274481.lua
+          ! grep -q "Name='AutoAery'\|Name = 'AutoAery'" games/6872274481.lua
+          grep -q "Name='AutoWarden'\|Name = 'AutoWarden'" games/6872274481.lua
+      - name: Commit rework
+        run: |
+          rm -f .github/scripts/apply_kit_rework.py
+          rm -f .github/workflows/apply-kits-rework.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Rework BedWars kit automation"
+          git push origin HEAD:kits-rework
