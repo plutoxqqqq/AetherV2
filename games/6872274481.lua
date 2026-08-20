@@ -33431,46 +33431,46 @@ run(function()
 end)
 
 run(function()
-\tlocal AutoBuilder
-\tlocal Legit, Range
-\tAutoBuilder=kits:CreateModule({
-\t\tName='AutoBuilder', Category='Auto',
-\t\tFunction=function(callback)
-\t\t\tif not callback then return end
-\t\t\trepeat task.wait() until (store.matchState~=0 and store.equippedKit=='builder') or not AutoBuilder.Enabled
-\t\t\tif not AutoBuilder.Enabled then return end
-\t\t\tlocal objs=collection('block',AutoBuilder,function(tab,obj)
-\t\t\t\ttask.defer(function() if obj and obj.Parent and not obj:GetAttribute('NoBreak') and obj:GetAttribute('PlacedByUserId')~=nil then table.insert(tab,obj) end end)
-\t\t\tend)
-\t\t\trepeat
-\t\t\t\tif entitylib.isAlive then
-\t\t\t\t\tlocal hammer=getItem('hammer')
-\t\t\t\t\tlocal held=store.hand.tool and store.hand.tool.Name=='hammer'
-\t\t\t\t\tif hammer and (not Legit.Enabled or held) then
-\t\t\t\t\t\tlocal origin=entitylib.character.RootPart.Position
-\t\t\t\t\t\tfor _,block in objs do
-\t\t\t\t\t\t\tif not AutoBuilder.Enabled then break end
-\t\t\t\t\t\t\tif block.Parent and (block.Position-origin).Magnitude<=Range.Value and not block:FindFirstChild('BuilderFortify') then
-\t\t\t\t\t\t\t\tlocal _,pos=getPlacedBlock(block.Position)
-\t\t\t\t\t\t\t\tif pos then
-\t\t\t\t\t\t\t\t\tpcall(function() bedwars.Handler:Get('FortifyBlock'):Fire('SendToServer',pos) end)
-\t\t\t\t\t\t\t\t\tif Legit.Enabled then pcall(function()
-\t\t\t\t\t\t\t\t\t\tbedwars.GameAnimationUtil:playAnimation(lplr,bedwars.GameAnimationUtil:getAssetId(bedwars.AnimationType.BUILDER_HAMMER_HIT),{fadeInTime=0.02})
-\t\t\t\t\t\t\t\t\t\tbedwars.SoundManager:playSound(bedwars.SoundList.FORTIFY_BLOCK,origin)
-\t\t\t\t\t\t\t\t\tend) end
-\t\t\t\t\t\t\t\t\ttask.wait(Legit.Enabled and 0.12 or 0.03)
-\t\t\t\t\t\t\t\tend
-\t\t\t\t\t\t\tend
-\t\t\t\t\t\tend
-\t\t\t\t\tend
-\t\t\t\tend
-\t\t\t\ttask.wait(0.05)
-\t\t\tuntil not AutoBuilder.Enabled
-\t\tend,
-\t\tTooltip='Automatically reinforces nearby placed blocks'
-\t})
-\tLegit=AutoBuilder:CreateToggle({Name='Legit',Default=true,Tooltip='Requires the hammer to be held and plays normal effects'})
-\tRange=AutoBuilder:CreateSlider({Name='Range',Min=1,Max=30,Default=18,Suffix=' studs'})
+    local AutoBuilder
+    local Legit, Range
+    AutoBuilder=kits:CreateModule({
+    \tName='AutoBuilder', Category='Auto',
+    \tFunction=function(callback)
+    \t\tif not callback then return end
+    \t\trepeat task.wait() until (store.matchState~=0 and store.equippedKit=='builder') or not AutoBuilder.Enabled
+    \t\tif not AutoBuilder.Enabled then return end
+    \t\tlocal objs=collection('block',AutoBuilder,function(tab,obj)
+    \t\t\ttask.defer(function() if obj and obj.Parent and not obj:GetAttribute('NoBreak') and obj:GetAttribute('PlacedByUserId')~=nil then table.insert(tab,obj) end end)
+    \t\tend)
+    \t\trepeat
+    \t\t\tif entitylib.isAlive then
+    \t\t\t\tlocal hammer=getItem('hammer')
+    \t\t\t\tlocal held=store.hand.tool and store.hand.tool.Name=='hammer'
+    \t\t\t\tif hammer and (not Legit.Enabled or held) then
+    \t\t\t\t\tlocal origin=entitylib.character.RootPart.Position
+    \t\t\t\t\tfor _,block in objs do
+    \t\t\t\t\t\tif not AutoBuilder.Enabled then break end
+    \t\t\t\t\t\tif block.Parent and (block.Position-origin).Magnitude<=Range.Value and not block:FindFirstChild('BuilderFortify') then
+    \t\t\t\t\t\t\tlocal _,pos=getPlacedBlock(block.Position)
+    \t\t\t\t\t\t\tif pos then
+    \t\t\t\t\t\t\t\tpcall(function() bedwars.Handler:Get('FortifyBlock'):Fire('SendToServer',pos) end)
+    \t\t\t\t\t\t\t\tif Legit.Enabled then pcall(function()
+    \t\t\t\t\t\t\t\t\tbedwars.GameAnimationUtil:playAnimation(lplr,bedwars.GameAnimationUtil:getAssetId(bedwars.AnimationType.BUILDER_HAMMER_HIT),{fadeInTime=0.02})
+    \t\t\t\t\t\t\t\t\tbedwars.SoundManager:playSound(bedwars.SoundList.FORTIFY_BLOCK,origin)
+    \t\t\t\t\t\t\t\tend) end
+    \t\t\t\t\t\t\t\ttask.wait(Legit.Enabled and 0.12 or 0.03)
+    \t\t\t\t\t\t\tend
+    \t\t\t\t\t\tend
+    \t\t\t\t\tend
+    \t\t\t\tend
+    \t\t\tend
+    \t\t\ttask.wait(0.05)
+    \t\tuntil not AutoBuilder.Enabled
+    \tend,
+    \tTooltip='Automatically reinforces nearby placed blocks'
+    })
+    Legit=AutoBuilder:CreateToggle({Name='Legit',Default=true,Tooltip='Requires the hammer to be held and plays normal effects'})
+    Range=AutoBuilder:CreateSlider({Name='Range',Min=1,Max=30,Default=18,Suffix=' studs'})
 end)
 
 run(function()
@@ -33506,31 +33506,31 @@ run(function()
 end)
 
 run(function()
-\tlocal AutoEmber
-\tlocal Targets, Range, Legit
-\tAutoEmber=kits:CreateModule({
-\t\tName='AutoEmber', Category='Auto',
-\t\tFunction=function(callback)
-\t\t\tif not callback then return end
-\t\t\tlocal nextUse=0
-\t\t\trepeat
-\t\t\t\tif entitylib.isAlive and store.equippedKit=='ember' then
-\t\t\t\t\tlocal saber=getItem('infernal_saber')
-\t\t\t\t\tlocal held=saber and store.hand.tool and store.hand.tool==saber.tool
-\t\t\t\t\tlocal ent=saber and entitylib.EntityPosition({Range=Range.Value,Part='RootPart',Players=Targets.Players.Enabled,NPCs=Targets.NPCs.Enabled,Wallcheck=Targets.Walls.Enabled or nil,Sort=sortmethods.Distance}) or nil
-\t\t\t\t\tif ent and (not Legit.Enabled or held) and os.clock()>=nextUse then
-\t\t\t\t\t\tpcall(function() bedwars.Handler:Get('HellBladeRelease'):Fire('SendToServer',{chargeTime=1,weapon=saber,player=lplr}) end)
-\t\t\t\t\t\tnextUse=os.clock()+0.12
-\t\t\t\t\tend
-\t\t\t\tend
-\t\t\t\ttask.wait(0.03)
-\t\t\tuntil not AutoEmber.Enabled
-\t\tend,
-\t\tTooltip='Automatically uses Ember saber against nearby selected targets'
-\t})
-\tTargets=AutoEmber:CreateTargets({Players=true,NPCs=true,Walls=true})
-\tRange=AutoEmber:CreateSlider({Name='Range',Min=1,Max=22,Default=22,Suffix=' studs'})
-\tLegit=AutoEmber:CreateToggle({Name='Legit',Default=true,Tooltip='Only activates while the infernal saber is held'})
+    local AutoEmber
+    local Targets, Range, Legit
+    AutoEmber=kits:CreateModule({
+    \tName='AutoEmber', Category='Auto',
+    \tFunction=function(callback)
+    \t\tif not callback then return end
+    \t\tlocal nextUse=0
+    \t\trepeat
+    \t\t\tif entitylib.isAlive and store.equippedKit=='ember' then
+    \t\t\t\tlocal saber=getItem('infernal_saber')
+    \t\t\t\tlocal held=saber and store.hand.tool and store.hand.tool==saber.tool
+    \t\t\t\tlocal ent=saber and entitylib.EntityPosition({Range=Range.Value,Part='RootPart',Players=Targets.Players.Enabled,NPCs=Targets.NPCs.Enabled,Wallcheck=Targets.Walls.Enabled or nil,Sort=sortmethods.Distance}) or nil
+    \t\t\t\tif ent and (not Legit.Enabled or held) and os.clock()>=nextUse then
+    \t\t\t\t\tpcall(function() bedwars.Handler:Get('HellBladeRelease'):Fire('SendToServer',{chargeTime=1,weapon=saber,player=lplr}) end)
+    \t\t\t\t\tnextUse=os.clock()+0.12
+    \t\t\t\tend
+    \t\t\tend
+    \t\t\ttask.wait(0.03)
+    \t\tuntil not AutoEmber.Enabled
+    \tend,
+    \tTooltip='Automatically uses Ember saber against nearby selected targets'
+    })
+    Targets=AutoEmber:CreateTargets({Players=true,NPCs=true,Walls=true})
+    Range=AutoEmber:CreateSlider({Name='Range',Min=1,Max=22,Default=22,Suffix=' studs'})
+    Legit=AutoEmber:CreateToggle({Name='Legit',Default=true,Tooltip='Only activates while the infernal saber is held'})
 end)
 
 run(function()
@@ -33908,52 +33908,52 @@ run(function()
 end)
 
 run(function()
-\tlocal AutoMelody
-\tlocal SelfHeal, TeammateHeal, Delay, Legit, HealthThreshold, Range
-\tlocal function hp(char)
-\t\tlocal hum=char and char:FindFirstChildWhichIsA('Humanoid')
-\t\treturn hum and hum.MaxHealth>0 and hum.Health/hum.MaxHealth or 1
-\tend
-\tlocal function teammate(origin)
-\t\tlocal best,besthp,bestdist=nil,math.huge,math.huge
-\t\tfor _,p in playersService:GetPlayers() do
-\t\t\tif p~=lplr and p:GetAttribute('Team')==lplr:GetAttribute('Team') and p.Character then
-\t\t\t\tlocal root=p.Character.PrimaryPart or p.Character:FindFirstChild('HumanoidRootPart')
-\t\t\t\tlocal ph=hp(p.Character); local dist=root and (root.Position-origin).Magnitude or math.huge
-\t\t\t\tif dist<=Range.Value and ph<1 and (ph<besthp or (ph==besthp and dist<bestdist)) then best,besthp,bestdist=p,ph,dist end
-\t\t\tend
-\t\tend
-\t\treturn best,besthp
-\tend
-\tAutoMelody=kits:CreateModule({
-\t\tName='AutoMelody', Category='Auto',
-\t\tFunction=function(callback)
-\t\t\tif not callback then return end
-\t\t\tlocal nextHeal=0
-\t\t\trepeat
-\t\t\t\tif entitylib.isAlive and store.equippedKit=='melody' and os.clock()>=nextHeal then
-\t\t\t\t\tlocal guitar=getItem('guitar'); local held=guitar and store.hand.tool and store.hand.tool==guitar.tool
-\t\t\t\t\tif guitar and (not Legit.Enabled or held) then
-\t\t\t\t\t\tlocal target,targethp=teammate(entitylib.character.RootPart.Position)
-\t\t\t\t\t\tlocal selfLow=SelfHeal.Enabled and hp(lplr.Character)<=HealthThreshold.Value/100
-\t\t\t\t\t\tlocal teamLow=TeammateHeal.Enabled and target and targethp<=HealthThreshold.Value/100
-\t\t\t\t\t\tif target and (selfLow or teamLow) then
-\t\t\t\t\t\t\tpcall(function() bedwars.Handler:Get('PlayGuitar'):Fire('SendToServer',{healTarget=target.Character}) end)
-\t\t\t\t\t\t\tnextHeal=os.clock()+Delay.Value
-\t\t\t\t\t\tend
-\t\t\t\t\tend
-\t\t\t\tend
-\t\t\t\ttask.wait(0.05)
-\t\t\tuntil not AutoMelody.Enabled
-\t\tend,
-\t\tTooltip='Automatically uses Melody guitar to heal injured teammates and trigger self-healing'
-\t})
-\tSelfHeal=AutoMelody:CreateToggle({Name='Self',Default=true})
-\tTeammateHeal=AutoMelody:CreateToggle({Name='Teammates',Default=true})
-\tDelay=AutoMelody:CreateSlider({Name='Delay',Min=0,Max=2,Default=0.1,Decimal=10,Suffix=' seconds'})
-\tLegit=AutoMelody:CreateToggle({Name='Legit',Default=true,Tooltip='Only heals while the guitar is held'})
-\tHealthThreshold=AutoMelody:CreateSlider({Name='Health threshold',Min=1,Max=100,Default=70,Suffix='%'})
-\tRange=AutoMelody:CreateSlider({Name='Range',Min=1,Max=30,Default=30,Suffix=' studs'})
+    local AutoMelody
+    local SelfHeal, TeammateHeal, Delay, Legit, HealthThreshold, Range
+    local function hp(char)
+    \tlocal hum=char and char:FindFirstChildWhichIsA('Humanoid')
+    \treturn hum and hum.MaxHealth>0 and hum.Health/hum.MaxHealth or 1
+    end
+    local function teammate(origin)
+    \tlocal best,besthp,bestdist=nil,math.huge,math.huge
+    \tfor _,p in playersService:GetPlayers() do
+    \t\tif p~=lplr and p:GetAttribute('Team')==lplr:GetAttribute('Team') and p.Character then
+    \t\t\tlocal root=p.Character.PrimaryPart or p.Character:FindFirstChild('HumanoidRootPart')
+    \t\t\tlocal ph=hp(p.Character); local dist=root and (root.Position-origin).Magnitude or math.huge
+    \t\t\tif dist<=Range.Value and ph<1 and (ph<besthp or (ph==besthp and dist<bestdist)) then best,besthp,bestdist=p,ph,dist end
+    \t\tend
+    \tend
+    \treturn best,besthp
+    end
+    AutoMelody=kits:CreateModule({
+    \tName='AutoMelody', Category='Auto',
+    \tFunction=function(callback)
+    \t\tif not callback then return end
+    \t\tlocal nextHeal=0
+    \t\trepeat
+    \t\t\tif entitylib.isAlive and store.equippedKit=='melody' and os.clock()>=nextHeal then
+    \t\t\t\tlocal guitar=getItem('guitar'); local held=guitar and store.hand.tool and store.hand.tool==guitar.tool
+    \t\t\t\tif guitar and (not Legit.Enabled or held) then
+    \t\t\t\t\tlocal target,targethp=teammate(entitylib.character.RootPart.Position)
+    \t\t\t\t\tlocal selfLow=SelfHeal.Enabled and hp(lplr.Character)<=HealthThreshold.Value/100
+    \t\t\t\t\tlocal teamLow=TeammateHeal.Enabled and target and targethp<=HealthThreshold.Value/100
+    \t\t\t\t\tif target and (selfLow or teamLow) then
+    \t\t\t\t\t\tpcall(function() bedwars.Handler:Get('PlayGuitar'):Fire('SendToServer',{healTarget=target.Character}) end)
+    \t\t\t\t\t\tnextHeal=os.clock()+Delay.Value
+    \t\t\t\t\tend
+    \t\t\t\tend
+    \t\t\tend
+    \t\t\ttask.wait(0.05)
+    \t\tuntil not AutoMelody.Enabled
+    \tend,
+    \tTooltip='Automatically uses Melody guitar to heal injured teammates and trigger self-healing'
+    })
+    SelfHeal=AutoMelody:CreateToggle({Name='Self',Default=true})
+    TeammateHeal=AutoMelody:CreateToggle({Name='Teammates',Default=true})
+    Delay=AutoMelody:CreateSlider({Name='Delay',Min=0,Max=2,Default=0.1,Decimal=10,Suffix=' seconds'})
+    Legit=AutoMelody:CreateToggle({Name='Legit',Default=true,Tooltip='Only heals while the guitar is held'})
+    HealthThreshold=AutoMelody:CreateSlider({Name='Health threshold',Min=1,Max=100,Default=70,Suffix='%'})
+    Range=AutoMelody:CreateSlider({Name='Range',Min=1,Max=30,Default=30,Suffix=' studs'})
 end)
 
 run(function()
@@ -35482,110 +35482,110 @@ run(function()
 end)
 
 run(function()
-\tlocal AutoAgni
-\tlocal Targets, Range, OnlySwinging, Clutch
-\tlocal swingMarker, swingSeenAt = nil, -math.huge
-\tlocal ray = RaycastParams.new()
-\tray.FilterType = Enum.RaycastFilterType.Exclude
-\tray.RespectCanCollide = true
-\tlocal function updateSwing()
-\t\tlocal value = bedwars.SwordController and bedwars.SwordController.lastSwing or 0
-\t\tif value ~= swingMarker then swingMarker, swingSeenAt = value, os.clock() end
-\tend
-\tlocal function swinging() return os.clock() - swingSeenAt <= 0.3 end
-\tlocal function voidFall(root)
-\t\tif not root or root.AssemblyLinearVelocity.Y >= -2 then return false end
-\t\tray.FilterDescendantsInstances = lplr.Character and {lplr.Character} or {}
-\t\treturn workspace:Raycast(root.Position, Vector3.new(0, -80, 0), ray) == nil
-\tend
-\tlocal function activate()
-\t\tlocal ok, ready = pcall(bedwars.AbilityController.canUseAbility, bedwars.AbilityController, 'rocket_detonate', {disableBlockedAbilityAlert = true})
-\t\tif not ok or not ready then return false end
-\t\tlocal used, result = pcall(bedwars.AbilityController.useAbility, bedwars.AbilityController, 'rocket_detonate')
-\t\treturn used and result ~= false
-\tend
-\tlocal function steer(root)
-\t\tlocal land, hum = getNearGround(30), entitylib.character.Humanoid
-\t\tif not land or not hum then return end
-\t\tlocal delta = Vector3.new(land.X-root.Position.X, 0, land.Z-root.Position.Z)
-\t\tif delta.Magnitude > 0.05 then hum:Move(delta.Unit, false) end
-\tend
-\tAutoAgni = kits:CreateModule({
-\t\tName = 'AutoAgni', Category = 'Auto',
-\t\tFunction = function(callback)
-\t\t\tif not callback then return end
-\t\t\tswingMarker = bedwars.SwordController and bedwars.SwordController.lastSwing or 0
-\t\t\tswingSeenAt = -math.huge
-\t\t\tlocal nextUse = 0
-\t\t\trepeat
-\t\t\t\tif entitylib.isAlive and store.equippedKit == 'agni' then
-\t\t\t\t\tlocal root = entitylib.character.RootPart
-\t\t\t\t\tupdateSwing()
-\t\t\t\t\tif Clutch.Enabled and voidFall(root) then
-\t\t\t\t\t\tif os.clock() >= nextUse and activate() then nextUse=os.clock()+0.35 end
-\t\t\t\t\t\tsteer(root)
-\t\t\t\t\telseif not OnlySwinging.Enabled or swinging() then
-\t\t\t\t\t\tlocal ent = entitylib.EntityPosition({Range=Range.Value, Part='RootPart', Players=Targets.Players.Enabled, NPCs=Targets.NPCs.Enabled, Wallcheck=Targets.Walls.Enabled or nil, Sort=sortmethods.Distance})
-\t\t\t\t\t\tif ent and os.clock() >= nextUse and activate() then nextUse=os.clock()+0.35 end
-\t\t\t\t\tend
-\t\t\t\tend
-\t\t\t\ttask.wait(0.03)
-\t\t\tuntil not AutoAgni.Enabled
-\t\tend,
-\t\tTooltip = 'Automatically uses Agni rocket boost around selected targets; Clutch saves void falls'
-\t})
-\tTargets = AutoAgni:CreateTargets({Players=true, NPCs=true, Walls=true})
-\tRange = AutoAgni:CreateSlider({Name='Range', Min=1, Max=40, Default=12, Suffix=' studs'})
-\tOnlySwinging = AutoAgni:CreateToggle({Name='Only while swinging'})
-\tClutch = AutoAgni:CreateToggle({Name='Clutch', Default=true, Tooltip='Uses Agni while falling into the void and walks toward nearby land'})
+    local AutoAgni
+    local Targets, Range, OnlySwinging, Clutch
+    local swingMarker, swingSeenAt = nil, -math.huge
+    local ray = RaycastParams.new()
+    ray.FilterType = Enum.RaycastFilterType.Exclude
+    ray.RespectCanCollide = true
+    local function updateSwing()
+    \tlocal value = bedwars.SwordController and bedwars.SwordController.lastSwing or 0
+    \tif value ~= swingMarker then swingMarker, swingSeenAt = value, os.clock() end
+    end
+    local function swinging() return os.clock() - swingSeenAt <= 0.3 end
+    local function voidFall(root)
+    \tif not root or root.AssemblyLinearVelocity.Y >= -2 then return false end
+    \tray.FilterDescendantsInstances = lplr.Character and {lplr.Character} or {}
+    \treturn workspace:Raycast(root.Position, Vector3.new(0, -80, 0), ray) == nil
+    end
+    local function activate()
+    \tlocal ok, ready = pcall(bedwars.AbilityController.canUseAbility, bedwars.AbilityController, 'rocket_detonate', {disableBlockedAbilityAlert = true})
+    \tif not ok or not ready then return false end
+    \tlocal used, result = pcall(bedwars.AbilityController.useAbility, bedwars.AbilityController, 'rocket_detonate')
+    \treturn used and result ~= false
+    end
+    local function steer(root)
+    \tlocal land, hum = getNearGround(30), entitylib.character.Humanoid
+    \tif not land or not hum then return end
+    \tlocal delta = Vector3.new(land.X-root.Position.X, 0, land.Z-root.Position.Z)
+    \tif delta.Magnitude > 0.05 then hum:Move(delta.Unit, false) end
+    end
+    AutoAgni = kits:CreateModule({
+    \tName = 'AutoAgni', Category = 'Auto',
+    \tFunction = function(callback)
+    \t\tif not callback then return end
+    \t\tswingMarker = bedwars.SwordController and bedwars.SwordController.lastSwing or 0
+    \t\tswingSeenAt = -math.huge
+    \t\tlocal nextUse = 0
+    \t\trepeat
+    \t\t\tif entitylib.isAlive and store.equippedKit == 'agni' then
+    \t\t\t\tlocal root = entitylib.character.RootPart
+    \t\t\t\tupdateSwing()
+    \t\t\t\tif Clutch.Enabled and voidFall(root) then
+    \t\t\t\t\tif os.clock() >= nextUse and activate() then nextUse=os.clock()+0.35 end
+    \t\t\t\t\tsteer(root)
+    \t\t\t\telseif not OnlySwinging.Enabled or swinging() then
+    \t\t\t\t\tlocal ent = entitylib.EntityPosition({Range=Range.Value, Part='RootPart', Players=Targets.Players.Enabled, NPCs=Targets.NPCs.Enabled, Wallcheck=Targets.Walls.Enabled or nil, Sort=sortmethods.Distance})
+    \t\t\t\t\tif ent and os.clock() >= nextUse and activate() then nextUse=os.clock()+0.35 end
+    \t\t\t\tend
+    \t\t\tend
+    \t\t\ttask.wait(0.03)
+    \t\tuntil not AutoAgni.Enabled
+    \tend,
+    \tTooltip = 'Automatically uses Agni rocket boost around selected targets; Clutch saves void falls'
+    })
+    Targets = AutoAgni:CreateTargets({Players=true, NPCs=true, Walls=true})
+    Range = AutoAgni:CreateSlider({Name='Range', Min=1, Max=40, Default=12, Suffix=' studs'})
+    OnlySwinging = AutoAgni:CreateToggle({Name='Only while swinging'})
+    Clutch = AutoAgni:CreateToggle({Name='Clutch', Default=true, Tooltip='Uses Agni while falling into the void and walks toward nearby land'})
 end)
 
 run(function()
-\tlocal AutoBekzat
-\tlocal Targets, Range, OnlySwinging
-\tlocal swingMarker, swingSeenAt = nil, -math.huge
-\tlocal function updateSwing()
-\t\tlocal value=bedwars.SwordController and bedwars.SwordController.lastSwing or 0
-\t\tif value~=swingMarker then swingMarker,swingSeenAt=value,os.clock() end
-\tend
-\tlocal function send(position)
-\t\tlocal ctl=bedwars.AbilityController
-\t\tif not ctl then return false end
-\t\tlocal ok,ready=pcall(ctl.canUseAbility,ctl,'SEND_FALCON',{disableBlockedAbilityAlert=true})
-\t\tif not ok or not ready then
-\t\t\tlocal iok,iready=pcall(ctl.canUseAbility,ctl,'ACTIVATE_FALCON_INDICATOR',{disableBlockedAbilityAlert=true})
-\t\t\tif iok and iready then pcall(ctl.useAbility,ctl,'ACTIVATE_FALCON_INDICATOR'); task.wait() end
-\t\tend
-\t\tok,ready=pcall(ctl.canUseAbility,ctl,'SEND_FALCON',{disableBlockedAbilityAlert=true})
-\t\tif not ok or not ready then return false end
-\t\tlocal used,result=pcall(ctl.useAbility,ctl,'SEND_FALCON',newproxy(true),{target=position})
-\t\tif not used or result==false then return false end
-\t\tpcall(function() bedwars.Handler:Get('SendFalconRequested'):Fire('SendToServer',{strikeZoneEpicenter=position}) end)
-\t\treturn true
-\tend
-\tAutoBekzat=kits:CreateModule({
-\t\tName='AutoBekzat', Category='Auto',
-\t\tFunction=function(callback)
-\t\t\tif not callback then return end
-\t\t\tswingMarker=bedwars.SwordController and bedwars.SwordController.lastSwing or 0
-\t\t\tswingSeenAt=-math.huge
-\t\t\tlocal nextUse=0
-\t\t\trepeat
-\t\t\t\tif entitylib.isAlive and (store.equippedKit=='falconer' or store.equippedKit=='bekzat') then
-\t\t\t\t\tupdateSwing()
-\t\t\t\t\tif not OnlySwinging.Enabled or os.clock()-swingSeenAt<=0.3 then
-\t\t\t\t\t\tlocal ent=entitylib.EntityPosition({Range=Range.Value,Part='RootPart',Players=Targets.Players.Enabled,NPCs=Targets.NPCs.Enabled,Wallcheck=Targets.Walls.Enabled or nil,Sort=sortmethods.Distance})
-\t\t\t\t\t\tif ent and os.clock()>=nextUse and send(ent.RootPart.Position) then nextUse=os.clock()+0.4 end
-\t\t\t\t\tend
-\t\t\t\tend
-\t\t\t\ttask.wait(0.05)
-\t\t\tuntil not AutoBekzat.Enabled
-\t\tend,
-\t\tTooltip='Automatically sends Bekzat falcon at nearby selected targets'
-\t})
-\tTargets=AutoBekzat:CreateTargets({Players=true,NPCs=true,Walls=true})
-\tRange=AutoBekzat:CreateSlider({Name='Range',Min=1,Max=80,Default=50,Suffix=' studs'})
-\tOnlySwinging=AutoBekzat:CreateToggle({Name='Only while swinging'})
+    local AutoBekzat
+    local Targets, Range, OnlySwinging
+    local swingMarker, swingSeenAt = nil, -math.huge
+    local function updateSwing()
+    \tlocal value=bedwars.SwordController and bedwars.SwordController.lastSwing or 0
+    \tif value~=swingMarker then swingMarker,swingSeenAt=value,os.clock() end
+    end
+    local function send(position)
+    \tlocal ctl=bedwars.AbilityController
+    \tif not ctl then return false end
+    \tlocal ok,ready=pcall(ctl.canUseAbility,ctl,'SEND_FALCON',{disableBlockedAbilityAlert=true})
+    \tif not ok or not ready then
+    \t\tlocal iok,iready=pcall(ctl.canUseAbility,ctl,'ACTIVATE_FALCON_INDICATOR',{disableBlockedAbilityAlert=true})
+    \t\tif iok and iready then pcall(ctl.useAbility,ctl,'ACTIVATE_FALCON_INDICATOR'); task.wait() end
+    \tend
+    \tok,ready=pcall(ctl.canUseAbility,ctl,'SEND_FALCON',{disableBlockedAbilityAlert=true})
+    \tif not ok or not ready then return false end
+    \tlocal used,result=pcall(ctl.useAbility,ctl,'SEND_FALCON',newproxy(true),{target=position})
+    \tif not used or result==false then return false end
+    \tpcall(function() bedwars.Handler:Get('SendFalconRequested'):Fire('SendToServer',{strikeZoneEpicenter=position}) end)
+    \treturn true
+    end
+    AutoBekzat=kits:CreateModule({
+    \tName='AutoBekzat', Category='Auto',
+    \tFunction=function(callback)
+    \t\tif not callback then return end
+    \t\tswingMarker=bedwars.SwordController and bedwars.SwordController.lastSwing or 0
+    \t\tswingSeenAt=-math.huge
+    \t\tlocal nextUse=0
+    \t\trepeat
+    \t\t\tif entitylib.isAlive and (store.equippedKit=='falconer' or store.equippedKit=='bekzat') then
+    \t\t\t\tupdateSwing()
+    \t\t\t\tif not OnlySwinging.Enabled or os.clock()-swingSeenAt<=0.3 then
+    \t\t\t\t\tlocal ent=entitylib.EntityPosition({Range=Range.Value,Part='RootPart',Players=Targets.Players.Enabled,NPCs=Targets.NPCs.Enabled,Wallcheck=Targets.Walls.Enabled or nil,Sort=sortmethods.Distance})
+    \t\t\t\t\tif ent and os.clock()>=nextUse and send(ent.RootPart.Position) then nextUse=os.clock()+0.4 end
+    \t\t\t\tend
+    \t\t\tend
+    \t\t\ttask.wait(0.05)
+    \t\tuntil not AutoBekzat.Enabled
+    \tend,
+    \tTooltip='Automatically sends Bekzat falcon at nearby selected targets'
+    })
+    Targets=AutoBekzat:CreateTargets({Players=true,NPCs=true,Walls=true})
+    Range=AutoBekzat:CreateSlider({Name='Range',Min=1,Max=80,Default=50,Suffix=' studs'})
+    OnlySwinging=AutoBekzat:CreateToggle({Name='Only while swinging'})
 end)
 
 run(function()
@@ -35733,20 +35733,20 @@ run(function()
 end)
 
 run(function()
-\tlocal AutoWarden
-\tlocal Range, Delay
-\tAutoWarden=kits:CreateModule({
-\t\tName='AutoWarden', Category='Auto',
-\t\tFunction=function(callback)
-\t\t\tif not callback then return end
-\t\t\tkitCollector(AutoWarden,'jailor_soul',function() return Range.Value end,function() return Delay.Value end,function(soul)
-\t\t\t\tbedwars.JailorController:collectEntity(lplr,soul,'JailorSoul')
-\t\t\tend)
-\t\tend,
-\t\tTooltip='Automatically traps/collects nearby Warden souls'
-\t})
-\tRange=AutoWarden:CreateSlider({Name='Range',Min=1,Max=60,Default=20,Suffix=' studs'})
-\tDelay=AutoWarden:CreateSlider({Name='Delay',Min=0,Max=2,Default=0.1,Decimal=10,Suffix=' seconds'})
+    local AutoWarden
+    local Range, Delay
+    AutoWarden=kits:CreateModule({
+    \tName='AutoWarden', Category='Auto',
+    \tFunction=function(callback)
+    \t\tif not callback then return end
+    \t\tkitCollector(AutoWarden,'jailor_soul',function() return Range.Value end,function() return Delay.Value end,function(soul)
+    \t\t\tbedwars.JailorController:collectEntity(lplr,soul,'JailorSoul')
+    \t\tend)
+    \tend,
+    \tTooltip='Automatically traps/collects nearby Warden souls'
+    })
+    Range=AutoWarden:CreateSlider({Name='Range',Min=1,Max=60,Default=20,Suffix=' studs'})
+    Delay=AutoWarden:CreateSlider({Name='Delay',Min=0,Max=2,Default=0.1,Decimal=10,Suffix=' seconds'})
 end)
 
 run(function()
@@ -35849,250 +35849,250 @@ end)
 
 
 run(function()
-\tlocal AutoAgni
-\tlocal Targets, Range, OnlySwinging, Clutch
-\tlocal swingMarker, swingSeenAt = nil, -math.huge
-\tlocal ray = RaycastParams.new()
-\tray.FilterType = Enum.RaycastFilterType.Exclude
-\tray.RespectCanCollide = true
-\tlocal function updateSwing()
-\t\tlocal value = bedwars.SwordController and bedwars.SwordController.lastSwing or 0
-\t\tif value ~= swingMarker then swingMarker, swingSeenAt = value, os.clock() end
-\tend
-\tlocal function swinging() return os.clock() - swingSeenAt <= 0.3 end
-\tlocal function voidFall(root)
-\t\tif not root or root.AssemblyLinearVelocity.Y >= -2 then return false end
-\t\tray.FilterDescendantsInstances = lplr.Character and {lplr.Character} or {}
-\t\treturn workspace:Raycast(root.Position, Vector3.new(0, -80, 0), ray) == nil
-\tend
-\tlocal function activate()
-\t\tlocal ok, ready = pcall(bedwars.AbilityController.canUseAbility, bedwars.AbilityController, 'rocket_detonate', {disableBlockedAbilityAlert = true})
-\t\tif not ok or not ready then return false end
-\t\tlocal used, result = pcall(bedwars.AbilityController.useAbility, bedwars.AbilityController, 'rocket_detonate')
-\t\treturn used and result ~= false
-\tend
-\tlocal function steer(root)
-\t\tlocal land, hum = getNearGround(30), entitylib.character.Humanoid
-\t\tif not land or not hum then return end
-\t\tlocal delta = Vector3.new(land.X-root.Position.X, 0, land.Z-root.Position.Z)
-\t\tif delta.Magnitude > 0.05 then hum:Move(delta.Unit, false) end
-\tend
-\tAutoAgni = kits:CreateModule({
-\t\tName = 'AutoAgni', Category = 'Auto',
-\t\tFunction = function(callback)
-\t\t\tif not callback then return end
-\t\t\tswingMarker = bedwars.SwordController and bedwars.SwordController.lastSwing or 0
-\t\t\tswingSeenAt = -math.huge
-\t\t\tlocal nextUse = 0
-\t\t\trepeat
-\t\t\t\tif entitylib.isAlive and store.equippedKit == 'agni' then
-\t\t\t\t\tlocal root = entitylib.character.RootPart
-\t\t\t\t\tupdateSwing()
-\t\t\t\t\tif Clutch.Enabled and voidFall(root) then
-\t\t\t\t\t\tif os.clock() >= nextUse and activate() then nextUse=os.clock()+0.35 end
-\t\t\t\t\t\tsteer(root)
-\t\t\t\t\telseif not OnlySwinging.Enabled or swinging() then
-\t\t\t\t\t\tlocal ent = entitylib.EntityPosition({Range=Range.Value, Part='RootPart', Players=Targets.Players.Enabled, NPCs=Targets.NPCs.Enabled, Wallcheck=Targets.Walls.Enabled or nil, Sort=sortmethods.Distance})
-\t\t\t\t\t\tif ent and os.clock() >= nextUse and activate() then nextUse=os.clock()+0.35 end
-\t\t\t\t\tend
-\t\t\t\tend
-\t\t\t\ttask.wait(0.03)
-\t\t\tuntil not AutoAgni.Enabled
-\t\tend,
-\t\tTooltip = 'Automatically uses Agni rocket boost around selected targets; Clutch saves void falls'
-\t})
-\tTargets = AutoAgni:CreateTargets({Players=true, NPCs=true, Walls=true})
-\tRange = AutoAgni:CreateSlider({Name='Range', Min=1, Max=40, Default=12, Suffix=' studs'})
-\tOnlySwinging = AutoAgni:CreateToggle({Name='Only while swinging'})
-\tClutch = AutoAgni:CreateToggle({Name='Clutch', Default=true, Tooltip='Uses Agni while falling into the void and walks toward nearby land'})
+    local AutoAgni
+    local Targets, Range, OnlySwinging, Clutch
+    local swingMarker, swingSeenAt = nil, -math.huge
+    local ray = RaycastParams.new()
+    ray.FilterType = Enum.RaycastFilterType.Exclude
+    ray.RespectCanCollide = true
+    local function updateSwing()
+    \tlocal value = bedwars.SwordController and bedwars.SwordController.lastSwing or 0
+    \tif value ~= swingMarker then swingMarker, swingSeenAt = value, os.clock() end
+    end
+    local function swinging() return os.clock() - swingSeenAt <= 0.3 end
+    local function voidFall(root)
+    \tif not root or root.AssemblyLinearVelocity.Y >= -2 then return false end
+    \tray.FilterDescendantsInstances = lplr.Character and {lplr.Character} or {}
+    \treturn workspace:Raycast(root.Position, Vector3.new(0, -80, 0), ray) == nil
+    end
+    local function activate()
+    \tlocal ok, ready = pcall(bedwars.AbilityController.canUseAbility, bedwars.AbilityController, 'rocket_detonate', {disableBlockedAbilityAlert = true})
+    \tif not ok or not ready then return false end
+    \tlocal used, result = pcall(bedwars.AbilityController.useAbility, bedwars.AbilityController, 'rocket_detonate')
+    \treturn used and result ~= false
+    end
+    local function steer(root)
+    \tlocal land, hum = getNearGround(30), entitylib.character.Humanoid
+    \tif not land or not hum then return end
+    \tlocal delta = Vector3.new(land.X-root.Position.X, 0, land.Z-root.Position.Z)
+    \tif delta.Magnitude > 0.05 then hum:Move(delta.Unit, false) end
+    end
+    AutoAgni = kits:CreateModule({
+    \tName = 'AutoAgni', Category = 'Auto',
+    \tFunction = function(callback)
+    \t\tif not callback then return end
+    \t\tswingMarker = bedwars.SwordController and bedwars.SwordController.lastSwing or 0
+    \t\tswingSeenAt = -math.huge
+    \t\tlocal nextUse = 0
+    \t\trepeat
+    \t\t\tif entitylib.isAlive and store.equippedKit == 'agni' then
+    \t\t\t\tlocal root = entitylib.character.RootPart
+    \t\t\t\tupdateSwing()
+    \t\t\t\tif Clutch.Enabled and voidFall(root) then
+    \t\t\t\t\tif os.clock() >= nextUse and activate() then nextUse=os.clock()+0.35 end
+    \t\t\t\t\tsteer(root)
+    \t\t\t\telseif not OnlySwinging.Enabled or swinging() then
+    \t\t\t\t\tlocal ent = entitylib.EntityPosition({Range=Range.Value, Part='RootPart', Players=Targets.Players.Enabled, NPCs=Targets.NPCs.Enabled, Wallcheck=Targets.Walls.Enabled or nil, Sort=sortmethods.Distance})
+    \t\t\t\t\tif ent and os.clock() >= nextUse and activate() then nextUse=os.clock()+0.35 end
+    \t\t\t\tend
+    \t\t\tend
+    \t\t\ttask.wait(0.03)
+    \t\tuntil not AutoAgni.Enabled
+    \tend,
+    \tTooltip = 'Automatically uses Agni rocket boost around selected targets; Clutch saves void falls'
+    })
+    Targets = AutoAgni:CreateTargets({Players=true, NPCs=true, Walls=true})
+    Range = AutoAgni:CreateSlider({Name='Range', Min=1, Max=40, Default=12, Suffix=' studs'})
+    OnlySwinging = AutoAgni:CreateToggle({Name='Only while swinging'})
+    Clutch = AutoAgni:CreateToggle({Name='Clutch', Default=true, Tooltip='Uses Agni while falling into the void and walks toward nearby land'})
 end)
 
 
 run(function()
-\tlocal AutoBekzat
-\tlocal Targets, Range, OnlySwinging
-\tlocal swingMarker, swingSeenAt = nil, -math.huge
-\tlocal function updateSwing()
-\t\tlocal value=bedwars.SwordController and bedwars.SwordController.lastSwing or 0
-\t\tif value~=swingMarker then swingMarker,swingSeenAt=value,os.clock() end
-\tend
-\tlocal function send(position)
-\t\tlocal ctl=bedwars.AbilityController
-\t\tif not ctl then return false end
-\t\tlocal ok,ready=pcall(ctl.canUseAbility,ctl,'SEND_FALCON',{disableBlockedAbilityAlert=true})
-\t\tif not ok or not ready then
-\t\t\tlocal iok,iready=pcall(ctl.canUseAbility,ctl,'ACTIVATE_FALCON_INDICATOR',{disableBlockedAbilityAlert=true})
-\t\t\tif iok and iready then pcall(ctl.useAbility,ctl,'ACTIVATE_FALCON_INDICATOR'); task.wait() end
-\t\tend
-\t\tok,ready=pcall(ctl.canUseAbility,ctl,'SEND_FALCON',{disableBlockedAbilityAlert=true})
-\t\tif not ok or not ready then return false end
-\t\tlocal used,result=pcall(ctl.useAbility,ctl,'SEND_FALCON',newproxy(true),{target=position})
-\t\tif not used or result==false then return false end
-\t\tpcall(function() bedwars.Handler:Get('SendFalconRequested'):Fire('SendToServer',{strikeZoneEpicenter=position}) end)
-\t\treturn true
-\tend
-\tAutoBekzat=kits:CreateModule({
-\t\tName='AutoBekzat', Category='Auto',
-\t\tFunction=function(callback)
-\t\t\tif not callback then return end
-\t\t\tswingMarker=bedwars.SwordController and bedwars.SwordController.lastSwing or 0
-\t\t\tswingSeenAt=-math.huge
-\t\t\tlocal nextUse=0
-\t\t\trepeat
-\t\t\t\tif entitylib.isAlive and (store.equippedKit=='falconer' or store.equippedKit=='bekzat') then
-\t\t\t\t\tupdateSwing()
-\t\t\t\t\tif not OnlySwinging.Enabled or os.clock()-swingSeenAt<=0.3 then
-\t\t\t\t\t\tlocal ent=entitylib.EntityPosition({Range=Range.Value,Part='RootPart',Players=Targets.Players.Enabled,NPCs=Targets.NPCs.Enabled,Wallcheck=Targets.Walls.Enabled or nil,Sort=sortmethods.Distance})
-\t\t\t\t\t\tif ent and os.clock()>=nextUse and send(ent.RootPart.Position) then nextUse=os.clock()+0.4 end
-\t\t\t\t\tend
-\t\t\t\tend
-\t\t\t\ttask.wait(0.05)
-\t\t\tuntil not AutoBekzat.Enabled
-\t\tend,
-\t\tTooltip='Automatically sends Bekzat falcon at nearby selected targets'
-\t})
-\tTargets=AutoBekzat:CreateTargets({Players=true,NPCs=true,Walls=true})
-\tRange=AutoBekzat:CreateSlider({Name='Range',Min=1,Max=80,Default=50,Suffix=' studs'})
-\tOnlySwinging=AutoBekzat:CreateToggle({Name='Only while swinging'})
+    local AutoBekzat
+    local Targets, Range, OnlySwinging
+    local swingMarker, swingSeenAt = nil, -math.huge
+    local function updateSwing()
+    \tlocal value=bedwars.SwordController and bedwars.SwordController.lastSwing or 0
+    \tif value~=swingMarker then swingMarker,swingSeenAt=value,os.clock() end
+    end
+    local function send(position)
+    \tlocal ctl=bedwars.AbilityController
+    \tif not ctl then return false end
+    \tlocal ok,ready=pcall(ctl.canUseAbility,ctl,'SEND_FALCON',{disableBlockedAbilityAlert=true})
+    \tif not ok or not ready then
+    \t\tlocal iok,iready=pcall(ctl.canUseAbility,ctl,'ACTIVATE_FALCON_INDICATOR',{disableBlockedAbilityAlert=true})
+    \t\tif iok and iready then pcall(ctl.useAbility,ctl,'ACTIVATE_FALCON_INDICATOR'); task.wait() end
+    \tend
+    \tok,ready=pcall(ctl.canUseAbility,ctl,'SEND_FALCON',{disableBlockedAbilityAlert=true})
+    \tif not ok or not ready then return false end
+    \tlocal used,result=pcall(ctl.useAbility,ctl,'SEND_FALCON',newproxy(true),{target=position})
+    \tif not used or result==false then return false end
+    \tpcall(function() bedwars.Handler:Get('SendFalconRequested'):Fire('SendToServer',{strikeZoneEpicenter=position}) end)
+    \treturn true
+    end
+    AutoBekzat=kits:CreateModule({
+    \tName='AutoBekzat', Category='Auto',
+    \tFunction=function(callback)
+    \t\tif not callback then return end
+    \t\tswingMarker=bedwars.SwordController and bedwars.SwordController.lastSwing or 0
+    \t\tswingSeenAt=-math.huge
+    \t\tlocal nextUse=0
+    \t\trepeat
+    \t\t\tif entitylib.isAlive and (store.equippedKit=='falconer' or store.equippedKit=='bekzat') then
+    \t\t\t\tupdateSwing()
+    \t\t\t\tif not OnlySwinging.Enabled or os.clock()-swingSeenAt<=0.3 then
+    \t\t\t\t\tlocal ent=entitylib.EntityPosition({Range=Range.Value,Part='RootPart',Players=Targets.Players.Enabled,NPCs=Targets.NPCs.Enabled,Wallcheck=Targets.Walls.Enabled or nil,Sort=sortmethods.Distance})
+    \t\t\t\t\tif ent and os.clock()>=nextUse and send(ent.RootPart.Position) then nextUse=os.clock()+0.4 end
+    \t\t\t\tend
+    \t\t\tend
+    \t\t\ttask.wait(0.05)
+    \t\tuntil not AutoBekzat.Enabled
+    \tend,
+    \tTooltip='Automatically sends Bekzat falcon at nearby selected targets'
+    })
+    Targets=AutoBekzat:CreateTargets({Players=true,NPCs=true,Walls=true})
+    Range=AutoBekzat:CreateSlider({Name='Range',Min=1,Max=80,Default=50,Suffix=' studs'})
+    OnlySwinging=AutoBekzat:CreateToggle({Name='Only while swinging'})
 end)
 
 
 run(function()
-\tlocal AutoBuilder
-\tlocal Legit, Range
-\tAutoBuilder=kits:CreateModule({
-\t\tName='AutoBuilder', Category='Auto',
-\t\tFunction=function(callback)
-\t\t\tif not callback then return end
-\t\t\trepeat task.wait() until (store.matchState~=0 and store.equippedKit=='builder') or not AutoBuilder.Enabled
-\t\t\tif not AutoBuilder.Enabled then return end
-\t\t\tlocal objs=collection('block',AutoBuilder,function(tab,obj)
-\t\t\t\ttask.defer(function() if obj and obj.Parent and not obj:GetAttribute('NoBreak') and obj:GetAttribute('PlacedByUserId')~=nil then table.insert(tab,obj) end end)
-\t\t\tend)
-\t\t\trepeat
-\t\t\t\tif entitylib.isAlive then
-\t\t\t\t\tlocal hammer=getItem('hammer')
-\t\t\t\t\tlocal held=store.hand.tool and store.hand.tool.Name=='hammer'
-\t\t\t\t\tif hammer and (not Legit.Enabled or held) then
-\t\t\t\t\t\tlocal origin=entitylib.character.RootPart.Position
-\t\t\t\t\t\tfor _,block in objs do
-\t\t\t\t\t\t\tif not AutoBuilder.Enabled then break end
-\t\t\t\t\t\t\tif block.Parent and (block.Position-origin).Magnitude<=Range.Value and not block:FindFirstChild('BuilderFortify') then
-\t\t\t\t\t\t\t\tlocal _,pos=getPlacedBlock(block.Position)
-\t\t\t\t\t\t\t\tif pos then
-\t\t\t\t\t\t\t\t\tpcall(function() bedwars.Handler:Get('FortifyBlock'):Fire('SendToServer',pos) end)
-\t\t\t\t\t\t\t\t\tif Legit.Enabled then pcall(function()
-\t\t\t\t\t\t\t\t\t\tbedwars.GameAnimationUtil:playAnimation(lplr,bedwars.GameAnimationUtil:getAssetId(bedwars.AnimationType.BUILDER_HAMMER_HIT),{fadeInTime=0.02})
-\t\t\t\t\t\t\t\t\t\tbedwars.SoundManager:playSound(bedwars.SoundList.FORTIFY_BLOCK,origin)
-\t\t\t\t\t\t\t\t\tend) end
-\t\t\t\t\t\t\t\t\ttask.wait(Legit.Enabled and 0.12 or 0.03)
-\t\t\t\t\t\t\t\tend
-\t\t\t\t\t\t\tend
-\t\t\t\t\t\tend
-\t\t\t\t\tend
-\t\t\t\tend
-\t\t\t\ttask.wait(0.05)
-\t\t\tuntil not AutoBuilder.Enabled
-\t\tend,
-\t\tTooltip='Automatically reinforces nearby placed blocks'
-\t})
-\tLegit=AutoBuilder:CreateToggle({Name='Legit',Default=true,Tooltip='Requires the hammer to be held and plays normal effects'})
-\tRange=AutoBuilder:CreateSlider({Name='Range',Min=1,Max=30,Default=18,Suffix=' studs'})
+    local AutoBuilder
+    local Legit, Range
+    AutoBuilder=kits:CreateModule({
+    \tName='AutoBuilder', Category='Auto',
+    \tFunction=function(callback)
+    \t\tif not callback then return end
+    \t\trepeat task.wait() until (store.matchState~=0 and store.equippedKit=='builder') or not AutoBuilder.Enabled
+    \t\tif not AutoBuilder.Enabled then return end
+    \t\tlocal objs=collection('block',AutoBuilder,function(tab,obj)
+    \t\t\ttask.defer(function() if obj and obj.Parent and not obj:GetAttribute('NoBreak') and obj:GetAttribute('PlacedByUserId')~=nil then table.insert(tab,obj) end end)
+    \t\tend)
+    \t\trepeat
+    \t\t\tif entitylib.isAlive then
+    \t\t\t\tlocal hammer=getItem('hammer')
+    \t\t\t\tlocal held=store.hand.tool and store.hand.tool.Name=='hammer'
+    \t\t\t\tif hammer and (not Legit.Enabled or held) then
+    \t\t\t\t\tlocal origin=entitylib.character.RootPart.Position
+    \t\t\t\t\tfor _,block in objs do
+    \t\t\t\t\t\tif not AutoBuilder.Enabled then break end
+    \t\t\t\t\t\tif block.Parent and (block.Position-origin).Magnitude<=Range.Value and not block:FindFirstChild('BuilderFortify') then
+    \t\t\t\t\t\t\tlocal _,pos=getPlacedBlock(block.Position)
+    \t\t\t\t\t\t\tif pos then
+    \t\t\t\t\t\t\t\tpcall(function() bedwars.Handler:Get('FortifyBlock'):Fire('SendToServer',pos) end)
+    \t\t\t\t\t\t\t\tif Legit.Enabled then pcall(function()
+    \t\t\t\t\t\t\t\t\tbedwars.GameAnimationUtil:playAnimation(lplr,bedwars.GameAnimationUtil:getAssetId(bedwars.AnimationType.BUILDER_HAMMER_HIT),{fadeInTime=0.02})
+    \t\t\t\t\t\t\t\t\tbedwars.SoundManager:playSound(bedwars.SoundList.FORTIFY_BLOCK,origin)
+    \t\t\t\t\t\t\t\tend) end
+    \t\t\t\t\t\t\t\ttask.wait(Legit.Enabled and 0.12 or 0.03)
+    \t\t\t\t\t\t\tend
+    \t\t\t\t\t\tend
+    \t\t\t\t\tend
+    \t\t\t\tend
+    \t\t\tend
+    \t\t\ttask.wait(0.05)
+    \t\tuntil not AutoBuilder.Enabled
+    \tend,
+    \tTooltip='Automatically reinforces nearby placed blocks'
+    })
+    Legit=AutoBuilder:CreateToggle({Name='Legit',Default=true,Tooltip='Requires the hammer to be held and plays normal effects'})
+    Range=AutoBuilder:CreateSlider({Name='Range',Min=1,Max=30,Default=18,Suffix=' studs'})
 end)
 
 
 run(function()
-\tlocal AutoEmber
-\tlocal Targets, Range, Legit
-\tAutoEmber=kits:CreateModule({
-\t\tName='AutoEmber', Category='Auto',
-\t\tFunction=function(callback)
-\t\t\tif not callback then return end
-\t\t\tlocal nextUse=0
-\t\t\trepeat
-\t\t\t\tif entitylib.isAlive and store.equippedKit=='ember' then
-\t\t\t\t\tlocal saber=getItem('infernal_saber')
-\t\t\t\t\tlocal held=saber and store.hand.tool and store.hand.tool==saber.tool
-\t\t\t\t\tlocal ent=saber and entitylib.EntityPosition({Range=Range.Value,Part='RootPart',Players=Targets.Players.Enabled,NPCs=Targets.NPCs.Enabled,Wallcheck=Targets.Walls.Enabled or nil,Sort=sortmethods.Distance}) or nil
-\t\t\t\t\tif ent and (not Legit.Enabled or held) and os.clock()>=nextUse then
-\t\t\t\t\t\tpcall(function() bedwars.Handler:Get('HellBladeRelease'):Fire('SendToServer',{chargeTime=1,weapon=saber,player=lplr}) end)
-\t\t\t\t\t\tnextUse=os.clock()+0.12
-\t\t\t\t\tend
-\t\t\t\tend
-\t\t\t\ttask.wait(0.03)
-\t\t\tuntil not AutoEmber.Enabled
-\t\tend,
-\t\tTooltip='Automatically uses Ember saber against nearby selected targets'
-\t})
-\tTargets=AutoEmber:CreateTargets({Players=true,NPCs=true,Walls=true})
-\tRange=AutoEmber:CreateSlider({Name='Range',Min=1,Max=22,Default=22,Suffix=' studs'})
-\tLegit=AutoEmber:CreateToggle({Name='Legit',Default=true,Tooltip='Only activates while the infernal saber is held'})
+    local AutoEmber
+    local Targets, Range, Legit
+    AutoEmber=kits:CreateModule({
+    \tName='AutoEmber', Category='Auto',
+    \tFunction=function(callback)
+    \t\tif not callback then return end
+    \t\tlocal nextUse=0
+    \t\trepeat
+    \t\t\tif entitylib.isAlive and store.equippedKit=='ember' then
+    \t\t\t\tlocal saber=getItem('infernal_saber')
+    \t\t\t\tlocal held=saber and store.hand.tool and store.hand.tool==saber.tool
+    \t\t\t\tlocal ent=saber and entitylib.EntityPosition({Range=Range.Value,Part='RootPart',Players=Targets.Players.Enabled,NPCs=Targets.NPCs.Enabled,Wallcheck=Targets.Walls.Enabled or nil,Sort=sortmethods.Distance}) or nil
+    \t\t\t\tif ent and (not Legit.Enabled or held) and os.clock()>=nextUse then
+    \t\t\t\t\tpcall(function() bedwars.Handler:Get('HellBladeRelease'):Fire('SendToServer',{chargeTime=1,weapon=saber,player=lplr}) end)
+    \t\t\t\t\tnextUse=os.clock()+0.12
+    \t\t\t\tend
+    \t\t\tend
+    \t\t\ttask.wait(0.03)
+    \t\tuntil not AutoEmber.Enabled
+    \tend,
+    \tTooltip='Automatically uses Ember saber against nearby selected targets'
+    })
+    Targets=AutoEmber:CreateTargets({Players=true,NPCs=true,Walls=true})
+    Range=AutoEmber:CreateSlider({Name='Range',Min=1,Max=22,Default=22,Suffix=' studs'})
+    Legit=AutoEmber:CreateToggle({Name='Legit',Default=true,Tooltip='Only activates while the infernal saber is held'})
 end)
 
 
 run(function()
-\tlocal AutoMelody
-\tlocal SelfHeal, TeammateHeal, Delay, Legit, HealthThreshold, Range
-\tlocal function hp(char)
-\t\tlocal hum=char and char:FindFirstChildWhichIsA('Humanoid')
-\t\treturn hum and hum.MaxHealth>0 and hum.Health/hum.MaxHealth or 1
-\tend
-\tlocal function teammate(origin)
-\t\tlocal best,besthp,bestdist=nil,math.huge,math.huge
-\t\tfor _,p in playersService:GetPlayers() do
-\t\t\tif p~=lplr and p:GetAttribute('Team')==lplr:GetAttribute('Team') and p.Character then
-\t\t\t\tlocal root=p.Character.PrimaryPart or p.Character:FindFirstChild('HumanoidRootPart')
-\t\t\t\tlocal ph=hp(p.Character); local dist=root and (root.Position-origin).Magnitude or math.huge
-\t\t\t\tif dist<=Range.Value and ph<1 and (ph<besthp or (ph==besthp and dist<bestdist)) then best,besthp,bestdist=p,ph,dist end
-\t\t\tend
-\t\tend
-\t\treturn best,besthp
-\tend
-\tAutoMelody=kits:CreateModule({
-\t\tName='AutoMelody', Category='Auto',
-\t\tFunction=function(callback)
-\t\t\tif not callback then return end
-\t\t\tlocal nextHeal=0
-\t\t\trepeat
-\t\t\t\tif entitylib.isAlive and store.equippedKit=='melody' and os.clock()>=nextHeal then
-\t\t\t\t\tlocal guitar=getItem('guitar'); local held=guitar and store.hand.tool and store.hand.tool==guitar.tool
-\t\t\t\t\tif guitar and (not Legit.Enabled or held) then
-\t\t\t\t\t\tlocal target,targethp=teammate(entitylib.character.RootPart.Position)
-\t\t\t\t\t\tlocal selfLow=SelfHeal.Enabled and hp(lplr.Character)<=HealthThreshold.Value/100
-\t\t\t\t\t\tlocal teamLow=TeammateHeal.Enabled and target and targethp<=HealthThreshold.Value/100
-\t\t\t\t\t\tif target and (selfLow or teamLow) then
-\t\t\t\t\t\t\tpcall(function() bedwars.Handler:Get('PlayGuitar'):Fire('SendToServer',{healTarget=target.Character}) end)
-\t\t\t\t\t\t\tnextHeal=os.clock()+Delay.Value
-\t\t\t\t\t\tend
-\t\t\t\t\tend
-\t\t\t\tend
-\t\t\t\ttask.wait(0.05)
-\t\t\tuntil not AutoMelody.Enabled
-\t\tend,
-\t\tTooltip='Automatically uses Melody guitar to heal injured teammates and trigger self-healing'
-\t})
-\tSelfHeal=AutoMelody:CreateToggle({Name='Self',Default=true})
-\tTeammateHeal=AutoMelody:CreateToggle({Name='Teammates',Default=true})
-\tDelay=AutoMelody:CreateSlider({Name='Delay',Min=0,Max=2,Default=0.1,Decimal=10,Suffix=' seconds'})
-\tLegit=AutoMelody:CreateToggle({Name='Legit',Default=true,Tooltip='Only heals while the guitar is held'})
-\tHealthThreshold=AutoMelody:CreateSlider({Name='Health threshold',Min=1,Max=100,Default=70,Suffix='%'})
-\tRange=AutoMelody:CreateSlider({Name='Range',Min=1,Max=30,Default=30,Suffix=' studs'})
+    local AutoMelody
+    local SelfHeal, TeammateHeal, Delay, Legit, HealthThreshold, Range
+    local function hp(char)
+    \tlocal hum=char and char:FindFirstChildWhichIsA('Humanoid')
+    \treturn hum and hum.MaxHealth>0 and hum.Health/hum.MaxHealth or 1
+    end
+    local function teammate(origin)
+    \tlocal best,besthp,bestdist=nil,math.huge,math.huge
+    \tfor _,p in playersService:GetPlayers() do
+    \t\tif p~=lplr and p:GetAttribute('Team')==lplr:GetAttribute('Team') and p.Character then
+    \t\t\tlocal root=p.Character.PrimaryPart or p.Character:FindFirstChild('HumanoidRootPart')
+    \t\t\tlocal ph=hp(p.Character); local dist=root and (root.Position-origin).Magnitude or math.huge
+    \t\t\tif dist<=Range.Value and ph<1 and (ph<besthp or (ph==besthp and dist<bestdist)) then best,besthp,bestdist=p,ph,dist end
+    \t\tend
+    \tend
+    \treturn best,besthp
+    end
+    AutoMelody=kits:CreateModule({
+    \tName='AutoMelody', Category='Auto',
+    \tFunction=function(callback)
+    \t\tif not callback then return end
+    \t\tlocal nextHeal=0
+    \t\trepeat
+    \t\t\tif entitylib.isAlive and store.equippedKit=='melody' and os.clock()>=nextHeal then
+    \t\t\t\tlocal guitar=getItem('guitar'); local held=guitar and store.hand.tool and store.hand.tool==guitar.tool
+    \t\t\t\tif guitar and (not Legit.Enabled or held) then
+    \t\t\t\t\tlocal target,targethp=teammate(entitylib.character.RootPart.Position)
+    \t\t\t\t\tlocal selfLow=SelfHeal.Enabled and hp(lplr.Character)<=HealthThreshold.Value/100
+    \t\t\t\t\tlocal teamLow=TeammateHeal.Enabled and target and targethp<=HealthThreshold.Value/100
+    \t\t\t\t\tif target and (selfLow or teamLow) then
+    \t\t\t\t\t\tpcall(function() bedwars.Handler:Get('PlayGuitar'):Fire('SendToServer',{healTarget=target.Character}) end)
+    \t\t\t\t\t\tnextHeal=os.clock()+Delay.Value
+    \t\t\t\t\tend
+    \t\t\t\tend
+    \t\t\tend
+    \t\t\ttask.wait(0.05)
+    \t\tuntil not AutoMelody.Enabled
+    \tend,
+    \tTooltip='Automatically uses Melody guitar to heal injured teammates and trigger self-healing'
+    })
+    SelfHeal=AutoMelody:CreateToggle({Name='Self',Default=true})
+    TeammateHeal=AutoMelody:CreateToggle({Name='Teammates',Default=true})
+    Delay=AutoMelody:CreateSlider({Name='Delay',Min=0,Max=2,Default=0.1,Decimal=10,Suffix=' seconds'})
+    Legit=AutoMelody:CreateToggle({Name='Legit',Default=true,Tooltip='Only heals while the guitar is held'})
+    HealthThreshold=AutoMelody:CreateSlider({Name='Health threshold',Min=1,Max=100,Default=70,Suffix='%'})
+    Range=AutoMelody:CreateSlider({Name='Range',Min=1,Max=30,Default=30,Suffix=' studs'})
 end)
 
 
 run(function()
-\tlocal AutoWarden
-\tlocal Range, Delay
-\tAutoWarden=kits:CreateModule({
-\t\tName='AutoWarden', Category='Auto',
-\t\tFunction=function(callback)
-\t\t\tif not callback then return end
-\t\t\tkitCollector(AutoWarden,'jailor_soul',function() return Range.Value end,function() return Delay.Value end,function(soul)
-\t\t\t\tbedwars.JailorController:collectEntity(lplr,soul,'JailorSoul')
-\t\t\tend)
-\t\tend,
-\t\tTooltip='Automatically traps/collects nearby Warden souls'
-\t})
-\tRange=AutoWarden:CreateSlider({Name='Range',Min=1,Max=60,Default=20,Suffix=' studs'})
-\tDelay=AutoWarden:CreateSlider({Name='Delay',Min=0,Max=2,Default=0.1,Decimal=10,Suffix=' seconds'})
+    local AutoWarden
+    local Range, Delay
+    AutoWarden=kits:CreateModule({
+    \tName='AutoWarden', Category='Auto',
+    \tFunction=function(callback)
+    \t\tif not callback then return end
+    \t\tkitCollector(AutoWarden,'jailor_soul',function() return Range.Value end,function() return Delay.Value end,function(soul)
+    \t\t\tbedwars.JailorController:collectEntity(lplr,soul,'JailorSoul')
+    \t\tend)
+    \tend,
+    \tTooltip='Automatically traps/collects nearby Warden souls'
+    })
+    Range=AutoWarden:CreateSlider({Name='Range',Min=1,Max=60,Default=20,Suffix=' studs'})
+    Delay=AutoWarden:CreateSlider({Name='Delay',Min=0,Max=2,Default=0.1,Decimal=10,Suffix=' seconds'})
 end)
