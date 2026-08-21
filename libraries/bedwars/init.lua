@@ -1,0 +1,18 @@
+local Runtime = loadstring(readfile('aetherv2/libraries/bedwars/runtime.lua'))()
+local Controllers = loadstring(readfile('aetherv2/libraries/bedwars/controllers.lua'))()
+local Metadata = loadstring(readfile('aetherv2/libraries/bedwars/metadata.lua'))()
+local Inventory = loadstring(readfile('aetherv2/libraries/bedwars/inventory.lua'))()
+local Network = loadstring(readfile('aetherv2/libraries/bedwars/network.lua'))()
+local Blocks = loadstring(readfile('aetherv2/libraries/bedwars/blocks.lua'))()
+local Projectiles = loadstring(readfile('aetherv2/libraries/bedwars/projectiles.lua'))()
+local Kits = loadstring(readfile('aetherv2/libraries/bedwars/kits.lua'))()
+
+local BedWars = Runtime.new()
+BedWars.Controllers = Controllers.new(BedWars)
+BedWars.Metadata = Metadata.new(BedWars)
+BedWars.Inventory = Inventory.new(BedWars)
+BedWars.Network = Network.new(BedWars)
+BedWars.Blocks = Blocks.new(BedWars)
+BedWars.Projectiles = Projectiles.new(BedWars)
+BedWars.Kits = Kits.new(BedWars)
+return BedWars
