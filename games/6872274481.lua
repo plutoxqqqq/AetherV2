@@ -81,15 +81,46 @@ local prediction = vape.Libraries.prediction
 local getfontsize = vape.Libraries.getfontsize
 local getcustomasset = vape.Libraries.getcustomasset
 
+local function boundedHttpGet(url, timeout)
+	timeout = timeout or 20
+	local finished, response = false, nil
+	task.spawn(function()
+		local success, body = pcall(function()
+			return game:HttpGet(url, true)
+		end)
+		response = {Success = success, Body = body}
+		finished = true
+	end)
+	local deadline = os.clock() + timeout
+	repeat
+		task.wait()
+	until finished or os.clock() >= deadline
+	if not finished then
+		return nil, 'request timed out after '..tostring(timeout)..' seconds'
+	end
+	if not response.Success then
+		return nil, tostring(response.Body)
+	end
+	return response.Body
+end
+
 local function downloadFile(path, func)
 	if not isfile(path) then
-		local suc, res = pcall(function()
-			return game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..readfile('aetherv2/profiles/commit.txt')..'/'..select(1, path:gsub('aetherv2/', '')), true)
+		local commit = 'main'
+		pcall(function()
+			local value = readfile('aetherv2/profiles/commit.txt')
+			if type(value) == 'string' and value:gsub('%s+', '') ~= '' then
+				commit = value:gsub('%s+', '')
+			end
 		end)
-		if not suc or res == '404: Not Found' then
-			error(res)
+		local res, problem = boundedHttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..commit..'/'..select(1, path:gsub('aetherv2/', '')), 20)
+		if not res or res == '404: Not Found' then
+			error(problem or res or 'empty response', 0)
 		end
 		if path:sub(-4) == '.lua' then
+			if not loadstring(res, path) then
+				error('downloaded file did not compile', 0)
+			end
 			res = '--This watermark is used to delete the file if its cached, remove it to make the file persist after vape updates.\n'..res
 		end
 		writefile(path, res)
@@ -1902,7 +1933,10 @@ run(function()
 		pcall(function()
 			repeat task.wait() until store.matchState ~= 0 or vape.Loaded == nil
 			if vape.Loaded == nil then return end
-			store.map = waitForChildYield(workspace, 9e9, 'Map', 'Worlds'):GetChildren()[1]
+			local mapWorlds = waitForChildYield(workspace, 30, 'Map', 'Worlds')
+			if not mapWorlds then return end
+			store.map = mapWorlds:GetChildren()[1]
+			if not store.map then return end
 			mapname = store.map.Name
 			mapname = string.gsub(string.split(mapname, '_')[2] or mapname, '-', '') or 'Blank'
 			if store.map then
@@ -1966,7 +2000,9 @@ run(function()
 	task.spawn(function()
 		local rayParams = RaycastParams.new()
 		rayParams.FilterType = Enum.RaycastFilterType.Include
-		rayParams.FilterDescendantsInstances = {workspace:WaitForChild('Map', 9e9)}
+		local mapFolder = workspace:WaitForChild('Map', 30)
+		if not mapFolder then return end
+		rayParams.FilterDescendantsInstances = {mapFolder}
 		store.airRay = rayParams
 
 		repeat
@@ -18113,9 +18149,12 @@ run(function()
     end
 
     local function staffFunction(plr, checktype)
-        if not vape.Loaded then
-            repeat task.wait() until vape.Loaded
-        end
+        if vape.Loaded == nil then return end
+        local loadDeadline = os.clock() + 30
+        repeat
+            task.wait()
+        until vape.Loaded or vape.Loaded == nil or os.clock() >= loadDeadline
+        if not vape.Loaded then return end
 
         notif('StaffDetector', 'Staff Detected ('..checktype..'): '..plr.Name..' ('..plr.UserId..')', 60, 'alert')
         whitelist.customtags[plr.Name] = {{text = 'GAME STAFF', color = Color3.new(1, 0, 0)}}

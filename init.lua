@@ -600,8 +600,76 @@ local function payloadProblem(path, body)
 	return nil
 end
 
+local function httpGet(url, timeout)
+	timeout = timeout or 15
+	local executorRequest = type(request) == 'function' and request or (type(http_request) == 'function' and http_request or (syn and type(syn.request) == 'function' and syn.request))
+	if type(executorRequest) == 'function' then
+		local finished, response = false, nil
+		task.spawn(function()
+			local success, result = pcall(executorRequest, {
+				Url = url,
+				Method = 'GET',
+				Timeout = timeout
+			})
+			response = {Success = success, Value = result}
+			finished = true
+		end)
+		local deadline = os.clock() + timeout
+		repeat
+			task.wait()
+		until finished or os.clock() >= deadline
+		if not finished then
+			return nil, 'request timed out after '..tostring(timeout)..' seconds'
+		end
+		if not response.Success then
+			return nil, tostring(response.Value)
+		end
+		if type(response.Value) == 'string' then
+			return response.Value
+		end
+		if type(response.Value) == 'table' then
+			local status = tonumber(response.Value.StatusCode or response.Value.status_code or response.Value.Status)
+			if status and (status < 200 or status >= 300) then
+				return nil, 'HTTP '..tostring(status)
+			end
+			return response.Value.Body or response.Value.body
+		end
+	end
+
+	local finished, response = false, nil
+	task.spawn(function()
+		local success, body = pcall(function()
+			return game:HttpGet(url, true)
+		end)
+		response = {Success = success, Body = body}
+		finished = true
+	end)
+	local deadline = os.clock() + timeout
+	repeat
+		task.wait()
+	until finished or os.clock() >= deadline
+	if not finished then
+		return nil, 'request timed out after '..tostring(timeout)..' seconds'
+	end
+	if not response.Success then
+		return nil, tostring(response.Body)
+	end
+	return response.Body
+end
+
+local function storedCommit()
+	local success, value = pcall(readfile, 'aetherv2/profiles/commit.txt')
+	if success and type(value) == 'string' then
+		value = value:gsub('%s+', '')
+		if value ~= '' then return value end
+	end
+	return 'main'
+end
+
 local function repoUrl(path, ref)
-	return 'https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..(ref or readfile('aetherv2/profiles/commit.txt'))..'/'..select(1, path:gsub('aetherv2/', ''))
+	ref = type(ref) == 'string' and ref:gsub('%s+', '') or ''
+	ref = ref ~= '' and ref or storedCommit()
+	return 'https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..ref..'/'..select(1, path:gsub('aetherv2/', ''))
 end
 
 -- Fetch with retries, returning the body or nil plus a reason. Most failures here are transient - a
@@ -611,14 +679,12 @@ local function fetchFile(path, ref, attempts)
 	local url = repoUrl(path, ref)
 	local problem
 	for attempt = 1, attempts do
-		local suc, res = pcall(function()
-			return game:HttpGet(url, true)
-		end)
-		if suc then
+		local res, requestProblem = httpGet(url, 20)
+		if res ~= nil then
 			problem = payloadProblem(path, res)
 			if not problem then return res end
 		else
-			problem = tostring(res)
+			problem = requestProblem or 'empty response'
 		end
 		if attempt < attempts then
 			task.wait(attempt)
@@ -835,7 +901,9 @@ local function updateChannel()
 end
 
 local function updateRef(channel)
-	return ({Stable = 'stable', Beta = 'beta', Nightly = 'main'})[channel] or 'stable'
+	-- Stable is the production branch in this repository. Keeping it on main
+	-- avoids two guaranteed failed requests before the real update check.
+	return ({Stable = 'main', Beta = 'beta', Nightly = 'main'})[channel] or 'main'
 end
 
 -- Which commit are we on?
@@ -864,10 +932,8 @@ local function resolveCommit(ref)
 		{Url = 'https://github.com/plutoxqqqq/AetherV2/commits/'..ref..'.atom', Pattern = 'Commit/(%x+)'}
 	}
 	for _, source in sources do
-		local suc, body = pcall(function()
-			return game:HttpGet(source.Url, true)
-		end)
-		if suc and type(body) == 'string' then
+		local body = httpGet(source.Url, 10)
+		if type(body) == 'string' then
 			local found = body:match(source.Pattern)
 			if found and #found >= 40 then
 				found = found:sub(1, 40)
@@ -898,10 +964,8 @@ end
 -- Deliberately forgiving: anything unexpected returns nil and the caller falls back to wiping
 -- everything, which is exactly what used to happen anyway.
 local function fetchFileList(ref)
-	local suc, body = pcall(function()
-		return game:HttpGet('https://api.github.com/repos/plutoxqqqq/AetherV2/git/trees/'..ref..'?recursive=1', true)
-	end)
-	if not suc or type(body) ~= 'string' then return nil end
+	local body = httpGet('https://api.github.com/repos/plutoxqqqq/AetherV2/git/trees/'..ref..'?recursive=1', 15)
+	if type(body) ~= 'string' then return nil end
 	-- Only ever set on a repository far larger than this one, but a partial list would silently
 	-- leave stale files in place, so it is not worth trusting.
 	if body:find('"truncated"%s*:%s*true') then return nil end
@@ -972,11 +1036,12 @@ end
 
 local updatesPaused = isfile('aetherv2/profiles/update-paused.txt') and readfile('aetherv2/profiles/update-paused.txt'):gsub('%s+', '') == 'true'
 if not shared.VapeDeveloper and not updatesPaused and not shared.AetherRolledBack then
-	local oldCommit = isfile('aetherv2/profiles/commit.txt') and readfile('aetherv2/profiles/commit.txt') or ''
+	local oldCommit = isfile('aetherv2/profiles/commit.txt') and readfile('aetherv2/profiles/commit.txt'):gsub('%s+', '') or ''
 	_G.AetherV2SetLoadingStatus('Checking for updates', 0.12)
 	local channel = updateChannel()
 	shared.AetherUpdateChannel = channel
-	local commit = license.Commit or resolveCommit(updateRef(channel))
+	local requestedCommit = type(license.Commit) == 'string' and license.Commit:gsub('%s+', '') or ''
+	local commit = requestedCommit ~= '' and requestedCommit or resolveCommit(updateRef(channel))
 
 	if commit and commit ~= oldCommit then
 		local previousVersion = installedVersion()
@@ -1056,7 +1121,9 @@ if not shared.VapeDeveloper and not updatesPaused and not shared.AetherRolledBac
 		else
 			-- A failed tree lookup is not permission to erase a good installation. Leave the
 			-- current revision intact and retry the update on the next injection.
-			commit = oldCommit
+			-- A fresh install has no known-good ref yet. Keep it on main instead of
+			-- writing an empty commit file after a failed tree request.
+			commit = oldCommit ~= '' and oldCommit or 'main'
 			rollbackManifest = nil
 		end
 
