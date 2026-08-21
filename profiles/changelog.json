@@ -1,6 +1,6 @@
 {
   "version": "4.0.0",
-  "generatedAt": "2026-08-21T07:55:02.000Z",
+  "generatedAt": "2026-08-21T07:55:27.000Z",
   "range": "HEAD~25..HEAD",
   "highlights": [
     "AetherFlow: Added an event and timer driven rule engine for shared triggers and actions.",
@@ -42,9 +42,10 @@
       "TransparentCharacter: Rewritten with conflict-safe property restoration and descendant lifecycle handling."
     ],
     "Other": [
+      "Update init.lua",
+      "generate v8f0e5c6e036842f2f220b7e44a34d943053368f9 changelog [skip ci]",
       "minor fixes",
       "generate v16dbc04679a156e363c352bb54087cc1b539a7f4 changelog [skip ci]",
-      "Update init.lua",
       "generate v9af11cf38326a2cb716b0596a8d671320164d453 changelog [skip ci]",
       "Update main.lua",
       "generate va5117ccb9a2b637f8edd8034e17d6ab15e35348a changelog [skip ci]",
@@ -70,8 +71,7 @@
       "hello",
       "Update newer.lua",
       "Update new.lua",
-      "Update 6872265039.lua",
-      "Update universal.lua"
+      "Update 6872265039.lua"
     ]
   }
 }

@@ -1,6 +1,6 @@
 # AetherV2 Changelog
 
-Generated from module manifests and Git history for v4.0.0 at 2026-08-21T07:55:02.000Z.
+Generated from module manifests and Git history for v4.0.0 at 2026-08-21T07:55:27.000Z.
 
 ## Highlights
 
@@ -46,9 +46,10 @@ Generated from module manifests and Git history for v4.0.0 at 2026-08-21T07:55:0
 
 ## Other
 
+- Update init.lua
+- generate v8f0e5c6e036842f2f220b7e44a34d943053368f9 changelog [skip ci]
 - minor fixes
 - generate v16dbc04679a156e363c352bb54087cc1b539a7f4 changelog [skip ci]
-- Update init.lua
 - generate v9af11cf38326a2cb716b0596a8d671320164d453 changelog [skip ci]
 - Update main.lua
 - generate va5117ccb9a2b637f8edd8034e17d6ab15e35348a changelog [skip ci]
@@ -75,4 +76,3 @@ Generated from module manifests and Git history for v4.0.0 at 2026-08-21T07:55:0
 - Update newer.lua
 - Update new.lua
 - Update 6872265039.lua
-- Update universal.lua
