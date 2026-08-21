@@ -1094,13 +1094,6 @@
       "source": "games/6872274481.lua"
     },
     {
-      "name": "CustomChildren",
-      "version": "4.0.0",
-      "changed": "",
-      "changeType": "Maintained",
-      "source": "guis/newer.lua"
-    },
-    {
       "name": "CustomClanTag",
       "version": "4.0.0",
       "changed": "",
@@ -1264,7 +1257,7 @@
     {
       "name": "FPSBoost",
       "version": "4.0.0",
-      "changed": "Added Quality, Balanced, Performance and Potato profiles.",
+      "changed": "Added the Aether Performance Mode master switch with Quality, Balanced, Performance and Potato profiles.",
       "changeType": "Improved",
       "source": "games/6872274481.lua"
     },
@@ -1367,13 +1360,6 @@
       "source": "games/6872274481.lua"
     },
     {
-      "name": "Icon",
-      "version": "4.0.0",
-      "changed": "",
-      "changeType": "Maintained",
-      "source": "guis/newer.lua"
-    },
-    {
       "name": "IgnorePlaceHitboxes",
       "version": "4.0.0",
       "changed": "",
@@ -1459,13 +1445,6 @@
     },
     {
       "name": "KillfeedSpoofer",
-      "version": "4.0.0",
-      "changed": "",
-      "changeType": "Maintained",
-      "source": "games/6872274481.lua"
-    },
-    {
-      "name": "Kit module visibility",
       "version": "4.0.0",
       "changed": "",
       "changeType": "Maintained",
@@ -1673,13 +1652,6 @@
       "changed": "",
       "changeType": "Maintained",
       "source": "games/6872274481.lua"
-    },
-    {
-      "name": "Notification",
-      "version": "4.0.0",
-      "changed": "",
-      "changeType": "Maintained",
-      "source": "guis/newer.lua"
     },
     {
       "name": "OG4v4v4v4",
@@ -1894,7 +1866,7 @@
     {
       "name": "Scaffold",
       "version": "4.0.0",
-      "changed": "Moved placement onto the shared predictor with projection, tower, width, preview and slot restoration.",
+      "changed": "Moved placement onto the shared predictor with projection, style, edge distance, tower, width, preview and slot restoration.",
       "changeType": "Improved",
       "source": "games/6872274481.lua"
     },
@@ -1932,13 +1904,6 @@
       "changed": "",
       "changeType": "Maintained",
       "source": "games/6872265039.lua"
-    },
-    {
-      "name": "Settings",
-      "version": "4.0.0",
-      "changed": "",
-      "changeType": "Maintained",
-      "source": "guis/newer.lua"
     },
     {
       "name": "ShadowRemover",
@@ -2093,13 +2058,6 @@
       "changed": "",
       "changeType": "Maintained",
       "source": "games/universal.lua"
-    },
-    {
-      "name": "Title",
-      "version": "4.0.0",
-      "changed": "",
-      "changeType": "Maintained",
-      "source": "guis/newer.lua"
     },
     {
       "name": "TitleChanger",

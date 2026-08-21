@@ -1,6 +1,6 @@
 # AetherV2 Changelog
 
-Generated from module manifests and Git history for v4.0.0 at 2026-08-20T07:43:54.000Z.
+Generated from module manifests and Git history for v4.0.0 at 2026-08-21T06:24:00.000Z.
 
 ## Highlights
 
@@ -10,7 +10,7 @@ Generated from module manifests and Git history for v4.0.0 at 2026-08-20T07:43:5
 - AutoEnchant: Added automatic enchant management.
 - AutoWin: Rebuilt as a bounded match brain with routing, recovery, target locking, module takeover and queue supervision.
 - BreakerLegit: Added a line-of-sight, animation-aware and closest-first legitimate breaker.
-- FPSBoost: Added Quality, Balanced, Performance and Potato profiles.
+- FPSBoost: Added the Aether Performance Mode master switch with Quality, Balanced, Performance and Potato profiles.
 - JadeInstaKill: Reworked kit detection, hammer activation, tool restoration, range validation and cancellation.
 - KitAutomation: Unified kit automation behind live kit detection and contextual settings.
 - LongJump: Bounded Jade carry time and speed to prevent late lagback.
@@ -33,8 +33,8 @@ Generated from module manifests and Git history for v4.0.0 at 2026-08-20T07:43:5
 
 - AntiVoid: Made Clutch react on PreSimulation with cached grounded support and an earlier trigger.
 - AutoWin: Rebuilt as a bounded match brain with routing, recovery, target locking, module takeover and queue supervision.
-- FPSBoost: Added Quality, Balanced, Performance and Potato profiles.
-- Scaffold: Moved placement onto the shared predictor with projection, tower, width, preview and slot restoration.
+- FPSBoost: Added the Aether Performance Mode master switch with Quality, Balanced, Performance and Potato profiles.
+- Scaffold: Moved placement onto the shared predictor with projection, style, edge distance, tower, width, preview and slot restoration.
 
 ## Fixed
 
@@ -46,6 +46,7 @@ Generated from module manifests and Git history for v4.0.0 at 2026-08-20T07:43:5
 
 ## Other
 
+- v4 update :D
 - fix syntax error x2
 - fix kits syntax error thing
 - fix the kits syntax bug thing
