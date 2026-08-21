@@ -32,4 +32,5 @@ loadstring(game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/m
 ---
 
 Thank you for choosing Aether <3
+
 [Join the Official Discord Server](https://discord.gg/aYu5c9v9zv)
