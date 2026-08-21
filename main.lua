@@ -113,34 +113,20 @@ local function closeLoadingScreen()
 	_G.AetherV2CloseLoadingScreen = nil
 end
 
-<<<<<<< HEAD
 -- main.lua can be loaded directly by developer and teleport entrypoints, where
 -- init.lua's equivalent helper is not in scope.  Keep failures actionable and
 -- always remove the loader instead of replacing the original error with an
 -- "attempt to call a nil value" crash.
 local function failLoad(message)
-	table.clear(compileCache)
-	shared.AetherCompileCache = nil
-	closeLoadingScreen()
-	warn('[AetherV2] Load failed: '..tostring(message))
-	pcall(function()
-		game:GetService('StarterGui'):SetCore('SendNotification', {
-			Title = 'AetherV2 failed to load',
-			Text = tostring(message):sub(1, 180),
-=======
--- main.lua owns failures after init.lua hands control over. Keeping this local
--- prevents a failed download or module from leaving the bootstrap screen visible.
-local function failLoad(message)
 	message = tostring(message)
-	closeLoadingScreen()
 	table.clear(compileCache)
 	shared.AetherCompileCache = nil
+	closeLoadingScreen()
 	warn('[AetherV2] Load failed: '..message)
 	pcall(function()
 		game:GetService('StarterGui'):SetCore('SendNotification', {
 			Title = 'AetherV2 failed to load',
 			Text = message:sub(1, 180),
->>>>>>> d334db2f1027e9dfa565a6d61d29d573002f8347
 			Duration = 12
 		})
 	end)
