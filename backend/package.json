@@ -1,7 +1,7 @@
 {
   "name": "aetherv2-config-review",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
-  "scripts": {"start": "node server.js", "test": "node --test server.test.js"},
+  "scripts": {"start": "node server.js", "test": "node --test server.test.js", "changelog": "node ../tools/generate-changelog.js"},
   "engines": {"node": ">=20"}
 }

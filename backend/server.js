@@ -1,82 +1,567 @@
 'use strict';
+
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const {createDatabase} = require('./lib/database');
+const {canonical, hash, safeEqual, receiptMatches, RateLimiter} = require('./lib/security');
+const {GitHubPublisher, validFile} = require('./lib/publisher');
 
-const PORT = Number(process.env.PORT || 3000);
-const DATA_FILE = process.env.DATA_FILE || path.join(__dirname, 'data.json');
-const ADMIN_KEY = process.env.ADMIN_KEY || '';
+const API_VERSION = '2';
 const MAX_BODY = 2 * 1024 * 1024;
-const categories = new Set(['Closet', 'Semi-closet', 'Blatant']);
-const read = () => { try { return JSON.parse(fs.readFileSync(DATA_FILE, 'utf8')); } catch { return {submissions: []}; } };
-const write = data => { const temp = `${DATA_FILE}.tmp`; fs.writeFileSync(temp, JSON.stringify(data, null, 2)); fs.renameSync(temp, DATA_FILE); };
-const json = (res, status, value) => { res.writeHead(status, {'content-type':'application/json','access-control-allow-origin':'*','access-control-allow-headers':'authorization,content-type','access-control-allow-methods':'GET,POST,PATCH,DELETE,OPTIONS'}); res.end(JSON.stringify(value)); };
-const body = req => new Promise((resolve, reject) => { let text=''; req.on('data', c => { text += c; if (text.length > MAX_BODY) reject(Error('Request body is too large')); }); req.on('end', () => { try { resolve(JSON.parse(text || '{}')); } catch { reject(Error('Invalid JSON')); } }); req.on('error', reject); });
-const admin = req => { const got=Buffer.from(req.headers.authorization || ''), expected=Buffer.from(`Bearer ${ADMIN_KEY}`); return Boolean(ADMIN_KEY) && got.length===expected.length && crypto.timingSafeEqual(got,expected); };
-const canonical = value => JSON.stringify(value, (_, child) => child && typeof child === 'object' && !Array.isArray(child) ? Object.fromEntries(Object.keys(child).sort().map(key => [key, child[key]])) : child);
-const matchesPublished = config => { const folder=path.resolve(__dirname,'..','configs'); try { return fs.readdirSync(folder).filter(file=>file.endsWith('.json')&&file!=='presets.json').some(file=>{ const wrapper=JSON.parse(fs.readFileSync(path.join(folder,file),'utf8')); const saved=typeof wrapper.config==='string'?JSON.parse(wrapper.config):wrapper.config; return canonical(saved)===canonical(config); }); } catch { return false; } };
-const github = () => {
-  if (!process.env.GITHUB_TOKEN || !process.env.GITHUB_REPO) throw Error('GitHub publishing is not configured');
-  return {branch:process.env.GITHUB_BRANCH || 'main',headers:{authorization:`Bearer ${process.env.GITHUB_TOKEN}`,accept:'application/vnd.github+json','user-agent':'aetherv2-review','x-github-api-version':'2022-11-28'}};
-};
-const apiFor = file => `https://api.github.com/repos/${process.env.GITHUB_REPO}/contents/configs/${file}`;
-async function getGithubFile(file, required=true) {
-  const {branch,headers}=github(); const response=await fetch(`${apiFor(file)}?ref=${encodeURIComponent(branch)}`,{headers});
-  if (!response.ok) { if (!required && response.status===404) return null; throw Error(`Could not load configs/${file} from GitHub (${response.status})`); }
-  const value=await response.json(); return {...value,decoded:Buffer.from(value.content.replace(/\n/g,''),'base64').toString()};
-}
-async function putGithubFile(file, content, sha, message) {
-  const {branch,headers}=github(); const response=await fetch(apiFor(file),{method:'PUT',headers:{...headers,'content-type':'application/json'},body:JSON.stringify({message,branch,content:Buffer.from(content).toString('base64'),...(sha&&{sha})})});
-  if (!response.ok) throw Error(`GitHub write failed for configs/${file} (${response.status}): ${await response.text()}`);
-}
-async function deleteGithubFile(file, sha, message) {
-  const {branch,headers}=github(); const response=await fetch(apiFor(file),{method:'DELETE',headers:{...headers,'content-type':'application/json'},body:JSON.stringify({message,branch,sha})});
-  if (!response.ok) throw Error(`GitHub delete failed for configs/${file} (${response.status}): ${await response.text()}`);
-}
-const supplied = (value, fallback) => value !== undefined && value !== null && value !== '' && (!Array.isArray(value) || value.length) ? value : fallback;
-async function publish(item) {
-  const slug=item.name.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'')||item.id, file=`${slug}.json`;
-  const existingFile=await getGithubFile(file,false);
-  const presetRemote=await getGithubFile('presets.json'); const manifest=JSON.parse(presetRemote.decoded); const presets=Array.isArray(manifest.presets)?manifest.presets:[];
-  const old=presets.find(p=>p.file===file)||presets.find(p=>String(p.name).toLowerCase()===String(item.name).toLowerCase())||{};
-  const metadata={...old,name:item.name,file,credits:supplied(item.creator,old.credits),tags:supplied([item.category,...(item.tags||[])].filter(Boolean),old.tags),description:supplied(item.description,old.description)};
-  const wrapper={name:item.name,credits:metadata.credits,tags:metadata.tags,description:metadata.description,game:item.game,config:JSON.stringify(item.config),...(item.gui&&{gui:JSON.stringify(item.gui)})};
-  // Publish the payload first: the catalogue is never changed to point at a missing file.
-  await putGithubFile(file,JSON.stringify(wrapper,null,2)+'\n',existingFile&&existingFile.sha,`Publish config: ${item.name}`);
-  manifest.presets=presets.filter(p=>p.file!==file&&String(p.name).toLowerCase()!==String(item.name).toLowerCase()); manifest.presets.push(metadata);
-  await putGithubFile('presets.json',JSON.stringify(manifest,null,2)+'\n',presetRemote.sha,`List config: ${item.name}`);
-  return file;
-}
-async function removePublished(file) {
-  if (typeof file!=='string'||!file.endsWith('.json')||file==='presets.json'||file.includes('/')||file.includes('\\')) throw Error('Invalid public config file');
-  const presetRemote=await getGithubFile('presets.json'); const manifest=JSON.parse(presetRemote.decoded); const presets=Array.isArray(manifest.presets)?manifest.presets:[];
-  if (!presets.some(p=>p.file===file)) { const error=Error('The requested file is not a known Public Config'); error.status=404; throw error; }
-  const configRemote=await getGithubFile(file);
-  // Remove the pointer first. A failed second operation can leave an unlisted orphan,
-  // but never a catalogue entry that points at an unavailable file.
-  manifest.presets=presets.filter(p=>p.file!==file);
-  await putGithubFile('presets.json',JSON.stringify(manifest,null,2)+'\n',presetRemote.sha,`Unlist config: ${file}`);
-  await deleteGithubFile(file,configRemote.sha,`Delete config: ${file}`);
-  return file;
+const categories = new Set(['Closet', 'Semi-Closet', 'Blatant']);
+const writable = new Set(['POST', 'PATCH', 'PUT', 'DELETE']);
+
+function httpError(status, message, details) {
+  return Object.assign(Error(message), {status, details});
 }
 
-const server = http.createServer(async (req,res) => { try {
-  if (req.method==='OPTIONS') return json(res,204,{success:true});
-  const url=new URL(req.url,'http://localhost'); const db=read();
-  if (req.method==='POST'&&url.pathname==='/submissions') {
-    const value=await body(req), required=['name','submitter','userId','creator','category','description','tags','game','config'];
-    if (required.some(k=>value[k]==null)||!categories.has(value.category)||!Array.isArray(value.tags)||!value.tags.length||typeof value.config!=='object') return json(res,400,{success:false,error:'Missing or invalid config details'});
-    if (matchesPublished(value.config)||db.submissions.some(s=>canonical(s.config)===canonical(value.config))) return json(res,409,{success:false,error:'An identical config has already been submitted'});
-    const item={...value,id:crypto.randomUUID(),token:crypto.randomBytes(24).toString('hex'),status:'pending',createdAt:new Date().toISOString()}; db.submissions.push(item); write(db);
-    return json(res,201,{success:true,id:item.id,token:item.token,status:item.status});
+function parseAllowedOrigins(value) {
+  return new Set(String(value || 'https://www.roblox.com,https://roblox.com,https://create.roblox.com')
+    .split(',').map(item => item.trim()).filter(Boolean));
+}
+
+function requestIp(req, trustProxy) {
+  if (trustProxy) {
+    const forwarded = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+    if (forwarded) return forwarded;
   }
-  if (req.method==='GET'&&url.pathname==='/submissions') { if(!admin(req)) return json(res,401,{success:false,error:'Maintainer authentication required'}); const status=url.searchParams.get('status'); return json(res,200,{success:true,submissions:db.submissions.filter(s=>!status||s.status===status).map(({token,...s})=>s)}); }
-  if (req.method==='DELETE'&&url.pathname==='/public-configs') { if(!admin(req)) return json(res,401,{success:false,error:'Maintainer authentication required'}); const value=await body(req); const file=await removePublished(value.file); return json(res,200,{success:true,status:'deleted',file}); }
-  const match=url.pathname.match(/^\/submissions\/([^/]+)$/), item=match&&db.submissions.find(s=>s.id===decodeURIComponent(match[1]));
-  if (req.method==='GET'&&item) { if(url.searchParams.get('token')!==item.token&&!admin(req)) return json(res,401,{success:false,error:'Invalid receipt'}); return json(res,200,{success:true,id:item.id,name:item.name,status:item.status,reason:item.reason,decidedAt:item.decidedAt}); }
-  if (req.method==='PATCH'&&item) { if(!admin(req)) return json(res,401,{success:false,error:'Maintainer authentication required'}); const value=await body(req); if(!['accept','reject'].includes(value.action)||item.status!=='pending') return json(res,409,{success:false,error:'Invalid decision or submission already reviewed'}); if(value.action==='accept') item.file=await publish(item); item.status=value.action==='accept'?'accepted':'declined'; item.reason=String(value.reason||''); item.decidedAt=new Date().toISOString(); write(db); return json(res,200,{success:true,id:item.id,status:item.status,file:item.file}); }
-  return json(res,404,{success:false,error:'Not found'});
- } catch(error) { return json(res,error.status||500,{success:false,error:error.message||'Operation failed',details:error.cause&&String(error.cause)}); } });
-if(require.main===module) server.listen(PORT,()=>console.log(`Aether config backend listening on ${PORT}`));
-module.exports={server,canonical,publish,removePublished};
+  return req.socket.remoteAddress || 'unknown';
+}
+
+function requestId(req) {
+  const supplied = String(req.headers['x-request-id'] || '');
+  return /^[A-Za-z0-9._-]{8,128}$/.test(supplied) ? supplied : crypto.randomUUID();
+}
+
+function readBody(req) {
+  return new Promise((resolve, reject) => {
+    let text = '';
+    let settled = false;
+    req.setEncoding('utf8');
+    req.on('data', chunk => {
+      if (settled) return;
+      text += chunk;
+      if (Buffer.byteLength(text) > MAX_BODY) {
+        settled = true;
+        reject(httpError(413, 'Request body is too large'));
+      }
+    });
+    req.on('end', () => {
+      if (settled) return;
+      try { resolve(JSON.parse(text || '{}')); }
+      catch { reject(httpError(400, 'Invalid JSON')); }
+    });
+    req.on('error', error => { if (!settled) reject(error); });
+  });
+}
+
+function validateString(value, name, options = {}) {
+  const min = options.min === undefined ? 1 : options.min;
+  const max = options.max === undefined ? 128 : options.max;
+  if (options.optional && (value === undefined || value === null || value === '')) return undefined;
+  if (typeof value !== 'string') throw httpError(400, name + ' must be a string');
+  const result = value.trim();
+  if (result.length < min || result.length > max) throw httpError(400, name + ' must be ' + min + '-' + max + ' characters');
+  return result;
+}
+
+function validateUserId(value) {
+  const result = Number(value);
+  if (!Number.isSafeInteger(result) || result < 1) throw httpError(400, 'userId must be a positive integer');
+  return result;
+}
+
+function validateTags(value, optional = false) {
+  if (optional && value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length < 1 || value.length > 10) throw httpError(400, 'tags must contain 1-10 values');
+  const tags = [...new Set(value.map(item => validateString(item, 'tag', {max: 24})))];
+  if (!tags.length) throw httpError(400, 'tags cannot be empty');
+  return tags;
+}
+
+function validateStringArray(value, name, options = {}) {
+  if (options.optional && value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length > (options.count || 5)) throw httpError(400, name + ' must be an array');
+  return [...new Set(value.map(item => validateString(item, name, {max: options.max || 240})))];
+}
+
+function validateConfig(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw httpError(400, 'config must be a JSON object');
+  return value;
+}
+
+function submissionSchema(value, update = false) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw httpError(400, 'Request body must be an object');
+  const result = {
+    name: validateString(value.name, 'name', {max: 64}),
+    displayName: validateString(value.displayName, 'displayName', {max: 64, optional: true}),
+    submitter: validateString(value.submitter, 'submitter', {max: 32}),
+    userId: validateUserId(value.userId),
+    game: validateString(String(value.game || ''), 'game', {max: 32}),
+    config: validateConfig(value.config),
+    gui: value.gui && typeof value.gui === 'object' && !Array.isArray(value.gui) ? value.gui : undefined,
+    minimumVersion: validateString(value.minimumVersion, 'minimumVersion', {max: 32, optional: true}),
+    gameVersion: validateString(value.gameVersion, 'gameVersion', {max: 64, optional: true}),
+    screenshots: validateStringArray(value.screenshots, 'screenshots', {count: 4, max: 300, optional: true}),
+    forkOf: validateString(value.forkOf, 'forkOf', {max: 128, optional: true})
+  };
+  if (update) {
+    result.changelog = validateString(value.changelog, 'changelog', {max: 500});
+    result.creator = validateString(value.creator, 'creator', {max: 64, optional: true});
+    result.category = validateString(value.category, 'category', {max: 24, optional: true});
+    if (result.category && !categories.has(result.category)) throw httpError(400, 'Invalid category');
+    result.description = validateString(value.description, 'description', {max: 500, optional: true});
+    result.tags = validateTags(value.tags, true);
+    if (value.deprecated !== undefined) result.deprecated = Boolean(value.deprecated);
+  } else {
+    result.creator = validateString(value.creator, 'creator', {max: 64});
+    result.category = validateString(value.category, 'category', {max: 24});
+    if (!categories.has(result.category)) throw httpError(400, 'Invalid category');
+    result.description = validateString(value.description, 'description', {max: 500});
+    result.tags = validateTags(value.tags);
+  }
+  return result;
+}
+
+function createApp(options = {}) {
+  const env = options.env || process.env;
+  const database = options.database || createDatabase({file: env.DATA_FILE || path.join(__dirname, 'data.json')});
+  const publisher = options.publisher || new GitHubPublisher(env);
+  const limiter = options.limiter || new RateLimiter({
+    windowMs: Number(env.RATE_WINDOW_MS || 60000),
+    readLimit: Number(env.RATE_READ_LIMIT || 180),
+    writeLimit: Number(env.RATE_WRITE_LIMIT || 20)
+  });
+  const allowedOrigins = parseAllowedOrigins(env.ALLOWED_ORIGINS);
+  const adminKey = env.ADMIN_KEY || '';
+  const verifiedCreators = new Set(String(env.VERIFIED_CREATORS || '').split(',').map(value => value.trim().toLowerCase()).filter(Boolean));
+  const trustProxy = env.TRUST_PROXY === 'true';
+  const localConfigFolder = path.resolve(__dirname, '..', 'configs');
+
+  function responseHeaders(context, extra = {}) {
+    const headers = {
+      'content-type': 'application/json; charset=utf-8',
+      'x-request-id': context.id,
+      'x-aether-api-version': API_VERSION,
+      'x-content-type-options': 'nosniff',
+      'cache-control': 'no-store',
+      vary: 'origin',
+      ...extra
+    };
+    if (context.origin) headers['access-control-allow-origin'] = context.origin;
+    return headers;
+  }
+
+  function send(res, context, status, value, extra) {
+    res.writeHead(status, responseHeaders(context, extra));
+    if (status === 204 || status === 304) return res.end();
+    return res.end(JSON.stringify(value));
+  }
+
+  function isAdmin(req) {
+    return Boolean(adminKey) && safeEqual(req.headers.authorization, 'Bearer ' + adminKey);
+  }
+
+  async function audit(context, action, target, outcome = 'success', metadata = {}) {
+    await database.transaction(data => {
+      data.audit.push({
+        id: crypto.randomUUID(),
+        requestId: context.id,
+        at: new Date().toISOString(),
+        actor: hash(context.ip).slice(0, 24),
+        action,
+        target: String(target || ''),
+        outcome,
+        metadata
+      });
+      if (data.audit.length > 5000) data.audit.splice(0, data.audit.length - 5000);
+    });
+  }
+
+  function localManifest() {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(path.join(localConfigFolder, 'presets.json'), 'utf8'));
+      return Array.isArray(parsed.presets) ? parsed : {presets: []};
+    } catch {
+      return {presets: []};
+    }
+  }
+
+  async function manifest() {
+    if (!publisher.configured) return localManifest();
+    const parsed = JSON.parse((await publisher.getFile('presets.json')).decoded);
+    return Array.isArray(parsed.presets) ? parsed : {presets: []};
+  }
+
+  async function publicFile(file) {
+    if (!validFile(file)) throw httpError(400, 'Invalid public config file');
+    if (publisher.configured) return (await publisher.getFile(file)).decoded;
+    try { return fs.readFileSync(path.join(localConfigFolder, file), 'utf8'); }
+    catch { throw httpError(404, 'Public Config not found'); }
+  }
+
+  async function isPublishedDuplicate(configHash, items) {
+    for (const item of items) {
+      if (item.hash === configHash) return true;
+      if (!item.hash && validFile(item.file)) {
+        try {
+          const wrapper = JSON.parse(await publicFile(item.file));
+          const config = typeof wrapper.config === 'string' ? JSON.parse(wrapper.config) : wrapper.config;
+          if (hash(config) === configHash) return true;
+        } catch {}
+      }
+    }
+    return false;
+  }
+
+  function enrichPresets(items, data, userId) {
+    return items.map(preset => {
+      const stats = data.publicConfigs[preset.file] || {};
+      const ratings = data.ratings[preset.file] || {};
+      const values = Object.values(ratings);
+      const likes = values.filter(value => value === 1).length;
+      const dislikes = values.filter(value => value === -1).length;
+      const ratingCount = likes + dislikes;
+      const prefix = userId ? String(userId) + ':' : '';
+      const userRating = prefix ? Object.entries(ratings).find(entry => entry[0].startsWith(prefix))?.[1] : undefined;
+      const favorites = data.favorites[preset.file] || {};
+      const creatorKey = String(preset.credits || '').toLowerCase();
+      return {
+        ...preset,
+        downloads: Number(stats.downloads || preset.downloads || 0),
+        likes,
+        dislikes,
+        ratingCount,
+        ratingPercentage: ratingCount ? Math.round(likes / ratingCount * 100) : 0,
+        userRating,
+        favoriteCount: Object.keys(favorites).length,
+        favorited: prefix ? Object.keys(favorites).some(key => key.startsWith(prefix)) : false,
+        verifiedCreator: verifiedCreators.has(creatorKey) || data.creators[creatorKey]?.verified === true
+      };
+    });
+  }
+
+  function sortPresets(items, mode) {
+    const copy = [...items];
+    const date = item => Date.parse(item.updatedAt || item.lastPublishedAt || item.createdAt || 0) || 0;
+    const score = item => (item.downloads || 0) + (item.likes || 0) * 4 - (item.dislikes || 0) * 2;
+    const comparators = {
+      'most-downloaded': (a, b) => b.downloads - a.downloads,
+      'highest-rated': (a, b) => (b.ratingPercentage - a.ratingPercentage) || (b.ratingCount - a.ratingCount),
+      newest: (a, b) => date(b) - date(a),
+      'recently-updated': (a, b) => date(b) - date(a),
+      trending: (a, b) => score(b) - score(a)
+    };
+    return copy.sort(comparators[mode] || comparators.trending);
+  }
+
+  async function handler(req, res) {
+    const requestedOrigin = String(req.headers.origin || '') || undefined;
+    const context = {
+      id: requestId(req),
+      ip: requestIp(req, trustProxy),
+      origin: requestedOrigin && allowedOrigins.has(requestedOrigin) ? requestedOrigin : undefined
+    };
+    let rateHeaders = {};
+    try {
+      if (requestedOrigin && !context.origin) throw httpError(403, 'Origin is not allowed');
+      const limited = limiter.take(context.ip, writable.has(req.method));
+      rateHeaders = {'x-ratelimit-limit': String(limited.limit), 'x-ratelimit-remaining': String(limited.remaining)};
+      if (!limited.allowed) return send(res, context, 429, {success: false, error: 'Rate limit exceeded'}, {...rateHeaders, 'retry-after': String(limited.retryAfter)});
+      if (req.method === 'OPTIONS') {
+        return send(res, context, 204, null, {
+          ...rateHeaders,
+          'access-control-allow-headers': 'authorization,content-type,x-aether-receipt,x-request-id',
+          'access-control-allow-methods': 'GET,POST,PATCH,DELETE,OPTIONS',
+          'access-control-max-age': '600'
+        });
+      }
+
+      const url = new URL(req.url, 'http://localhost');
+      const pathname = url.pathname.replace(/^\/v2(?=\/|$)/, '') || '/';
+      if (req.method === 'GET' && pathname === '/health') {
+        return send(res, context, 200, {success: true, apiVersion: API_VERSION, storage: database.constructor.name, publishing: publisher.configured ? publisher.mode : 'disabled'}, rateHeaders);
+      }
+
+      if (req.method === 'POST' && pathname === '/submissions') {
+        const value = submissionSchema(await readBody(req));
+        if (value.forkOf && !(await manifest()).presets.some(item => item.file === value.forkOf)) throw httpError(400, 'forkOf must identify a published config');
+        const configHash = hash(value.config);
+        const published = (await manifest()).presets || [];
+        if (await isPublishedDuplicate(configHash, published)) throw httpError(409, 'An identical config is already published');
+        let token;
+        const item = await database.transaction(data => {
+          if (data.submissions.some(entry => entry.configHash === configHash || (!entry.configHash && canonical(entry.config) === canonical(value.config)))) {
+            throw httpError(409, 'An identical config has already been submitted');
+          }
+          token = crypto.randomBytes(32).toString('hex');
+          const created = {...value, id: crypto.randomUUID(), receiptHash: hash(token), configHash, type: 'new', status: 'pending', createdAt: new Date().toISOString()};
+          data.submissions.push(created);
+          return created;
+        });
+        await audit(context, 'submission.create', item.id, 'success', {hash: configHash});
+        return send(res, context, 201, {success: true, id: item.id, token, status: item.status}, rateHeaders);
+      }
+
+      const updateMatch = pathname.match(/^\/public-configs\/([^/]+)\/updates$/);
+      if (req.method === 'POST' && updateMatch) {
+        const file = decodeURIComponent(updateMatch[1]);
+        if (!validFile(file)) throw httpError(400, 'Invalid public config file');
+        const raw = await readBody(req);
+        const value = submissionSchema(raw, true);
+        const owner = (await database.read()).submissions.find(item => item.file === file && item.status === 'accepted' && Number(item.userId) === value.userId && receiptMatches(raw.ownerToken, item));
+        if (!owner) throw httpError(401, 'A valid ownership receipt is required');
+        const configHash = hash(value.config);
+        let token;
+        const item = await database.transaction(data => {
+          if (data.submissions.some(entry => entry.configHash === configHash)) throw httpError(409, 'An identical config has already been submitted');
+          token = crypto.randomBytes(32).toString('hex');
+          const created = {
+            ...value,
+            creator: value.creator || owner.creator,
+            category: value.category || owner.category,
+            description: value.description || owner.description,
+            tags: value.tags || owner.tags,
+            id: crypto.randomUUID(),
+            receiptHash: hash(token),
+            configHash,
+            type: 'update',
+            targetFile: file,
+            status: 'pending',
+            createdAt: new Date().toISOString()
+          };
+          data.submissions.push(created);
+          return created;
+        });
+        await audit(context, 'submission.update', file, 'success', {submissionId: item.id, hash: configHash});
+        const current = (await manifest()).presets.find(entry => entry.file === file);
+        return send(res, context, 201, {success: true, id: item.id, token, status: item.status, targetVersion: Number(current?.version || 0) + 1}, rateHeaders);
+      }
+
+      if (req.method === 'GET' && pathname === '/submissions') {
+        if (!isAdmin(req)) throw httpError(401, 'Maintainer authentication required');
+        const status = url.searchParams.get('status');
+        const items = (await database.read()).submissions.filter(item => !status || item.status === status)
+          .map(({receiptHash, token, config, gui, ...item}) => item);
+        await audit(context, 'submission.list', status || 'all');
+        return send(res, context, 200, {success: true, submissions: items}, rateHeaders);
+      }
+
+      const submissionMatch = pathname.match(/^\/submissions\/([^/]+)$/);
+      if (submissionMatch && req.method === 'GET') {
+        const item = (await database.read()).submissions.find(entry => entry.id === decodeURIComponent(submissionMatch[1]));
+        if (!item) throw httpError(404, 'Submission not found');
+        const token = req.headers['x-aether-receipt'] || url.searchParams.get('token');
+        if (!receiptMatches(token, item) && !isAdmin(req)) throw httpError(401, 'Invalid receipt');
+        return send(res, context, 200, {
+          success: true,
+          id: item.id,
+          name: item.name,
+          displayName: item.displayName || item.name,
+          status: item.status,
+          reason: item.reason,
+          decidedAt: item.decidedAt,
+          file: item.file,
+          publishedFile: item.file,
+          version: item.version,
+          submissionType: item.type,
+          pullRequestUrl: item.pullRequestUrl
+        }, rateHeaders);
+      }
+
+      if (submissionMatch && req.method === 'PATCH') {
+        if (!isAdmin(req)) throw httpError(401, 'Maintainer authentication required');
+        const decision = await readBody(req);
+        if (!['accept', 'reject'].includes(decision.action)) throw httpError(400, 'action must be accept or reject');
+        const id = decodeURIComponent(submissionMatch[1]);
+        const item = (await database.read()).submissions.find(entry => entry.id === id);
+        if (!item) throw httpError(404, 'Submission not found');
+        if (item.status !== 'pending') throw httpError(409, 'Submission already reviewed');
+        const publication = decision.action === 'accept' ? await publisher.publish(item, context.id) : undefined;
+        const decided = await database.transaction(data => {
+          const current = data.submissions.find(entry => entry.id === id);
+          if (!current || current.status !== 'pending') throw httpError(409, 'Submission already reviewed');
+          current.status = decision.action === 'accept' ? 'accepted' : 'declined';
+          current.reason = validateString(String(decision.reason || ''), 'reason', {min: 0, max: 500, optional: true}) || '';
+          current.decidedAt = new Date().toISOString();
+          if (publication) {
+            Object.assign(current, {file: publication.file, version: publication.version, publishedHash: publication.hash, branch: publication.branch, pullRequest: publication.pullRequest, pullRequestUrl: publication.pullRequestUrl});
+            const stats = data.publicConfigs[publication.file] || {downloads: 0, versions: []};
+            stats.versions = Array.isArray(stats.versions) ? stats.versions : [];
+            stats.versions.push({
+              version: publication.version,
+              versionLabel: 'v' + publication.version,
+              hash: publication.hash,
+              at: current.decidedAt,
+              publishedAt: current.decidedAt,
+              changelog: current.changelog || 'Initial publication'
+            });
+            data.publicConfigs[publication.file] = stats;
+          }
+          return current;
+        });
+        await audit(context, 'submission.' + decision.action, id, 'success', publication || {});
+        return send(res, context, 200, {success: true, id, status: decided.status, file: decided.file, version: decided.version, pullRequest: decided.pullRequest, pullRequestUrl: decided.pullRequestUrl}, rateHeaders);
+      }
+
+      if (req.method === 'GET' && pathname === '/public-configs') {
+        const catalogue = await manifest();
+        const presets = enrichPresets(catalogue.presets || [], await database.read(), Number(url.searchParams.get('userId')) || undefined);
+        return send(res, context, 200, {success: true, apiVersion: API_VERSION, presets: sortPresets(presets, url.searchParams.get('sort'))}, {...rateHeaders, 'cache-control': 'public, max-age=30'});
+      }
+
+      const versionsMatch = pathname.match(/^\/public-configs\/([^/]+)\/versions$/);
+      if (req.method === 'GET' && versionsMatch) {
+        const file = decodeURIComponent(versionsMatch[1]);
+        const stats = (await database.read()).publicConfigs[file] || {};
+        return send(res, context, 200, {success: true, file, versions: stats.versions || []}, rateHeaders);
+      }
+
+      const ratingsMatch = pathname.match(/^\/public-configs\/([^/]+)\/ratings$/);
+      if (req.method === 'POST' && ratingsMatch) {
+        const file = decodeURIComponent(ratingsMatch[1]);
+        if (!validFile(file)) throw httpError(400, 'Invalid public config file');
+        const value = await readBody(req);
+        const userId = validateUserId(value.userId);
+        const clientId = validateString(value.clientId, 'clientId', {min: 16, max: 80});
+        const rating = value.rating === 'like' ? 1 : value.rating === 'dislike' ? -1 : Number(value.rating);
+        if (rating !== 1 && rating !== -1) throw httpError(400, 'rating must be 1 or -1');
+        const voter = String(userId) + ':' + hash(clientId).slice(0, 24);
+        const result = await database.transaction(data => {
+          data.ratings[file] = data.ratings[file] || {};
+          data.ratings[file][voter] = rating;
+          const values = Object.values(data.ratings[file]);
+          const likes = values.filter(item => item === 1).length;
+          const dislikes = values.filter(item => item === -1).length;
+          return {likes, dislikes, ratingCount: likes + dislikes, ratingPercentage: likes + dislikes ? Math.round(likes / (likes + dislikes) * 100) : 0, userRating: rating};
+        });
+        await audit(context, 'rating.set', file, 'success', {userId, rating});
+        return send(res, context, 200, {success: true, ...result}, rateHeaders);
+      }
+
+      const favoritesMatch = pathname.match(/^\/public-configs\/([^/]+)\/favorites$/);
+      if (req.method === 'POST' && favoritesMatch) {
+        const file = decodeURIComponent(favoritesMatch[1]);
+        if (!validFile(file)) throw httpError(400, 'Invalid public config file');
+        const value = await readBody(req);
+        const userId = validateUserId(value.userId);
+        const clientId = validateString(value.clientId, 'clientId', {min: 16, max: 80});
+        const voter = String(userId) + ':' + hash(clientId).slice(0, 24);
+        const result = await database.transaction(data => {
+          data.favorites[file] = data.favorites[file] || {};
+          if (value.favorite === false) delete data.favorites[file][voter];
+          else data.favorites[file][voter] = new Date().toISOString();
+          return {favorited: Boolean(data.favorites[file][voter]), favoriteCount: Object.keys(data.favorites[file]).length};
+        });
+        await audit(context, 'favorite.set', file, 'success', {userId, favorited: result.favorited});
+        return send(res, context, 200, {success: true, ...result}, rateHeaders);
+      }
+
+      const reportsMatch = pathname.match(/^\/public-configs\/([^/]+)\/reports$/);
+      if (req.method === 'POST' && reportsMatch) {
+        const file = decodeURIComponent(reportsMatch[1]);
+        if (!validFile(file)) throw httpError(400, 'Invalid public config file');
+        const value = await readBody(req);
+        const report = {
+          id: crypto.randomUUID(),
+          file,
+          userId: validateUserId(value.userId),
+          reason: validateString(value.reason, 'reason', {min: 4, max: 500}),
+          createdAt: new Date().toISOString(),
+          status: 'open'
+        };
+        await database.transaction(data => {
+          if (data.reports.some(item => item.file === file && item.userId === report.userId && item.status === 'open')) throw httpError(409, 'You already have an open report for this config');
+          data.reports.push(report);
+        });
+        await audit(context, 'report.create', file, 'success', {reportId: report.id, userId: report.userId});
+        return send(res, context, 201, {success: true, id: report.id}, rateHeaders);
+      }
+
+      if (req.method === 'GET' && pathname === '/reports') {
+        if (!isAdmin(req)) throw httpError(401, 'Maintainer authentication required');
+        return send(res, context, 200, {success: true, reports: (await database.read()).reports}, rateHeaders);
+      }
+
+      const creatorMatch = pathname.match(/^\/creators\/([^/]+)$/);
+      if (req.method === 'GET' && creatorMatch) {
+        const name = decodeURIComponent(creatorMatch[1]);
+        const catalogue = enrichPresets((await manifest()).presets || [], await database.read());
+        const configs = catalogue.filter(item => String(item.credits || '').toLowerCase() === name.toLowerCase());
+        if (!configs.length) throw httpError(404, 'Creator not found');
+        return send(res, context, 200, {
+          success: true,
+          creator: name,
+          verified: configs.some(item => item.verifiedCreator),
+          downloads: configs.reduce((total, item) => total + Number(item.downloads || 0), 0),
+          configs
+        }, {...rateHeaders, 'cache-control': 'public, max-age=30'});
+      }
+
+      const publicMatch = pathname.match(/^\/public-configs\/([^/]+)$/);
+      if (req.method === 'GET' && publicMatch) {
+        const file = decodeURIComponent(publicMatch[1]);
+        const content = await publicFile(file);
+        const etag = '"sha256-' + hash(content) + '"';
+        if (req.headers['if-none-match'] === etag) return send(res, context, 304, null, {...rateHeaders, etag});
+        const client = String(url.searchParams.get('clientId') || String(url.searchParams.get('userId') || 'guest') + ':' + context.ip);
+        const downloadKey = hash(client).slice(0, 32);
+        await database.transaction(data => {
+          const stats = data.publicConfigs[file] || {downloads: 0, versions: [], downloadKeys: []};
+          stats.downloadKeys = Array.isArray(stats.downloadKeys) ? stats.downloadKeys : [];
+          if (!stats.downloadKeys.includes(downloadKey)) {
+            stats.downloadKeys.push(downloadKey);
+            stats.downloads = Number(stats.downloads || 0) + 1;
+            if (stats.downloadKeys.length > 5000) stats.downloadKeys.splice(0, stats.downloadKeys.length - 5000);
+          }
+          data.publicConfigs[file] = stats;
+        });
+        res.writeHead(200, responseHeaders(context, {...rateHeaders, etag, 'cache-control': 'public, max-age=60'}));
+        return res.end(content);
+      }
+
+      const deleteMatch = pathname.match(/^\/public-configs\/([^/]+)$/);
+      if (req.method === 'DELETE' && deleteMatch) {
+        const file = decodeURIComponent(deleteMatch[1]);
+		const value = await readBody(req);
+		const owner = !isAdmin(req) && (await database.read()).submissions.find(item =>
+			item.file === file && item.status === 'accepted' && Number(item.userId) === Number(value.userId) && receiptMatches(value.ownerToken, item)
+		);
+		if (!isAdmin(req) && !owner) throw httpError(401, value.ownerToken ? 'A valid ownership receipt is required' : 'Maintainer authentication required');
+        const removed = await publisher.remove(file, context.id);
+        await database.transaction(data => { delete data.publicConfigs[file]; delete data.ratings[file]; delete data.favorites[file]; });
+        await audit(context, 'public-config.delete', file, 'success', removed);
+        return send(res, context, 200, {success: true, status: 'pending-merge', ...removed}, rateHeaders);
+      }
+
+      if (req.method === 'DELETE' && pathname === '/public-configs') {
+        if (!isAdmin(req)) throw httpError(401, 'Maintainer authentication required');
+        const file = validateString((await readBody(req)).file, 'file', {max: 128});
+        const removed = await publisher.remove(file, context.id);
+        await audit(context, 'public-config.delete', file, 'success', removed);
+        return send(res, context, 200, {success: true, status: 'pending-merge', ...removed}, rateHeaders);
+      }
+
+      return send(res, context, 404, {success: false, error: 'Not found'}, rateHeaders);
+    } catch (error) {
+      const status = Number(error.status) || 500;
+      if (writable.has(req.method)) {
+        try { await audit(context, 'request.failure', req.url, 'failure', {status, error: String(error.message || 'Operation failed')}); } catch {}
+      }
+      return send(res, context, status, {success: false, error: error.message || 'Operation failed', ...(error.details && {details: error.details})}, rateHeaders);
+    }
+  }
+
+  const server = http.createServer(handler);
+  return {server, handler, database, publisher, limiter};
+}
+
+const app = createApp();
+if (require.main === module) {
+  const port = Number(process.env.PORT || 3000);
+  app.server.listen(port, () => console.log('Aether config backend v' + API_VERSION + ' listening on ' + port));
+}
+
+module.exports = {server: app.server, createApp, canonical, hash, API_VERSION};

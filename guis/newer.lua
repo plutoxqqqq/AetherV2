@@ -31,6 +31,16 @@
 	Windows settings-clutter panes (their machinery falls back to sane defaults).
 ]]
 local license = ... or {}
+if type(license) ~= 'table' then license = {} end
+-- UI Core receives a skin token from main.lua.  All former GUI choices now execute this
+-- one component/layout/input/data-binding implementation; a skin changes design tokens only.
+local uiSkins = {
+	nexus = {Name = 'Nexus', Main = Color3.fromRGB(12, 13, 18), Text = Color3.fromRGB(226, 230, 240), Font = Enum.Font.Gotham, Tween = 0.16, Glass = 0.12},
+	classic = {Name = 'Classic', Main = Color3.fromRGB(0, 0, 0), Text = Color3.fromRGB(200, 200, 200), Font = Enum.Font.Arial, Tween = 0.16, Glass = 0},
+	rise = {Name = 'Rise', Main = Color3.fromRGB(20, 20, 25), Text = Color3.fromRGB(238, 238, 245), Font = Enum.Font.Gotham, Tween = 0.14, Glass = 0.08},
+	old = {Name = 'Old', Main = Color3.fromRGB(24, 24, 24), Text = Color3.fromRGB(215, 215, 215), Font = Enum.Font.Arial, Tween = 0.1, Glass = 0}
+}
+local uiSkin = uiSkins[string.lower(tostring(license.Skin or 'Nexus'))] or uiSkins.nexus
 -- AetherV2's accent, rgb(190, 115, 255), as the HSV the GUI works in. It is the
 -- default in every window and is also the sixth notch on the GUI Theme slider,
 -- so it stays a preset the user can move off and come back to.
@@ -56,10 +66,16 @@ local mainapi = {
 	Scale = {Value = 1},
 	ThreadFix = setthreadidentity and true or false,
 	ToggleNotifications = {},
-	Version = '6.0',
+	Version = '4.0.0',
 	ToggleMode = {Value = 'Toggle'},
 	Windows = {}
 }
+
+function mainapi:GetAvatarThumbnail(userId, size)
+	local id = tonumber(userId) or 1
+	local dimension = tonumber(size) or 420
+	return 'rbxthumb://type=AvatarHeadShot&id='..id..'&w='..dimension..'&h='..dimension
+end
 
 local cloneref = cloneref or function(obj)
 	return obj
@@ -94,14 +110,14 @@ local uipallet = {
 	-- color.Light/Dark. Rows read as flat dark list items; the live accent shows as
 	-- a left bar + text on enabled modules and a hairline under window headers,
 	-- rather than the old full-row highlight.
-	Main = Color3.fromRGB(12, 13, 18),
-	Text = Color3.fromRGB(226, 230, 240),
-	Font = Font.fromEnum(Enum.Font.Gotham),
-	FontSemiBold = Font.fromEnum(Enum.Font.Gotham, Enum.FontWeight.SemiBold),
-	Tween = TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+	Main = uiSkin.Main,
+	Text = uiSkin.Text,
+	Font = Font.fromEnum(uiSkin.Font),
+	FontSemiBold = Font.fromEnum(uiSkin.Font, Enum.FontWeight.SemiBold),
+	Tween = TweenInfo.new(uiSkin.Tween, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
 	-- Glass-morphism levels: transparency applied to blurred panels (windows,
 	-- tooltips, notifications).
-	Glass = 0.12
+	Glass = uiSkin.Glass
 }
 -- Every panel that addBlur() frosts is registered here so the Theme editor can
 -- retune glass intensity in real time. Weak keys let destroyed panels collect.
@@ -200,6 +216,11 @@ local nexus = {
 	OnWindowMoved = function() end
 }
 mainapi.Nexus = nexus
+mainapi.UI = {
+	Core = 'Nexus',
+	Skin = uiSkin.Name,
+	Theme = {Primary = mainapi.GUIColor, Background = uipallet.Main, Surface = uipallet.Main, Text = uipallet.Text, Radius = 10, Spacing = 8, AnimationSpeed = uiSkin.Tween}
+}
 
 local getcustomassets = {
 	['aetherv2/assets/new/add.png'] = 'rbxassetid://14368300605',
@@ -1104,17 +1125,103 @@ end
 	there on the next injection without the browser having been opened.
 ]]
 configapi.Presets = {
-	Path = profileFolder..'/presetconfigs.json'
+	Path = profileFolder..'/presetconfigs.json',
+	OwnerPath = profileFolder..'/communityconfigowners.json',
+	ClientPath = profileFolder..'/communityclientid.txt'
 }
 configapi.Presets.Registry = (isfile(configapi.Presets.Path) and loadJson(configapi.Presets.Path)) or {}
+configapi.Presets.Owners = (isfile(configapi.Presets.OwnerPath) and loadJson(configapi.Presets.OwnerPath)) or {}
 
--- Public configs follow the live publishing branch rather than Aether's code revision.
+-- Public configs always use the live publishing branch. Aether's commit pin is only for
+-- application code and must not prevent newly moderated configs from appearing.
 function configapi.Presets.Base()
 	return 'https://raw.githubusercontent.com/plutoxqqqq/AetherV2/main/configs/'
 end
 
+function configapi.Presets.Backend()
+	local configured = getgenv and getgenv().AetherConfigBackend
+	if (not configured or configured == '') and isfile(profileFolder..'/configbackend.txt') then
+		configured = readfile(profileFolder..'/configbackend.txt')
+	end
+	if type(configured) ~= 'string' or configured:match('^%s*$') then
+		configured = 'https://aether-config-backend.aether-config-backend-plutoxqq.workers.dev'
+	end
+	return configured:match('^%s*(.-)%s*$'):gsub('/+$', '')
+end
+
+function configapi.Presets.ClientId()
+	if configapi.Presets.InstallationId then return configapi.Presets.InstallationId end
+	local stored = isfile(configapi.Presets.ClientPath) and tostring(readfile(configapi.Presets.ClientPath)):lower():match('^%s*([a-f0-9%-]+)%s*$') or nil
+	if not stored or #stored < 32 or #stored > 64 then
+		stored = httpService:GenerateGUID(false):lower()
+		pcall(writefile, configapi.Presets.ClientPath, stored)
+	end
+	configapi.Presets.InstallationId = stored
+	return stored
+end
+
 function configapi.Presets.URL(file)
-	return configapi.Presets.Base()..file..'?aether='..tostring(os.time())..'-'..tostring(math.random(100000, 999999))
+	local player = cloneref(game:GetService('Players')).LocalPlayer
+	return configapi.Presets.Backend()..'/public-configs/'..httpService:UrlEncode(tostring(file))
+		..'?userId='..tostring(player.UserId)
+		..'&clientId='..httpService:UrlEncode(configapi.Presets.ClientId())
+		..'&aether='..tostring(os.time())..'-'..tostring(math.random(100000, 999999))
+end
+
+function configapi.Presets.Fetch(file)
+	local success, response = pcall(function()
+		return game:HttpGet(configapi.Presets.URL(file), true)
+	end)
+	if success and response and response ~= '404: Not Found' then return response end
+	return game:HttpGet(configapi.Presets.Base()..tostring(file)..'?aether='..tostring(os.time()), true)
+end
+
+-- The raw GitHub CDN can serve an older catalogue even with a query string. Refresh the
+-- catalogue through the Contents API instead, whose response carries the current main-branch
+-- blob inline as base64.
+function configapi.Presets.FetchList(sort)
+	local player = cloneref(game:GetService('Players')).LocalPlayer
+	local backendSuccess, backendResponse = pcall(function()
+		return game:HttpGet(
+			configapi.Presets.Backend()..'/public-configs?sort='..httpService:UrlEncode(tostring(sort or 'trending'))
+				..'&userId='..tostring(player.UserId),
+			true
+		)
+	end)
+	if backendSuccess and backendResponse and backendResponse ~= '404: Not Found' then
+		local decoded = select(2, pcall(httpService.JSONDecode, httpService, backendResponse))
+		if type(decoded) == 'table' and type(decoded.presets) == 'table' then return backendResponse end
+	end
+
+	local response = game:HttpGet(
+		'https://api.github.com/repos/plutoxqqqq/AetherV2/contents/configs/presets.json?ref=main',
+		true
+	)
+	local payload = httpService:JSONDecode(response)
+	if type(payload) ~= 'table' or type(payload.content) ~= 'string' or payload.encoding ~= 'base64' then
+		error('Invalid GitHub Contents API response')
+	end
+
+	local alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+	local bytes = {}
+	local content = payload.content:gsub('[^%w%+%/%=]', '')
+	for i = 1, #content, 4 do
+		local chars = content:sub(i, i + 3)
+		local a = alphabet:find(chars:sub(1, 1), 1, true)
+		local b = alphabet:find(chars:sub(2, 2), 1, true)
+		local c = alphabet:find(chars:sub(3, 3), 1, true)
+		local d = alphabet:find(chars:sub(4, 4), 1, true)
+		if not a or not b then error('Invalid base64 content') end
+		a, b, c, d = a - 1, b - 1, (c or 1) - 1, (d or 1) - 1
+		bytes[#bytes + 1] = string.char((a * 4) + math.floor(b / 16))
+		if chars:sub(3, 3) ~= '=' then
+			bytes[#bytes + 1] = string.char(((b % 16) * 16) + math.floor(c / 4))
+		end
+		if chars:sub(4, 4) ~= '=' then
+			bytes[#bytes + 1] = string.char(((c % 4) * 64) + d)
+		end
+	end
+	return table.concat(bytes)
 end
 
 function configapi.Presets.Remember(configName, preset)
@@ -1129,6 +1236,25 @@ end
 function configapi.Presets.Get(configName)
 	local entry = type(configName) == 'string' and configapi.Presets.Registry[configName] or nil
 	return type(entry) == 'table' and type(entry.file) == 'string' and entry or nil
+end
+
+function configapi.Presets.RememberOwner(file, receipt, result)
+	if type(file) ~= 'string' or file == '' or type(receipt) ~= 'table' then return end
+	local player = cloneref(game:GetService('Players')).LocalPlayer
+	configapi.Presets.Owners[file:lower()] = {
+		file = file,
+		token = receipt.token,
+		submissionId = receipt.id,
+		userId = player.UserId,
+		displayName = type(result) == 'table' and (result.displayName or result.name) or nil
+	}
+	pcall(writefile, configapi.Presets.OwnerPath, httpService:JSONEncode(configapi.Presets.Owners))
+end
+
+function configapi.Presets.GetOwner(file)
+	local owner = type(file) == 'string' and configapi.Presets.Owners[file:lower()] or nil
+	local player = cloneref(game:GetService('Players')).LocalPlayer
+	return type(owner) == 'table' and tonumber(owner.userId) == player.UserId and type(owner.token) == 'string' and owner or nil
 end
 
 --[[
@@ -3652,6 +3778,8 @@ function mainapi:CreateGUI()
 		addGlass(button)
 		button.BorderSizePixel = 0
 		button.AutoButtonColor = false
+		button.Active = true
+		button.Selectable = true
 		button.Text = '          Rebind GUI'
 		button.TextXAlignment = Enum.TextXAlignment.Left
 		button.TextColor3 = color.Dark(uipallet.Text, 0.16)
@@ -3782,39 +3910,55 @@ function mainapi:CreateGUI()
 		arrow.Image = getcustomasset('aetherv2/assets/new/expandright.png')
 		arrow.ImageColor3 = color.Light(uipallet.Main, 0.37)
 		arrow.Parent = button
+		local activeMarker = Instance.new('Frame')
+		activeMarker.Name = 'ActiveMarker'
+		activeMarker.Size = UDim2.fromOffset(2, 22)
+		activeMarker.Position = UDim2.fromOffset(7, 9)
+		activeMarker.BackgroundColor3 = Color3.fromHSV(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value)
+		activeMarker.BorderSizePixel = 0
+		activeMarker.Visible = false
+		activeMarker.Parent = button
+		addCorner(activeMarker, UDim.new(1, 0))
 		optionapi.Name = categorysettings.Name
 		optionapi.Icon = icon
 		optionapi.Object = button
 
-		-- Opening a category has to actually show you the window. A saved layout can put one
-		-- off the side of a smaller screen, or exactly on top of another window, and either way
-		-- the tab reads as "nothing happened" - the button lit up and the panel was nowhere on
-		-- screen. Anything that cannot be seen goes back to the slot this category was built
-		-- with.
+		-- Keep category content in one visible workspace. The old reset action stacked every
+		-- panel at one point and the old recovery only compared exact coordinates, so a panel
+		-- could be fully hidden behind the main menu yet still count as "open".
 		local function revealWindow(window)
-			local screen = mainapi.gui and mainapi.gui.AbsoluteSize / scale.Scale or Vector2.new(1920, 1080)
-			local pos = window.Position
-			local offscreen = pos.X.Offset < -40 or pos.Y.Offset < -40
-				or pos.X.Offset > screen.X - 60 or pos.Y.Offset > screen.Y - 40
-			local stacked = false
+			local screen = Vector2.new(1920, 1080)
+			pcall(function()
+				if mainapi.gui then screen = mainapi.gui.AbsoluteSize / math.max(scale.Scale, 0.01) end
+			end)
+			local size = window.AbsoluteSize / math.max(scale.Scale, 0.01)
+			if size.X < 20 then size = Vector2.new(220, math.max(window.Size.Y.Offset, 41)) end
+			local pos = Vector2.new(window.Position.X.Offset, window.Position.Y.Offset)
+			local offscreen = pos.X < 0 or pos.Y < 0 or pos.X + size.X > screen.X or pos.Y + size.Y > screen.Y
+			local covered = false
 			for _, v in mainapi.Categories do
 				local other = v.Object
-				if typeof(other) == 'Instance' and other ~= window and other.Visible
-					and other.Position == pos
-				then
-					stacked = true
+				if typeof(other) == 'Instance' and other ~= window and other.Visible then
+					local otherPos = Vector2.new(other.Position.X.Offset, other.Position.Y.Offset)
+					local otherSize = other.AbsoluteSize / math.max(scale.Scale, 0.01)
+					if pos.X < otherPos.X + otherSize.X and pos.X + size.X > otherPos.X
+						and pos.Y < otherPos.Y + otherSize.Y and pos.Y + size.Y > otherPos.Y
+					then
+						covered = true
+					end
+				end
+				if covered then
 					break
 				end
 			end
-			if not (offscreen or stacked) then return end
-			local default
-			for _, v in mainapi.Categories do
-				if v.Object == window then
-					default = v.DefaultPosition
-					break
-				end
-			end
-			window.Position = default or UDim2.fromOffset(6, 60)
+			if not (offscreen or covered) then return end
+			local menu = categoryapi.Object
+			local menuPos = menu and Vector2.new(menu.Position.X.Offset, menu.Position.Y.Offset) or Vector2.new(6, 60)
+			local menuWidth = menu and (menu.AbsoluteSize.X / math.max(scale.Scale, 0.01)) or 220
+			local x = menuPos.X + menuWidth + 10
+			if x + size.X > screen.X then x = math.max(6, screen.X - size.X - 8) end
+			local y = math.clamp(menuPos.Y, 0, math.max(0, screen.Y - math.min(size.Y, screen.Y) - 8))
+			window.Position = UDim2.fromOffset(x, y)
 		end
 
 		function optionapi:Toggle(state)
@@ -3824,20 +3968,35 @@ function mainapi:CreateGUI()
 			else
 				self.Enabled = not self.Enabled
 			end
+			if self.Enabled and categorysettings.Exclusive ~= false then
+				for _, other in mainapi.Categories do
+					if other.Button and other.Button ~= self and (other.Type == 'Category' or other.Type == 'CategoryList') then
+						other.Button:Toggle(false)
+					end
+				end
+			end
 			tween:Tween(arrow, uipallet.Tween, {
 				Position = UDim2.new(1, self.Enabled and -14 or -20, 0, 16)
 			})
 			button.TextColor3 = self.Enabled and Color3.fromHSV(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value) or color.Dark(uipallet.Text, 0.16)
+			activeMarker.BackgroundColor3 = Color3.fromHSV(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value)
+			activeMarker.Visible = self.Enabled
 			if icon then
 				icon.ImageColor3 = button.TextColor3
 			end
-			button.BackgroundColor3 = self.Enabled and color.Light(uipallet.Main, 0.02) or uipallet.Main
+			button.BackgroundColor3 = self.Enabled and color.Light(uipallet.Main, 0.055) or uipallet.Main
 			local window = categorysettings.Window
 			if typeof(window) ~= 'Instance' or not window.Parent then return end
 			if self.Enabled then
 				revealWindow(window)
 			end
 			window.Visible = self.Enabled
+			if self.Enabled and type(categorysettings.Open) == 'function' then
+				task.defer(function()
+					local ok, err = pcall(categorysettings.Open)
+					if not ok then warn('[AetherV2] category open '..tostring(categorysettings.Name)..': '..tostring(err)) end
+				end)
+			end
 		end
 
 		button.MouseEnter:Connect(function()
@@ -3854,24 +4013,28 @@ function mainapi:CreateGUI()
 				button.BackgroundColor3 = uipallet.Main
 			end
 		end)
-		-- Both signals, because neither one is reliable everywhere: Activated is what carries
-		-- touch and gamepad, and it is also the one that goes quiet on some executor-hosted
-		-- ScreenGuis, which is what left these tabs dead to a plain mouse click. A normal click
-		-- fires both, so the second one inside the same moment is dropped.
-local lastClick = 0
-
-local function clicked()
-	local now = os.clock()
-	if now - lastClick < 0.05 then
-		return
-	end
-
-	lastClick = now
-	optionapi:Toggle()
-end
-
-button.Activated:Connect(clicked)
-button.MouseButton1Click:Connect(clicked)
+		-- Activated covers touch/gamepad, MouseButton1Click covers executors that do not
+		-- forward Activated, and the hit-test fallback covers the inverse case. All three
+		-- call the same debounced handler so one real press never toggles twice.
+		local lastClick = 0
+		local function clicked()
+			local now = os.clock()
+			if now - lastClick < 0.12 then return end
+			lastClick = now
+			local ok, err = pcall(optionapi.Toggle, optionapi)
+			if not ok then warn('[AetherV2] category click '..tostring(categorysettings.Name)..': '..tostring(err)) end
+		end
+		button.Activated:Connect(clicked)
+		button.MouseButton1Click:Connect(clicked)
+		mainapi:Clean(inputService.InputBegan:Connect(function(inputObj)
+			if not clickgui.Visible then return end
+			if inputObj.UserInputType ~= Enum.UserInputType.MouseButton1 and inputObj.UserInputType ~= Enum.UserInputType.Touch then return end
+			local ok, objects = pcall(function()
+				return mainapi.gui.Parent:GetGuiObjectsAtPosition(inputObj.Position.X, inputObj.Position.Y)
+			end)
+			local top = ok and objects and objects[1]
+			if top and (top == button or top:IsDescendantOf(button)) then clicked() end
+		end))
 
 		categoryapi.Buttons[categorysettings.Name] = optionapi
 
@@ -3903,6 +4066,27 @@ button.MouseButton1Click:Connect(clicked)
 		button.Parent = bar
 		addCorner(button, UDim.new(1, 0))
 		addTooltip(button, 'Open overlays menu')
+		local homebutton = Instance.new('TextButton')
+		homebutton.Name = 'AetherV2Home'
+		homebutton.Size = UDim2.fromOffset(46, 24)
+		homebutton.Position = UDim2.new(1, -81, 0, 6)
+		homebutton.BackgroundTransparency = 1
+		homebutton.AutoButtonColor = false
+		homebutton.Text = 'Home'
+		homebutton.TextColor3 = color.Light(uipallet.Main, 0.37)
+		homebutton.TextSize = 12
+		homebutton.FontFace = uipallet.Font
+		homebutton.Parent = bar
+		addTooltip(homebutton, 'Open Aether Home')
+		homebutton.MouseEnter:Connect(function()
+			homebutton.TextColor3 = uipallet.Text
+		end)
+		homebutton.MouseLeave:Connect(function()
+			homebutton.TextColor3 = color.Light(uipallet.Main, 0.37)
+		end)
+		homebutton.MouseButton1Click:Connect(function()
+			if mainapi.OpenHome then mainapi:OpenHome() end
+		end)
 		local shadow = Instance.new('TextButton')
 		shadow.Name = 'Shadow'
 		shadow.Size = UDim2.new(1, 0, 1, -5)
@@ -5015,12 +5199,14 @@ function mainapi:CreateCategory(categorysettings)
 		local moduleapi = {
 			Enabled = false,
 			Favourited = false,
+			Favorited = false,
 			Options = {},
 			Bind = {},
 			Tags = {},
 			Index = getTableSize(mainapi.Modules),
 			ExtraText = modulesettings.ExtraText,
 			Name = modulesettings.Name,
+			DisplayName = modulesettings.DisplayName or modulesettings.Name,
 			Category = categorysettings.Name
 		}
 
@@ -5040,7 +5226,7 @@ function mainapi:CreateCategory(categorysettings)
 		addGlass(modulebutton)
 		modulebutton.BorderSizePixel = 0
 		modulebutton.AutoButtonColor = false
-		modulebutton.Text = '            '..modulesettings.Name
+		modulebutton.Text = '            '..moduleapi.DisplayName
 		modulebutton.TextXAlignment = Enum.TextXAlignment.Left
 		modulebutton.TextColor3 = color.Dark(uipallet.Text, 0.16)
 		modulebutton.TextSize = 14
@@ -5284,6 +5470,7 @@ function mainapi:CreateCategory(categorysettings)
 				return
 			end
 			self.Favourited = state
+			self.Favorited = state
 			updateFavouriteVisual(silent)
 			mainapi:SortModules()
 			-- Hand the ordered favourites list + the Favourites tab to the central
@@ -5303,6 +5490,7 @@ function mainapi:CreateCategory(categorysettings)
 				scrollToFavouriteHome(state)
 			end
 		end
+		moduleapi.SetFavorite = moduleapi.SetFavourite
 		favourite.MouseEnter:Connect(function()
 			-- tweenstwo so this doesn't cancel the star colour tween, which is
 			-- keyed on the same object in the primary tween table.
@@ -5972,6 +6160,7 @@ function mainapi:CreateCategory(categorysettings)
 			bind.Visible = #moduleapi.Bind > 0 or hovered or settingsOpen
 		end)
 		modulebutton.MouseButton1Click:Connect(function()
+			if mainapi.PushUndo then mainapi:PushUndo(moduleapi) end
 			moduleapi:Toggle()
 		end)
 		modulebutton.MouseButton2Click:Connect(function()
@@ -6105,7 +6294,10 @@ function mainapi:CreateCategory(categorysettings)
 		Name = categorysettings.Name,
 		Icon = categorysettings.Icon,
 		Size = categorysettings.Size,
-		Window = window
+		Window = window,
+		Open = function()
+			if not categoryapi.Expanded then categoryapi:Expand() end
+		end
 	})
 
 	categoryapi.Object = window
@@ -6474,9 +6666,6 @@ function mainapi:CreateCategoryList(categorysettings)
 	-- the config's keybind and accent on the spot. Nothing here asks for a rejoin or a
 	-- reinject, and the menu stays open behind the window.
 	if categorysettings.Profiles then
-		local repoBase = configapi.Presets.Base
-		local repoURL = configapi.Presets.URL
-
 		local downloadbtn = Instance.new('ImageButton')
 		downloadbtn.Name = 'PresetDownload'
 		downloadbtn.Size = UDim2.fromOffset(16, 16)
@@ -6492,8 +6681,8 @@ function mainapi:CreateCategoryList(categorysettings)
 
 		local dl = Instance.new('Frame')
 		dl.Name = 'PresetDownloader'
-		dl.Size = UDim2.fromOffset(376, 352)
-		dl.Position = UDim2.new(0.5, -188, 0.5, -176)
+		dl.Size = UDim2.fromOffset(520, 430)
+		dl.Position = UDim2.new(0.5, -260, 0.5, -215)
 		dl.BackgroundColor3 = uipallet.Main
 		dl.Visible = false
 		dl.Parent = scaledgui
@@ -6510,7 +6699,7 @@ function mainapi:CreateCategoryList(categorysettings)
 		dltitle.Size = UDim2.new(1, -20, 0, 20)
 		dltitle.Position = UDim2.fromOffset(16, 12)
 		dltitle.BackgroundTransparency = 1
-		dltitle.Text = 'Repo Configs'
+		dltitle.Text = 'Public Configs'
 		dltitle.TextXAlignment = Enum.TextXAlignment.Left
 		dltitle.TextColor3 = uipallet.Text
 		dltitle.TextSize = 14
@@ -6529,7 +6718,7 @@ function mainapi:CreateCategoryList(categorysettings)
 		-- Live search over the preset list.
 		local dlsearchbkg = Instance.new('Frame')
 		dlsearchbkg.Name = 'SearchBkg'
-		dlsearchbkg.Size = UDim2.new(1, -20, 0, 26)
+		dlsearchbkg.Size = UDim2.fromOffset(280, 26)
 		dlsearchbkg.Position = UDim2.fromOffset(10, 52)
 		dlsearchbkg.BackgroundColor3 = color.Light(uipallet.Main, 0.03)
 		dlsearchbkg.BorderSizePixel = 0
@@ -6553,7 +6742,7 @@ function mainapi:CreateCategoryList(categorysettings)
 		local dlstatus = Instance.new('TextLabel')
 		dlstatus.Name = 'Status'
 		dlstatus.Size = UDim2.new(1, -20, 0, 30)
-		dlstatus.Position = UDim2.fromOffset(10, 88)
+		dlstatus.Position = UDim2.fromOffset(10, 86)
 		dlstatus.BackgroundTransparency = 1
 		dlstatus.Text = ''
 		dlstatus.TextColor3 = color.Dark(uipallet.Text, 0.35)
@@ -6562,8 +6751,8 @@ function mainapi:CreateCategoryList(categorysettings)
 		dlstatus.Parent = dl
 		local dllist = Instance.new('ScrollingFrame')
 		dllist.Name = 'List'
-		dllist.Size = UDim2.new(1, -20, 1, -98)
-		dllist.Position = UDim2.fromOffset(10, 88)
+		dllist.Size = UDim2.new(1, -20, 1, -136)
+		dllist.Position = UDim2.fromOffset(10, 86)
 		dllist.BackgroundTransparency = 1
 		dllist.BorderSizePixel = 0
 		dllist.ScrollBarThickness = 2
@@ -6579,6 +6768,499 @@ function mainapi:CreateCategoryList(categorysettings)
 		end)
 		table.insert(mainapi.Windows, dl)
 
+		-- Submission and rating writes require the Worker: Roblox clients never receive
+		-- repository credentials. A custom deployment can still be selected with
+		-- getgenv().AetherConfigBackend or profiles/configbackend.txt.
+		local requestFunction = request or http_request or (syn and syn.request)
+		local function backendURL()
+			return configapi.Presets.Backend()
+		end
+		local function backendRequest(method, route, body, admin)
+			local base = backendURL()
+			if base == '' or not requestFunction then return false, 'A config backend has not been configured.' end
+			local headers = {['Content-Type'] = 'application/json'}
+			if admin then
+				local key = isfile('aetherv2/profiles/configadminkey.txt') and readfile('aetherv2/profiles/configadminkey.txt') or ''
+				if key == '' then return false, 'The maintainer key is missing.' end
+				headers.Authorization = 'Bearer '..key
+			end
+			local ok, response = pcall(requestFunction, {
+				Url = base..route,
+				Method = method,
+				Headers = headers,
+				Body = body and httpService:JSONEncode(body) or nil
+			})
+			if not ok or type(response) ~= 'table' then return false, 'The config backend could not be reached.' end
+			local status = tonumber(response.StatusCode or response.Status) or 0
+			local decoded = response.Body and select(2, pcall(httpService.JSONDecode, httpService, response.Body))
+			local successful = status >= 200 and status < 300 and not (type(decoded) == 'table' and decoded.success == false)
+			return successful, decoded or response.Body or ('HTTP '..status)
+		end
+
+		-- Submission and the admin queue stay in the footer. Sorting and refresh are
+		-- compact controls beside Search, leaving the catalogue itself uncluttered.
+		local footer = Instance.new('Frame')
+		footer.Name = 'Footer'
+		footer.Size, footer.Position, footer.BackgroundTransparency, footer.Parent = UDim2.new(1, -20, 0, 32), UDim2.new(0, 10, 1, -38), 1, dl
+		local function submissionButton(name, text, position, width, parent)
+			local button = Instance.new('TextButton')
+			button.Name, button.Size, button.Position = name, UDim2.fromOffset(width, 28), position
+			button.BackgroundColor3 = color.Light(uipallet.Main, 0.05)
+			button.Text, button.TextColor3, button.TextSize, button.FontFace = text, uipallet.Text, 12, uipallet.Font
+			button.AutoButtonColor = true
+			button.Parent = parent or footer
+			addCorner(button, UDim.new(0, 5))
+			return button
+		end
+		local submitConfig = submissionButton('Submit', 'Submit config', UDim2.fromOffset(0, 2), 110)
+		local review = submissionButton('Review', 'Review queue', UDim2.new(1, -110, 0, 2), 110)
+		local sortModes = {
+			{Key = 'trending', Label = 'Trending'},
+			{Key = 'most-downloaded', Label = 'Most Downloaded'},
+			{Key = 'highest-rated', Label = 'Highest Rated'},
+			{Key = 'newest', Label = 'Newest'},
+			{Key = 'recently-updated', Label = 'Recently Updated'}
+		}
+		local sortIndex = 1
+		local sortButton = submissionButton('Sort', 'Sort: '..sortModes[sortIndex].Label, UDim2.fromOffset(298, 52), 176, dl)
+		local refreshButton = submissionButton('Refresh', '↻', UDim2.fromOffset(480, 52), 30, dl)
+		-- The queue button is part of the existing repo-config window, but only the
+		-- repository owner should see it. The backend key remains the actual security
+		-- boundary; this check merely avoids presenting a dead admin control to users.
+		local localPlayer = cloneref(game:GetService('Players')).LocalPlayer
+		review.Visible = localPlayer.Name:lower() == 'plutoxqqqqq'
+		addTooltip(submitConfig, 'Submits the active config for in-game review')
+		addTooltip(review, 'Lists the configs waiting on a maintainer decision')
+		local function responseMessage(response, fallback)
+			if type(response) == 'table' then
+				return tostring(response.error or (type(response.details) == 'string' and response.details) or fallback)
+			end
+			return type(response) == 'string' and response or fallback
+		end
+		local refresh
+		sortButton.MouseButton1Click:Connect(function()
+			sortIndex = sortIndex % #sortModes + 1
+			sortButton.Text = 'Sort: '..sortModes[sortIndex].Label
+			if refresh then refresh() end
+		end)
+		addTooltip(sortButton, 'Choose how D1 ranks the Public Config catalogue')
+
+		local function submitActiveConfig(details, updatePreset)
+			local path = mainapi.Profile and getConfigPath(mainapi.Profile)
+			if not path or not isfile(path) then
+				mainapi:CreateNotification('Configs', 'Save a config before submitting it.', 7, 'alert')
+				return false
+			end
+			local player = localPlayer
+			local config = select(2, pcall(httpService.JSONDecode, httpService, readfile(path)))
+			if type(config) ~= 'table' then
+				mainapi:CreateNotification('Configs', 'The active config JSON is invalid.', 7, 'alert')
+				return false
+			end
+			local guiData
+			local guiPath = 'aetherv2/profiles/'..game.GameId..'.gui.txt'
+			if isfile(guiPath) then guiData = select(2, pcall(httpService.JSONDecode, httpService, readfile(guiPath))) end
+			local owner = updatePreset and configapi.Presets.GetOwner(tostring(updatePreset.file))
+			if updatePreset and not owner then
+				mainapi:CreateNotification('Configs', 'The original submission receipt is not available on this install.', 8, 'alert')
+				return false
+			end
+			local route = updatePreset
+				and ('/public-configs/'..httpService:UrlEncode(tostring(updatePreset.file))..'/updates')
+				or '/submissions'
+			local payload = {
+				name = mainapi.Profile,
+				submitter = player.Name,
+				userId = player.UserId,
+				ownerToken = owner and owner.token or nil,
+				changelog = updatePreset and details.changelog or nil,
+				game = tostring(mainapi.Place),
+				gameVersion = tostring(game.PlaceVersion),
+				minimumVersion = tostring(mainapi.Version),
+				forkOf = not updatePreset and details.forkOf or nil,
+				config = config,
+				gui = guiData
+			}
+			if not updatePreset or details.editDetails then
+				payload.displayName = details.displayName
+				payload.creator = details.creator
+				payload.description = details.description
+				payload.tags = details.tags
+				payload.category = details.category
+				payload.screenshots = details.screenshots
+			end
+			local ok, response = backendRequest('POST', route, payload)
+			local successMessage = updatePreset and ('Update submitted for v'..tostring(type(response) == 'table' and response.targetVersion or '?')..' review.') or 'Config submitted for review.'
+			mainapi:CreateNotification('Configs', ok and successMessage or responseMessage(response, 'Config submission failed.'), 8, ok and 'info' or 'alert')
+			if ok and type(response) == 'table' and response.id then
+				local receiptPath = profileFolder..'/configsubmissions.json'
+				local receipts = isfile(receiptPath) and loadJson(receiptPath) or {}
+				table.insert(receipts, {
+					id = response.id,
+					token = response.token,
+					submissionType = response.submissionType,
+					file = response.file
+				})
+				pcall(writefile, receiptPath, httpService:JSONEncode(receipts))
+			end
+			return ok
+		end
+
+		-- The full form is used for new submissions and the optional Edit details path
+		-- on updates. Tags are fixed chips, with contradictory choices made mutually
+		-- exclusive in the client and independently checked by the Worker.
+		local submitWindow = Instance.new('Frame')
+		submitWindow.Name, submitWindow.Size, submitWindow.Position = 'SubmitConfig', UDim2.fromOffset(430, 368), UDim2.new(0.5, -215, 0.5, -184)
+		submitWindow.BackgroundColor3, submitWindow.Visible, submitWindow.Parent = uipallet.Main, false, scaledgui
+		addBlur(submitWindow); addCorner(submitWindow); addWindowStroke(submitWindow); makeDraggable(submitWindow)
+		local submitTitle = Instance.new('TextLabel')
+		submitTitle.Size, submitTitle.Position, submitTitle.BackgroundTransparency = UDim2.new(1, -50, 0, 38), UDim2.fromOffset(14, 0), 1
+		submitTitle.Text, submitTitle.TextColor3, submitTitle.TextSize, submitTitle.FontFace = 'Submit current config', uipallet.Text, 14, uipallet.FontSemiBold
+		submitTitle.TextXAlignment, submitTitle.Parent = Enum.TextXAlignment.Left, submitWindow
+		addCloseButton(submitWindow).MouseButton1Click:Connect(function() submitWindow.Visible = false end)
+		local fields = {}
+		local function submitField(key, placeholder, y, height, limit)
+			local box = Instance.new('TextBox')
+			box.Name, box.Size, box.Position = key, UDim2.new(1, -28, 0, height), UDim2.fromOffset(14, y)
+			box.BackgroundColor3, box.TextColor3, box.PlaceholderColor3 = color.Light(uipallet.Main, 0.04), uipallet.Text, color.Dark(uipallet.Text, 0.35)
+			box.PlaceholderText, box.Text, box.TextSize, box.FontFace = placeholder, '', 12, uipallet.Font
+			box.ClearTextOnFocus, box.MultiLine, box.TextWrapped, box.Parent = false, height > 34, height > 34, submitWindow
+			pcall(function() box.MaxVisibleGraphemes = limit end)
+			addCorner(box); fields[key] = box
+		end
+		submitField('displayName', 'Display name shown publicly (50 characters)', 44, 34, 50)
+		submitField('creator', 'Creator / credit', 84, 34, 50)
+		submitField('description', 'Description shown after acceptance (300 characters)', 124, 58, 300)
+		submitField('screenshot', 'Screenshot URL (optional, HTTPS)', 324, 34, 300)
+		submitField('changelog', 'What changed in this version? (300 characters)', 364, 58, 300)
+		local tagLabel = Instance.new('TextLabel')
+		tagLabel.Size, tagLabel.Position, tagLabel.BackgroundTransparency = UDim2.new(1, -28, 0, 20), UDim2.fromOffset(14, 188), 1
+		tagLabel.Text, tagLabel.TextColor3, tagLabel.TextSize, tagLabel.FontFace = 'Built-in tags  •  one choice per group', color.Dark(uipallet.Text, 0.25), 11, uipallet.Font
+		tagLabel.TextXAlignment, tagLabel.Parent = Enum.TextXAlignment.Left, submitWindow
+		local builtInTags = {'Closet', 'Semi-Closet', 'Blatant', 'Ranked', 'Casual', 'Low Ping', 'Medium Ping', 'High Ping', 'Mobile'}
+		local tagGroups = {
+			Closet = 'style', ['Semi-Closet'] = 'style', Blatant = 'style',
+			Ranked = 'mode', Casual = 'mode',
+			['Low Ping'] = 'ping', ['Medium Ping'] = 'ping', ['High Ping'] = 'ping',
+			Mobile = 'device'
+		}
+		local tagPositions = {
+			Closet = {14, 212, 92}, ['Semi-Closet'] = {112, 212, 112}, Blatant = {230, 212, 92},
+			Ranked = {14, 246, 92}, Casual = {112, 246, 92}, Mobile = {210, 246, 92},
+			['Low Ping'] = {14, 280, 100}, ['Medium Ping'] = {120, 280, 116}, ['High Ping'] = {242, 280, 100}
+		}
+		local selectedTagMap, tagButtons = {}, {}
+		local function paintTag(tag)
+			local button = tagButtons[tag]
+			if not button then return end
+			button.BackgroundColor3 = selectedTagMap[tag]
+				and Color3.fromHSV(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value)
+				or color.Light(uipallet.Main, 0.04)
+			button.TextColor3 = selectedTagMap[tag]
+				and mainapi:TextColor(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value)
+				or uipallet.Text
+		end
+		for _, tag in builtInTags do
+			local position = tagPositions[tag]
+			local button = submissionButton('Tag'..tag:gsub('%s+', ''), tag, UDim2.fromOffset(position[1], position[2]), position[3], submitWindow)
+			tagButtons[tag] = button
+			button.MouseButton1Click:Connect(function()
+				local selecting = not selectedTagMap[tag]
+				if selecting then
+					for selected in selectedTagMap do
+						if tagGroups[selected] == tagGroups[tag] then selectedTagMap[selected] = nil; paintTag(selected) end
+					end
+				end
+				selectedTagMap[tag] = selecting or nil
+				paintTag(tag)
+			end)
+		end
+		local function setSelectedTags(tags)
+			table.clear(selectedTagMap)
+			for _, rawTag in tags or {} do
+				for _, builtIn in builtInTags do
+					if tostring(rawTag):lower() == builtIn:lower() then selectedTagMap[builtIn] = true break end
+				end
+			end
+			for _, tag in builtInTags do paintTag(tag) end
+		end
+		local function selectedTags()
+			local result = {}
+			for _, tag in builtInTags do if selectedTagMap[tag] then table.insert(result, tag) end end
+			return result
+		end
+		local confirmSubmit = submissionButton('Confirm', 'Send for review', UDim2.new(1, -144, 0, 364), 130, submitWindow)
+		local submitModePreset
+		local submitForkOf
+		local function trimmed(text)
+			return tostring(text or ''):match('^%s*(.-)%s*$')
+		end
+		local function validLength(text, maximum)
+			local success, length = pcall(utf8.len, text)
+			return (success and length or #text) <= maximum
+		end
+		confirmSubmit.MouseButton1Click:Connect(function()
+			local tags = selectedTags()
+			local displayName, creator = trimmed(fields.displayName.Text), trimmed(fields.creator.Text)
+			local description, changelog = trimmed(fields.description.Text), trimmed(fields.changelog.Text)
+			local screenshot = trimmed(fields.screenshot.Text)
+			if displayName == '' or creator == '' or description == '' or #tags == 0 then
+				mainapi:CreateNotification('Configs', 'Display name, creator, description, and at least one tag are required.', 7, 'alert')
+				return
+			end
+			if displayName:find('[<>%c]') or creator:find('[<>%c]') or description:find('[<>%c]') or (submitModePreset and changelog:find('[<>%c]')) then
+				mainapi:CreateNotification('Configs', 'Public text cannot contain markup or control characters.', 7, 'alert')
+				return
+			end
+			if not validLength(displayName, 50) or not validLength(creator, 50) or not validLength(description, 300) or not validLength(changelog, 300) or not validLength(screenshot, 300) then
+				mainapi:CreateNotification('Configs', 'Display names are limited to 50 characters; descriptions and changelogs to 300.', 8, 'alert')
+				return
+			end
+			if screenshot ~= '' and not screenshot:match('^https://') then
+				mainapi:CreateNotification('Configs', 'Screenshot URLs must use HTTPS.', 7, 'alert')
+				return
+			end
+			if submitModePreset and changelog == '' then
+				mainapi:CreateNotification('Configs', 'Describe what changed before submitting an update.', 7, 'alert')
+				return
+			end
+			if submitActiveConfig({
+				displayName = displayName,
+				creator = creator,
+				description = description,
+				changelog = changelog,
+				screenshots = screenshot ~= '' and {screenshot} or {},
+				tags = tags,
+				category = selectedTagMap.Closet and 'Closet' or selectedTagMap['Semi-Closet'] and 'Semi-Closet' or selectedTagMap.Blatant and 'Blatant' or nil,
+				editDetails = true,
+				forkOf = submitForkOf
+			}, submitModePreset) then submitWindow.Visible = false end
+		end)
+		table.insert(mainapi.Windows, submitWindow)
+		local function openSubmitWindow(preset, existingChangelog, forkOf)
+			submitModePreset = preset
+			submitForkOf = forkOf
+			submitTitle.Text = preset and ('Edit '..tostring(preset.name)..' update') or forkOf and 'Publish config fork' or 'Submit current config'
+			fields.displayName.Text = preset and tostring(preset.name or mainapi.Profile) or tostring(mainapi.Profile or '')
+			fields.creator.Text = preset and tostring(preset.credits or localPlayer.Name) or localPlayer.Name
+			fields.description.Text = preset and tostring(preset.description or '') or ''
+			fields.screenshot.Text = preset and type(preset.screenshots) == 'table' and tostring(preset.screenshots[1] or '') or ''
+			fields.changelog.Text = tostring(existingChangelog or '')
+			fields.changelog.Visible = preset ~= nil
+			setSelectedTags(preset and preset.tags or {})
+			local actionY = preset and 428 or 364
+			confirmSubmit.Position = UDim2.new(1, -144, 0, actionY)
+			confirmSubmit.Text = preset and 'Save & submit' or 'Send for review'
+			submitWindow.Size = UDim2.fromOffset(430, preset and 472 or 408)
+			submitWindow.Position = UDim2.new(0.5, -215, 0.5, preset and -236 or -204)
+			submitWindow.Visible = true
+		end
+		submitConfig.MouseButton1Click:Connect(function() openSubmitWindow(nil, nil, nil) end)
+
+		-- Owner updates are deliberately short: current local profile + changelog.
+		-- Public metadata is preserved unless Edit details opens the full form above.
+		local updateWindow = Instance.new('Frame')
+		updateWindow.Name, updateWindow.Size, updateWindow.Position = 'UpdateConfig', UDim2.fromOffset(410, 246), UDim2.new(0.5, -205, 0.5, -123)
+		updateWindow.BackgroundColor3, updateWindow.Visible, updateWindow.Parent = uipallet.Main, false, scaledgui
+		addBlur(updateWindow); addCorner(updateWindow); addWindowStroke(updateWindow); makeDraggable(updateWindow)
+		local updateTitle = Instance.new('TextLabel')
+		updateTitle.Size, updateTitle.Position, updateTitle.BackgroundTransparency = UDim2.new(1, -50, 0, 36), UDim2.fromOffset(14, 0), 1
+		updateTitle.Text, updateTitle.TextColor3, updateTitle.TextSize, updateTitle.FontFace = 'Update config', uipallet.Text, 14, uipallet.FontSemiBold
+		updateTitle.TextXAlignment, updateTitle.Parent = Enum.TextXAlignment.Left, updateWindow
+		addCloseButton(updateWindow).MouseButton1Click:Connect(function() updateWindow.Visible = false end)
+		local updateSummary = updateTitle:Clone()
+		updateSummary.Size, updateSummary.Position = UDim2.new(1, -28, 0, 54), UDim2.fromOffset(14, 38)
+		updateSummary.TextColor3, updateSummary.TextSize, updateSummary.FontFace = color.Dark(uipallet.Text, 0.2), 11, uipallet.Font
+		updateSummary.TextWrapped, updateSummary.TextYAlignment, updateSummary.Parent = true, Enum.TextYAlignment.Top, updateWindow
+		local updateChangelog = Instance.new('TextBox')
+		updateChangelog.Size, updateChangelog.Position = UDim2.new(1, -28, 0, 76), UDim2.fromOffset(14, 94)
+		updateChangelog.BackgroundColor3, updateChangelog.TextColor3, updateChangelog.PlaceholderColor3 = color.Light(uipallet.Main, 0.04), uipallet.Text, color.Dark(uipallet.Text, 0.35)
+		updateChangelog.Text, updateChangelog.PlaceholderText = '', 'What changed? Required for moderation (300 characters)'
+		updateChangelog.TextSize, updateChangelog.FontFace, updateChangelog.MultiLine, updateChangelog.TextWrapped = 12, uipallet.Font, true, true
+		updateChangelog.ClearTextOnFocus, updateChangelog.Parent = false, updateWindow
+		pcall(function() updateChangelog.MaxVisibleGraphemes = 300 end)
+		addCorner(updateChangelog)
+		local editUpdate = submissionButton('EditDetails', 'Edit details', UDim2.fromOffset(14, 190), 110, updateWindow)
+		local confirmUpdate = submissionButton('ConfirmUpdate', 'Send update', UDim2.new(1, -144, 0, 190), 130, updateWindow)
+		local updateModePreset
+		local function openUpdateWindow(preset)
+			if not configapi.Presets.GetOwner(tostring(preset.file)) then
+				mainapi:CreateNotification('Configs', 'The original submission receipt is not available on this install.', 8, 'alert')
+				return
+			end
+			if not mainapi.Profile or not isfile(getConfigPath(mainapi.Profile)) then
+				mainapi:CreateNotification('Configs', 'Save the active config before updating.', 7, 'alert')
+				return
+			end
+			updateModePreset = preset
+			updateTitle.Text = 'Update '..tostring(preset.name)
+			updateSummary.Text = 'Active profile: '..tostring(mainapi.Profile)..'\nPublishes as '..tostring(preset.name)..' v'..tostring((tonumber(preset.version) or 1) + 1)..' only after approval.'
+			updateChangelog.Text = ''
+			updateWindow.Visible = true
+		end
+		local function validateUpdateChangelog()
+			local changelog = trimmed(updateChangelog.Text)
+			if changelog == '' then mainapi:CreateNotification('Configs', 'Describe what changed before submitting an update.', 7, 'alert'); return nil end
+			if changelog:find('[<>%c]') or not validLength(changelog, 300) then mainapi:CreateNotification('Configs', 'The changelog must be plain text and 300 characters or fewer.', 7, 'alert'); return nil end
+			return changelog
+		end
+		editUpdate.MouseButton1Click:Connect(function()
+			local changelog = validateUpdateChangelog()
+			if not changelog or not updateModePreset then return end
+			updateWindow.Visible = false
+			openSubmitWindow(updateModePreset, changelog)
+		end)
+		confirmUpdate.MouseButton1Click:Connect(function()
+			local changelog = validateUpdateChangelog()
+			if not changelog or not updateModePreset then return end
+			if submitActiveConfig({changelog = changelog}, updateModePreset) then updateWindow.Visible = false end
+		end)
+		table.insert(mainapi.Windows, updateWindow)
+
+		-- Queue completed reviews until the menu opens
+		local reviewCards = {}
+		local activeReviewCard
+		local function showNextReviewCard()
+			if activeReviewCard then
+				activeReviewCard.Visible = clickgui.Visible
+				return
+			end
+			if not clickgui.Visible or #reviewCards == 0 then return end
+			activeReviewCard = table.remove(reviewCards, 1)
+			activeReviewCard.Visible = true
+		end
+		local function createReviewResultCard(result)
+			local accepted = result.status == 'accepted'
+			local accent = accepted and Color3.fromRGB(70, 190, 112) or Color3.fromRGB(224, 79, 84)
+			local card = Instance.new('Frame')
+			card.Name = 'ConfigReviewResult'
+			card.Size = UDim2.fromOffset(430, accepted and 230 or 278)
+			card.Position = UDim2.new(0.5, -215, 0.5, accepted and -115 or -139)
+			card.BackgroundColor3, card.Visible, card.Parent = uipallet.Main, false, scaledgui
+			addBlur(card); addCorner(card); addWindowStroke(card); makeDraggable(card)
+			local modal = Instance.new('TextButton')
+			modal.BackgroundTransparency, modal.Text, modal.Modal, modal.Parent = 1, '', true, card
+			local bar = Instance.new('Frame')
+			bar.Name, bar.Size, bar.BorderSizePixel, bar.BackgroundColor3, bar.Parent = 'StatusBar', UDim2.new(1, 0, 0, 4), 0, accent, card
+			local icon = Instance.new('TextLabel')
+			icon.Name, icon.Size, icon.Position = 'StatusIcon', UDim2.fromOffset(42, 42), UDim2.fromOffset(22, 28)
+			icon.BackgroundColor3, icon.BackgroundTransparency, icon.Text = accent, 0.86, accepted and '✓' or '!'
+			icon.TextColor3, icon.TextSize, icon.FontFace, icon.Parent = accent, 22, uipallet.FontSemiBold, card
+			addCorner(icon, UDim.new(1, 0))
+			local heading = Instance.new('TextLabel')
+			heading.Size, heading.Position, heading.BackgroundTransparency = UDim2.new(1, -100, 0, 24), UDim2.fromOffset(78, 26), 1
+			heading.Text = accepted and 'Config accepted' or 'Config rejected'
+			heading.TextColor3, heading.TextSize, heading.FontFace = uipallet.Text, 17, uipallet.FontSemiBold
+			heading.TextXAlignment, heading.Parent = Enum.TextXAlignment.Left, card
+			local name = tostring(result.name or 'Unnamed config')
+			local rejectionReason = type(result.reason) == 'string' and result.reason:match('^%s*(.-)%s*$') or ''
+			local message = accepted
+				and ('Congrats! Your config '..name..' has been accepted.\n\nYou can view and download it in the Public Configs window.')
+				or ('Your config '..name..' has been rejected.'..(rejectionReason ~= '' and ('\n\nReason: '..rejectionReason) or '')..'\n\nYou can revise it and submit another request.')
+			local body = Instance.new('TextLabel')
+			body.Size, body.Position, body.BackgroundTransparency = UDim2.new(1, -44, 0, accepted and 90 or 138), UDim2.fromOffset(22, 84), 1
+			body.Text, body.TextColor3, body.TextSize, body.FontFace = message, color.Dark(uipallet.Text, 0.12), 13, uipallet.Font
+			body.TextXAlignment, body.TextYAlignment, body.TextWrapped, body.Parent = Enum.TextXAlignment.Left, Enum.TextYAlignment.Top, true, card
+			local close = Instance.new('TextButton')
+			close.Size, close.Position = UDim2.fromOffset(92, 30), UDim2.new(1, -114, 1, -44)
+			close.BackgroundColor3, close.Text = color.Light(uipallet.Main, 0.06), 'Got it'
+			close.TextColor3, close.TextSize, close.FontFace, close.Parent = uipallet.Text, 12, uipallet.FontSemiBold, card
+			addCorner(close, UDim.new(0, 5))
+			local function dismiss()
+				card.Visible = false
+				activeReviewCard = nil
+				showNextReviewCard()
+			end
+			close.MouseButton1Click:Connect(dismiss)
+			addCloseButton(card).MouseButton1Click:Connect(dismiss)
+			table.insert(mainapi.Windows, card)
+			table.insert(reviewCards, card)
+			showNextReviewCard()
+		end
+		mainapi:Clean(clickgui:GetPropertyChangedSignal('Visible'):Connect(showNextReviewCard))
+
+		-- Poll each private receipt until moderation completes. Accepted v1 receipts are
+		-- retained separately as proof that only the original submitter may create v2+.
+		task.spawn(function()
+			local receiptPath = profileFolder..'/configsubmissions.json'
+			if not isfile(receiptPath) then return end
+			local receipts, pending = loadJson(receiptPath) or {}, {}
+			for _, receipt in receipts do
+				local ok, result = backendRequest('GET', '/submissions/'..httpService:UrlEncode(tostring(receipt.id))..'?token='..httpService:UrlEncode(tostring(receipt.token)))
+				if ok and type(result) == 'table' and result.status ~= 'pending' then
+					if result.status == 'accepted' and result.submissionType == 'new' and result.publishedFile then
+						configapi.Presets.RememberOwner(tostring(result.publishedFile), receipt, result)
+					end
+					createReviewResultCard(result)
+				else table.insert(pending, receipt) end
+			end
+			pcall(writefile, receiptPath, httpService:JSONEncode(pending))
+		end)
+
+		local reviewWindow = Instance.new('Frame')
+		reviewWindow.Name, reviewWindow.Size, reviewWindow.Position = 'ConfigReview', UDim2.fromOffset(440, 350), UDim2.new(0.5, -220, 0.5, -175)
+		reviewWindow.BackgroundColor3, reviewWindow.Visible, reviewWindow.Parent = uipallet.Main, false, scaledgui
+		addBlur(reviewWindow); addCorner(reviewWindow); addWindowStroke(reviewWindow); makeDraggable(reviewWindow)
+		local reviewTitle = Instance.new('TextLabel')
+		reviewTitle.Size, reviewTitle.Position, reviewTitle.BackgroundTransparency = UDim2.new(1, -50, 0, 40), UDim2.fromOffset(14, 0), 1
+		reviewTitle.Text, reviewTitle.TextColor3, reviewTitle.TextSize, reviewTitle.FontFace = 'Pending Configs', uipallet.Text, 14, uipallet.FontSemiBold
+		reviewTitle.TextXAlignment, reviewTitle.Parent = Enum.TextXAlignment.Left, reviewWindow
+		local reviewClose = addCloseButton(reviewWindow)
+		reviewClose.MouseButton1Click:Connect(function() reviewWindow.Visible = false end)
+		local reviewList = Instance.new('ScrollingFrame')
+		reviewList.Size, reviewList.Position = UDim2.new(1, -20, 1, -52), UDim2.fromOffset(10, 44)
+		reviewList.BackgroundTransparency, reviewList.ScrollBarThickness, reviewList.CanvasSize, reviewList.Parent = 1, 2, UDim2.new(), reviewWindow
+		local reviewLayout = Instance.new('UIListLayout')
+		reviewLayout.Padding, reviewLayout.Parent = UDim.new(0, 6), reviewList
+		reviewLayout:GetPropertyChangedSignal('AbsoluteContentSize'):Connect(function() reviewList.CanvasSize = UDim2.fromOffset(0, reviewLayout.AbsoluteContentSize.Y / scale.Scale) end)
+		table.insert(mainapi.Windows, reviewWindow)
+		local function refreshReviews()
+			for _, child in reviewList:GetChildren() do if child:IsA('Frame') then child:Destroy() end end
+			local ok, response = backendRequest('GET', '/submissions?status=pending', nil, true)
+			if not ok then mainapi:CreateNotification('Configs', responseMessage(response, 'Could not load the review queue.'), 8, 'alert'); return end
+			local submissions = type(response) == 'table' and (response.submissions or response) or {}
+			for _, submission in submissions do
+				local row = Instance.new('Frame')
+				row.Size, row.BackgroundColor3, row.Parent = UDim2.new(1, 0, 0, 82), color.Light(uipallet.Main, 0.02), reviewList
+				addCorner(row)
+				if submission.description then
+					addTooltip(row, tostring(submission.description)..(submission.changelog and ('\n\nChangelog: '..tostring(submission.changelog)) or ''), 360)
+				end
+				local label = Instance.new('TextLabel')
+				label.Size, label.Position, label.BackgroundTransparency = UDim2.new(1, -230, 0, 36), UDim2.fromOffset(10, 0), 1
+				label.Text, label.TextColor3, label.TextSize, label.FontFace = tostring(submission.displayName or submission.name or 'Config')..' '..(submission.targetVersion and ('v'..tostring(submission.targetVersion)..' ') or '')..'— '..tostring(submission.submitter or '?'), uipallet.Text, 12, uipallet.Font
+				label.TextXAlignment, label.Parent = Enum.TextXAlignment.Left, row
+				local reason = Instance.new('TextBox')
+				reason.Size, reason.Position = UDim2.new(1, -20, 0, 30), UDim2.fromOffset(10, 42)
+				reason.BackgroundColor3, reason.TextColor3, reason.PlaceholderColor3 = color.Light(uipallet.Main, 0.04), uipallet.Text, color.Dark(uipallet.Text, 0.35)
+				reason.Text, reason.PlaceholderText, reason.TextSize, reason.FontFace = '', 'Rejection reason (shown to the submitter)', 11, uipallet.Font
+				reason.ClearTextOnFocus, reason.Parent = false, row
+				addCorner(reason)
+				local download = submissionButton('Download', 'Download', UDim2.new(1, -146, 0, 4), 58, row)
+				download.AnchorPoint = Vector2.new(1, 0)
+				download.MouseButton1Click:Connect(function()
+					local success, result = importJsonConfig(httpService:JSONEncode(submission), tostring(submission.name or submission.id or 'submission'))
+					if success then refreshConfigProfiles(); categoryapi:ChangeValue() end
+					mainapi:CreateNotification('Configs', success and ('Installed '..tostring(result)..' for local review.') or tostring(result), 7, success and 'info' or 'alert')
+				end)
+				local function decide(action, x, text)
+					local button = submissionButton(action, text, UDim2.new(1, x, 0, 4), 62, row)
+					button.AnchorPoint = Vector2.new(1, 0)
+					button.MouseButton1Click:Connect(function()
+						local success, result = backendRequest('PATCH', '/submissions/'..httpService:UrlEncode(tostring(submission.id)), {
+							action = action,
+							reason = action == 'reject' and reason.Text or nil
+						}, true)
+						local successText = action == 'accept' and 'Config accepted successfully.' or 'Config rejected successfully.'
+						mainapi:CreateNotification('Configs', success and successText or responseMessage(result, 'Moderation action failed.'), 7, success and 'info' or 'alert')
+						if success then refreshReviews(); if action == 'accept' and refresh then refresh() end end
+					end)
+				end
+				decide('accept', -76, 'Accept'); decide('reject', -8, 'Reject')
+			end
+		end
+		review.MouseButton1Click:Connect(function() reviewWindow.Visible = true; refreshReviews() end)
+
 		-- Repaints the Load button of every row so exactly one of them reads Active.
 		local refreshRows
 		local downloading = {}
@@ -6592,7 +7274,7 @@ function mainapi:CreateCategoryList(categorysettings)
 			dlstatus.Visible = true
 			task.spawn(function()
 				local ok, res = pcall(function()
-					return game:HttpGet(repoURL(preset.file), true)
+					return configapi.Presets.Fetch(preset.file)
 				end)
 				if not ok or not res or res == '404: Not Found' then
 					downloading[preset.file] = nil
@@ -6617,18 +7299,247 @@ function mainapi:CreateCategoryList(categorysettings)
 			end)
 		end
 
-		local function info(preset)
-			local tags = (preset.tags and #preset.tags > 0) and table.concat(preset.tags, ', ') or 'none'
-			mainapi:CreateNotification(tostring(preset.name), 'By '..tostring(preset.credits or '?')..'\nTags: '..tags..(preset.description and ('\n'..preset.description) or ''), 9, 'info')
+		local months = {'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'}
+		local function formatDate(value)
+			local year, month, day = tostring(value or ''):match('^(%d%d%d%d)%-(%d%d)%-(%d%d)')
+			return year and (day..' '..(months[tonumber(month)] or month)..' '..year) or 'date unknown'
 		end
+		local function compactCount(value)
+			local number = math.max(0, tonumber(value) or 0)
+			local function rounded(divisor, suffix)
+				return string.format('%.1f', number / divisor):gsub('%.0$', '')..suffix
+			end
+			if number >= 1000000 then return rounded(1000000, 'm') end
+			if number >= 1000 then return rounded(1000, 'k') end
+			return tostring(math.floor(number))
+		end
+
+		-- Secondary actions live in one reusable details panel. Rows only expose the
+		-- primary Download action and the owner-only Update action.
+		local detailsWindow = Instance.new('Frame')
+		detailsWindow.Name, detailsWindow.Size, detailsWindow.Position = 'ConfigDetails', UDim2.fromOffset(470, 452), UDim2.new(0.5, -235, 0.5, -226)
+		detailsWindow.BackgroundColor3, detailsWindow.Visible, detailsWindow.Parent = uipallet.Main, false, scaledgui
+		addBlur(detailsWindow); addCorner(detailsWindow); addWindowStroke(detailsWindow); makeDraggable(detailsWindow)
+		local detailsTitle = Instance.new('TextLabel')
+		detailsTitle.Size, detailsTitle.Position, detailsTitle.BackgroundTransparency = UDim2.new(1, -52, 0, 28), UDim2.fromOffset(16, 8), 1
+		detailsTitle.TextColor3, detailsTitle.TextSize, detailsTitle.FontFace = uipallet.Text, 16, uipallet.FontSemiBold
+		detailsTitle.TextXAlignment, detailsTitle.Parent = Enum.TextXAlignment.Left, detailsWindow
+		addCloseButton(detailsWindow).MouseButton1Click:Connect(function() detailsWindow.Visible = false end)
+		local detailsSubtitle = detailsTitle:Clone()
+		detailsSubtitle.Size, detailsSubtitle.Position = UDim2.new(1, -32, 0, 18), UDim2.fromOffset(16, 38)
+		detailsSubtitle.TextColor3, detailsSubtitle.TextSize, detailsSubtitle.FontFace = color.Dark(uipallet.Text, 0.32), 11, uipallet.Font
+		detailsSubtitle.Parent = detailsWindow
+		local detailsScroll = Instance.new('ScrollingFrame')
+		detailsScroll.Size, detailsScroll.Position = UDim2.new(1, -28, 0, 284), UDim2.fromOffset(14, 66)
+		detailsScroll.BackgroundColor3, detailsScroll.BorderSizePixel = color.Light(uipallet.Main, 0.025), 0
+		detailsScroll.ScrollBarThickness, detailsScroll.ScrollBarImageTransparency = 2, 0.7
+		detailsScroll.CanvasSize, detailsScroll.AutomaticCanvasSize, detailsScroll.Parent = UDim2.new(), Enum.AutomaticSize.Y, detailsWindow
+		addCorner(detailsScroll)
+		local detailsBody = Instance.new('TextLabel')
+		detailsBody.Size, detailsBody.Position, detailsBody.AutomaticSize = UDim2.new(1, -20, 0, 0), UDim2.fromOffset(10, 10), Enum.AutomaticSize.Y
+		detailsBody.BackgroundTransparency, detailsBody.TextWrapped, detailsBody.TextXAlignment, detailsBody.TextYAlignment = 1, true, Enum.TextXAlignment.Left, Enum.TextYAlignment.Top
+		detailsBody.TextColor3, detailsBody.TextSize, detailsBody.FontFace, detailsBody.Parent = color.Dark(uipallet.Text, 0.12), 12, uipallet.Font, detailsScroll
+		local detailsLike = submissionButton('Like', 'Like', UDim2.fromOffset(14, 360), 104, detailsWindow)
+		local detailsDislike = submissionButton('Dislike', 'Dislike', UDim2.fromOffset(124, 360), 104, detailsWindow)
+		local detailsFavorite = submissionButton('Favorite', 'Favorite', UDim2.fromOffset(234, 360), 104, detailsWindow)
+		local detailsCreator = submissionButton('Creator', 'Creator', UDim2.fromOffset(344, 360), 104, detailsWindow)
+		local detailsFork = submissionButton('Fork', 'Fork', UDim2.fromOffset(14, 400), 134, detailsWindow)
+		local detailsReport = submissionButton('Report', 'Report', UDim2.fromOffset(168, 400), 134, detailsWindow)
+		local detailsDelete = submissionButton('Delete', 'Delete', UDim2.fromOffset(322, 400), 126, detailsWindow)
+		detailsDelete.BackgroundColor3 = Color3.fromRGB(155, 61, 67)
+		detailsDelete.Visible = localPlayer.Name:lower() == 'plutoxqqqqq'
+		table.insert(mainapi.Windows, detailsWindow)
+
+		local deleteWindow = Instance.new('Frame')
+		deleteWindow.Name, deleteWindow.Size, deleteWindow.Position = 'DeleteConfigConfirm', UDim2.fromOffset(370, 196), UDim2.new(0.5, -185, 0.5, -98)
+		deleteWindow.BackgroundColor3, deleteWindow.Visible, deleteWindow.Parent = uipallet.Main, false, scaledgui
+		addBlur(deleteWindow); addCorner(deleteWindow); addWindowStroke(deleteWindow); makeDraggable(deleteWindow)
+		local deleteTitle = Instance.new('TextLabel')
+		deleteTitle.Size, deleteTitle.Position, deleteTitle.BackgroundTransparency = UDim2.new(1, -50, 0, 34), UDim2.fromOffset(14, 2), 1
+		deleteTitle.Text, deleteTitle.TextColor3, deleteTitle.TextSize, deleteTitle.FontFace = 'Delete public config?', uipallet.Text, 14, uipallet.FontSemiBold
+		deleteTitle.TextXAlignment, deleteTitle.Parent = Enum.TextXAlignment.Left, deleteWindow
+		local deleteTarget
+		addCloseButton(deleteWindow).MouseButton1Click:Connect(function() deleteWindow.Visible = false; deleteTarget = nil end)
+		local deleteText = deleteTitle:Clone()
+		deleteText.Size, deleteText.Position = UDim2.new(1, -28, 0, 86), UDim2.fromOffset(14, 42)
+		deleteText.TextColor3, deleteText.TextSize, deleteText.FontFace = color.Dark(uipallet.Text, 0.15), 12, uipallet.Font
+		deleteText.TextWrapped, deleteText.TextYAlignment, deleteText.Parent = true, Enum.TextYAlignment.Top, deleteWindow
+		local cancelDelete = submissionButton('CancelDelete', 'Cancel', UDim2.fromOffset(14, 148), 92, deleteWindow)
+		local confirmDelete = submissionButton('ConfirmDelete', 'Delete config', UDim2.new(1, -128, 0, 148), 114, deleteWindow)
+		confirmDelete.BackgroundColor3 = Color3.fromRGB(155, 61, 67)
+		cancelDelete.MouseButton1Click:Connect(function() deleteWindow.Visible = false; deleteTarget = nil end)
+		table.insert(mainapi.Windows, deleteWindow)
+
+		local activeDetailsPreset
+		local rate
+		local function detailsText(preset, versions, loading)
+			local ratingCount = tonumber(preset.ratingCount) or 0
+			local rating = ratingCount > 0 and (tostring(preset.ratingPercentage)..'% positive from '..tostring(ratingCount)..' votes') or 'Unrated'
+			local lines = {
+				tostring(preset.description or 'No description provided.'),
+				'',
+				'Creator: '..tostring(preset.credits or '?')..(preset.verifiedCreator and '  ✓ verified' or ''),
+				'Tags: '..((preset.tags and #preset.tags > 0) and table.concat(preset.tags, ' • ') or 'None'),
+				'Compatibility: Aether '..tostring(preset.minimumVersion or '4.x')..'+ • game '..tostring(preset.gameVersion or 'current'),
+				'Favorites: '..compactCount(preset.favoriteCount)..(preset.forkOf and (' • Fork of '..tostring(preset.forkOf)) or ''),
+				'Published: '..formatDate(preset.lastPublishedAt or preset.updatedAt),
+				'Rating: '..rating,
+				'',
+				'Version history'
+			}
+			if preset.deprecated then table.insert(lines, 2, '⚠ This config is deprecated by its creator.') end
+			if type(preset.screenshots) == 'table' and #preset.screenshots > 0 then
+				table.insert(lines, 8, 'Screenshots: '..table.concat(preset.screenshots, ' • '))
+			end
+			if loading then
+				table.insert(lines, 'Loading...')
+			elseif type(versions) == 'table' and #versions > 0 then
+				for index = 1, math.min(#versions, 8) do
+					local version = versions[index]
+					table.insert(lines, tostring(version.versionLabel or ('v'..tostring(version.version)))..' • '..formatDate(version.publishedAt)..(version.changelog and version.changelog ~= '' and ('\n'..tostring(version.changelog)) or ''))
+				end
+			else
+				table.insert(lines, 'No version history available.')
+			end
+			return table.concat(lines, '\n')
+		end
+		local function paintDetailsRatings(preset)
+			local accent = Color3.fromHSV(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value)
+			local accentText = mainapi:TextColor(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value)
+			detailsLike.Text, detailsDislike.Text = 'Like '..compactCount(preset.likes), 'Dislike '..compactCount(preset.dislikes)
+			detailsLike.BackgroundColor3 = tonumber(preset.userRating) == 1 and accent or color.Light(uipallet.Main, 0.05)
+			detailsDislike.BackgroundColor3 = tonumber(preset.userRating) == -1 and accent or color.Light(uipallet.Main, 0.05)
+			detailsLike.TextColor3 = tonumber(preset.userRating) == 1 and accentText or uipallet.Text
+			detailsDislike.TextColor3 = tonumber(preset.userRating) == -1 and accentText or uipallet.Text
+			detailsFavorite.Text = (preset.favorited and '★ ' or '☆ ')..'Favorite '..compactCount(preset.favoriteCount)
+			detailsFavorite.BackgroundColor3 = preset.favorited and accent or color.Light(uipallet.Main, 0.05)
+			detailsFavorite.TextColor3 = preset.favorited and accentText or uipallet.Text
+		end
+		local function openDetails(preset)
+			activeDetailsPreset = preset
+			detailsDelete.Visible = configapi.Presets.GetOwner(tostring(preset.file)) ~= nil or localPlayer.Name:lower() == 'plutoxqqqqq'
+			detailsTitle.Text = tostring(preset.name)..'  '..tostring(preset.versionLabel or ('v'..tostring(preset.version or 1)))..(preset.deprecated and '  [deprecated]' or '')
+			detailsSubtitle.Text = 'By '..tostring(preset.credits or '?')..'  •  '..compactCount(preset.downloads)..' downloads'
+			detailsBody.Text = detailsText(preset, nil, true)
+			paintDetailsRatings(preset)
+			detailsWindow.Visible = true
+			task.spawn(function()
+				local success, result = backendRequest('GET', '/public-configs/'..httpService:UrlEncode(tostring(preset.file))..'/versions')
+				if activeDetailsPreset ~= preset then return end
+				detailsBody.Text = detailsText(preset, success and type(result) == 'table' and result.versions or nil, false)
+			end)
+		end
+		detailsLike.MouseButton1Click:Connect(function() if activeDetailsPreset and rate then rate(activeDetailsPreset, 'like') end end)
+		detailsDislike.MouseButton1Click:Connect(function() if activeDetailsPreset and rate then rate(activeDetailsPreset, 'dislike') end end)
+		detailsFavorite.MouseButton1Click:Connect(function()
+			local preset = activeDetailsPreset
+			if not preset then return end
+			task.spawn(function()
+				local success, result = backendRequest('POST', '/public-configs/'..httpService:UrlEncode(tostring(preset.file))..'/favorites', {
+					userId = localPlayer.UserId,
+					clientId = configapi.Presets.ClientId(),
+					favorite = not preset.favorited
+				})
+				if success and type(result) == 'table' then
+					preset.favorited, preset.favoriteCount = result.favorited, result.favoriteCount
+					paintDetailsRatings(preset)
+				else
+					mainapi:CreateNotification('Configs', responseMessage(result, 'Could not save favorite.'), 6, 'alert')
+				end
+			end)
+		end)
+		detailsCreator.MouseButton1Click:Connect(function()
+			local preset = activeDetailsPreset
+			if not preset then return end
+			task.spawn(function()
+				local success, result = backendRequest('GET', '/creators/'..httpService:UrlEncode(tostring(preset.credits or '')))
+				if activeDetailsPreset ~= preset then return end
+				if success and type(result) == 'table' then
+					local names = {}
+					for _, item in result.configs or {} do table.insert(names, tostring(item.name)) end
+					detailsBody.Text = (result.verified and '✓ Verified creator\n' or '')..tostring(result.creator)..' • '..compactCount(result.downloads)..' downloads\n\nConfigs\n'..table.concat(names, '\n')
+				else
+					mainapi:CreateNotification('Configs', responseMessage(result, 'Creator page is unavailable.'), 6, 'alert')
+				end
+			end)
+		end)
+		detailsFork.MouseButton1Click:Connect(function()
+			local preset = activeDetailsPreset
+			if not preset then return end
+			task.spawn(function()
+				local success, raw = pcall(configapi.Presets.Fetch, preset.file)
+				if not success or not raw or raw == '404: Not Found' then
+					mainapi:CreateNotification('Configs', 'Could not download the source config.', 7, 'alert')
+					return
+				end
+				local imported, profile = importJsonConfig(raw, tostring(preset.name)..' Fork')
+				if not imported then mainapi:CreateNotification('Configs', tostring(profile), 7, 'alert'); return end
+				refreshConfigProfiles()
+				categoryapi:ChangeValue()
+				detailsWindow.Visible = false
+				openSubmitWindow(nil, nil, tostring(preset.file))
+			end)
+		end)
+		detailsReport.MouseButton1Click:Connect(function()
+			local preset = activeDetailsPreset
+			if not preset then return end
+			task.spawn(function()
+				local success, result = backendRequest('POST', '/public-configs/'..httpService:UrlEncode(tostring(preset.file))..'/reports', {
+					userId = localPlayer.UserId,
+					reason = 'Reported from the AetherV2 in-client marketplace for maintainer review.'
+				})
+				mainapi:CreateNotification('Configs', success and 'Report sent to the maintainers.' or responseMessage(result, 'Could not submit report.'), 7, success and 'info' or 'alert')
+			end)
+		end)
+		detailsDelete.MouseButton1Click:Connect(function()
+			if not activeDetailsPreset then return end
+			deleteTarget = activeDetailsPreset
+			deleteText.Text = 'This permanently removes '..tostring(deleteTarget.name)..' from Public Configs and deletes '..tostring(deleteTarget.file)..' from GitHub. This cannot be undone from Aether.'
+			deleteWindow.Visible = true
+		end)
+		confirmDelete.MouseButton1Click:Connect(function()
+			if not deleteTarget then return end
+			local target = deleteTarget
+			confirmDelete.Active = false
+			local owner = configapi.Presets.GetOwner(tostring(target.file))
+			local success, result = backendRequest('DELETE', '/public-configs/'..httpService:UrlEncode(tostring(target.file)), owner and {
+				ownerToken = owner.token,
+				userId = localPlayer.UserId
+			} or nil, owner == nil)
+			confirmDelete.Active = true
+			mainapi:CreateNotification('Configs', success and 'Config deleted successfully.' or responseMessage(result, 'Config deletion failed.'), 8, success and 'info' or 'alert')
+			if success then detailsWindow.Visible = false; deleteWindow.Visible = false; deleteTarget = nil; if refresh then refresh() end end
+		end)
 
 		local rowbuttons = {}
 		function refreshRows()
-			for name, button in rowbuttons do
-				button.Text = isfile(getConfigPath(name)) and 'Redownload' or 'Download'
-				button.BackgroundColor3 = Color3.fromHSV(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value)
-				button.TextColor3 = mainapi:TextColor(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value)
+			for _, entry in rowbuttons do
+				local installed = isfile(getConfigPath(entry.Name))
+				entry.Button.Text = installed and 'Redownload' or 'Download'
+				entry.Button.BackgroundColor3 = Color3.fromHSV(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value)
+				entry.Button.TextColor3 = mainapi:TextColor(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value)
 			end
+		end
+
+		local ratingInFlight = {}
+		rate = function(preset, value)
+			if ratingInFlight[preset.file] then return end
+			ratingInFlight[preset.file] = true
+			task.spawn(function()
+				local success, result = backendRequest('POST', '/public-configs/'..httpService:UrlEncode(tostring(preset.file))..'/ratings', {
+					userId = localPlayer.UserId,
+					clientId = configapi.Presets.ClientId(),
+					rating = value
+				})
+				ratingInFlight[preset.file] = nil
+				mainapi:CreateNotification('Configs', success and 'Your rating was saved.' or responseMessage(result, 'Could not save your rating.'), 6, success and 'info' or 'alert')
+				if success and type(result) == 'table' then
+					preset.likes, preset.dislikes = result.likes or preset.likes, result.dislikes or preset.dislikes
+					preset.ratingCount, preset.ratingPercentage, preset.userRating = result.ratingCount or preset.ratingCount, result.ratingPercentage, result.userRating
+					if activeDetailsPreset == preset then openDetails(preset) end
+					if refresh then refresh() end
+				end
+			end)
 		end
 
 		local function makeRow(preset)
@@ -6640,35 +7551,50 @@ function mainapi:CreateCategoryList(categorysettings)
 			end
 			local row = Instance.new('Frame')
 			row.Name = tostring(preset.name)
-			row:SetAttribute('Tags', preset.tags and table.concat(preset.tags, ' ') or '')
-			row.Size = UDim2.new(1, 0, 0, 46)
+			row:SetAttribute('Tags', (preset.tags and table.concat(preset.tags, ' ') or '')..' '..tostring(preset.credits or '')..' '..tostring(preset.description or ''))
+			row.Size = UDim2.new(1, 0, 0, 64)
 			row.BackgroundColor3 = color.Light(uipallet.Main, 0.02)
 			row.Parent = dllist
 			addCorner(row)
 			if preset.description then
-				addTooltip(row, tostring(preset.description))
+				addTooltip(row, tostring(preset.description), 360)
 			end
+			local owner = configapi.Presets.GetOwner(tostring(preset.file))
+			local actionWidth = owner and 188 or 100
+			local openArea = Instance.new('TextButton')
+			openArea.Name, openArea.Size, openArea.BackgroundTransparency, openArea.Text = 'OpenDetails', UDim2.new(1, -actionWidth, 1, 0), 1, ''
+			openArea.AutoButtonColor, openArea.ZIndex, openArea.Parent = false, 1, row
+			openArea.MouseButton1Click:Connect(function() openDetails(preset) end)
+			openArea.MouseEnter:Connect(function() row.BackgroundColor3 = color.Light(uipallet.Main, 0.04) end)
+			openArea.MouseLeave:Connect(function() row.BackgroundColor3 = color.Light(uipallet.Main, 0.02) end)
 			local name = Instance.new('TextLabel')
-			name.Size = UDim2.new(1, -140, 0, 18)
+			name.Size = UDim2.new(1, -actionWidth - 8, 0, 18)
 			name.Position = UDim2.fromOffset(12, 6)
 			name.BackgroundTransparency = 1
-			name.Text = tostring(preset.name)
+			name.Text = tostring(preset.name)..'  '..tostring(preset.versionLabel or ('v'..tostring(preset.version or 1)))..(preset.verifiedCreator and '  ✓' or '')..(preset.deprecated and '  [deprecated]' or '')
 			name.TextXAlignment = Enum.TextXAlignment.Left
+			name.TextTruncate = Enum.TextTruncate.AtEnd
 			name.TextColor3 = uipallet.Text
 			name.TextSize = 13
 			name.FontFace = uipallet.Font
-			name.Parent = row
+			name.ZIndex, name.Parent = 2, row
 			local tagline = name:Clone()
-			tagline.Size = UDim2.new(1, -140, 0, 14)
+			tagline.Size = UDim2.new(1, -actionWidth - 8, 0, 14)
 			tagline.Position = UDim2.fromOffset(12, 24)
-			tagline.Text = (preset.tags and #preset.tags > 0) and table.concat(preset.tags, ' • ') or ''
+			local ratingText = (tonumber(preset.ratingCount) or 0) > 0 and (tostring(preset.ratingPercentage)..'% positive') or 'unrated'
+			tagline.Text = compactCount(preset.downloads)..' downloads • '..ratingText..' • '..formatDate(preset.lastPublishedAt or preset.updatedAt)
 			tagline.TextColor3 = color.Dark(uipallet.Text, 0.31)
 			tagline.TextSize = 11
 			tagline.Parent = row
-			local function mkbtn(text, xoff, colour, fn)
+			local tags = tagline:Clone()
+			tags.Position = UDim2.fromOffset(12, 42)
+			tags.Text = (preset.tags and #preset.tags > 0) and table.concat(preset.tags, ' • ') or ('By '..tostring(preset.credits or '?'))
+			tags.TextTruncate = Enum.TextTruncate.AtEnd
+			tags.Parent = row
+			local function mkbtn(text, xoff, width, y, colour, fn)
 				local b = Instance.new('TextButton')
-				b.Size = UDim2.fromOffset(58, 26)
-				b.Position = UDim2.new(1, xoff, 0.5, -13)
+				b.Size = UDim2.fromOffset(width, 26)
+				b.Position = UDim2.new(1, xoff, 0, y)
 				b.AnchorPoint = Vector2.new(1, 0)
 				b.BackgroundColor3 = colour
 				b.Text = text
@@ -6676,13 +7602,16 @@ function mainapi:CreateCategoryList(categorysettings)
 				b.TextSize = 12
 				b.FontFace = uipallet.Font
 				b.AutoButtonColor = true
-				b.Parent = row
+				b.ZIndex, b.Parent = 3, row
 				addCorner(b, UDim.new(0, 5))
 				b.MouseButton1Click:Connect(fn)
 				return b
 			end
-			mkbtn('Info', -74, color.Light(uipallet.Main, 0.05), function() info(preset) end)
-			rowbuttons[tostring(preset.name)] = mkbtn(isfile(getConfigPath(tostring(preset.name))) and 'Redownload' or 'Download', -10, Color3.fromHSV(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value), function() download(preset) end)
+			if owner then
+				mkbtn('Update', -100, 78, 19, color.Light(uipallet.Main, 0.05), function() openUpdateWindow(preset) end)
+			end
+			local downloadButton = mkbtn(isfile(getConfigPath(tostring(preset.name))) and 'Redownload' or 'Download', -10, 84, 19, Color3.fromHSV(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value), function() download(preset) end)
+			rowbuttons[tostring(preset.file)] = {Name = tostring(preset.name), Button = downloadButton}
 		end
 
 		-- Live search: match against the preset name and its tags.
@@ -6698,7 +7627,7 @@ function mainapi:CreateCategoryList(categorysettings)
 		dlsearch:GetPropertyChangedSignal('Text'):Connect(applyFilter)
 
 		local refreshing = false
-		local function refresh()
+		function refresh()
 			if refreshing then return end
 			refreshing = true
 			for _, v in dllist:GetChildren() do
@@ -6709,7 +7638,7 @@ function mainapi:CreateCategoryList(categorysettings)
 			dlstatus.Visible = true
 			task.spawn(function()
 				local ok, res = pcall(function()
-					return game:HttpGet(repoURL('presets.json'), true)
+					return configapi.Presets.FetchList(sortModes[sortIndex].Key)
 				end)
 				refreshing = false
 				if not ok or not res or res == '404: Not Found' then
@@ -6735,12 +7664,15 @@ function mainapi:CreateCategoryList(categorysettings)
 			end)
 		end
 
+		refreshButton.MouseButton1Click:Connect(refresh)
+		addTooltip(refreshButton, 'Fetch the latest Public Config catalogue')
+
 		-- Opening it is also offered by the first-run welcome popup, so the opener lives
 		-- on mainapi rather than only on this button.
 		function mainapi.OpenRepoConfigs()
 			clickgui.Visible = false
 			dl.Visible = true
-			dl.Position = UDim2.new(0.5, -188, 0.5, -176)
+			dl.Position = UDim2.new(0.5, -260, 0.5, -215)
 			refresh()
 		end
 
@@ -6823,7 +7755,7 @@ function mainapi:CreateCategoryList(categorysettings)
 			syncbutton.Text = 'Syncing...'
 			task.spawn(function()
 				local ok, res = pcall(function()
-					return game:HttpGet(repoURL(entry.file), true)
+					return configapi.Presets.Fetch(entry.file)
 				end)
 				local suc, result
 				if ok and res and res ~= '404: Not Found' then
@@ -7235,21 +8167,9 @@ function mainapi:CreateCategoryList(categorysettings)
 			self:ChangeValue()
 		end
 		self.Expanded = not self.Expanded
-		local targetHeight = self.Expanded and math.min(51 + windowlist.AbsoluteContentSize.Y / scale.Scale, 611) or 45
-		-- Animated open/close (see the matching category Expand above): the children
-		-- ScrollingFrame is pinned to the window height and clips, so a height tween
-		-- reveals/hides the rows smoothly. Keep them mounted until a collapse ends.
-		if self.Expanded then
-			children.Visible = true
-		else
-			task.delay(uipallet.Tween.Time, function()
-				if not self.Expanded then
-					children.Visible = false
-				end
-			end)
-		end
-		tween:Tween(window, uipallet.Tween, {Size = UDim2.fromOffset(220, targetHeight)})
-		tweenService:Create(arrow, uipallet.Tween, {Rotation = self.Expanded and 0 or 180}):Play()
+		children.Visible = self.Expanded
+		arrow.Rotation = self.Expanded and 0 or 180
+		window.Size = UDim2.fromOffset(220, self.Expanded and math.min(51 + windowlist.AbsoluteContentSize.Y / scale.Scale, 611) or 45)
 		divider.Visible = children.CanvasPosition.Y > 10 and children.Visible
 	end
 
@@ -7316,7 +8236,7 @@ function mainapi:CreateCategoryList(categorysettings)
 		settings.ImageColor3 = uipallet.Text
 	end)
 	settings.MouseLeave:Connect(function()
-		settings.ImageColor3 = color.Dark(uipallet.Text, 0.43)
+		settings.ImageColor3 = color.Light(uipallet.Main, 0.37)
 	end)
 	settings.MouseButton1Click:Connect(function()
 		childrentwo.Visible = not childrentwo.Visible
@@ -7349,7 +8269,10 @@ function mainapi:CreateCategoryList(categorysettings)
 		Name = displayName,
 		Icon = categorysettings.CategoryIcon,
 		Size = categorysettings.CategorySize,
-		Window = window
+		Window = window,
+		Open = function()
+			if not categoryapi.Expanded then categoryapi:Expand() end
+		end
 	})
 
 	categoryapi.Object = window
@@ -7798,7 +8721,7 @@ function mainapi:CreateSearch()
 	searchstroke.Transparency = 1
 	searchstroke.Parent = searchbkg
 	local search = Instance.new('TextBox')
-	search.Size = UDim2.new(1, -68, 0, 37)
+	search.Size = UDim2.new(1, -102, 0, 37)
 	search.Position = UDim2.fromOffset(50, 0)
 	search.BackgroundTransparency = 1
 	search.Text = ''
@@ -8298,6 +9221,7 @@ function mainapi:CreateLegit()
 			end
 		end)
 		module.MouseButton1Click:Connect(function()
+			if mainapi.PushUndo then mainapi:PushUndo(moduleapi) end
 			moduleapi:Toggle()
 		end)
 		module.MouseButton2Click:Connect(function()
@@ -8689,7 +9613,7 @@ function mainapi:Load(skipgui, profile)
 			object:SetBind(v.Bind or {})
 			object.Object.Bind.Visible = #(v.Bind or {}) > 0
 			if object.SetFavourite then
-				object:SetFavourite(v.Favourited, true)
+				object:SetFavourite(v.Favourited or v.Favorited, true)
 			end
 		end
 		-- Reinstate the saved order of the Favourites tab now that every module's
@@ -9804,6 +10728,35 @@ general:CreateButton({
 ]]
 
 local modules = mainapi.Categories.Main:CreateSettingsPane({Name = 'Modules'})
+
+-- Classic exposed a game-file picker. Keep the control in Nexus for configuration
+-- parity, but deliberately limit it to the three BedWars files that remain supported.
+local bedwarsGameFiles = {'6872265039', '6872274481'}
+local savedForcedGame = isfile('aetherv2/profiles/forcegameid.txt') and readfile('aetherv2/profiles/forcegameid.txt'):gsub('%s+', '') or ''
+local forcedGameFile = modules:CreateDropdown({
+	Name = 'Game file',
+	List = bedwarsGameFiles,
+	Default = table.find(bedwarsGameFiles, savedForcedGame) and savedForcedGame or bedwarsGameFiles[1],
+	Tooltip = 'Choose a supported BedWars module file',
+	Function = function(value)
+		pcall(writefile, 'aetherv2/profiles/forcegameid.txt', tostring(value))
+	end
+})
+modules:CreateButton({
+	Name = 'Force game file',
+	Tooltip = 'Reloads Aether with the selected supported BedWars module',
+	Function = function()
+		local selected = tostring(forcedGameFile.Value or ''):match('^%s*(%d+)%s*$')
+		if not selected or not table.find(bedwarsGameFiles, selected) then
+			mainapi:CreateNotification('AetherV2', 'Choose a supported BedWars game file first.', 6, 'alert')
+			return
+		end
+		pcall(writefile, 'aetherv2/profiles/forcegameid.txt', selected)
+		pcall(writefile, 'aetherv2/profiles/forcegame.txt', 'true')
+		mainapi:CreateNotification('AetherV2', 'Reloading with BedWars game file '..selected..'.', 4, 'info')
+		reloadAether()
+	end
+})
 modules:CreateToggle({
 	Name = 'Teams by server',
 	Tooltip = 'Ignore players on your team designated by the server',
@@ -9848,7 +10801,8 @@ guipane:CreateToggle({
 	Tooltip = 'Removes module\'s text spacing',
 	Function = function(callback)
 		for _, v in mainapi.Modules do
-			v.Object.Text = '            '..(callback and v.Name:gsub(' ', '') or v.Name)
+			local displayName = v.DisplayName or v.Name
+			v.Object.Text = '            '..(callback and displayName:gsub(' ', '') or displayName)
 		end
 	end
 })
@@ -9866,8 +10820,8 @@ guipane:CreateToggle({
 	Function = function(enabled)
 		clickgui.Search.Legit.Visible = enabled
 		clickgui.Search.LegitDivider.Visible = enabled
-		clickgui.Search.TextBox.Size = UDim2.new(1, enabled and -50 or -10, 0, 37)
 		clickgui.Search.TextBox.Position = UDim2.fromOffset(enabled and 50 or 10, 0)
+		clickgui.Search.TextBox.Size = UDim2.new(1, enabled and -102 or -62, 0, 37)
 	end,
 	Default = true,
 	Tooltip = 'Shows the button to change to Legit Mode'
@@ -9965,10 +10919,16 @@ guipane:CreateButton({
 	Name = 'Reset GUI positions',
 	Function = function()
 		for _, v in mainapi.Categories do
-			v.Object.Position = UDim2.fromOffset(6, 42)
+			if v.Type == 'MainWindow' then
+				v.Object.Position = UDim2.fromOffset(6, 60)
+			elseif v.Type == 'Category' or v.Type == 'CategoryList' then
+				if v.Button and v.Button.Enabled then v.Button:Toggle(false) else v.Object.Visible = false end
+				v.Object.Position = v.DefaultPosition or UDim2.fromOffset(236, 60)
+			end
 		end
+		mainapi:CreateNotification('GUI', 'Positions reset. Select a category to open it in the workspace.', 5, 'info')
 	end,
-	Tooltip = 'This will reset your GUI back to default'
+	Tooltip = 'Resets the menu and closes category panels so they cannot stack on top of each other'
 })
 guipane:CreateButton({
 	Name = 'Sort GUI',
@@ -9998,10 +10958,12 @@ guipane:CreateButton({
 			return (priority[a.Object.Name] or 99) < (priority[b.Object.Name] or 99)
 		end)
 
+		local screen = mainapi.gui.AbsoluteSize / math.max(scale.Scale, 0.01)
+		local columns = math.max(1, math.floor((screen.X - 12) / 230))
 		local ind = 0
 		for _, v in categories do
 			if v.Object.Visible then
-				v.Object.Position = UDim2.fromOffset(6 + (ind % 8 * 230), 60 + (ind > 7 and 360 or 0))
+				v.Object.Position = UDim2.fromOffset(6 + (ind % columns * 230), 60 + math.floor(ind / columns) * 360)
 				ind += 1
 			end
 		end
@@ -10157,6 +11119,43 @@ local textguiscale = textgui:CreateSlider({
 		mainapi:UpdateTextGUI()
 	end
 })
+local textguisize = textgui:CreateSlider({
+	Name = 'Text size',
+	Min = 11,
+	Max = 22,
+	Default = 15,
+	Function = function()
+		mainapi:UpdateTextGUI()
+	end
+})
+local textguispacing = textgui:CreateSlider({
+	Name = 'Row spacing',
+	Min = 0,
+	Max = 8,
+	Default = 0,
+	Suffix = 'px',
+	Function = function(value)
+		if VapeLabelSorter then VapeLabelSorter.Padding = UDim.new(0, value) end
+		mainapi:UpdateTextGUI()
+	end
+})
+local textguialignment = textgui:CreateDropdown({
+	Name = 'Alignment',
+	List = {'Auto', 'Left', 'Right'},
+	Default = 'Auto',
+	Tooltip = 'Auto aligns toward the closest screen edge',
+	Function = function()
+		mainapi:UpdateTextGUI()
+	end
+})
+local textguiextratext = textgui:CreateToggle({
+	Name = 'Show module details',
+	Default = true,
+	Tooltip = 'Shows mode and status text supplied by modules',
+	Function = function()
+		mainapi:UpdateTextGUI()
+	end
+})
 local textguishadow = textgui:CreateToggle({
 	Name = 'Shadow',
 	Tooltip = 'Renders shadowed text',
@@ -10200,11 +11199,13 @@ local textguibackgroundtransparency = {
 	Object = {Visible = {}}
 }
 local textguibackgroundtint = {Enabled = false}
+local textguiaccentline = {Enabled = true, Object = {Visible = false}}
 local textguibackground = textgui:CreateToggle({
 	Name = 'Render background',
 	Function = function(callback)
 		textguibackgroundtransparency.Object.Visible = callback
 		textguibackgroundtint.Object.Visible = callback
+		textguiaccentline.Object.Visible = callback
 		mainapi:UpdateTextGUI()
 	end
 })
@@ -10222,6 +11223,16 @@ textguibackgroundtransparency = textgui:CreateSlider({
 })
 textguibackgroundtint = textgui:CreateToggle({
 	Name = 'Tint',
+	Function = function()
+		mainapi:UpdateTextGUI()
+	end,
+	Darker = true,
+	Visible = false
+})
+textguiaccentline = textgui:CreateToggle({
+	Name = 'Accent line',
+	Default = true,
+	Tooltip = 'Shows the thin GUI-coloured edge beside each module',
 	Function = function()
 		mainapi:UpdateTextGUI()
 	end,
@@ -10438,7 +11449,7 @@ local targetinfoshot = Instance.new('ImageLabel')
 targetinfoshot.Size = UDim2.fromOffset(26, 27)
 targetinfoshot.Position = UDim2.fromOffset(19, 17)
 targetinfoshot.BackgroundColor3 = uipallet.Main
-targetinfoshot.Image = 'rbxthumb://type=AvatarHeadShot&id=1&w=420&h=420'
+targetinfoshot.Image = mainapi:GetAvatarThumbnail(1, 420)
 targetinfoshot.Parent = targetinfobkg
 local targetinfoshotflash = Instance.new('Frame')
 targetinfoshotflash.Size = UDim2.fromScale(1, 1)
@@ -10594,6 +11605,83 @@ targetinfobcolor = targetinfoobj:CreateColorSlider({
 	Visible = false
 })
 
+local targetinfofollow = targetinfoobj:CreateToggle({
+	Name = 'Follow player',
+	Tooltip = 'Moves the HUD beside the entity currently being attacked while keeping both players visible',
+	Function = function(enabled)
+		if not enabled then targetinfobkg.Position = UDim2.new() end
+	end
+})
+local targetinfoelements = targetinfoobj:CreateTargets({
+	Players = true,
+	NPCs = true
+})
+local followCenter, followTarget, followSide
+local function updateTargetInfoPosition(target)
+	if not targetinfofollow.Enabled or not target or not target.RootPart then
+		followCenter, followTarget, followSide = nil, nil, nil
+		if targetinfofollow.Enabled then targetinfobkg.Position = UDim2.new() end
+		return true
+	end
+	local camera = workspace.CurrentCamera
+	if not camera then return false end
+	local targetPoint, visible = camera:WorldToViewportPoint(target.RootPart.Position + Vector3.new(0, 2.5, 0))
+	if not visible or targetPoint.Z <= 0 then
+		targetinfobkg.Position = UDim2.new()
+		return true
+	end
+	local viewport = camera.ViewportSize
+	local margin, half = 18, Vector2.new(120, 44.5)
+	if viewport.X < (half.X + margin) * 2 or viewport.Y < (half.Y + margin) * 2 then return false end
+	local localPoint = Vector2.new(viewport.X / 2, viewport.Y * 0.72)
+	local entity = mainapi.Libraries and mainapi.Libraries.entity
+	if entity and entity.character and entity.character.RootPart then
+		local projected, onScreen = camera:WorldToViewportPoint(entity.character.RootPart.Position + Vector3.new(0, 2.5, 0))
+		if onScreen and projected.Z > 0 then localPoint = Vector2.new(projected.X, projected.Y) end
+	end
+	local target2d = Vector2.new(targetPoint.X, targetPoint.Y)
+	local offsets = {
+		Vector2.new(half.X + 42, 0), Vector2.new(-half.X - 42, 0),
+		Vector2.new(0, half.Y + 58), Vector2.new(0, -half.Y - 58),
+		Vector2.new(half.X + 42, half.Y + 58), Vector2.new(half.X + 42, -half.Y - 58),
+		Vector2.new(-half.X - 42, half.Y + 58), Vector2.new(-half.X - 42, -half.Y - 58)
+	}
+	local function covers(center, point)
+		return math.abs(center.X - point.X) <= half.X + margin and math.abs(center.Y - point.Y) <= half.Y + margin
+	end
+	local best, bestScore, bestSide
+	for side, offset in offsets do
+		local desired = target2d + offset
+		local center = Vector2.new(
+			math.clamp(desired.X, half.X + margin, viewport.X - half.X - margin),
+			math.clamp(desired.Y, half.Y + margin, viewport.Y - half.Y - margin)
+		)
+		if not covers(center, target2d) and not covers(center, localPoint) then
+			local score = math.min((center - target2d).Magnitude, (center - localPoint).Magnitude) - ((center - desired).Magnitude * 2)
+			if not bestScore or score > bestScore then best, bestScore, bestSide = center, score, side end
+		end
+	end
+	if not best then return false end
+	if followTarget == target and followSide then
+		local desired = target2d + offsets[followSide]
+		local held = Vector2.new(
+			math.clamp(desired.X, half.X + margin, viewport.X - half.X - margin),
+			math.clamp(desired.Y, half.Y + margin, viewport.Y - half.Y - margin)
+		)
+		if not covers(held, target2d) and not covers(held, localPoint) then best, bestSide = held, followSide end
+	end
+	if followTarget ~= target then followCenter = best end
+	followTarget, followSide = target, bestSide
+	followCenter = followCenter and followCenter:Lerp(best, 0.04) or best
+	local parentPosition = targetinfoobj.Children.AbsolutePosition
+	local guiScale = scale and scale.Scale or 1
+	targetinfobkg.Position = UDim2.fromOffset(
+		(followCenter.X - half.X - parentPosition.X) / guiScale,
+		(followCenter.Y - half.Y - parentPosition.Y) / guiScale
+	)
+	return true
+end
+
 local lasthealth = 0
 local lastmaxhealth = 0
 targetinfo = {
@@ -10611,16 +11699,17 @@ targetinfo = {
 
 		local v, highest = nil, tick()
 		for i, check in self.Targets do
-			if check > highest then
+			local allowed = i.Player and targetinfoelements.Players.Enabled or targetinfoelements.NPCs.Enabled
+			if allowed and check > highest then
 				v = i
 				highest = check
 			end
 		end
 
-		targetinfobkg.Visible = v ~= nil or mainapi.gui.ScaledGui.ClickGui.Visible
+		targetinfobkg.Visible = (v ~= nil or mainapi.gui.ScaledGui.ClickGui.Visible) and updateTargetInfoPosition(v)
 		if v then
 			targetinfoname.Text = v.Player and (targetinfodisplay.Enabled and v.Player.DisplayName or v.Player.Name) or v.Character and v.Character.Name or targetinfoname.Text
-			targetinfoshot.Image = 'rbxthumb://type=AvatarHeadShot&id='..(v.Player and v.Player.UserId or 1)..'&w=420&h=420'
+			targetinfoshot.Image = mainapi:GetAvatarThumbnail(v.Player and v.Player.UserId or 1, 420)
 
 			if not v.Character then
 				v.Health = v.Health or 0
@@ -10657,7 +11746,8 @@ mainapi.Libraries.targetinfo = targetinfo
 function mainapi:UpdateTextGUI(afterload)
 	if not afterload and not mainapi.Loaded then return end
 	if textgui.Button.Enabled then
-		local right = textgui.Children.AbsolutePosition.X > (gui.AbsoluteSize.X / 2)
+		local right = textguialignment.Value == 'Right' or (textguialignment.Value == 'Auto' and textgui.Children.AbsolutePosition.X > (gui.AbsoluteSize.X / 2))
+		VapeLabelSorter.Padding = UDim.new(0, textguispacing.Value)
 		VapeLogo.Visible = textguiwatermark.Enabled
 		VapeLogo.Position = right and UDim2.new(1 / VapeTextScale.Scale, -113, 0, 6) or UDim2.fromOffset(0, 6)
 		VapeLogoShadow.Visible = textguishadow.Enabled
@@ -10718,14 +11808,15 @@ function mainapi:UpdateTextGUI(afterload)
 					holdercolorline.Size = UDim2.new(0, 2, 1, 0)
 					holdercolorline.Position = right and UDim2.new(1, -5, 0, 0) or UDim2.new()
 					holdercolorline.BorderSizePixel = 0
+					holdercolorline.Visible = textguiaccentline.Enabled
 					holdercolorline.Parent = holderbackground
 				end
 				local holdertext = Instance.new('TextLabel')
 				holdertext.Position = UDim2.fromOffset(right and 3 or 6, 2)
 				holdertext.BackgroundTransparency = 1
 				holdertext.BorderSizePixel = 0
-				holdertext.Text = ({i:gsub(' ', '')})[1]..(v.ExtraText and " <font color='#A8A8A8'>"..v.ExtraText()..'</font>' or '')
-				holdertext.TextSize = 15
+				holdertext.Text = ({i:gsub(' ', '')})[1]..(textguiextratext.Enabled and v.ExtraText and " <font color='#A8A8A8'>"..v.ExtraText()..'</font>' or '')
+				holdertext.TextSize = textguisize.Value
 				holdertext.FontFace = textguifont.Value
 				holdertext.RichText = true
 				local size = getfontsize(removeTags(holdertext.Text), holdertext.TextSize, holdertext.FontFace)
@@ -10888,7 +11979,6 @@ function mainapi:UpdateGUI(hue, sat, val, default)
 	if mainapi.Legit.Icon then
 		mainapi.Legit.Icon.ImageColor3 = Color3.fromHSV(hue, sat, val)
 	end
-
 	if mainapi.Legit.Window.Visible then
 		for _, v in mainapi.Legit.Modules do
 			if v.Enabled then
@@ -10924,6 +12014,37 @@ local whitelist = {Enum.UserInputType.MouseButton2, Enum.UserInputType.MouseButt
 local function convert(input)
 	return {KeyCode = {Name = input == Enum.UserInputType.MouseButton2 and 'MB2' or input == Enum.UserInputType.MouseButton1 and 'MB1' or 'MB3'}}
 end
+
+-- Bounded undo/redo history records only deliberate UI/keybind toggles. Config
+-- loads and bulk actions call Toggle directly and therefore never pollute it.
+mainapi.UndoStack, mainapi.RedoStack = {}, {}
+function mainapi:PushUndo(module)
+	if not module then return end
+	table.insert(self.UndoStack, module)
+	while #self.UndoStack > 50 do table.remove(self.UndoStack, 1) end
+	table.clear(self.RedoStack)
+end
+function mainapi:Undo()
+	local module = table.remove(self.UndoStack)
+	if not module then return end
+	module:Toggle()
+	table.insert(self.RedoStack, module)
+end
+function mainapi:Redo()
+	local module = table.remove(self.RedoStack)
+	if not module then return end
+	module:Toggle()
+	table.insert(self.UndoStack, module)
+end
+
+mainapi:Clean(inputService.InputBegan:Connect(function(input)
+	if inputService:GetFocusedTextBox() then return end
+	local control = inputService:IsKeyDown(Enum.KeyCode.LeftControl) or inputService:IsKeyDown(Enum.KeyCode.RightControl)
+	if not control then return end
+	if input.KeyCode == Enum.KeyCode.Z then mainapi:Undo()
+	elseif input.KeyCode == Enum.KeyCode.Y then mainapi:Redo() end
+end))
+
 local function keybindStart(inputObj)
 	if not inputService:GetFocusedTextBox() and (inputObj.KeyCode ~= Enum.KeyCode.Unknown or table.find(whitelist, inputObj.UserInputType)) then
 		if table.find(whitelist, inputObj.UserInputType) then
@@ -10959,10 +12080,21 @@ local function keybindStart(inputObj)
 		for i, v in mainapi.Modules do
 			if checkKeybinds(mainapi.HeldKeybinds, v.Bind, inputObj.KeyCode.Name) then
 				toggled = true
+				mainapi:PushUndo(v)
 				if mainapi.ToggleNotifications.Enabled then
 					mainapi:CreateNotification('Module Toggled', i.."<font color='#FFFFFF'> has been </font>"..(not v.Enabled and "<font color='#5AFF5A'>Enabled</font>" or "<font color='#FF5A5A'>Disabled</font>").."<font color='#FFFFFF'>!</font>", 0.75)
 				end
 				v:Toggle(true)
+			end
+		end
+		for i, v in mainapi.Legit.Modules do
+			if v.Bind and checkKeybinds(mainapi.HeldKeybinds, v.Bind, inputObj.KeyCode.Name) then
+				toggled = true
+				mainapi:PushUndo(v)
+				if mainapi.ToggleNotifications.Enabled then
+					mainapi:CreateNotification('Module Toggled', i..' '..(not v.Enabled and 'Enabled' or 'Disabled'), 0.75)
+				end
+				v:Toggle()
 			end
 		end
 		if toggled then
@@ -11463,6 +12595,844 @@ do
 end
 
 --[[
+	Aether 4 platform pack. This is deliberately isolated from the visual pack:
+	game modules are registered after this GUI returns, so wrapping category
+	registration here gives every module the same lifecycle, contextual-UI and
+	crash-safety contract without adding per-frame work to individual modules.
+]]
+;(function()
+	local runtime = {
+		Errors = {},
+		Quarantined = {},
+		ErrorWindows = {},
+		ContextBindings = {},
+		ContextRunning = false,
+		Metrics = {Samples = 0, Cpu = 0, Raycasts = 0, Remotes = 0},
+		ContextInterval = 0.25,
+		PerformanceProfile = 'Quality',
+		StartedAt = tick()
+	}
+	mainapi.Runtime = runtime
+
+	local function notify(title, message, kind)
+		pcall(function()
+			mainapi:CreateNotification(title, message, 7, kind or 'info')
+		end)
+	end
+
+	local function traceback(message)
+		return debug and debug.traceback and debug.traceback(tostring(message), 2) or tostring(message)
+	end
+
+	local function trimErrors()
+		while #runtime.Errors > 100 do table.remove(runtime.Errors, 1) end
+	end
+
+	function runtime:Record(module, phase, message)
+		local name = type(module) == 'table' and module.Name or tostring(module or 'Core')
+		local now = tick()
+		local entry = {Module = name, Phase = tostring(phase or 'runtime'), Message = tostring(message), Time = now}
+		table.insert(self.Errors, entry)
+		trimErrors()
+		self.ErrorWindows[name] = self.ErrorWindows[name] or {}
+		local window = self.ErrorWindows[name]
+		table.insert(window, now)
+		while window[1] and now - window[1] > 10 do table.remove(window, 1) end
+		if #window >= 3 and type(module) == 'table' and not self.Quarantined[name] then
+			self.Quarantined[name] = {Since = now, Reason = entry.Message}
+			task.defer(function()
+				if module.Enabled then pcall(module.Toggle, module, true) end
+				notify('Aether Doctor', name..' was quarantined after 3 errors in 10 seconds.', 'alert')
+			end)
+		end
+		warn('[AetherV2]['..name..']['..entry.Phase..'] '..entry.Message)
+	end
+
+	function runtime:Retry(name)
+		if name then
+			self.Quarantined[name] = nil
+			self.ErrorWindows[name] = nil
+		else
+			table.clear(self.Quarantined)
+			table.clear(self.ErrorWindows)
+		end
+	end
+
+	function runtime:CountRaycast(amount) self.Metrics.Raycasts += amount or 1 end
+	function runtime:CountRemote(amount) self.Metrics.Remotes += amount or 1 end
+	function runtime:SetPerformanceProfile(profile)
+		self.PerformanceProfile = profile or 'Quality'
+		self.ContextInterval = ({Quality = 0.25, Balanced = 0.35, Performance = 0.6, Potato = 1})[self.PerformanceProfile] or 0.35
+		nexus.LowMotion = self.PerformanceProfile == 'Performance' or self.PerformanceProfile == 'Potato'
+	end
+
+	local function contextValue(rule)
+		if type(rule) == 'function' then
+			local ok, result = xpcall(rule, traceback)
+			if not ok then
+				runtime:Record('Contextual UI', 'VisibleWhen', result)
+				return true
+			end
+			return result and true or false
+		end
+		if type(rule) == 'string' then
+			local module = mainapi.Modules[rule] or (mainapi.Legit and mainapi.Legit.Modules[rule])
+			return module ~= nil and module.Enabled
+		end
+		if type(rule) == 'table' then
+			local module = rule.Module and (mainapi.Modules[rule.Module] or (mainapi.Legit and mainapi.Legit.Modules[rule.Module]))
+			if module then return module.Enabled == (rule.Enabled ~= false) end
+			if rule.Predicate then return contextValue(rule.Predicate) end
+		end
+		return true
+	end
+
+	local function refreshContext()
+		for _, binding in runtime.ContextBindings do
+			local object = binding.Object
+			if typeof(object) == 'Instance' and object.Parent then
+				object.Visible = contextValue(binding.Rule)
+			end
+		end
+	end
+
+	function runtime:BindContext(object, rule)
+		if not rule or typeof(object) ~= 'Instance' then return end
+		table.insert(self.ContextBindings, {Object = object, Rule = rule})
+		refreshContext()
+		if self.ContextRunning then return end
+		self.ContextRunning = true
+		mainapi:Clean(task.spawn(function()
+			while mainapi.Loaded ~= nil do
+				refreshContext()
+				task.wait(runtime.ContextInterval)
+			end
+			self.ContextRunning = false
+		end))
+	end
+
+	local wrappedCategories = {}
+	local function wrapCategory(category)
+		if type(category) ~= 'table' or wrappedCategories[category] or type(category.CreateModule) ~= 'function' then return end
+		wrappedCategories[category] = true
+		local createModule = category.CreateModule
+		category.CreateModule = function(self, settings)
+			settings = settings or {}
+			local original = settings.Function or function() end
+			local module
+			settings.Function = function(enabled)
+				local started = os.clock()
+				local ok, result = xpcall(function()
+					if enabled and settings.Validate then
+						local valid, reason = settings.Validate()
+						if valid == false then error(reason or 'Module validation failed', 0) end
+					end
+					return original(enabled)
+				end, traceback)
+				runtime.Metrics.Samples += 1
+				runtime.Metrics.Cpu += math.max(0, os.clock() - started)
+				if not ok then
+					runtime:Record(module or settings.Name, enabled and 'enable' or 'disable', result)
+					if enabled and module and module.Enabled then task.defer(function() pcall(module.Toggle, module, true) end) end
+				end
+				return result
+			end
+			module = createModule(self, settings)
+			module.Generation = 0
+			if license.SafeModeDisabled == module.Name then
+				runtime.Quarantined[module.Name] = {Since = tick(), Reason = 'Disabled by startup Safe Mode'}
+			end
+			module.IsActive = function(self, generation)
+				return self.Enabled and self.Generation == generation and not runtime.Quarantined[self.Name]
+			end
+			module.Spawn = function(self, fn)
+				local generation = self.Generation
+				local thread = task.spawn(function()
+					local ok, result = xpcall(fn, traceback, generation)
+					if not ok and self:IsActive(generation) then runtime:Record(self, 'task', result) end
+				end)
+				self:Clean(thread)
+				return thread, generation
+			end
+			module.Delay = function(self, seconds, fn)
+				local generation = self.Generation
+				local thread = task.delay(seconds, function()
+					if not self:IsActive(generation) then return end
+					local ok, result = xpcall(fn, traceback, generation)
+					if not ok then runtime:Record(self, 'delay', result) end
+				end)
+				self:Clean(thread)
+				return thread, generation
+			end
+			local toggle = module.Toggle
+			module.Toggle = function(self, ...)
+				if not self.Enabled and runtime.Quarantined[self.Name] then
+					notify('Aether Doctor', self.Name..' is quarantined. Open Error Logs and retry it first.', 'alert')
+					return false
+				end
+				self.Generation += 1
+				return toggle(self, ...)
+			end
+			runtime:BindContext(module.Object, settings.VisibleWhen)
+			for key, creator in module do
+				if type(key) == 'string' and key:sub(1, 6) == 'Create' and type(creator) == 'function' then
+					module[key] = function(self, optionSettings)
+						local option = creator(self, optionSettings)
+						if type(optionSettings) == 'table' and optionSettings.VisibleWhen then
+							local object = type(option) == 'table' and option.Object or nil
+							if typeof(object) == 'Instance' then
+								runtime:BindContext(object, optionSettings.VisibleWhen)
+							elseif type(object) == 'table' then
+								for _, frame in object do runtime:BindContext(frame, optionSettings.VisibleWhen) end
+							end
+						end
+						return option
+					end
+				end
+			end
+			return module
+		end
+	end
+
+	for _, category in mainapi.Categories do wrapCategory(category) end
+	wrapCategory(mainapi.Legit)
+	mainapi.WrapModuleCategory = wrapCategory
+
+	local function countRuntime()
+		local modules, enabled, connections = 0, 0, 0
+		local function scan(source)
+			for _, module in source or {} do
+				modules += 1
+				if module.Enabled then enabled += 1 end
+				connections += type(module.Connections) == 'table' and #module.Connections or 0
+			end
+		end
+		scan(mainapi.Modules)
+		scan(mainapi.Legit and mainapi.Legit.Modules)
+		return modules, enabled, connections
+	end
+
+	function runtime:Report()
+		local modules, enabled, connections = countRuntime()
+		local quarantined = 0
+		for _ in self.Quarantined do quarantined += 1 end
+		local executor = 'Unknown'
+		pcall(function() executor = identifyexecutor and identifyexecutor() or executor end)
+		local memory = 'n/a'
+		pcall(function() memory = string.format('%.1f MB', collectgarbage('count') / 1024) end)
+		local commit = isfile('aetherv2/profiles/commit.txt') and readfile('aetherv2/profiles/commit.txt'):sub(1, 12) or 'unavailable'
+		local channel = isfile('aetherv2/profiles/channel.txt') and readfile('aetherv2/profiles/channel.txt') or 'Stable'
+		local controllerCount, controllerSample = 0, {}
+		for name, controller in mainapi.Libraries.bedwars or {} do
+			if type(name) == 'string' and name:find('Controller') and controller ~= nil then
+				controllerCount += 1
+				if #controllerSample < 5 then table.insert(controllerSample, name) end
+			end
+		end
+		local elapsed = math.max(1, tick() - self.StartedAt)
+		local averageCpu = self.Metrics.Samples > 0 and (self.Metrics.Cpu / self.Metrics.Samples * 1000) or 0
+		local function capability(value) return value and '✓' or '✕' end
+		local bedwars = mainapi.Libraries.bedwars or {}
+		local problems = {}
+		for name, item in self.Quarantined do table.insert(problems, '⚠ '..name..' quarantined: '..tostring(item.Reason)) end
+		if #self.Errors > 0 then table.insert(problems, '⚠ '..#self.Errors..' runtime error(s) recorded') end
+		if #problems == 0 then table.insert(problems, '✓ No current runtime problems') end
+		return table.concat({
+			'AetherV2 '..mainapi.Version..' / '..tostring(mainapi.UI and mainapi.UI.Skin or 'Nexus'),
+			'Channel: '..channel..'  Commit: '..commit,
+			'Executor: '..executor,
+			'Place: '..tostring(game.PlaceId)..'  Game: '..tostring(game.GameId),
+			'',
+			'SYSTEM',
+			'Filesystem '..capability(isfile and writefile)..'  HTTP '..capability(game.HttpGet)..'  setfpscap '..capability(setfpscap),
+			'Drawing '..capability(Drawing and Drawing.new)..'  getconnections '..capability(getconnections)..'  hooks '..capability(hookfunction),
+			'',
+			'BEDWARS',
+			'SwordController '..capability(bedwars.SwordController)..'  AbilityController '..capability(bedwars.AbilityController),
+			'ProjectileController '..capability(bedwars.ProjectileController)..'  Shop '..capability(bedwars.Shop),
+			'BedWars controllers: '..controllerCount..(#controllerSample > 0 and ('  ('..table.concat(controllerSample, ', ')..')') or ''),
+			'',
+			'RUNTIME',
+			'Modules: '..modules..'  Enabled: '..enabled..'  Connections: '..connections,
+			'Scheduler jobs: '..connections..'  Active hooks: '..capability(hookfunction),
+			string.format('Average lifecycle CPU: %.3f ms', averageCpu),
+			string.format('Instrumented raycasts/sec: %.2f  Remote actions/sec: %.2f', self.Metrics.Raycasts / elapsed, self.Metrics.Remotes / elapsed),
+			'Context bindings: '..#self.ContextBindings,
+			'Errors: '..#self.Errors..'  Quarantined: '..quarantined,
+			'Lua memory: '..memory,
+			'',
+			'PROBLEMS',
+			table.concat(problems, '\n')
+		}, '\n')
+	end
+
+	-- These are peer-level platform surfaces. Showing one closes the others so diagnostics,
+	-- Home and Update Center never pile their opaque cards on top of each other.
+	local platformWindows = {}
+	local function showPlatformWindow(target)
+		if mainapi.CloseSpotlight then mainapi.CloseSpotlight() end
+		for _, candidate in platformWindows do
+			if candidate ~= target then candidate.Visible = false end
+		end
+		target.Visible = true
+	end
+
+	local doctor = Instance.new('Frame')
+	doctor.Name = 'AetherDoctor'
+	doctor.Size = UDim2.fromOffset(560, 430)
+	doctor.Position = UDim2.fromScale(0.5, 0.5)
+	doctor.AnchorPoint = Vector2.new(0.5, 0.5)
+	doctor.BackgroundColor3 = uipallet.Main
+	doctor.Visible = false
+	doctor.Parent = scaledgui
+	addBlur(doctor)
+	addCorner(doctor, UDim.new(0, 10))
+	addWindowStroke(doctor)
+	makeDraggable(doctor)
+	table.insert(mainapi.Windows, doctor)
+	table.insert(platformWindows, doctor)
+	local doctorTitle = Instance.new('TextLabel')
+	doctorTitle.Size = UDim2.new(1, -110, 0, 34)
+	doctorTitle.Position = UDim2.fromOffset(14, 7)
+	doctorTitle.BackgroundTransparency = 1
+	doctorTitle.Text = 'Aether Doctor / Error Logs'
+	doctorTitle.TextXAlignment = Enum.TextXAlignment.Left
+	doctorTitle.TextColor3 = uipallet.Text
+	doctorTitle.TextSize = 16
+	doctorTitle.FontFace = uipallet.FontSemiBold
+	doctorTitle.Parent = doctor
+	local doctorBody = Instance.new('ScrollingFrame')
+	doctorBody.Size = UDim2.new(1, -28, 1, -102)
+	doctorBody.Position = UDim2.fromOffset(14, 48)
+	doctorBody.BackgroundColor3 = color.Light(uipallet.Main, 0.025)
+	doctorBody.BorderSizePixel = 0
+	doctorBody.CanvasSize = UDim2.new()
+	doctorBody.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	doctorBody.ScrollBarThickness = 3
+	doctorBody.ScrollBarImageTransparency = 0.45
+	doctorBody.ScrollingDirection = Enum.ScrollingDirection.Y
+	doctorBody.Parent = doctor
+	addCorner(doctorBody, UDim.new(0, 6))
+	local doctorPadding = Instance.new('UIPadding')
+	doctorPadding.PaddingTop, doctorPadding.PaddingBottom = UDim.new(0, 8), UDim.new(0, 8)
+	doctorPadding.PaddingLeft, doctorPadding.PaddingRight = UDim.new(0, 10), UDim.new(0, 10)
+	doctorPadding.Parent = doctorBody
+	local doctorText = Instance.new('TextLabel')
+	doctorText.Size = UDim2.new(1, -20, 0, 0)
+	doctorText.AutomaticSize = Enum.AutomaticSize.Y
+	doctorText.BackgroundTransparency = 1
+	doctorText.TextWrapped = true
+	doctorText.TextXAlignment = Enum.TextXAlignment.Left
+	doctorText.TextYAlignment = Enum.TextYAlignment.Top
+	doctorText.TextColor3 = color.Dark(uipallet.Text, 0.12)
+	doctorText.TextSize = 11
+	doctorText.FontFace = uipallet.Font
+	doctorText.Text = ''
+	doctorText.Parent = doctorBody
+
+	local function smallButton(parent, name, textValue, x, callback)
+		local button = Instance.new('TextButton')
+		button.Name = name
+		button.Size = UDim2.fromOffset(128, 32)
+		button.Position = UDim2.new(0, x, 1, -42)
+		button.BackgroundColor3 = color.Light(uipallet.Main, 0.06)
+		button.Text = textValue
+		button.TextColor3 = uipallet.Text
+		button.TextSize = 12
+		button.FontFace = uipallet.FontSemiBold
+		button.Parent = parent
+		addCorner(button, UDim.new(0, 6))
+		button.MouseButton1Click:Connect(callback)
+		return button
+	end
+
+	local doctorOpen = false
+	local function refreshDoctor()
+		local lines = {runtime:Report(), '', 'RECENT ERRORS'}
+		for index = math.max(1, #runtime.Errors - 14), #runtime.Errors do
+			local item = runtime.Errors[index]
+			if item then table.insert(lines, os.date('%H:%M:%S')..' ['..item.Module..'/'..item.Phase..'] '..item.Message) end
+		end
+		if #runtime.Errors == 0 then table.insert(lines, 'None recorded.') end
+		table.insert(lines, '')
+		table.insert(lines, 'QUARANTINED')
+		local found = false
+		for name, item in runtime.Quarantined do
+			found = true
+			table.insert(lines, name..' - '..item.Reason)
+		end
+		if not found then table.insert(lines, 'None.') end
+		doctorText.Text = table.concat(lines, '\n')
+		doctorBody.CanvasPosition = Vector2.zero
+	end
+
+	function mainapi:OpenDoctor()
+		doctorOpen = true
+		showPlatformWindow(doctor)
+		refreshDoctor()
+	end
+	local closeDoctor = addCloseButton(doctor)
+	closeDoctor.MouseButton1Click:Connect(function() doctorOpen = false doctor.Visible = false end)
+	smallButton(doctor, 'Copy', 'Copy diagnostics', 14, function()
+		refreshDoctor()
+		pcall(setclipboard, doctorText.Text)
+		notify('Aether Doctor', 'Diagnostics copied.')
+	end)
+	smallButton(doctor, 'Retry', 'Retry quarantined', 150, function()
+		runtime:Retry()
+		refreshDoctor()
+		notify('Aether Doctor', 'Quarantine cleared. Modules can be retried.')
+	end)
+	smallButton(doctor, 'Clear', 'Clear error log', 286, function()
+		table.clear(runtime.Errors)
+		refreshDoctor()
+	end)
+
+	local home = Instance.new('Frame')
+	home.Name = 'AetherV2Home'
+	home.Size = UDim2.fromOffset(568, 406)
+	home.Position = UDim2.fromScale(0.5, 0.5)
+	home.AnchorPoint = Vector2.new(0.5, 0.5)
+	home.BackgroundColor3 = uipallet.Main
+	home.Visible = false
+	home.Parent = scaledgui
+	addBlur(home)
+	addCorner(home, UDim.new(0, 12))
+	addWindowStroke(home)
+	makeDraggable(home)
+	table.insert(mainapi.Windows, home)
+	table.insert(platformWindows, home)
+
+	local homeTitle = Instance.new('TextLabel')
+	homeTitle.Size = UDim2.new(1, -50, 0, 32)
+	homeTitle.Position = UDim2.fromOffset(18, 10)
+	homeTitle.BackgroundTransparency = 1
+	homeTitle.Text = 'Aether Home'
+	homeTitle.TextXAlignment = Enum.TextXAlignment.Left
+	homeTitle.TextColor3 = uipallet.Text
+	homeTitle.TextSize = 18
+	homeTitle.FontFace = uipallet.FontSemiBold
+	homeTitle.Parent = home
+
+	local identity = Instance.new('Frame')
+	identity.Name = 'Identity'
+	identity.Size = UDim2.new(1, -36, 0, 82)
+	identity.Position = UDim2.fromOffset(18, 52)
+	identity.BackgroundColor3 = color.Light(uipallet.Main, 0.035)
+	identity.BorderSizePixel = 0
+	identity.Parent = home
+	addCorner(identity, UDim.new(0, 9))
+	local avatar = Instance.new('ImageLabel')
+	avatar.Name = 'Avatar'
+	avatar.Size = UDim2.fromOffset(62, 62)
+	avatar.Position = UDim2.fromOffset(10, 10)
+	avatar.BackgroundColor3 = color.Light(uipallet.Main, 0.08)
+	avatar.BorderSizePixel = 0
+	avatar.ScaleType = Enum.ScaleType.Crop
+	avatar.Parent = identity
+	addCorner(avatar, UDim.new(1, 0))
+	local identityName = Instance.new('TextLabel')
+	identityName.Size = UDim2.new(1, -164, 0, 24)
+	identityName.Position = UDim2.fromOffset(84, 14)
+	identityName.BackgroundTransparency = 1
+	identityName.TextXAlignment = Enum.TextXAlignment.Left
+	identityName.TextTruncate = Enum.TextTruncate.AtEnd
+	identityName.TextColor3 = uipallet.Text
+	identityName.TextSize = 16
+	identityName.FontFace = uipallet.FontSemiBold
+	identityName.Parent = identity
+	local identityDetail = identityName:Clone()
+	identityDetail.Name = 'Detail'
+	identityDetail.Position = UDim2.fromOffset(84, 40)
+	identityDetail.TextColor3 = color.Dark(uipallet.Text, 0.28)
+	identityDetail.TextSize = 12
+	identityDetail.FontFace = uipallet.Font
+	identityDetail.Parent = identity
+	local supportChip = Instance.new('TextLabel')
+	supportChip.Size = UDim2.fromOffset(92, 24)
+	supportChip.Position = UDim2.new(1, -104, 0, 29)
+	supportChip.BackgroundColor3 = color.Light(uipallet.Main, 0.075)
+	supportChip.TextColor3 = Color3.fromRGB(99, 220, 130)
+	supportChip.TextSize = 10
+	supportChip.FontFace = uipallet.FontSemiBold
+	supportChip.Parent = identity
+	addCorner(supportChip, UDim.new(1, 0))
+
+	local function homeCard(x, y, heading)
+		local card = Instance.new('Frame')
+		card.Size = UDim2.fromOffset(257, 54)
+		card.Position = UDim2.fromOffset(x, y)
+		card.BackgroundColor3 = color.Light(uipallet.Main, 0.025)
+		card.BorderSizePixel = 0
+		card.Parent = home
+		addCorner(card, UDim.new(0, 8))
+		local label = Instance.new('TextLabel')
+		label.Size = UDim2.new(1, -20, 0, 15)
+		label.Position = UDim2.fromOffset(10, 7)
+		label.BackgroundTransparency = 1
+		label.Text = heading
+		label.TextXAlignment = Enum.TextXAlignment.Left
+		label.TextColor3 = color.Dark(uipallet.Text, 0.3)
+		label.TextSize = 10
+		label.FontFace = uipallet.FontSemiBold
+		label.Parent = card
+		local value = label:Clone()
+		value.Name = 'Value'
+		value.Position = UDim2.fromOffset(10, 25)
+		value.Size = UDim2.new(1, -20, 0, 19)
+		value.TextColor3 = uipallet.Text
+		value.TextSize = 13
+		value.FontFace = uipallet.Font
+		value.TextTruncate = Enum.TextTruncate.AtEnd
+		value.Parent = card
+		return value
+	end
+	local gameValue = homeCard(18, 146, 'CURRENT GAME')
+	local kitValue = homeCard(293, 146, 'DETECTED KIT')
+	local versionValue = homeCard(18, 210, 'AETHERV2 VERSION')
+	local sessionValue = homeCard(293, 210, 'SESSION DURATION')
+	local homeSummary = Instance.new('TextLabel')
+	homeSummary.Size = UDim2.new(1, -36, 0, 36)
+	homeSummary.Position = UDim2.fromOffset(18, 274)
+	homeSummary.BackgroundTransparency = 1
+	homeSummary.TextXAlignment = Enum.TextXAlignment.Left
+	homeSummary.TextYAlignment = Enum.TextYAlignment.Center
+	homeSummary.TextColor3 = color.Dark(uipallet.Text, 0.2)
+	homeSummary.TextSize = 12
+	homeSummary.FontFace = uipallet.Font
+	homeSummary.TextTruncate = Enum.TextTruncate.AtEnd
+	homeSummary.Parent = home
+	local actionHolder = Instance.new('Frame')
+	actionHolder.Size = UDim2.new(1, -36, 0, 78)
+	actionHolder.Position = UDim2.fromOffset(18, 318)
+	actionHolder.BackgroundTransparency = 1
+	actionHolder.Parent = home
+	local actionLayout = Instance.new('UIGridLayout')
+	actionLayout.CellSize = UDim2.fromOffset(257, 35)
+	actionLayout.CellPadding = UDim2.fromOffset(10, 8)
+	actionLayout.Parent = actionHolder
+	local function homeAction(name, callback)
+		local button = Instance.new('TextButton')
+		button.Size = UDim2.fromOffset(257, 35)
+		button.BackgroundColor3 = color.Light(uipallet.Main, 0.055)
+		button.Text = name
+		button.TextColor3 = uipallet.Text
+		button.TextSize = 12
+		button.FontFace = uipallet.FontSemiBold
+		button.Parent = actionHolder
+		addCorner(button, UDim.new(0, 7))
+		button.MouseButton1Click:Connect(callback)
+	end
+	local function formatDuration(seconds)
+		seconds = math.max(0, math.floor(seconds))
+		return string.format('%02d:%02d:%02d', math.floor(seconds / 3600), math.floor(seconds / 60) % 60, seconds % 60)
+	end
+	local function refreshHome()
+		local player = cloneref(game:GetService('Players')).LocalPlayer
+		local modules, enabled = countRuntime()
+		local channel = isfile('aetherv2/profiles/channel.txt') and readfile('aetherv2/profiles/channel.txt'):gsub('%s+', '') or 'Stable'
+		local bedwarsStore = mainapi.Libraries.bedwarsStore
+		local kit = bedwarsStore and tostring(bedwarsStore.equippedKit or 'None detected') or 'None detected'
+		local displayName = player and tostring(player.DisplayName) or 'Roblox Player'
+		local username = player and tostring(player.Name) or 'unknown'
+		if player then avatar.Image = mainapi:GetAvatarThumbnail(player.UserId, 150) end
+		identityName.Text = displayName
+		identityDetail.Text = '@'..username..'  •  Profile: '..tostring(mainapi.Profile)..'  •  '..channel
+		supportChip.Text = bedwarsStore and '● SUPPORTED' or '● STARTING'
+		gameValue.Text = tostring(game.Name)..'  •  '..tostring(game.PlaceId)
+		kitValue.Text = kit:gsub('_', ' ')
+		versionValue.Text = 'AetherV2 '..tostring(mainapi.Version)
+		sessionValue.Text = formatDuration(tick() - runtime.StartedAt)
+		homeSummary.Text = enabled..'/'..modules..' modules enabled  •  Session diagnostics are available in Aether Doctor'
+	end
+	local homeRefreshId = 0
+	function mainapi:OpenHome()
+		showPlatformWindow(home)
+		refreshHome()
+		homeRefreshId += 1
+		local refreshId = homeRefreshId
+		task.spawn(function()
+			while home.Visible and refreshId == homeRefreshId do
+				task.wait(1)
+				if home.Visible and refreshId == homeRefreshId then refreshHome() end
+			end
+		end)
+	end
+	function mainapi:CreateOnline()
+		self.Online = self.Online or {Open = function() mainapi:OpenHome() end, Close = function() home.Visible = false end, Window = home}
+		return self.Online
+	end
+	local closeHome = addCloseButton(home)
+	closeHome.MouseButton1Click:Connect(function() home.Visible = false end)
+	homeAction('Save profile', function() pcall(mainapi.Save, mainapi) notify('Aether Home', 'Current profile saved.') end)
+	homeAction('Community Configs', function() home.Visible = false if mainapi.OpenRepoConfigs then mainapi.OpenRepoConfigs() end end)
+	homeAction('Aether Doctor', function() home.Visible = false mainapi:OpenDoctor() end)
+	homeAction('Update Center', function() home.Visible = false mainapi:OpenUpdateCenter() end)
+
+	-- A dedicated update surface: status for every channel, an explicit refresh/update action,
+	-- release notes, and a real rollback backed by init.lua's pre-update snapshot.
+	local updateCenter = Instance.new('Frame')
+	updateCenter.Name = 'AetherUpdateCenter'
+	updateCenter.Size = UDim2.fromOffset(560, 410)
+	updateCenter.Position = UDim2.fromScale(0.5, 0.5)
+	updateCenter.AnchorPoint = Vector2.new(0.5, 0.5)
+	updateCenter.BackgroundColor3 = uipallet.Main
+	updateCenter.Visible = false
+	updateCenter.Parent = scaledgui
+	addBlur(updateCenter); addCorner(updateCenter, UDim.new(0, 11)); addWindowStroke(updateCenter); makeDraggable(updateCenter)
+	table.insert(mainapi.Windows, updateCenter)
+	table.insert(platformWindows, updateCenter)
+	local updateTitle = Instance.new('TextLabel')
+	updateTitle.Size, updateTitle.Position, updateTitle.BackgroundTransparency = UDim2.new(1, -50, 0, 38), UDim2.fromOffset(16, 4), 1
+	updateTitle.Text, updateTitle.TextXAlignment, updateTitle.TextColor3 = 'Aether Update Center', Enum.TextXAlignment.Left, uipallet.Text
+	updateTitle.TextSize, updateTitle.FontFace, updateTitle.Parent = 17, uipallet.FontSemiBold, updateCenter
+	local updateStatus = Instance.new('TextLabel')
+	updateStatus.Size, updateStatus.Position = UDim2.new(1, -32, 0, 116), UDim2.fromOffset(16, 50)
+	updateStatus.BackgroundColor3, updateStatus.TextColor3 = color.Light(uipallet.Main, 0.025), color.Dark(uipallet.Text, 0.1)
+	updateStatus.TextXAlignment, updateStatus.TextYAlignment, updateStatus.TextSize = Enum.TextXAlignment.Left, Enum.TextYAlignment.Top, 13
+	updateStatus.FontFace, updateStatus.Parent = uipallet.Font, updateCenter
+	addCorner(updateStatus, UDim.new(0, 7))
+	local releaseNotes = Instance.new('ScrollingFrame')
+	releaseNotes.Size, releaseNotes.Position = UDim2.new(1, -32, 0, 160), UDim2.fromOffset(16, 176)
+	releaseNotes.BackgroundColor3, releaseNotes.BorderSizePixel = color.Light(uipallet.Main, 0.025), 0
+	releaseNotes.CanvasSize, releaseNotes.AutomaticCanvasSize = UDim2.new(), Enum.AutomaticSize.Y
+	releaseNotes.ScrollBarThickness, releaseNotes.ScrollBarImageTransparency = 3, 0.45
+	releaseNotes.ScrollingDirection, releaseNotes.Parent = Enum.ScrollingDirection.Y, updateCenter
+	addCorner(releaseNotes, UDim.new(0, 7))
+	local releaseNotesPadding = Instance.new('UIPadding')
+	releaseNotesPadding.PaddingTop, releaseNotesPadding.PaddingBottom = UDim.new(0, 8), UDim.new(0, 8)
+	releaseNotesPadding.PaddingLeft, releaseNotesPadding.PaddingRight = UDim.new(0, 10), UDim.new(0, 10)
+	releaseNotesPadding.Parent = releaseNotes
+	local releaseNotesText = Instance.new('TextLabel')
+	releaseNotesText.Size, releaseNotesText.AutomaticSize = UDim2.new(1, -20, 0, 0), Enum.AutomaticSize.Y
+	releaseNotesText.BackgroundTransparency = 1
+	releaseNotesText.TextXAlignment, releaseNotesText.TextYAlignment, releaseNotesText.TextWrapped = Enum.TextXAlignment.Left, Enum.TextYAlignment.Top, true
+	releaseNotesText.TextColor3, releaseNotesText.TextSize, releaseNotesText.FontFace = color.Dark(uipallet.Text, 0.14), 12, uipallet.Font
+	releaseNotesText.Parent = releaseNotes
+	local updateNow = smallButton(updateCenter, 'UpdateNow', 'Update / refresh', 16, function()
+		if isfile('aetherv2/profiles/update-paused.txt') then
+			if delfile then pcall(delfile, 'aetherv2/profiles/update-paused.txt') else pcall(writefile, 'aetherv2/profiles/update-paused.txt', 'false') end
+		end
+		reloadAether()
+	end)
+	local rollback = smallButton(updateCenter, 'Rollback', 'Rollback', 152, function()
+		if not isfile('aetherv2/profiles/rollback/manifest.json') then
+			notify('Update Center', 'No previous update snapshot is available.', 'alert')
+			return
+		end
+		pcall(writefile, 'aetherv2/profiles/rollback-request.txt', tostring(os.time()))
+		reloadAether()
+	end)
+	smallButton(updateCenter, 'CopyNotes', 'Copy release notes', 288, function() pcall(setclipboard, releaseNotesText.Text) notify('Update Center', 'Release notes copied.') end)
+	local closeUpdate = addCloseButton(updateCenter)
+	closeUpdate.MouseButton1Click:Connect(function() updateCenter.Visible = false end)
+
+	local function remoteVersion(ref)
+		local ok, body = pcall(function()
+			return game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..ref..'/version.txt', true)
+		end)
+		if not ok or type(body) ~= 'string' or body == '404: Not Found' then return nil end
+		return body:match('version%s*=%s*([^\r\n]+)')
+	end
+	function mainapi:OpenUpdateCenter()
+		showPlatformWindow(updateCenter)
+		local channel = isfile('aetherv2/profiles/channel.txt') and readfile('aetherv2/profiles/channel.txt') or 'Stable'
+		local paused = isfile('aetherv2/profiles/update-paused.txt') and readfile('aetherv2/profiles/update-paused.txt'):gsub('%s+', '') == 'true'
+		updateStatus.Text = '\n  Installed       '..mainapi.Version..'\n  Latest Stable   checking…\n  Latest Beta     checking…\n  Latest Nightly  checking…'
+		releaseNotesText.Text = 'Loading generated release notes…'
+		releaseNotes.CanvasPosition = Vector2.zero
+		rollback.BackgroundTransparency = isfile('aetherv2/profiles/rollback/manifest.json') and 0 or 0.55
+		task.spawn(function()
+			local stable = remoteVersion('stable') or remoteVersion('main') or 'unavailable'
+			local beta = remoteVersion('beta') or remoteVersion('main') or 'unavailable'
+			local nightly = remoteVersion('main') or 'unavailable'
+			if not updateCenter.Visible then return end
+			updateStatus.Text = '\n  Installed       '..mainapi.Version..'  ('..channel:gsub('%s+', '')..(paused and ', rollback pinned' or '')..')\n  Latest Stable   '..stable..'\n  Latest Beta     '..beta..'\n  Latest Nightly  '..nightly
+			local text = 'No generated notes are cached.'
+			pcall(function()
+				local changelog = httpService:JSONDecode(readfile('aetherv2/profiles/changelog.json'))
+				local lines = {'AetherV2 '..tostring(changelog.version or mainapi.Version)}
+				for _, highlight in changelog.highlights or {} do table.insert(lines, '• '..tostring(highlight)) end
+				for heading, entries in changelog.sections or {} do
+					if #entries > 0 then table.insert(lines, '\n'..heading); for _, entry in entries do table.insert(lines, '• '..tostring(entry)) end end
+				end
+				text = table.concat(lines, '\n')
+			end)
+			releaseNotesText.Text = text
+		end)
+	end
+	function mainapi:CreateChangelogs()
+		self.Changelogs = self.Changelogs or {Open = function() mainapi:OpenUpdateCenter() end, Close = function() updateCenter.Visible = false end, Window = updateCenter}
+		return self.Changelogs
+	end
+	mainapi.OpenChangelog = mainapi.OpenUpdateCenter
+	mainapi:CreateOnline()
+	mainapi:CreateChangelogs()
+	homeAction('Update Center', function() home.Visible = false mainapi:OpenUpdateCenter() end)
+
+	mainapi.Commands = {}
+	local function command(name, callback)
+		mainapi.Commands[name] = {Name = name, Category = 'Command', Enabled = false, Toggle = callback}
+	end
+	command('Open Aether Home', function() mainapi:OpenHome() end)
+	command('Open Update Center', function() mainapi:OpenUpdateCenter() end)
+	command('Open Aether Doctor', function() mainapi:OpenDoctor() end)
+	command('Open Community Configs', function() if mainapi.OpenRepoConfigs then mainapi.OpenRepoConfigs() end end)
+	command('Save Current Profile', function() pcall(mainapi.Save, mainapi) notify('AetherV2', 'Profile saved.') end)
+	command('Undo Last Toggle', function() mainapi:Undo() end)
+	command('Redo Last Toggle', function() mainapi:Redo() end)
+	command('Disable All Modules', function() for _, module in mainapi.Modules do if module.Enabled then module:Toggle(true) end end end)
+	command('Retry Quarantined Modules', function() runtime:Retry() notify('Aether Doctor', 'Quarantine cleared.') end)
+	command('Copy Diagnostics', function() pcall(setclipboard, runtime:Report()) notify('Aether Doctor', 'Diagnostics copied.') end)
+	command('Uninject AetherV2', function() task.defer(function() mainapi:Uninject() end) end)
+
+	mainapi.ReloadAether = reloadAether
+	command('Reinject AetherV2', reloadAether)
+	command('Update AetherV2', function() mainapi:OpenUpdateCenter() end)
+	command('Reload Game Modules', reloadAether)
+	command('/help', function() notify('Aether Commands', 'Ctrl+K searches modules, profiles, skins, diagnostics, updates and lifecycle commands.') end)
+	for guiName, guiLabel in {newer = 'Nexus', new = 'Classic', rise = 'Rise', old = 'Old'} do
+		command('Change GUI to '..guiLabel, function()
+			pcall(writefile, 'aetherv2/profiles/gui.txt', guiName)
+			reloadAether()
+		end)
+	end
+	for _, profile in mainapi.Profiles or {} do
+		local name = tostring(profile.Name)
+		command('Load Profile '..name, function() mainapi:Load(false, name) end)
+	end
+
+	-- Debug Mode is useful while the menu is closed too. Keep a compact, draggable HUD
+	-- separate from Doctor so it never turns the diagnostics window into a permanent overlay.
+	local debugHud
+	local debugHudText
+	local debugEnabled = false
+	local function destroyDebugHud()
+		if debugHud then
+			debugHud:Destroy()
+			debugHud = nil
+			debugHudText = nil
+		end
+	end
+	local function refreshDebugHud()
+		if not debugHudText or not debugHudText.Parent then return end
+		local modules, enabled, connections = countRuntime()
+		local averageCpu = runtime.Metrics.Samples > 0 and (runtime.Metrics.Cpu / runtime.Metrics.Samples * 1000) or 0
+		local quarantined = 0
+		for _ in runtime.Quarantined do quarantined += 1 end
+		debugHudText.Text = string.format(
+			'AETHER DEBUG\\n%.3f ms  •  %d/%d modules  •  %d connections\\n%d error(s)  •  %d quarantined  •  %.1f MB',
+			averageCpu, enabled, modules, connections, #runtime.Errors, quarantined, collectgarbage('count') / 1024
+		)
+	end
+	local function setDebugHud(enabled)
+		if not enabled then
+			destroyDebugHud()
+			return
+		end
+		if debugHud and debugHud.Parent then
+			debugHud.Visible = true
+			refreshDebugHud()
+			return
+		end
+		local hud = Instance.new('Frame')
+		hud.Name = 'AetherDebugHUD'
+		hud.Size = UDim2.fromOffset(246, 62)
+		hud.Position = UDim2.new(1, -258, 0, 48)
+		hud.BackgroundColor3 = color.Light(uipallet.Main, 0.035)
+		hud.BackgroundTransparency = 0.06
+		hud.BorderSizePixel = 0
+		hud.Parent = scaledgui
+		addBlur(hud)
+		addCorner(hud, UDim.new(0, 7))
+		addWindowStroke(hud)
+		makeDraggable(hud)
+		local label = Instance.new('TextLabel')
+		label.Name = 'Diagnostics'
+		label.Size = UDim2.new(1, -16, 1, -12)
+		label.Position = UDim2.fromOffset(8, 6)
+		label.BackgroundTransparency = 1
+		label.TextXAlignment = Enum.TextXAlignment.Left
+		label.TextYAlignment = Enum.TextYAlignment.Top
+		label.TextColor3 = uipallet.Text
+		label.TextSize = 11
+		label.FontFace = uipallet.Font
+		label.Parent = hud
+		debugHud, debugHudText = hud, label
+		refreshDebugHud()
+	end
+
+	local debugMode = general:CreateToggle({
+		Name = 'Debug Mode',
+		Tooltip = 'Shows compact on-screen diagnostics and opens Aether Doctor / Error Logs',
+		Function = function(enabled)
+			debugEnabled = enabled
+			setDebugHud(enabled)
+			if enabled then
+				mainapi:OpenDoctor()
+				mainapi:Clean(task.spawn(function()
+					while debugEnabled and mainapi.Loaded ~= nil do
+						if doctorOpen then refreshDoctor() end
+						refreshDebugHud()
+						task.wait(1)
+					end
+				end))
+			else
+				-- Closing the Doctor is deliberate; the compact HUD is also removed so
+				-- Debug Mode has one clear off state.
+				doctorOpen = false
+				doctor.Visible = false
+			end
+		end
+	})
+	mainapi.DebugMode = debugMode
+
+	local currentChannel = isfile('aetherv2/profiles/channel.txt') and readfile('aetherv2/profiles/channel.txt') or 'Stable'
+	if not table.find({'Stable', 'Beta', 'Nightly'}, currentChannel) then currentChannel = 'Stable' end
+	local channelReady = false
+	mainapi.UpdateChannel = general:CreateDropdown({
+		Name = 'Update Channel',
+		List = {'Stable', 'Beta', 'Nightly'},
+		Default = currentChannel,
+		Tooltip = 'Stable is release pinned; Beta previews tested changes; Nightly follows the newest main build',
+		Function = function(value)
+			pcall(writefile, 'aetherv2/profiles/channel.txt', value)
+			if channelReady and isfile('aetherv2/profiles/update-paused.txt') then
+				if delfile then pcall(delfile, 'aetherv2/profiles/update-paused.txt') else pcall(writefile, 'aetherv2/profiles/update-paused.txt', 'false') end
+			end
+		end
+	})
+	pcall(function() mainapi.UpdateChannel:SetValue(currentChannel) end)
+	channelReady = true
+
+	local mobileDefault = inputService.TouchEnabled and not inputService.KeyboardEnabled
+	if isfile('aetherv2/profiles/mobilefirst.txt') then mobileDefault = readfile('aetherv2/profiles/mobilefirst.txt'):gsub('%s+', '') == 'true' end
+	mainapi.MobileFirst = general:CreateToggle({
+		Name = 'Mobile First Mode',
+		Default = mobileDefault,
+		Tooltip = 'Uses larger controls, a single-column category layout and touch-friendly scaling',
+		Function = function(enabled)
+			pcall(writefile, 'aetherv2/profiles/mobilefirst.txt', enabled and 'true' or 'false')
+			if mainapi.SetMobileLayout then mainapi.SetMobileLayout(enabled) end
+			if enabled then
+				scale.Scale = math.max(scale.Scale, 0.8)
+				local row = 0
+				for _, category in mainapi.Categories do
+					if category.Type ~= 'Overlay' and category.Object then
+						category.Object.Position = UDim2.fromOffset(10, 58 + row * 54)
+						row += 1
+					end
+				end
+			end
+		end
+	})
+
+	general:CreateButton({Name = 'Open Aether Home', Function = function() mainapi:OpenHome() end, Tooltip = 'Session status, quick actions and Update Center'})
+	general:CreateButton({Name = 'Open Error Logs', Function = function() mainapi:OpenDoctor() end, Tooltip = 'View, copy, clear and retry runtime failures'})
+	general:CreateButton({Name = 'View changelog / updates', Function = function() mainapi:OpenUpdateCenter() end, Tooltip = 'Opens release channels, update status, rollback and generated notes'})
+end)()
+
+--[[
 	=====================================================================
 	Visual feature pack (v5.3) - flashy, user-facing GUI additions.
 
@@ -11595,7 +13565,7 @@ end
 	spotSearch.Position = UDim2.fromOffset(42, 0)
 	spotSearch.BackgroundTransparency = 1
 	spotSearch.Text = ''
-	spotSearch.PlaceholderText = 'Toggle a module...'
+	spotSearch.PlaceholderText = 'Toggle a module or run a command...'
 	spotSearch.PlaceholderColor3 = color.Dark(uipallet.Text, 0.5)
 	spotSearch.TextXAlignment = Enum.TextXAlignment.Left
 	spotSearch.TextColor3 = uipallet.Text
@@ -11607,7 +13577,7 @@ end
 	spotHint.Size = UDim2.fromOffset(210, 16)
 	spotHint.Position = UDim2.new(1, -218, 0, 17)
 	spotHint.BackgroundTransparency = 1
-	spotHint.Text = 'Enter toggles • right-click for details'
+	spotHint.Text = 'Ctrl+K • Enter runs • right-click for details'
 	spotHint.TextXAlignment = Enum.TextXAlignment.Right
 	spotHint.TextColor3 = color.Dark(uipallet.Text, 0.5)
 	spotHint.TextSize = 10
@@ -11733,14 +13703,20 @@ end
 		local function collect(source, fallbackCategory)
 			for name, m in source do
 				if query == '' or name:lower():find(query, 1, true) then
-					table.insert(matches, {Module = m, Name = name, Category = m.Category or m.ApiCategory or fallbackCategory})
+					table.insert(matches, {Module = m, Name = name, Category = m.Category or m.ApiCategory or fallbackCategory, Favourite = m.Favourited == true})
 				end
 			end
 		end
 		collect(mainapi.Modules)
 		-- Legit modules live in their own table, so half the menu never showed up here.
 		collect(mainapi.Legit and mainapi.Legit.Modules or {}, 'Legit')
-		table.sort(matches, function(a, b) return a.Name < b.Name end)
+		-- Platform commands share Spotlight so Ctrl+K is useful for actions as well
+		-- as module toggles (save, diagnostics, reinject, Community Configs, etc.).
+		collect(mainapi.Commands or {}, 'Command')
+		table.sort(matches, function(a, b)
+			if a.Favourite ~= b.Favourite then return a.Favourite end
+			return a.Name < b.Name
+		end)
 		firstMatch = matches[1] and matches[1].Module or nil
 		-- Every match is listed. The old build stopped at eighty, which with an empty query cut
 		-- the list off well before the end of the menu.
@@ -11825,6 +13801,11 @@ end
 	local function openSpot()
 		if spotOpen then return end
 		spotOpen = true
+		if mainapi.MobileFirst and mainapi.MobileFirst.Enabled then
+			spotCard.Size = UDim2.new(1, -24, 1, -80)
+		else
+			spotCard.Size = UDim2.fromOffset(660, 560)
+		end
 		raiseZ(spotBackdrop, 40)
 		raiseZ(spotCard, 41)
 		spotStroke.Color = accent()
@@ -11848,6 +13829,161 @@ end
 		end)
 	end
 	mainapi.OpenSpotlight = openSpot
+	mainapi.CloseSpotlight = closeSpot
+
+	-- Mobile First drawer. It is deliberately one compact surface: swipe/tap it up for the four
+	-- primary categories, a large command search, and four draggable quick actions. Holding a quick
+	-- action assigns the next favourite/common module; Scaffold, Speed and Freecam behave as true
+	-- hold binds and return to their previous state on release.
+	local mobileDock = Instance.new('Frame')
+	mobileDock.Name = 'MobileModuleDrawer'
+	mobileDock.Size = UDim2.new(1, -20, 0, 46)
+	mobileDock.Position = UDim2.new(0, 10, 1, -56)
+	mobileDock.BackgroundColor3 = uipallet.Main
+	mobileDock.Visible = false
+	mobileDock.ClipsDescendants = true
+	mobileDock.Parent = scaledgui
+	addBlur(mobileDock); addCorner(mobileDock, UDim.new(0, 12)); addWindowStroke(mobileDock)
+	local dockConstraint = Instance.new('UISizeConstraint')
+	dockConstraint.MaxSize, dockConstraint.MinSize, dockConstraint.Parent = Vector2.new(520, 230), Vector2.new(300, 46), mobileDock
+	local drawerButton = Instance.new('TextButton')
+	drawerButton.Size, drawerButton.BackgroundTransparency, drawerButton.Text = UDim2.new(1, 0, 0, 46), 1, 'Aether Modules   ⌃'
+	drawerButton.TextColor3, drawerButton.TextSize, drawerButton.FontFace, drawerButton.Parent = uipallet.Text, 14, uipallet.FontSemiBold, mobileDock
+	local mobileSearch = Instance.new('TextButton')
+	mobileSearch.Size, mobileSearch.Position = UDim2.new(1, -24, 0, 38), UDim2.fromOffset(12, 52)
+	mobileSearch.BackgroundColor3, mobileSearch.Text = color.Light(uipallet.Main, 0.05), 'Search modules and commands…'
+	mobileSearch.TextColor3, mobileSearch.TextSize, mobileSearch.FontFace, mobileSearch.Parent = color.Dark(uipallet.Text, 0.2), 14, uipallet.Font, mobileDock
+	addCorner(mobileSearch, UDim.new(0, 8))
+	mobileSearch.MouseButton1Click:Connect(openSpot)
+	local mobileExpanded = false
+	local function setDrawer(open)
+		mobileExpanded = open
+		drawerButton.Text = open and 'Aether Modules   ⌄' or 'Aether Modules   ⌃'
+		tween:Tween(mobileDock, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {
+			Size = UDim2.new(1, -20, 0, open and 230 or 46),
+			Position = UDim2.new(0, 10, 1, open and -240 or -56)
+		})
+	end
+	drawerButton.MouseButton1Click:Connect(function() setDrawer(not mobileExpanded) end)
+	do
+		local startY
+		drawerButton.InputBegan:Connect(function(input)
+			if input.UserInputType == Enum.UserInputType.Touch then startY = input.Position.Y end
+		end)
+		drawerButton.InputEnded:Connect(function(input)
+			if input.UserInputType == Enum.UserInputType.Touch and startY then
+				local delta = input.Position.Y - startY
+				if math.abs(delta) > 24 then setDrawer(delta < 0) end
+				startY = nil
+			end
+		end)
+	end
+	local categoryHolder = Instance.new('Frame')
+	categoryHolder.Size, categoryHolder.Position, categoryHolder.BackgroundTransparency, categoryHolder.Parent = UDim2.new(1, -24, 0, 34), UDim2.fromOffset(12, 98), 1, mobileDock
+	local categoryLayout = Instance.new('UIGridLayout')
+	categoryLayout.CellSize, categoryLayout.CellPadding, categoryLayout.Parent = UDim2.new(0.25, -5, 1, 0), UDim2.fromOffset(6, 0), categoryHolder
+	for _, categoryName in {'Combat', 'Movement', 'World', 'Render'} do
+		local button = Instance.new('TextButton')
+		button.BackgroundColor3, button.Text, button.TextColor3 = color.Light(uipallet.Main, 0.045), categoryName, uipallet.Text
+		button.TextSize, button.FontFace, button.Parent = 12, uipallet.FontSemiBold, categoryHolder
+		addCorner(button, UDim.new(0, 7))
+		button.MouseButton1Click:Connect(function()
+			local category = mainapi.Categories[categoryName]
+			clickgui.Visible = true
+			if category and category.Button then
+				category.Button:Toggle(true)
+			elseif category and not category.Expanded and category.Expand then
+				category:Expand()
+			end
+			setDrawer(false)
+		end)
+	end
+
+	local mobilePath = 'aetherv2/profiles/mobile-layout.json'
+	local mobileLayout = {Quick = {'Killaura', 'Scaffold', 'Speed', 'Freecam'}, X = {12, 116, 220, 324}}
+	pcall(function()
+		local loaded = httpService:JSONDecode(readfile(mobilePath))
+		if type(loaded) == 'table' then mobileLayout = loaded end
+	end)
+	mobileLayout.Quick = type(mobileLayout.Quick) == 'table' and mobileLayout.Quick or {'Killaura', 'Scaffold', 'Speed', 'Freecam'}
+	mobileLayout.X = type(mobileLayout.X) == 'table' and mobileLayout.X or {12, 116, 220, 324}
+	local function saveMobile() pcall(writefile, mobilePath, httpService:JSONEncode(mobileLayout)) end
+	local function mobileModule(name)
+		return mainapi.Modules[name] or (mainapi.Legit and mainapi.Legit.Modules and mainapi.Legit.Modules[name])
+	end
+	local function moduleChoices()
+		local result, seen = {}, {}
+		for name, module in mainapi.Modules do
+			if module.Favourited then table.insert(result, name); seen[name] = true end
+		end
+		for _, name in {'Killaura', 'Scaffold', 'Speed', 'Freecam', 'AntiVoid', 'AutoWin'} do
+			if mobileModule(name) and not seen[name] then table.insert(result, name); seen[name] = true end
+		end
+		return result
+	end
+	for index = 1, 4 do
+		local button = Instance.new('TextButton')
+		button.Name, button.Size, button.Position = 'Quick'..index, UDim2.fromOffset(96, 72), UDim2.fromOffset(tonumber(mobileLayout.X[index]) or (12 + (index - 1) * 104), 144)
+		button.BackgroundColor3, button.TextColor3, button.TextSize, button.FontFace = color.Light(uipallet.Main, 0.055), uipallet.Text, 12, uipallet.FontSemiBold
+		button.TextWrapped, button.Parent = true, mobileDock
+		addCorner(button, UDim.new(0, 9))
+		local pressed, dragged, start, startX, original, pressedModule, pressedHold
+		local function repaint()
+			local name = tostring(mobileLayout.Quick[index] or '?')
+			local hold = name == 'Scaffold' or name == 'Speed' or name == 'Freecam'
+			button.Text = (hold and 'HOLD\n' or '')..name
+			local module = mobileModule(name)
+			button.BackgroundColor3 = module and module.Enabled and accent() or color.Light(uipallet.Main, 0.055)
+		end
+		local function finish()
+			if not pressed then return end
+			pressed = false
+			local name = tostring(mobileLayout.Quick[index] or '')
+			local module = mobileModule(name)
+			if pressedModule and pressedHold and pressedModule.Enabled ~= original then pressedModule:Toggle() end
+			if dragged then
+				mobileLayout.X[index] = button.Position.X.Offset
+				saveMobile()
+			elseif module and not hold then
+				module:Toggle()
+			end
+			repaint()
+		end
+		button.InputBegan:Connect(function(input)
+			if input.UserInputType ~= Enum.UserInputType.Touch and input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+			pressed, dragged, start, startX = true, false, input.Position, button.Position.X.Offset
+			local module = mobileModule(tostring(mobileLayout.Quick[index] or ''))
+			pressedModule = module
+			original = module and module.Enabled or false
+			pressedHold = mobileLayout.Quick[index] == 'Scaffold' or mobileLayout.Quick[index] == 'Speed' or mobileLayout.Quick[index] == 'Freecam'
+			if module and pressedHold and not module.Enabled then module:Toggle() end
+			repaint()
+			task.delay(0.75, function()
+				if not pressed or dragged then return end
+				local choices = moduleChoices()
+				if #choices > 0 then
+					local current = table.find(choices, mobileLayout.Quick[index]) or 0
+					mobileLayout.Quick[index] = choices[current % #choices + 1]
+					saveMobile(); repaint()
+				end
+			end)
+		end)
+		mainapi:Clean(inputService.InputChanged:Connect(function(input)
+			if not pressed or (input.UserInputType ~= Enum.UserInputType.Touch and input.UserInputType ~= Enum.UserInputType.MouseMovement) then return end
+			local delta = input.Position - start
+			if delta.Magnitude > 8 then dragged = true end
+			if dragged then button.Position = UDim2.fromOffset(math.clamp(startX + delta.X, 8, math.max(8, mobileDock.AbsoluteSize.X - 104)), 144) end
+		end))
+		button.InputEnded:Connect(function(input)
+			if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then finish() end
+		end)
+		repaint()
+	end
+	function mainapi.SetMobileLayout(enabled)
+		mobileDock.Visible = enabled
+		if enabled then raiseZ(mobileDock, 35) else setDrawer(false) end
+	end
+	mainapi.SetMobileLayout(mainapi.MobileFirst and mainapi.MobileFirst.Enabled)
 
 	spotBackdrop.MouseButton1Click:Connect(closeSpot)
 	-- Coalesced: the list is every module in the menu now, so rebuilding it on each keystroke
@@ -11871,10 +14007,14 @@ end
 			end)
 		end
 	end)
-	-- Backquote (`) toggles Spotlight from anywhere the GUI isn't capturing text.
+	-- Backquote (`) and Ctrl+K toggle Spotlight from anywhere the GUI isn't
+	-- capturing text. Ctrl+K is the documented command-palette shortcut.
 	mainapi:Clean(inputService.InputBegan:Connect(function(input, processed)
 		if processed then return end
-		if input.KeyCode == Enum.KeyCode.Backquote and not inputService:GetFocusedTextBox() then
+		local commandKey = input.KeyCode == Enum.KeyCode.K and (
+			inputService:IsKeyDown(Enum.KeyCode.LeftControl) or inputService:IsKeyDown(Enum.KeyCode.RightControl)
+		)
+		if (input.KeyCode == Enum.KeyCode.Backquote or commandKey) and not inputService:GetFocusedTextBox() then
 			if spotOpen then closeSpot() else openSpot() end
 		elseif input.KeyCode == Enum.KeyCode.Escape and spotOpen then
 			closeSpot()
@@ -12051,7 +14191,7 @@ end
 		return btn, content
 	end
 
-	local spotBtn = makeToolButton(1, 'aetherv2/assets/new/search.png', nil, 'Spotlight - quick toggle any module (`)')
+	local spotBtn = makeToolButton(1, 'aetherv2/assets/new/search.png', nil, 'Command Palette - modules and actions (Ctrl+K or `)')
 	spotBtn.MouseButton1Click:Connect(function()
 		if spotOpen then closeSpot() else openSpot() end
 	end)

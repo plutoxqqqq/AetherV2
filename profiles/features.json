@@ -1,39 +1,48 @@
 {
-	"added": [
-		"MultiAction",
-		"AutoEnchant",
-		"Theme",
-		"LowHealthVignette"
-	],
-	"updated": [
-		"RecoveryTP",
-		"Killaura",
-		"StreamRemover",
-		"ACMODView",
-		"Keystrokes"
-	],
-	"text": "[BEDWARS]\n[+] Added MultiAction to Exploits for compatible simultaneous actions\n[+] Added AutoEnchant to Inventory for automatic table repair and enchanting\n[^] Renamed DeathTP to RecoveryTP\n[^] Consolidated visual modules into the customizable Theme Render module\n[!] Fixed Killaura Fury Potion attack speed\n[!] Fixed StreamRemover and ACMODView Remove disguises\n[-] Removed standalone Atmosphere, TimeChanger, Shader, AuroraSky, StormMode, Bloom, AbyssalDepths, and IRLReplica modules; their visual functionality is available in Theme\n\n[GENERAL]\n[+] Added LowHealthVignette to Legit\n[^] Expanded Keystrokes with mouse-click and spacebar support\n[^] Improved auto-execute startup time",
-	"newModules": [
-		"MultiAction",
-		"AutoEnchant",
-		"Theme",
-		"LowHealthVignette"
-	],
-	"updatedModules": [
-		"RecoveryTP",
-		"Killaura",
-		"StreamRemover",
-		"ACMODView",
-		"Keystrokes"
-	],
-	"removedModules": [
-		"Atmosphere",
-		"TimeChanger",
-		"Shader",
-		"AuroraSky",
-		"StormMode",
-		"Bloom",
-		"AbyssalDepths",
-		"IRLReplica"
-	]
+  "added": [
+    "AetherFlow",
+    "AntiVoidFlag",
+    "AutoEnchant",
+    "BreakerLegit",
+    "JadeInstaKill",
+    "KitAutomation",
+    "LowHealthVignette",
+    "MultiAction",
+    "Theme"
+  ],
+  "updated": [
+    "AntiVoid",
+    "AutoWin",
+    "FPSBoost",
+    "LongJump",
+    "NoFallDamage",
+    "ProjectileDodger",
+    "ProjectileLanding",
+    "Scaffold",
+    "TransparentCharacter"
+  ],
+  "text": "[+] AetherFlow: Added an event and timer driven rule engine for shared triggers and actions.\n[^] AntiVoid: Made Clutch react on PreSimulation with cached grounded support and an earlier trigger.\n[+] AntiVoidFlag: Added a bounded horizontal void glide with grounded-state recovery.\n[+] AutoEnchant: Added automatic enchant management.\n[^] AutoWin: Rebuilt as a bounded match brain with routing, recovery, target locking, module takeover and queue supervision.\n[+] BreakerLegit: Added a line-of-sight, animation-aware and closest-first legitimate breaker.\n[^] FPSBoost: Added Quality, Balanced, Performance and Potato profiles.\n[+] JadeInstaKill: Reworked kit detection, hammer activation, tool restoration, range validation and cancellation.\n[+] KitAutomation: Unified kit automation behind live kit detection and contextual settings.\n[!] LongJump: Bounded Jade carry time and speed to prevent late lagback.\n[+] LowHealthVignette: Added a configurable low-health visual warning.\n[+] MultiAction: Added shared multi-action input handling.\n[!] NoFallDamage: Prevented overlapping Blatant callbacks and preserved horizontal velocity.\n[!] ProjectileDodger: Hardened nested projectile and shooter discovery.\n[!] ProjectileLanding: Replaced per-frame scans with bounded tracking and corrected world/entity collision order.\n[^] Scaffold: Moved placement onto the shared predictor with projection, tower, width, preview and slot restoration.\n[+] Theme: Added shared client theme controls.\n[!] TransparentCharacter: Rewritten with conflict-safe property restoration and descendant lifecycle handling.",
+  "newModules": [
+    "AetherFlow",
+    "AntiVoidFlag",
+    "AutoEnchant",
+    "BreakerLegit",
+    "JadeInstaKill",
+    "KitAutomation",
+    "LowHealthVignette",
+    "MultiAction",
+    "Theme"
+  ],
+  "updatedModules": [
+    "AntiVoid",
+    "AutoWin",
+    "FPSBoost",
+    "LongJump",
+    "NoFallDamage",
+    "ProjectileDodger",
+    "ProjectileLanding",
+    "Scaffold",
+    "TransparentCharacter"
+  ],
+  "removedModules": []
 }

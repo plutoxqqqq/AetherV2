@@ -1,0 +1,38 @@
+name: Generate changelog
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'games/**'
+      - 'guis/**'
+      - 'libraries/**'
+      - 'backend/**'
+      - 'init.lua'
+      - 'main.lua'
+      - 'version.txt'
+      - 'tools/generate-changelog.js'
+
+permissions:
+  contents: write
+
+jobs:
+  changelog:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: node tools/generate-changelog.js
+      - name: Commit generated changelog
+        run: |
+          if git diff --quiet -- CHANGELOG.md profiles/changelog.json profiles/features.json profiles/modules.json; then exit 0; fi
+          git config user.name 'aether-changelog-bot'
+          git config user.email 'aether-changelog-bot@users.noreply.github.com'
+          git add CHANGELOG.md profiles/changelog.json profiles/features.json profiles/modules.json
+          git commit -m 'chore: generate v${{ github.sha }} changelog [skip ci]'
+          git push

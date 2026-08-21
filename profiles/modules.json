@@ -1,0 +1,2252 @@
+{
+  "version": "4.0.0",
+  "modules": [
+    {
+      "name": "ACMODView",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AetherFlow",
+      "version": "4.0.0",
+      "changed": "Added an event and timer driven rule engine for shared triggers and actions.",
+      "changeType": "Added",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AimAssist",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AnimationPlayer",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/universal.lua"
+    },
+    {
+      "name": "Anti-AFK",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AntiDeath",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AntiLasso",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AntiRagdoll",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/universal.lua"
+    },
+    {
+      "name": "AntiSuffocate",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AntiVoid",
+      "version": "4.0.0",
+      "changed": "Made Clutch react on PreSimulation with cached grounded support and an earlier trigger.",
+      "changeType": "Improved",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AntiVoidFlag",
+      "version": "4.0.0",
+      "changed": "Added a bounded horizontal void glide with grounded-state recovery.",
+      "changeType": "Added",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "ArmorHighlight",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "ArmorSwitch",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "ArmorTrims",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "Arrows",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/universal.lua"
+    },
+    {
+      "name": "Aura",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoAdetunde",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoAgni",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoAlchemist",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoBalloon",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoBank",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoBeekeeper",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoBekzat",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoBlockKicker",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoBuilder",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoBuildUp",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoBuy",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoCaitlyn",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoClicker",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoColbat",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoConqueror",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoConsume",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoCounter",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoCrocowolf",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoCyber",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoDavey",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoDeathAdder",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoDinoTamerDom",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoDrill",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoElder",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoEmber",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoEnchant",
+      "version": "4.0.0",
+      "changed": "Added automatic enchant management.",
+      "changeType": "Added",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoEvelynn",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoFarmer",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoFish",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoFisherman",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoFreiya",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoFrosty",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoGamble",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872265039.lua"
+    },
+    {
+      "name": "AutoGingerbreadMan",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoGompy",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoGrim",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoHannah",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoHephaestus",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoHonor",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoHotbar",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoInfernalShielder",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoJack",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoJade",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoKaida",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoKaliyah",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoKrystal",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoLani",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoLasso",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoLumen",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoMarina",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoMartin",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoMelody",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoMerchantMarco",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoMetal",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoMiner",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoNazar",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoNoelle",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoNyoka",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoNyx",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoPearl",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoPickpocket",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoPinata",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoPlay",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoPyro",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoQueue",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872265039.lua"
+    },
+    {
+      "name": "AutoRagnar",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoRamil",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoRaven",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoRejoin",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/universal.lua"
+    },
+    {
+      "name": "AutoRelease",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoSanta",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoSheepHerder",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoSheila",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoShoot",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoSilas",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoSmoke",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoSpiritCatcher",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoStarCollector",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoSteal",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoStyx",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoSuffocate",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoTaliyah",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoTerra",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoTool",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoToxic",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoTrapper",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoTrinity",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoUma",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoUmbra",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoUmeko",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoVanessa",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoVoidDragon",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoVoidDrop",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoVoidRegent",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoVulcan",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoWarden",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoWarlock",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoWarrior",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoWhim",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoWhisper",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoWin",
+      "version": "4.0.0",
+      "changed": "Rebuilt as a bounded match brain with routing, recovery, target locking, module takeover and queue supervision.",
+      "changeType": "Improved",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoWizard",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoWren",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoYamini",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoYeti",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoYuzi",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoZenith",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoZeno",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoZephyr",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "AutoZola",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "BackTrack",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "BalloonDisabler",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "BedAlarm",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "BedAssist",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "BedBreakEffect",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "BedESP",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "BedPlates",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "BedProtector",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "BeehiveESP",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "Blink",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/universal.lua"
+    },
+    {
+      "name": "BlockIn",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "BlockSelectorColor",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "BoostAirJump",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "BowAssist",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "Breadcrumbs",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/universal.lua"
+    },
+    {
+      "name": "Breaker",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "BreakerLegit",
+      "version": "4.0.0",
+      "changed": "Added a line-of-sight, animation-aware and closest-first legitimate breaker.",
+      "changeType": "Added",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "Cape",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/universal.lua"
+    },
+    {
+      "name": "Chams",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/universal.lua"
+    },
+    {
+      "name": "ChatNameColor",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "ChatPosition",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "ChatSpammer",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/universal.lua"
+    },
+    {
+      "name": "CheatDetector",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "ChillLighting",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "ChinaHat",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/universal.lua"
+    },
+    {
+      "name": "ClaimRewards",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872265039.lua"
+    },
+    {
+      "name": "CleanKit",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "Clock",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/universal.lua"
+    },
+    {
+      "name": "Coords",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/universal.lua"
+    },
+    {
+      "name": "Crosshair",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "CustomChildren",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "guis/newer.lua"
+    },
+    {
+      "name": "CustomClanTag",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872265039.lua"
+    },
+    {
+      "name": "CustomCursor",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "CustomTags",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "DamageBoost",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "DamageIndicator",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "DaveyAim",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "DeathAdderAimbot",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "Desync",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/universal.lua"
+    },
+    {
+      "name": "DeviceSpoofer",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "Disabler",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/universal.lua"
+    },
+    {
+      "name": "Disguise",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/universal.lua"
+    },
+    {
+      "name": "EntityAnalyser",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "ESP",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/universal.lua"
+    },
+    {
+      "name": "FakeLag",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "FastBreak",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "FastConsume",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "FastDrop",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "FastPlace",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "FFlagEditor",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/universal.lua"
+    },
+    {
+      "name": "FishermanSpy",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "Fly",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "FOV",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "FPS",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/universal.lua"
+    },
+    {
+      "name": "FPSBoost",
+      "version": "4.0.0",
+      "changed": "Added Quality, Balanced, Performance and Potato profiles.",
+      "changeType": "Improved",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "FPSUnlocker",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/universal.lua"
+    },
+    {
+      "name": "Freecam",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/universal.lua"
+    },
+    {
+      "name": "Fullbright",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/universal.lua"
+    },
+    {
+      "name": "GamingChair",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/universal.lua"
+    },
+    {
+      "name": "GeneratorESP",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "Gravity",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/universal.lua"
+    },
+    {
+      "name": "GrimReaperFix",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "Headless",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872265039.lua"
+    },
+    {
+      "name": "Health",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "HighJump",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/universal.lua"
+    },
+    {
+      "name": "HitBoxes",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "HitColor",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "HitFix",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "HitregAdjuster",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "Icon",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "guis/newer.lua"
+    },
+    {
+      "name": "IgnorePlaceHitboxes",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "InfiniteJump",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/universal.lua"
+    },
+    {
+      "name": "InstantKill",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "Interface",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "InvisibleCursor",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "ItemESP",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "JadeInstaKill",
+      "version": "4.0.0",
+      "changed": "Reworked kit detection, hammer activation, tool restoration, range validation and cancellation.",
+      "changeType": "Added",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "Jesus",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/universal.lua"
+    },
+    {
+      "name": "KeepSprint",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "Keystrokes",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/universal.lua"
+    },
+    {
+      "name": "Killaura",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "KillEffect",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "KillfeedSpoofer",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "Kit module visibility",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "KitAutomation",
+      "version": "4.0.0",
+      "changed": "Unified kit automation behind live kit detection and contextual settings.",
+      "changeType": "Added",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "KitDisplay",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "KitESP",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "KnockbackDelay",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "KrystalDisabler",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "LARPKits",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872265039.lua"
+    },
+    {
+      "name": "LeaderboardSpoof",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872265039.lua"
+    },
+    {
+      "name": "LegacyAnimation",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "Legless",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "LongJump",
+      "version": "4.0.0",
+      "changed": "Bounded Jade carry time and speed to prevent late lagback.",
+      "changeType": "Fixed",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "LongJumpBypass",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "LootESP",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "LowHealthVignette",
+      "version": "4.0.0",
+      "changed": "Added a configurable low-health visual warning.",
+      "changeType": "Added",
+      "source": "games/universal.lua"
+    },
+    {
+      "name": "Memory",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/universal.lua"
+    },
+    {
+      "name": "MissileTP",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "MotionBlur",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "MouseTP",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "MP3Player",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "MultiAction",
+      "version": "4.0.0",
+      "changed": "Added shared multi-action input handling.",
+      "changeType": "Added",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "Multiplier",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "NameTags",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "NametagSpoof",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872265039.lua"
+    },
+    {
+      "name": "NameTagSpoofer",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "NightmareEmote",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872265039.lua"
+    },
+    {
+      "name": "NoCameraCollision",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/universal.lua"
+    },
+    {
+      "name": "NoClickDelay",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "NoClip",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/universal.lua"
+    },
+    {
+      "name": "NoFallDamage",
+      "version": "4.0.0",
+      "changed": "Prevented overlapping Blatant callbacks and preserved horizontal velocity.",
+      "changeType": "Fixed",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "NoSlowdown",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "Notification",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "guis/newer.lua"
+    },
+    {
+      "name": "OG4v4v4v4",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "OGNameTags",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872265039.lua"
+    },
+    {
+      "name": "OwlAura",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "Panic",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/universal.lua"
+    },
+    {
+      "name": "Parkour",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/universal.lua"
+    },
+    {
+      "name": "PhaseMine",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "PickupRange",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "Ping",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/universal.lua"
+    },
+    {
+      "name": "PlayerAttach",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "PlayerModel",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/universal.lua"
+    },
+    {
+      "name": "PlayerOutline",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "PlayerProfileSpoof",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872265039.lua"
+    },
+    {
+      "name": "PotatoMode",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "PotionStatus",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "ProjectileAimbot",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "ProjectileAura",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "ProjectileDodger",
+      "version": "4.0.0",
+      "changed": "Hardened nested projectile and shooter discovery.",
+      "changeType": "Fixed",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "ProjectileLanding",
+      "version": "4.0.0",
+      "changed": "Replaced per-frame scans with bounded tracking and corrected world/entity collision order.",
+      "changeType": "Fixed",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "ProjectileTracers",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "ProximityExtender",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/universal.lua"
+    },
+    {
+      "name": "ProximityPromptDuration",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/universal.lua"
+    },
+    {
+      "name": "RavenTP",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "Reach",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "ReachDisplay",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "ReaperBypass",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "RecoveryTP",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "Rejoin",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/universal.lua"
+    },
+    {
+      "name": "RemoveNeon",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "RemovePlayerLevelUI",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "SafeWalk",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/universal.lua"
+    },
+    {
+      "name": "Scaffold",
+      "version": "4.0.0",
+      "changed": "Moved placement onto the shared predictor with projection, tower, width, preview and slot restoration.",
+      "changeType": "Improved",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "Schematica",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "Search",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/universal.lua"
+    },
+    {
+      "name": "ServerHop",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/universal.lua"
+    },
+    {
+      "name": "SetPlayerLevel",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872265039.lua"
+    },
+    {
+      "name": "SetPlayerWins",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872265039.lua"
+    },
+    {
+      "name": "Settings",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "guis/newer.lua"
+    },
+    {
+      "name": "ShadowRemover",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "ShopClicker",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "SilentAim",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "SilentAura",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "SkinChanger",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "SongBeats",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "SoundChanger",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "Speed",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "Speedmeter",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/universal.lua"
+    },
+    {
+      "name": "Spider",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "SpinBot",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/universal.lua"
+    },
+    {
+      "name": "Sprint",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872265039.lua"
+    },
+    {
+      "name": "StaffDetector",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "StateSpoofer",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/universal.lua"
+    },
+    {
+      "name": "StatsBoardSpoof",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872265039.lua"
+    },
+    {
+      "name": "StorageESP",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "StreamRemover",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "TargetStrafe",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/universal.lua"
+    },
+    {
+      "name": "TerraAimbot",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "TexturePack",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "Theme",
+      "version": "4.0.0",
+      "changed": "Added shared client theme controls.",
+      "changeType": "Added",
+      "source": "games/universal.lua"
+    },
+    {
+      "name": "Timer",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/universal.lua"
+    },
+    {
+      "name": "Title",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "guis/newer.lua"
+    },
+    {
+      "name": "TitleChanger",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872265039.lua"
+    },
+    {
+      "name": "TPAura",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "Tracers",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/universal.lua"
+    },
+    {
+      "name": "TransparentCharacter",
+      "version": "4.0.0",
+      "changed": "Rewritten with conflict-safe property restoration and descendant lifecycle handling.",
+      "changeType": "Fixed",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "TrapDisabler",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "TrapESP",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "TriggerBot",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "TritonClutch",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "UICleanup",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "Velocity",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "ViewMatchHistory",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872265039.lua"
+    },
+    {
+      "name": "Viewmodel",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "ViewmodelVisuals",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "VulcanAssist",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "Water",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "Waypoints",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/universal.lua"
+    },
+    {
+      "name": "WhiteHits",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "WinEffect",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872274481.lua"
+    },
+    {
+      "name": "WinstreakSpoofer",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/6872265039.lua"
+    },
+    {
+      "name": "Xray",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/universal.lua"
+    },
+    {
+      "name": "ZoomUnlocker",
+      "version": "4.0.0",
+      "changed": "",
+      "changeType": "Maintained",
+      "source": "games/universal.lua"
+    }
+  ]
+}

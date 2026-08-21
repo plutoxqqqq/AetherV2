@@ -627,11 +627,77 @@ local function fetchFile(path, ref, attempts)
 	return nil, problem
 end
 
-local function storeFile(path, body)
+local rollbackRoot = 'aetherv2/profiles/rollback'
+local rollbackManifest
+
+local function ensureParent(path)
+	local current = ''
+	for part in path:gmatch('[^/]+') do
+		if part:find('%.') and current ~= '' and current..'/'..part == path then break end
+		current = current == '' and part or current..'/'..part
+		if current ~= path and not isfolder(current) then pcall(makefolder, current) end
+	end
+end
+
+local function atomicWriteRaw(path, body)
+	local temporary = path..'.aether-new'
+	writefile(temporary, body)
+	if readfile(temporary) ~= body then
+		pcall(delfile, temporary)
+		error('temporary write verification failed for '..path, 0)
+	end
+	local moved = renamefile and pcall(renamefile, temporary, path) or false
+	if not moved then
+		writefile(path, body)
+		pcall(delfile, temporary)
+	end
+end
+
+local function rememberRollback(path)
+	if not rollbackManifest or rollbackManifest.seen[path] then return end
+	rollbackManifest.seen[path] = true
+	local relative = path:gsub('^aetherv2/', '')
+	local backup = rollbackRoot..'/'..relative
+	local existed = isfile(path)
+	if existed then
+		ensureParent(backup)
+		atomicWriteRaw(backup, readfile(path))
+	end
+	table.insert(rollbackManifest.files, {path = path, backup = backup, existed = existed})
+	atomicWriteRaw(rollbackRoot..'/manifest.json', httpService:JSONEncode({
+		commit = rollbackManifest.commit,
+		filesText = rollbackManifest.filesText,
+		files = rollbackManifest.files
+	}))
+end
+
+local function storeFile(path, body, backup)
 	if path:sub(-4) == '.lua' then
 		body = watermark..body
 	end
-	writefile(path, body)
+	if backup then rememberRollback(path) end
+	-- Validate a complete temporary copy before replacing the live cache. Executors
+	-- with renamefile get an atomic swap; others still only touch the destination
+	-- after the full payload has been written and read back successfully.
+	local temporary = path..'.aether-new'
+	writefile(temporary, body)
+	local verified = readfile(temporary)
+	if verified ~= body then
+		pcall(delfile, temporary)
+		error('temporary write verification failed for '..path, 0)
+	end
+	if path:sub(-4) == '.lua' and not cachedLoadstring(verified, path) then
+		pcall(delfile, temporary)
+		error('temporary Lua validation failed for '..path, 0)
+	end
+	local moved = false
+	if renamefile then
+		moved = pcall(renamefile, temporary, path)
+	end
+	if not moved then
+		writefile(path, verified)
+		pcall(delfile, temporary)
+	end
 end
 
 local function downloadFile(path, func)
@@ -662,7 +728,9 @@ end
 -- for the ride. Downloaded once on a fresh install, never updated again, for everyone.
 local repoProfileFiles = {
 	['aetherv2/profiles/features.json'] = true,
-	['aetherv2/profiles/packages.json'] = true
+	['aetherv2/profiles/packages.json'] = true,
+	['aetherv2/profiles/changelog.json'] = true,
+	['aetherv2/profiles/modules.json'] = true
 }
 
 local function isUserFile(normalized)
@@ -699,6 +767,49 @@ for _, folder in {'aetherv2', 'aetherv2/games', 'aetherv2/profiles', 'aetherv2/a
 	end
 end
 
+-- Rollback is explicit: the Update Center writes this request and reinjects. The previous
+-- revision was captured before any live file changed, including files removed by that update.
+local rollbackRequest = 'aetherv2/profiles/rollback-request.txt'
+if isfile(rollbackRequest) then
+	local ok, manifest = pcall(httpService.JSONDecode, httpService, isfile(rollbackRoot..'/manifest.json') and readfile(rollbackRoot..'/manifest.json') or '')
+	if ok and type(manifest) == 'table' and type(manifest.files) == 'table' then
+		_G.AetherV2SetLoadingStatus('Rolling back the previous update', 0.1)
+		for _, entry in manifest.files do
+			if entry.existed and isfile(entry.backup) then
+				ensureParent(entry.path)
+				atomicWriteRaw(entry.path, readfile(entry.backup))
+			elseif not entry.existed and isfile(entry.path) then
+				pcall(delfile, entry.path)
+			end
+		end
+		if type(manifest.commit) == 'string' then atomicWriteRaw('aetherv2/profiles/commit.txt', manifest.commit) end
+		if type(manifest.filesText) == 'string' then atomicWriteRaw('aetherv2/profiles/files.txt', manifest.filesText) end
+		atomicWriteRaw('aetherv2/profiles/update-paused.txt', 'true')
+		shared.AetherRolledBack = true
+	end
+	pcall(delfile, rollbackRequest)
+end
+
+if not isfile('aetherv2/profiles/channel.txt') then
+	writefile('aetherv2/profiles/channel.txt', 'Stable')
+end
+
+-- A marker survives only when the preceding startup failed before Finalizing.
+-- main.lua turns it into a three-choice recovery prompt after the GUI core is
+-- available, so recovery never depends on console access.
+local startupMarkerPath = 'aetherv2/profiles/startup.json'
+if isfile(startupMarkerPath) then
+	local ok, previous = pcall(httpService.JSONDecode, httpService, readfile(startupMarkerPath))
+	if ok and type(previous) == 'table' and previous.state == 'loading' then
+		license.SafeModeFailure = previous
+	end
+end
+pcall(writefile, startupMarkerPath, httpService:JSONEncode({
+	state = 'loading',
+	stage = 'init',
+	time = os.time()
+}))
+
 -- Drop-a-song note, written once. MP3Player reads whatever is in aetherv2/songs, so the folder is
 -- no use to anyone who does not know it is there.
 if not isfile('aetherv2/songs/read me.txt') then
@@ -713,6 +824,16 @@ if not isfile('aetherv2/songs/read me.txt') then
 	}, '\n'))
 end
 
+local function updateChannel()
+	local channel = isfile('aetherv2/profiles/channel.txt') and readfile('aetherv2/profiles/channel.txt'):gsub('%s+', '') or 'Stable'
+	if channel ~= 'Stable' and channel ~= 'Beta' and channel ~= 'Nightly' then channel = 'Stable' end
+	return channel
+end
+
+local function updateRef(channel)
+	return ({Stable = 'stable', Beta = 'beta', Nightly = 'main'})[channel] or 'stable'
+end
+
 -- Which commit are we on?
 --
 -- This used to download the repository's GitHub LANDING PAGE - 279 KB of HTML - on every single
@@ -725,18 +846,18 @@ end
 -- call the error message was parsed as if it were the page, the match failed, and the commit
 -- silently became 'main' - which then looked like an update and wiped the entire install. On a flaky
 -- connection that happened on every injection. A lookup that fails now changes nothing at all.
-local function resolveCommit()
+local function resolveCommit(ref)
+	ref = ref or 'main'
 	-- Reinjection in the same client should not repeat three update endpoints. The first injection
 	-- still performs the normal live check; this short in-memory reuse never survives a new client
 	-- session and therefore does not make persistent installs miss updates.
 	local recent = shared.AetherResolvedCommit
-	if type(recent) == 'table' and type(recent.Commit) == 'string' and os.clock() - (recent.CheckedAt or 0) < 60 then
+	if type(recent) == 'table' and recent.Ref == ref and type(recent.Commit) == 'string' and os.clock() - (recent.CheckedAt or 0) < 60 then
 		return recent.Commit
 	end
 	local sources = {
-		{Url = 'https://api.github.com/repos/plutoxqqqq/AetherV2/commits/main', Pattern = '"sha"%s*:%s*"(%x+)"'},
-		{Url = 'https://github.com/plutoxqqqq/AetherV2/commits/main.atom', Pattern = 'Commit/(%x+)'},
-		{Url = 'https://github.com/plutoxqqqq/AetherV2', Pattern = 'currentOid[^%x]*(%x+)'}
+		{Url = 'https://api.github.com/repos/plutoxqqqq/AetherV2/commits/'..ref, Pattern = '"sha"%s*:%s*"(%x+)"'},
+		{Url = 'https://github.com/plutoxqqqq/AetherV2/commits/'..ref..'.atom', Pattern = 'Commit/(%x+)'}
 	}
 	for _, source in sources do
 		local suc, body = pcall(function()
@@ -746,11 +867,15 @@ local function resolveCommit()
 			local found = body:match(source.Pattern)
 			if found and #found >= 40 then
 				found = found:sub(1, 40)
-				shared.AetherResolvedCommit = {Commit = found, CheckedAt = os.clock()}
+				shared.AetherResolvedCommit = {Commit = found, Ref = ref, CheckedAt = os.clock()}
 				return found
 			end
 		end
 	end
+	-- Repositories upgrading to channels may not have published stable/beta refs
+	-- yet. Falling back to main keeps the loader usable while preserving the
+	-- selected channel for the moment those refs appear.
+	if ref ~= 'main' then return resolveCommit('main') end
 	return nil
 end
 
@@ -841,13 +966,23 @@ local function installedVersion()
 	return found and (found:gsub('%s+$', '')) or nil
 end
 
-if not shared.VapeDeveloper then
+local updatesPaused = isfile('aetherv2/profiles/update-paused.txt') and readfile('aetherv2/profiles/update-paused.txt'):gsub('%s+', '') == 'true'
+if not shared.VapeDeveloper and not updatesPaused and not shared.AetherRolledBack then
 	local oldCommit = isfile('aetherv2/profiles/commit.txt') and readfile('aetherv2/profiles/commit.txt') or ''
 	_G.AetherV2SetLoadingStatus('Checking for updates', 0.12)
-	local commit = license.Commit or resolveCommit()
+	local channel = updateChannel()
+	shared.AetherUpdateChannel = channel
+	local commit = license.Commit or resolveCommit(updateRef(channel))
 
 	if commit and commit ~= oldCommit then
 		local previousVersion = installedVersion()
+		if not isfolder(rollbackRoot) then makefolder(rollbackRoot) end
+		rollbackManifest = {
+			commit = oldCommit,
+			filesText = isfile(fileListPath) and readfile(fileListPath) or '',
+			files = {},
+			seen = {}
+		}
 
 		-- Update only what actually changed.
 		--
@@ -856,8 +991,8 @@ if not shared.VapeDeveloper then
 		-- the last update says exactly which files moved - usually a handful - and only those are
 		-- dropped. Everything else stays on disk.
 		--
-		-- Missing either list falls back to the old full wipe, on purpose: with nothing to compare
-		-- against, keeping files would mean keeping whatever is stale among them.
+		-- If the old baseline is unavailable, every installed repository file is staged and refreshed;
+		-- a tree lookup failure leaves the known-good install untouched.
 		local newFiles = fetchFileList(commit)
 		local oldFiles = readFileList()
 
@@ -867,18 +1002,29 @@ if not shared.VapeDeveloper then
 
 		if newFiles and oldFiles then
 			local changed = 0
+			local staged = {}
 			for path, blob in newFiles do
 				local target = 'aetherv2/'..path
 				if oldFiles[path] ~= blob and isfile(target) then
-					delfile(target)
+					-- Download and validate every replacement before touching any live file.
+					-- A failed request therefore leaves the complete previous revision usable.
+					local body, problem = fetchFile(target, commit, 3)
+					if not body then
+						failLoad('Could not stage update for '..target..' - '..tostring(problem))
+					end
+					staged[target] = body
 					changed += 1
 				end
+			end
+			for target, body in staged do
+				storeFile(target, body, true)
 			end
 			-- Files that no longer exist upstream.
 			for path in oldFiles do
 				if not newFiles[path] then
 					local target = 'aetherv2/'..path
 					if isfile(target) and not isUserFile('/'..target) then
+						rememberRollback(target)
 						delfile(target)
 						changed += 1
 					end
@@ -886,31 +1032,46 @@ if not shared.VapeDeveloper then
 			end
 			changedFiles = changed
 			_G.AetherV2SetLoadingStatus('Updating '..changed..' file'..(changed == 1 and '' or 's'), 0.16)
+		elseif newFiles then
+			-- No trustworthy old baseline: stage a complete refresh of repository files that
+			-- are already installed, then swap them individually. Keeping unknown local files is
+			-- safer than the former broad folder wipe and still guarantees every known cache entry
+			-- is from one verified revision.
+			local staged, changed = {}, 0
+			for path in newFiles do
+				local target = 'aetherv2/'..path
+				if isfile(target) and not isUserFile('/'..target) then
+					local body, problem = fetchFile(target, commit, 3)
+					if not body then failLoad('Could not stage update for '..target..' - '..tostring(problem)) end
+					staged[target] = body
+					changed += 1
+				end
+			end
+			for target, body in staged do storeFile(target, body, true) end
+			changedFiles = changed
 		else
-			wipeFolder('aetherv2')
-			wipeFolder('aetherv2/games')
-			wipeFolder('aetherv2/guis')
-			wipeFolder('aetherv2/libraries')
+			-- A failed tree lookup is not permission to erase a good installation. Leave the
+			-- current revision intact and retry the update on the next injection.
+			commit = oldCommit
+			rollbackManifest = nil
 		end
 
 		-- Only an update the user would actually notice is worth announcing. A first
 		-- install has nothing to compare against, and a commit that moved no file this
 		-- install carries (a README edit, a change to another game's module) is not an
 		-- update to this install at all - both used to fire the notification anyway.
-		if oldCommit ~= '' and (changedFiles == nil or changedFiles > 0) then
+		if oldCommit ~= '' and changedFiles and changedFiles > 0 then
 			shared.updated = {From = previousVersion, Files = changedFiles}
 		end
 
 		writefile('aetherv2/profiles/commit.txt', commit)
 		if newFiles then
 			writeFileList(newFiles)
-		elseif isfile(fileListPath) then
-			-- Could not read the new list, so the stored one now describes an install that no longer
-			-- exists. Drop it: a stale baseline would let a later update skip files that had genuinely
-			-- changed. Without one, the next update simply wipes and refetches.
+		elseif commit ~= oldCommit and isfile(fileListPath) then
+			-- A revision was applied without a usable tree, so the previous baseline is no longer safe.
 			delfile(fileListPath)
 		end
-		prefetchPaths = newFiles
+		prefetchPaths = newFiles or readFileList()
 	elseif oldCommit == '' then
 		-- First run with no answer from GitHub: fall back to main rather than having no ref at all.
 		writefile('aetherv2/profiles/commit.txt', commit or 'main')
@@ -969,14 +1130,16 @@ local function neededFiles(files)
 		-- .json (a font descriptor) as well as images, and letting the extension rule see those first
 		-- pulled another GUI's files down.
 		if path:sub(1, 7) == 'assets/' then
-			-- Only the selected GUI's artwork, plus the loading logo which is always shown.
-			include = path:sub(1, 8 + #gui) == 'assets/'..gui..'/' or path == 'assets/new/loading.png'
+			-- All skins share Nexus UI Core, whose artwork is the former `new` asset set.  A
+			-- selected skin is data, not a second GUI implementation, so never prefetch a
+			-- second asset family just because an older profile says old/rise/new.
+			include = path:sub(1, 11) == 'assets/new/'
 		elseif path:sub(-4) == '.lua' or path:sub(-5) == '.json' or path:sub(-4) == '.txt' then
 			-- Only this game's module, never the other twenty-odd.
 			if path:sub(1, 6) == 'games/' then
 				include = path == 'games/universal.lua' or path == 'games/'..place..'.lua'
 			elseif path:sub(1, 5) == 'guis/' then
-				include = path == 'guis/'..gui..'.lua'
+				include = path == 'guis/newer.lua'
 			elseif path:sub(1, 6) == 'tools/' or path:sub(1, 1) == '.' then
 				include = false
 			elseif path == 'init.lua' then

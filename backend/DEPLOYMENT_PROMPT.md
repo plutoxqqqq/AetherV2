@@ -1,0 +1,7 @@
+# Backend 2.0 deployment prompt
+
+Use this prompt with the operator or hosting assistant that manages AetherV2 infrastructure:
+
+> Deploy `/backend` from the AetherV2 repository as a persistent Node.js 20 service. Run `npm test` before release and start it with `npm start`. Give the service a persistent volume mounted at `/data`, HTTPS, and outbound HTTPS access to `api.github.com`. Set `DATA_FILE=/data/aether-community.json`, a cryptographically random `ADMIN_KEY` of at least 32 bytes, `GITHUB_REPO=plutoxqqqq/AetherV2`, `GITHUB_BRANCH=main`, `GITHUB_PUBLISH_MODE=pr`, and a repository-scoped GitHub token with Contents read/write plus Pull requests read/write. Set `ALLOWED_ORIGINS=https://www.roblox.com,https://create.roblox.com`; set `TRUST_PROXY=true` only if the platform overwrites `X-Forwarded-For`. Optionally set `VERIFIED_CREATORS` to a comma-separated list of approved creator credits. Protect the `main` branch, require review for bot-created config PRs, back up `/data/aether-community.json`, and return the final HTTPS origin with no trailing slash. Verify `GET <origin>/v2/health` returns HTTP 200, `apiVersion: "2"`, and publishing mode `pr`. Do not expose `ADMIN_KEY` or `GITHUB_TOKEN` to Roblox, Lua files, logs, or source control.
+
+After deployment, put the returned origin (no trailing slash) in `aetherv2/profiles/configbackend.txt`. Only the maintainer installation should contain `aetherv2/profiles/configadminkey.txt`, whose content is the exact `ADMIN_KEY`.

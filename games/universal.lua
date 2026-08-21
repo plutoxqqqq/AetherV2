@@ -8377,7 +8377,7 @@ run(function()
 		set(Saturation, profile.Saturation); set(Contrast, profile.Contrast)
 	end
 
-    Theme = vape.Categories.Render:CreateModule({Name = 'Theme', Function = function(enabled)
+    Theme = vape.Categories.Render:CreateModule({Name = 'Theme', Version = '4.0.0', Changed = 'Added shared client theme controls.', ChangeType = 'Added', Function = function(enabled)
         if enabled then
             for _, property in lightingProperties do remember(lightingService, property, lightingOriginal) end
             for _, object in lightingService:GetChildren() do if effectClasses[object.ClassName] then table.insert(preserved, {Object = object, Parent = object.Parent}); object.Parent = game end end
@@ -9309,6 +9309,9 @@ run(function()
 
     LowHealthVignette = vape.Categories.Legit:CreateModule({
         Name = 'LowHealthVignette',
+        Version = '4.0.0',
+        Changed = 'Added a configurable low-health visual warning.',
+        ChangeType = 'Added',
         Function = function(enabled)
             cleanup()
             if not enabled then return end

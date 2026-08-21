@@ -24,10 +24,17 @@ local mainapi = {
 	Scale = {Value = 1},
 	ThreadFix = setthreadidentity and true or false,
 	ToggleNotifications = {},
-	Version = '4.18',
+	Version = '4.0.0',
 	ToggleMode = {Value = 'Toggle'},
-	Windows = {}
+	Windows = {},
+	Runtime = {StartedAt = tick()}
 }
+
+function mainapi:GetAvatarThumbnail(userId, size)
+	local id = tonumber(userId) or 1
+	local dimension = tonumber(size) or 420
+	return 'rbxthumb://type=AvatarHeadShot&id='..id..'&w='..dimension..'&h='..dimension
+end
 
 local cloneref = cloneref or function(obj)
 	return obj
@@ -3083,7 +3090,7 @@ mainapi.Components = setmetatable(components, {
 			end)
 		end
 
-		for _, panel in {mainapi.Legit, mainapi.Kits} do
+		for _, panel in {mainapi.Legit} do
 			for _, v in panel.Modules do
 				rawset(v, 'Create'..ind, function(_, settings)
 					return func(settings, v.Children, v)
@@ -3481,8 +3488,8 @@ local children = Instance.new('Frame')
 		addTooltip(button, 'Open overlays menu')
 		local homebutton = Instance.new('TextButton')
 		homebutton.Name = 'AetherV2Home'
-		homebutton.Size = UDim2.fromOffset(42, 22)
-		homebutton.Position = UDim2.fromOffset(8, 8)
+		homebutton.Size = UDim2.fromOffset(46, 24)
+		homebutton.Position = UDim2.new(1, -81, 0, 6)
 		homebutton.BackgroundTransparency = 1
 		homebutton.AutoButtonColor = false
 		homebutton.Text = 'Home'
@@ -3490,7 +3497,13 @@ local children = Instance.new('Frame')
 		homebutton.TextSize = 12
 		homebutton.FontFace = uipallet.Font
 		homebutton.Parent = bar
-		addTooltip(homebutton, 'Home')
+		addTooltip(homebutton, 'Open Aether Home')
+		homebutton.MouseEnter:Connect(function()
+			homebutton.TextColor3 = uipallet.Text
+		end)
+		homebutton.MouseLeave:Connect(function()
+			homebutton.TextColor3 = color.Light(uipallet.Main, 0.37)
+		end)
 		homebutton.MouseButton1Click:Connect(function()
 			if mainapi.Online then mainapi.Online:Open() end
 		end)
@@ -7321,9 +7334,7 @@ function mainapi:CreateSearch()
 	local xscale = inputService.TouchEnabled and 0.1 or 0.5
 	local searchbkg = Instance.new('Frame')
 	searchbkg.Name = 'Search'
-	-- Wider than the 220 of a module row so both panel buttons fit beside the text box.
-	-- The results list centres the 220-wide clones inside it.
-	searchbkg.Size = UDim2.fromOffset(260, 37)
+	searchbkg.Size = UDim2.fromOffset(220, 37)
 	searchbkg.Position = UDim2.new(xscale, 0, 0, 13)
 	searchbkg.AnchorPoint = Vector2.new(xscale, 0)
 	searchbkg.BackgroundColor3 = color.Dark(uipallet.Main, 0.02)
@@ -7336,42 +7347,25 @@ function mainapi:CreateSearch()
 	searchicon.Image = getcustomasset('aetherv2/assets/new/search.png')
 	searchicon.ImageColor3 = color.Light(uipallet.Main, 0.37)
 	searchicon.Parent = searchbkg
-	-- Kits sits to the LEFT of Legit. Same construction, different asset and a window of
-	-- its own; the two buttons share no state whatsoever.
-	local kitsicon = Instance.new('ImageButton')
-	kitsicon.Name = 'Kits'
-	kitsicon.Size = UDim2.fromOffset(29, 16)
-	kitsicon.Position = UDim2.fromOffset(8, 11)
-	kitsicon.BackgroundTransparency = 1
-	kitsicon.Image = getcustomasset('aetherv2/assets/new/friendstab.png')
-	kitsicon.ScaleType = Enum.ScaleType.Fit
-	kitsicon.Parent = searchbkg
-	local kitsdivider = Instance.new('Frame')
-	kitsdivider.Name = 'KitsDivider'
-	kitsdivider.Size = UDim2.fromOffset(2, 12)
-	kitsdivider.Position = UDim2.fromOffset(43, 13)
-	kitsdivider.BackgroundColor3 = color.Light(uipallet.Main, 0.14)
-	kitsdivider.BorderSizePixel = 0
-	kitsdivider.Parent = searchbkg
 	local legiticon = Instance.new('ImageButton')
 	legiticon.Name = 'Legit'
 	legiticon.Size = UDim2.fromOffset(29, 16)
-	legiticon.Position = UDim2.fromOffset(51, 11)
+	legiticon.Position = UDim2.fromOffset(8, 11)
 	legiticon.BackgroundTransparency = 1
 	legiticon.Image = getcustomasset('aetherv2/assets/new/legit.png')
 	legiticon.Parent = searchbkg
 	local legitdivider = Instance.new('Frame')
 	legitdivider.Name = 'LegitDivider'
 	legitdivider.Size = UDim2.fromOffset(2, 12)
-	legitdivider.Position = UDim2.fromOffset(86, 13)
+	legitdivider.Position = UDim2.fromOffset(43, 13)
 	legitdivider.BackgroundColor3 = color.Light(uipallet.Main, 0.14)
 	legitdivider.BorderSizePixel = 0
 	legitdivider.Parent = searchbkg
 	addBlur(searchbkg)
 	addCorner(searchbkg)
 	local search = Instance.new('TextBox')
-	search.Size = UDim2.new(1, -93, 0, 37)
-	search.Position = UDim2.fromOffset(93, 0)
+	search.Size = UDim2.new(1, -76, 0, 37)
+	search.Position = UDim2.fromOffset(50, 0)
 	search.BackgroundTransparency = 1
 	search.Text = ''
 	search.PlaceholderText = ''
@@ -7407,35 +7401,6 @@ function mainapi:CreateSearch()
 
 	children:GetPropertyChangedSignal('CanvasPosition'):Connect(function()
 		divider.Visible = children.CanvasPosition.Y > 10 and children.Visible
-	end)
-	-- Lays the two panel buttons out left to right, skipping whichever ones are hidden,
-	-- and reflows the text box behind them. Called by the 'Show legit mode' / 'Show kits
-	-- mode' settings toggles.
-	local function updateSearchLayout()
-		local x = 8
-		for _, entry in {{Button = kitsicon, Divider = kitsdivider}, {Button = legiticon, Divider = legitdivider}} do
-			if entry.Button.Visible then
-				entry.Button.Position = UDim2.fromOffset(x, 11)
-				entry.Divider.Position = UDim2.fromOffset(x + 35, 13)
-				entry.Divider.Visible = true
-				x = x + 43
-			else
-				entry.Divider.Visible = false
-			end
-		end
-		local offset = x == 8 and 10 or x
-		search.Position = UDim2.fromOffset(offset, 0)
-		search.Size = UDim2.new(1, -offset, 0, 37)
-	end
-	self.UpdateSearchLayout = updateSearchLayout
-	-- Position everything from the layout function rather than from the literals above, so
-	-- there is only one place the spacing is decided.
-	updateSearchLayout()
-
-	kitsicon.MouseButton1Click:Connect(function()
-		clickgui.Visible = false
-		self.Kits.Window.Visible = true
-		self.Kits.Window.Position = UDim2.new(0.5, -350, 0.5, -194)
 	end)
 	legiticon.MouseButton1Click:Connect(function()
 		clickgui.Visible = false
@@ -7529,23 +7494,20 @@ function mainapi:CreateSearch()
 			setthreadidentity(8)
 		end
 		children.CanvasSize = UDim2.fromOffset(0, windowlist.AbsoluteContentSize.Y / scale.Scale)
-		searchbkg.Size = UDim2.fromOffset(260, math.min(37 + windowlist.AbsoluteContentSize.Y / scale.Scale, 437))
+		searchbkg.Size = UDim2.fromOffset(220, math.min(37 + windowlist.AbsoluteContentSize.Y / scale.Scale, 437))
 	end)
 
 	self.Legit.Icon = legiticon
-	self.Kits.Icon = kitsicon
 end
 
 --[[
-	Panel windows (Legit, Kits)
+	Panel window (Legit)
 
-	Both of the icons sitting to the left of the search bar open a standalone
-	window built by this one factory. Each call produces an entirely separate
-	api, window, module table and config section - the two panels share code,
-	never state, so toggling or configuring one can never affect the other.
+	The icon sitting to the left of the search bar opens this standalone
+	window. It owns its module table and config section.
 
 	config = {
-		Field    - key on mainapi the api is stored under ('Legit' / 'Kits')
+		Field    - key on mainapi the api is stored under
 		Window   - Instance name for the frame
 		Icon     - header icon asset path
 		Tabs     - category names, first one is focused by default
@@ -8110,73 +8072,127 @@ function mainapi:CreateLegit()
 	})
 end
 
--- Kits: its own window, its own module table, its own config section. Nothing about
--- it is wired to the Legit panel beyond sharing the factory above.
-function mainapi:CreateKits()
-	return createPanel({
-		Field = 'Kits',
-		Window = 'KitsGUI',
-		Icon = 'aetherv2/assets/new/friendstab.png',
-		Tabs = {'All', 'Auto', 'Ability', 'Aim', 'Visual'},
-		Default = 'Auto'
-	})
-end
-
 function mainapi:CreateOnline()
 	local api = {}
-	-- CatVape's compact Online card is used as the visual language for Home:
-	-- branded header, circular identity asset, raised information rows and a status chip.
 	local window = Instance.new('Frame')
 	window.Name = 'AetherV2Home'
-	window.Size = UDim2.fromOffset(208, 320)
-	window.Position = UDim2.new(0.5, -104, 0.5, -160)
+	window.Size = UDim2.fromOffset(568, 406)
+	window.Position = UDim2.new(0.5, -284, 0.5, -203)
 	window.BackgroundColor3 = uipallet.Main
 	window.Visible, window.Parent = false, scaledgui
-	addBlur(window); addCorner(window); addWindowStroke(window); makeDraggable(window)
-	local logo = Instance.new('ImageLabel')
-	logo.Name = 'Icon'; logo.Size = UDim2.fromOffset(16, 16); logo.Position = UDim2.fromOffset(10, 10)
-	logo.BackgroundTransparency = 1; logo.Image = getcustomasset('aetherv2/assets/new/catvape-onlineicon.png')
-	logo.ImageColor3 = Color3.fromHSV(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value); logo.Parent = window
+	addBlur(window); addCorner(window, UDim.new(0, 12)); addWindowStroke(window); makeDraggable(window)
 	local title = Instance.new('TextLabel')
-	title.Size, title.Position = UDim2.fromOffset(140, 38), UDim2.fromOffset(36, 0)
-	title.BackgroundTransparency, title.Text = 1, 'AetherV2 Home'
-	title.TextColor3, title.TextSize, title.FontFace = uipallet.Text, 14, uipallet.Font
+	title.Size, title.Position = UDim2.new(1, -50, 0, 32), UDim2.fromOffset(18, 10)
+	title.BackgroundTransparency, title.Text = 1, 'Aether Home'
+	title.TextColor3, title.TextSize, title.FontFace = uipallet.Text, 18, uipallet.FontSemiBold
 	title.TextXAlignment, title.Parent = Enum.TextXAlignment.Left, window
 	local close = addCloseButton(window)
-	local divider = Instance.new('Frame')
-	divider.Size, divider.Position = UDim2.new(1, 0, 0, 1), UDim2.fromOffset(0, 38)
-	divider.BorderSizePixel, divider.BackgroundColor3, divider.BackgroundTransparency, divider.Parent = 0, color.Light(uipallet.Main, 0.15), 0.5, window
+
+	local identity = Instance.new('Frame')
+	identity.Name = 'Identity'
+	identity.Size, identity.Position = UDim2.new(1, -36, 0, 82), UDim2.fromOffset(18, 52)
+	identity.BackgroundColor3, identity.BorderSizePixel, identity.Parent = color.Light(uipallet.Main, 0.035), 0, window
+	addCorner(identity, UDim.new(0, 9))
 	local avatar = Instance.new('ImageLabel')
-	avatar.Size, avatar.Position = UDim2.fromOffset(52, 52), UDim2.fromOffset(78, 52)
-	avatar.BackgroundColor3, avatar.BorderSizePixel = color.Light(uipallet.Main, 0.05), 0
-	avatar.Image, avatar.ScaleType, avatar.Parent = getcustomasset('aetherv2/assets/new/catvape-onlineicon.png'), Enum.ScaleType.Fit, window
+	avatar.Name = 'Avatar'
+	avatar.Size, avatar.Position = UDim2.fromOffset(62, 62), UDim2.fromOffset(10, 10)
+	avatar.BackgroundColor3, avatar.BorderSizePixel, avatar.ScaleType, avatar.Parent = color.Light(uipallet.Main, 0.08), 0, Enum.ScaleType.Crop, identity
 	addCorner(avatar, UDim.new(1, 0))
-	local welcome = Instance.new('TextLabel')
-	welcome.Size, welcome.Position = UDim2.new(1, -16, 0, 24), UDim2.fromOffset(8, 116)
-	welcome.BackgroundTransparency, welcome.Text = 1, 'Welcome to AetherV2'
-	welcome.TextColor3, welcome.TextSize, welcome.FontFace, welcome.Parent = uipallet.Text, 16, uipallet.FontSemiBold, window
-	local function row(y, heading, value)
-		local frame = Instance.new('Frame'); frame.Size, frame.Position = UDim2.fromOffset(192, 46), UDim2.fromOffset(8, y)
-		frame.BackgroundColor3, frame.BorderSizePixel, frame.Parent = color.Light(uipallet.Main, 0.035), 0, window; addCorner(frame)
-		local label = Instance.new('TextLabel'); label.Size, label.Position = UDim2.new(1, -20, 0, 18), UDim2.fromOffset(10, 5)
-		label.BackgroundTransparency, label.Text, label.TextColor3, label.TextSize, label.FontFace = 1, heading, uipallet.Text, 12, uipallet.FontSemiBold
-		label.TextXAlignment, label.Parent = Enum.TextXAlignment.Left, frame
-		local detail = label:Clone(); detail.Position, detail.Text, detail.TextColor3, detail.TextSize, detail.FontFace = UDim2.fromOffset(10, 23), value, color.Dark(uipallet.Text, 0.32), 11, uipallet.Font; detail.Parent = frame
+	local identityName = Instance.new('TextLabel')
+	identityName.Size, identityName.Position = UDim2.new(1, -164, 0, 24), UDim2.fromOffset(84, 14)
+	identityName.BackgroundTransparency, identityName.TextXAlignment = 1, Enum.TextXAlignment.Left
+	identityName.TextTruncate, identityName.TextColor3, identityName.TextSize, identityName.FontFace, identityName.Parent = Enum.TextTruncate.AtEnd, uipallet.Text, 16, uipallet.FontSemiBold, identity
+	local identityDetail = identityName:Clone()
+	identityDetail.Name, identityDetail.Position = 'Detail', UDim2.fromOffset(84, 40)
+	identityDetail.TextColor3, identityDetail.TextSize, identityDetail.FontFace, identityDetail.Parent = color.Dark(uipallet.Text, 0.28), 12, uipallet.Font, identity
+	local supportChip = Instance.new('TextLabel')
+	supportChip.Size, supportChip.Position = UDim2.fromOffset(92, 24), UDim2.new(1, -104, 0, 29)
+	supportChip.BackgroundColor3, supportChip.TextColor3, supportChip.TextSize, supportChip.FontFace, supportChip.Parent = color.Light(uipallet.Main, 0.075), Color3.fromRGB(99, 220, 130), 10, uipallet.FontSemiBold, identity
+	addCorner(supportChip, UDim.new(1, 0))
+
+	local function homeCard(x, y, heading)
+		local card = Instance.new('Frame')
+		card.Size, card.Position = UDim2.fromOffset(257, 54), UDim2.fromOffset(x, y)
+		card.BackgroundColor3, card.BorderSizePixel, card.Parent = color.Light(uipallet.Main, 0.025), 0, window
+		addCorner(card, UDim.new(0, 8))
+		local label = Instance.new('TextLabel')
+		label.Size, label.Position = UDim2.new(1, -20, 0, 15), UDim2.fromOffset(10, 7)
+		label.BackgroundTransparency, label.Text, label.TextXAlignment = 1, heading, Enum.TextXAlignment.Left
+		label.TextColor3, label.TextSize, label.FontFace, label.Parent = color.Dark(uipallet.Text, 0.3), 10, uipallet.FontSemiBold, card
+		local value = label:Clone()
+		value.Name, value.Position, value.Size = 'Value', UDim2.fromOffset(10, 25), UDim2.new(1, -20, 0, 19)
+		value.TextColor3, value.TextSize, value.FontFace, value.TextTruncate, value.Parent = uipallet.Text, 13, uipallet.Font, Enum.TextTruncate.AtEnd, card
+		return value
 	end
-	local executorName = 'Unknown executor'
-	pcall(function()
-		executorName = identifyexecutor and select(1, identifyexecutor()) or executorName
-	end)
-	row(154, 'Executor', tostring(executorName))
-	row(208, 'Client', 'AetherV2 '..tostring(mainapi.Version))
-	local status = Instance.new('TextLabel')
-	status.Size, status.Position = UDim2.fromOffset(192, 34), UDim2.fromOffset(8, 270)
-	status.BackgroundColor3, status.Text = color.Light(uipallet.Main, 0.035), '●  LOCAL CLIENT'
-	status.TextColor3, status.TextSize, status.FontFace, status.Parent = Color3.fromRGB(99, 220, 130), 11, uipallet.FontSemiBold, window
-	addCorner(status)
-	function api:Open() window.Visible = true end
+	local gameValue = homeCard(18, 146, 'CURRENT GAME')
+	local kitValue = homeCard(293, 146, 'DETECTED KIT')
+	local versionValue = homeCard(18, 210, 'AETHERV2 VERSION')
+	local sessionValue = homeCard(293, 210, 'SESSION DURATION')
+	local summary = Instance.new('TextLabel')
+	summary.Size, summary.Position = UDim2.new(1, -36, 0, 36), UDim2.fromOffset(18, 274)
+	summary.BackgroundTransparency, summary.TextXAlignment, summary.TextYAlignment = 1, Enum.TextXAlignment.Left, Enum.TextYAlignment.Center
+	summary.TextColor3, summary.TextSize, summary.FontFace, summary.TextTruncate, summary.Parent = color.Dark(uipallet.Text, 0.2), 12, uipallet.Font, Enum.TextTruncate.AtEnd, window
+	local actionHolder = Instance.new('Frame')
+	actionHolder.Size, actionHolder.Position, actionHolder.BackgroundTransparency, actionHolder.Parent = UDim2.new(1, -36, 0, 78), UDim2.fromOffset(18, 318), 1, window
+	local actionLayout = Instance.new('UIGridLayout')
+	actionLayout.CellSize, actionLayout.CellPadding, actionLayout.Parent = UDim2.fromOffset(257, 35), UDim2.fromOffset(10, 8), actionHolder
+	local function homeAction(name, callback)
+		local button = Instance.new('TextButton')
+		button.Size, button.BackgroundColor3, button.Text, button.TextColor3 = UDim2.fromOffset(257, 35), color.Light(uipallet.Main, 0.055), name, uipallet.Text
+		button.TextSize, button.FontFace, button.Parent = 12, uipallet.FontSemiBold, actionHolder
+		addCorner(button, UDim.new(0, 7))
+		button.MouseButton1Click:Connect(callback)
+	end
+	local function formatDuration(seconds)
+		seconds = math.max(0, math.floor(seconds))
+		return string.format('%02d:%02d:%02d', math.floor(seconds / 3600), math.floor(seconds / 60) % 60, seconds % 60)
+	end
+	local function countModules()
+		local total, enabled = 0, 0
+		for _, category in mainapi.Categories do
+			for _, module in category.Modules or {} do
+				total += 1
+				if module.Enabled then enabled += 1 end
+			end
+		end
+		return total, enabled
+	end
+	local function refresh()
+		local player = cloneref(game:GetService('Players')).LocalPlayer
+		local store = mainapi.Libraries.bedwarsStore
+		local channel = isfile('aetherv2/profiles/channel.txt') and readfile('aetherv2/profiles/channel.txt'):gsub('%s+', '') or 'Stable'
+		local total, enabled = countModules()
+		local displayName = player and tostring(player.DisplayName) or 'Roblox Player'
+		local username = player and tostring(player.Name) or 'unknown'
+		if player then avatar.Image = mainapi:GetAvatarThumbnail(player.UserId, 150) end
+		identityName.Text = displayName
+		identityDetail.Text = '@'..username..'  •  Profile: '..tostring(mainapi.Profile)..'  •  '..channel
+		supportChip.Text = store and '● SUPPORTED' or '● STARTING'
+		gameValue.Text = tostring(game.Name)..'  •  '..tostring(game.PlaceId)
+		kitValue.Text = tostring(store and store.equippedKit or 'None detected'):gsub('_', ' ')
+		versionValue.Text = 'AetherV2 '..tostring(mainapi.Version)
+		sessionValue.Text = formatDuration(tick() - mainapi.Runtime.StartedAt)
+		summary.Text = enabled..'/'..total..' modules enabled  •  Open the update panel for release information'
+	end
+	local refreshId = 0
+	function api:Open()
+		window.Visible = true
+		refresh()
+		refreshId += 1
+		local current = refreshId
+		task.spawn(function()
+			while window.Visible and current == refreshId do
+				task.wait(1)
+				if window.Visible and current == refreshId then refresh() end
+			end
+		end)
+	end
 	function api:Close() window.Visible = false end
 	close.MouseButton1Click:Connect(function() api:Close() end)
+	homeAction('Save profile', function() pcall(mainapi.Save, mainapi, mainapi.Profile); mainapi:CreateNotification('Aether Home', 'Current profile saved.', 4, 'info') end)
+	homeAction('Community Configs', function() api:Close(); if mainapi.OpenRepoConfigs then mainapi.OpenRepoConfigs() end end)
+	homeAction('View changelog', function() api:Close(); if mainapi.Changelogs then mainapi.Changelogs:Open() end end)
+	homeAction('Reinject', function() reloadAether() end)
 	mainapi:Clean(window); self.Online = api
 	return api
 end
@@ -9491,13 +9507,10 @@ targets.Update = Instance.new('BindableEvent')
 mainapi:Clean(targets.Update)
 
 mainapi:CreateLegit()
-mainapi:CreateKits()
 mainapi:CreateOnline()
 mainapi:CreateChangelogs()
--- Route every `vape.Categories.Legit:CreateModule` / `vape.Categories.Kits:CreateModule`
--- registration into the matching window (opened via its search-bar icon) instead of a
--- category tab. Using __index (rather than real keys) keeps those modules working while
--- ensuring neither api shows up when the code iterates mainapi.Categories for real tabs.
+-- Route every `vape.Categories.Legit:CreateModule` registration into the
+-- standalone window (opened via its search-bar icon) instead of a category tab.
 -- Visuals is no longer a tab of its own. Its modules are render/HUD work, so they
 -- belong beside the rest of it in the Legit window, under a Visuals tab there. This
 -- proxy keeps every `vape.Categories.Visuals:CreateModule` call in the game modules
@@ -9516,8 +9529,6 @@ setmetatable(mainapi.Categories, {
 	__index = function(_, key)
 		if key == 'Legit' then
 			return mainapi.Legit
-		elseif key == 'Kits' then
-			return mainapi.Kits
 		elseif key == 'Visuals' then
 			return visualsCategory()
 		end
@@ -9802,19 +9813,12 @@ guipane:CreateToggle({
 	Name = 'Show legit mode',
 	Function = function(enabled)
 		clickgui.Search.Legit.Visible = enabled
-		if mainapi.UpdateSearchLayout then mainapi.UpdateSearchLayout() end
+		clickgui.Search.LegitDivider.Visible = enabled
+		clickgui.Search.TextBox.Position = UDim2.fromOffset(enabled and 50 or 10, 0)
+		clickgui.Search.TextBox.Size = UDim2.new(1, enabled and -76 or -36, 0, 37)
 	end,
 	Default = true,
 	Tooltip = 'Shows the button to change to Legit Mode'
-})
-guipane:CreateToggle({
-	Name = 'Show kits mode',
-	Function = function(enabled)
-		clickgui.Search.Kits.Visible = enabled
-		if mainapi.UpdateSearchLayout then mainapi.UpdateSearchLayout() end
-	end,
-	Default = true,
-	Tooltip = 'Shows the button that opens the Kits window'
 })
 local scaleslider = {Object = {}, Value = 1}
 mainapi.Scale = guipane:CreateToggle({
@@ -10358,7 +10362,7 @@ local targetinfoshot = Instance.new('ImageLabel')
 targetinfoshot.Size = UDim2.fromOffset(26, 27)
 targetinfoshot.Position = UDim2.fromOffset(19, 17)
 targetinfoshot.BackgroundColor3 = uipallet.Main
-targetinfoshot.Image = 'rbxthumb://type=AvatarHeadShot&id=1&w=420&h=420'
+targetinfoshot.Image = mainapi:GetAvatarThumbnail(1, 420)
 targetinfoshot.Parent = targetinfobkg
 local targetinfoshotflash = Instance.new('Frame')
 targetinfoshotflash.Size = UDim2.fromScale(1, 1)
@@ -10638,7 +10642,7 @@ targetinfo = {
 		targetinfobkg.Visible = shouldDisplay and updateTargetInfoPosition(v)
 		if v then
 			targetinfoname.Text = v.Player and (targetinfodisplay.Enabled and v.Player.DisplayName or v.Player.Name) or v.Character and v.Character.Name or targetinfoname.Text
-			targetinfoshot.Image = 'rbxthumb://type=AvatarHeadShot&id='..(v.Player and v.Player.UserId or 1)..'&w=420&h=420'
+			targetinfoshot.Image = mainapi:GetAvatarThumbnail(v.Player and v.Player.UserId or 1, 420)
 
 			if not v.Character then
 				v.Health = v.Health or 0
@@ -10832,7 +10836,7 @@ function mainapi:UpdateGUI(hue, sat, val, default)
 		end
 	end
 
-	if not clickgui.Visible and not mainapi.Legit.Window.Visible and not mainapi.Kits.Window.Visible then return end
+	if not clickgui.Visible and not mainapi.Legit.Window.Visible then return end
 	local rainbow = mainapi.GUIColor.Rainbow and mainapi.RainbowMode.Value ~= 'Retro'
 
 	for i, v in mainapi.Categories do
@@ -10907,7 +10911,7 @@ function mainapi:UpdateGUI(hue, sat, val, default)
 		end
 	end
 
-	for _, panel in {mainapi.Legit, mainapi.Kits} do
+	for _, panel in {mainapi.Legit} do
 		if panel.Icon then
 			panel.Icon.ImageColor3 = Color3.fromHSV(hue, sat, val)
 		end
@@ -11023,9 +11027,9 @@ local function keybindStart(inputObj)
 				v:Toggle(true)
 			end
 		end
-		-- Panel windows (Legit, Kits) hold ordinary gameplay modules, so their binds are
+		-- The Legit panel holds ordinary gameplay modules, so its binds are
 		-- honoured on the same pass. They keep no text-GUI entry, hence no UpdateTextGUI.
-		for _, panel in {mainapi.Legit, mainapi.Kits} do
+		for _, panel in {mainapi.Legit} do
 			for i, v in panel.Modules do
 				if v.Bind and checkKeybinds(mainapi.HeldKeybinds, v.Bind, inputObj.KeyCode.Name) then
 					if mainapi.ToggleNotifications.Enabled then

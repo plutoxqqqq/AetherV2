@@ -1,61 +1,81 @@
-# AetherV2 config review backend
+# AetherV2 Community Config Backend 2.0
 
-This small, dependency-free Node service stores submissions, rejects identical config payloads, exposes an authenticated review queue, returns decisions to uploaders, and publishes accepted configs plus their catalogue entry through GitHub's Contents API.
+This dependency-free Node 20 service powers Community Configs 2.0. It validates submissions, forks and updates, stores only hashed ownership receipts, prevents content-hash duplicates, tracks unique downloads, ratings and favorites, exposes creator/compatibility metadata and reporting, provides an authenticated review queue, and publishes accepted changes through bot-created branches and pull requests.
 
-## 1. Requirements
+## Security and reliability
 
-* A host with **Node 20 or newer**, HTTPS, persistent disk, and outbound access to `api.github.com` (Railway, Render, Fly.io, a VPS, or a container host all work).
-* A fine-grained GitHub personal access token for `plutoxqqqq/AetherV2`, limited to **Contents: Read and write**. Never put this token in Lua or commit it.
-* A long random maintainer key. Generate one with `openssl rand -hex 32`.
+- JSON schema checks cap names, descriptions, tags, IDs, categories, and the 2 MB request body.
+- Read and write rate limits are enforced independently per client IP.
+- Every response includes x-request-id and x-aether-api-version: 2.
+- CORS echoes only an origin listed in ALLOWED_ORIGINS; requests without an Origin header remain supported for Roblox executors.
+- Maintainer authentication uses a timing-safe bearer-token comparison.
+- Uploader receipt tokens are returned once and persisted only as SHA-256 hashes.
+- Config payloads have canonical SHA-256 identities for duplicate and integrity checks.
+- Every mutation creates a bounded audit record with a hashed actor, action, target, outcome, timestamp, and request ID.
+- The JSON database is behind a replaceable storage interface and uses verified temporary-file renames.
+- GitHub publishing stages the config and catalogue on a bot branch, rolls back the branch if either half fails, and opens a pull request. Deletion also restores the catalogue if payload deletion fails.
 
-## 2. Configure and run locally
+## Run locally
 
-```bash
-cd backend
-export ADMIN_KEY='paste-the-random-maintainer-key'
-export GITHUB_TOKEN='github_pat_...'
-export GITHUB_REPO='plutoxqqqq/AetherV2'
-export GITHUB_BRANCH='main'
-export DATA_FILE="$PWD/data.json"
-npm test
-npm start
-```
+Requirements: Node 20 or newer, persistent storage, HTTPS in production, and outbound access to api.github.com.
 
-`PORT` defaults to `3000`. `DATA_FILE` must be on a persistent volume in production. Back it up: it contains uploader receipt tokens and review outcomes (but no GitHub credential). Put the service behind HTTPS; the Roblox executor sends metadata and the admin key to it.
+    cd backend
+    export ADMIN_KEY='a long random value'
+    export GITHUB_TOKEN='github_pat_...'
+    export GITHUB_REPO='plutoxqqqq/AetherV2'
+    export GITHUB_BRANCH='main'
+    export GITHUB_PUBLISH_MODE='pr'
+    export DATA_FILE='/data/aether-community.json'
+    export ALLOWED_ORIGINS='https://www.roblox.com,https://create.roblox.com'
+    npm test
+    npm start
 
-## 3. Deploy
+Useful optional settings:
 
-1. Create a new service from this repository and set its root/working directory to `backend`.
-2. Use `npm start` as the start command; no build command is needed.
-3. Add `ADMIN_KEY`, `GITHUB_TOKEN`, `GITHUB_REPO=plutoxqqqq/AetherV2`, `GITHUB_BRANCH=main`, and optionally `DATA_FILE=/data/aether-submissions.json` as secret environment variables.
-4. Mount a persistent volume at `/data` when using that `DATA_FILE` value. Without a volume, decisions and duplicate history disappear on redeploy.
-5. Expose the assigned `PORT`, enable HTTPS, and test `curl https://YOUR-HOST/submissions` returns HTTP 401.
-6. Restrict platform logs and dashboard access. Rotate both keys immediately if either is exposed.
+- PORT defaults to 3000.
+- RATE_WINDOW_MS defaults to 60000.
+- RATE_READ_LIMIT defaults to 180 per window.
+- RATE_WRITE_LIMIT defaults to 20 per window.
+- TRUST_PROXY must be true only behind a trusted proxy that overwrites X-Forwarded-For.
+- GITHUB_PUBLISH_MODE may be direct for a staging repository; production should use pr.
+- VERIFIED_CREATORS is an optional comma-separated list of creator credits that receive the verified badge.
 
-Accepted submissions create/update `configs/<slug>.json`, then update `configs/presets.json`. GitHub therefore records auditable commits. Protect `main` appropriately; if direct writes are prohibited, set `GITHUB_BRANCH` to a publishing branch and merge its commits through a pull request.
+The GitHub token needs Contents read/write and Pull requests read/write on only the configured repository. Protect the base branch and never put ADMIN_KEY or GITHUB_TOKEN in Lua, source control, shared profiles, or logs.
 
-## 4. Connect Aether clients
+## Client connection
 
-Create this local executor file (the directory exists after Aether first starts):
+Put the HTTPS service origin, with no trailing route, in:
 
-```text
-aetherv2/profiles/configbackend.txt
-```
+    aetherv2/profiles/configbackend.txt
 
-Its only content is the HTTPS origin, with no trailing route, for example `https://aether-configs.example.com`. Alternatively set `getgenv().AetherConfigBackend` before loading Aether.
+A custom executor session can instead set getgenv().AetherConfigBackend. Only the maintainer should have aetherv2/profiles/configadminkey.txt. Ordinary users authenticate updates with the random receipt returned by their original accepted submission.
 
-Only the maintainer should create `aetherv2/profiles/configadminkey.txt`, containing the exact `ADMIN_KEY`. Do **not** share a config folder containing this file. Regular uploaders need no secret. They receive a random per-submission receipt token, stored locally in `configsubmissions.json`, which can reveal only that submission's decision.
+## API v2
 
-## 5. API contract and operations
+Both the unprefixed compatibility routes and /v2-prefixed routes are accepted. All responses carry the v2 header.
 
-* `POST /submissions` validates metadata and config data and returns `{id, token, status}`. The server returns HTTP 409 when the config data is identical to any prior submission.
-* `GET /submissions?status=pending` requires `Authorization: Bearer <ADMIN_KEY>` and powers the review queue.
-* `GET /submissions/:id?token=<receipt>` lets an uploader retrieve only their outcome.
-* `PATCH /submissions/:id`, also admin-authenticated, accepts `{"action":"accept"}` or `{"action":"reject","reason":"..."}`. Acceptance publishes to GitHub before recording success.
-* `DELETE /public-configs`, also admin-authenticated, accepts `{"file":"known-preset.json"}`. The service verifies the file against the live catalogue, unlists it, and deletes its config file before returning success. A Roblox username is never accepted as authorization.
+- GET /v2/health reports storage, publishing mode, and API version.
+- POST /submissions validates and queues a new config.
+- POST /public-configs/:file/updates validates the original ownership receipt and queues a versioned update.
+- GET /submissions?status=pending requires maintainer authentication.
+- GET /submissions/:id accepts the uploader receipt or maintainer authentication.
+- PATCH /submissions/:id accepts an authenticated accept/reject decision. Acceptance creates a publication branch and PR.
+- GET /public-configs returns the sortable catalogue with download and rating data.
+- GET /public-configs/:file returns the config with an integrity ETag and unique-download accounting.
+- GET /public-configs/:file/versions returns its published version history.
+- POST /public-configs/:file/ratings stores one replaceable vote per Roblox user and installation.
+- POST /public-configs/:file/favorites stores one favorite per Roblox user and installation.
+- POST /public-configs/:file/reports opens one bounded moderation report per user/config.
+- GET /creators/:name returns the creator page, verified state, configs, and aggregate downloads.
+- GET /reports requires maintainer authentication.
+- DELETE /public-configs/:file accepts the owner receipt or maintainer authentication and opens a rollback-safe deletion PR.
 
-Every response is JSON and includes a `success` boolean. Failed operations also include
-an `error` message (and `details` when the upstream service supplies useful context), so
-clients do not have to infer success from response text.
+Submission metadata can include `minimumVersion`, `gameVersion`, up to four screenshot URLs, and `forkOf`. Published manifests expose those fields plus owner-controlled deprecation status; the client keeps them in the compact details panel instead of adding more catalogue-row controls.
 
-For production, monitor disk space and HTTP 5xx responses, back up `DATA_FILE`, keep Node patched, rate-limit POST requests at the reverse proxy, and allow request bodies no larger than 2 MB (the application also enforces this). Restore by redeploying with the same environment secrets and restored data file. Test acceptance on a non-protected staging branch before enabling the live maintainer key.
+Every success body includes success: true. Failures include success: false and a stable error string; upstream details are included only when useful. Use the x-request-id value to correlate a client error with audit and platform logs.
+
+## Storage and recovery
+
+backend/lib/database.js contains the storage contract. JsonDatabase is the default; MemoryDatabase is used by integration tests and is an example for a future SQL adapter. Back up DATA_FILE and restrict it to the service account because it contains submission data and hashed receipts.
+
+If a publication fails before the PR is opened, the bot branch restores the previous payload/catalogue state. If the process stops after a PR is opened, the protected base branch is still unchanged: close the PR or delete the bot branch. For database recovery, stop the service, restore DATA_FILE from backup, and restart.
