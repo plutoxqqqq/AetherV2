@@ -586,7 +586,7 @@ local function finishLoading()
 	-- release both keys and compiled closures as soon as all startup chunks have run.
 	table.clear(compileCache)
 	shared.AetherCompileCache = nil
-	if not loaded then
+	if not finished or not loaded then
 		failLoad(loadError)
 	end
 	pcall(delfile, startupMarkerPath)
