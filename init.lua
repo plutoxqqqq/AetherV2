@@ -760,7 +760,11 @@ local function wipeFolder(path)
 end
 
 
-for _, folder in {'aetherv2', 'aetherv2/games', 'aetherv2/profiles', 'aetherv2/assets', 'aetherv2/assets/new', 'aetherv2/libraries', 'aetherv2/guis', 'aetherv2/configs', 'aetherv2/songs', 'aetherv2/songs/spotify'} do
+-- Spotify's clip cache is optional and is not read during startup.  Creating it
+-- here can block the entire bootstrap on executors that reject nested folders
+-- (or where an old install left a file at that path), so leave it to the
+-- feature that eventually needs it.
+for _, folder in {'aetherv2', 'aetherv2/games', 'aetherv2/profiles', 'aetherv2/assets', 'aetherv2/assets/new', 'aetherv2/libraries', 'aetherv2/guis', 'aetherv2/configs', 'aetherv2/songs'} do
 	if not isfolder(folder) then
 		_G.AetherV2SetLoadingStatus('Creating '..folder, 0.08)
 		makefolder(folder)
