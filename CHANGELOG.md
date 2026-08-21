@@ -1,6 +1,6 @@
 # AetherV2 Changelog
 
-Generated from module manifests and Git history for v4.0.0 at 2026-08-21T06:24:00.000Z.
+Generated from module manifests and Git history for v4.0.0 at 2026-08-21T07:30:47.000Z.
 
 ## Highlights
 
@@ -46,6 +46,9 @@ Generated from module manifests and Git history for v4.0.0 at 2026-08-21T06:24:0
 
 ## Other
 
+- Merge pull request #141 from plutoxqqqq/fix/loader-startup-issues
+- prevent loader hangs and startup failures
+- generate v97e90f69e8bcc711ae1898a8cfdbc8b7de0e16e1 changelog [skip ci]
 - v4 update :D
 - fix syntax error x2
 - fix kits syntax error thing
@@ -68,4 +71,3 @@ Generated from module manifests and Git history for v4.0.0 at 2026-08-21T06:24:0
 - Update 6872265039.lua
 - Update universal.lua
 - Add files via upload
-- Delete assets/aetherlogo.png

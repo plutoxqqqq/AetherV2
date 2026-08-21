@@ -1,6 +1,6 @@
 {
   "version": "4.0.0",
-  "generatedAt": "2026-08-21T06:24:00.000Z",
+  "generatedAt": "2026-08-21T07:30:47.000Z",
   "range": "HEAD~25..HEAD",
   "highlights": [
     "AetherFlow: Added an event and timer driven rule engine for shared triggers and actions.",
@@ -42,6 +42,9 @@
       "TransparentCharacter: Rewritten with conflict-safe property restoration and descendant lifecycle handling."
     ],
     "Other": [
+      "Merge pull request #141 from plutoxqqqq/fix/loader-startup-issues",
+      "prevent loader hangs and startup failures",
+      "generate v97e90f69e8bcc711ae1898a8cfdbc8b7de0e16e1 changelog [skip ci]",
       "v4 update :D",
       "fix syntax error x2",
       "fix kits syntax error thing",
@@ -63,8 +66,7 @@
       "Update new.lua",
       "Update 6872265039.lua",
       "Update universal.lua",
-      "Add files via upload",
-      "Delete assets/aetherlogo.png"
+      "Add files via upload"
     ]
   }
 }
