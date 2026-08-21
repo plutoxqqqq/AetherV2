@@ -1,0 +1,60 @@
+{
+    "CLAW_CAN_HIT_THROUGH_BLOCKS": false,
+    "SUMMON_CAN_HIT_THROUGH_BLOCKS": false,
+    "SPELL_DAMAGE_REDUCTION_MULTIPLIER": 0.9,
+    "CLAW_TIER_1_DATA": {
+        "level": 1,
+        "splitDamage": 6,
+        "damage": 20
+    },
+    "SPELL_CAST_RANGE": 39,
+    "SPELL_TIER_2_DATA": {
+        "splitDamage": 19,
+        "castTime": 0.6,
+        "hitsToLevelUp": 4,
+        "maxRadius": 13.998000000000001,
+        "damage": 30
+    },
+    "CASTING_MOVE_SPEED_MULTIPLIER": 0.85,
+    "SPELL_COOLDOWN": 20,
+    "SPELL_TIER_3_DATA": {
+        "splitDamage": 20,
+        "castTime": 0.8,
+        "hitsToLevelUp": 6,
+        "maxRadius": 15.999,
+        "damage": 40
+    },
+    "SPELL_MINIMUM_CAST_TIME": 0.5,
+    "SPELL_TIER_4_DATA": {
+        "splitDamage": 20,
+        "castTime": 1,
+        "maxRadius": 19.998,
+        "damage": 55
+    },
+    "CLAW_TIER_3_DATA": {
+        "level": 3,
+        "splitDamage": 12,
+        "damage": 34
+    },
+    "CLAW_TIER_2_DATA": {
+        "level": 2,
+        "splitDamage": 9,
+        "damage": 23
+    },
+    "CLAW_TIER_4_DATA": {
+        "level": 4,
+        "splitDamage": 15,
+        "damage": 44
+    },
+    "CIRCLE_MIN_RADIUS": 3,
+    "CLAW_HITBOX_DIMENSIONS": null,
+    "CIRCLE_HEIGHT": 15,
+    "SPELL_TIER_1_DATA": {
+        "splitDamage": 15,
+        "castTime": 0.6,
+        "hitsToLevelUp": 2,
+        "maxRadius": 12,
+        "damage": 20
+    },
+    "CLAW_COOLDOWN": 0.55
+}
