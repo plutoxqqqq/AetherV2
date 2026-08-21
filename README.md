@@ -16,9 +16,9 @@ loadstring(game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/m
 ```
 
 ## Recommended Executors:
-- Potassium (Paid)
-- Volt (Paid)
-- Opiumware (Free, Keyed)
-- Madium (Free, Keyed)
-- Real (Free, Keyed)
-- Any other executor with 90%+ sUNC
+- **Potassium** (Paid)
+- **Volt** (Paid)
+- **Opiumware** (Free, Keyed)
+- **Madium** (Free, Keyed)
+- **Real** (Free, Keyed)
+- Any other executor with **90%+ sUNC**
