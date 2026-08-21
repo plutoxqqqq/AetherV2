@@ -541,7 +541,7 @@ local function buildNewLoadingScreen(screen)
 end
 
 local function createInlineLoadingScreen()
-	if isLoadingScreenDisabled() then return nil end
+	if license.Closet or isLoadingScreenDisabled() then return nil end
 	-- Per-GUI loading screens: only 'new' and 'newer' show one at all.
 	local gui = selectedGui()
 	if gui ~= 'new' and gui ~= 'newer' then return nil end
@@ -575,7 +575,7 @@ end
 local closeLoadingScreen
 
 local function setLoadingStatus(text, progress)
-	if isLoadingScreenDisabled() then
+	if license.Closet or isLoadingScreenDisabled() then
 		closeLoadingScreen()
 		return
 	end
@@ -606,6 +606,7 @@ end
 -- screen comes down so nothing is left frozen on it, the reason goes to the console AND to a Roblox
 -- notification so the user can actually report it, and only then does it raise.
 local function failLoad(message)
+	pcall(writefile, 'aetherv2/profiles/startup_state.txt', 'failed')
 	table.clear(compileCache)
 	shared.AetherCompileCache = nil
 	closeLoadingScreen()
@@ -863,6 +864,7 @@ local function finishLoading()
 	if not loaded then
 		failLoad(loadError)
 	end
+	pcall(writefile, 'aetherv2/profiles/startup_state.txt', 'ready')
 	task.spawn(function()
 		repeat
 			vape:Save()
@@ -969,6 +971,16 @@ end
 if not isfile('aetherv2/profiles/disableloading.txt') then
 	writefile('aetherv2/profiles/disableloading.txt', 'false')
 end
+if not isfile('aetherv2/profiles/releasechannel.txt') then
+	writefile('aetherv2/profiles/releasechannel.txt', 'stable')
+end
+local startupState = isfile('aetherv2/profiles/startup_state.txt') and readfile('aetherv2/profiles/startup_state.txt') or ''
+if shared.AetherStartupRecovery == nil then
+	shared.AetherStartupRecovery = startupState == 'starting' or startupState == 'failed'
+end
+shared.AetherSafeModeChoice = nil
+shared.AetherLastModule = shared.AetherLastModule or (isfile('aetherv2/profiles/lastmodule.txt') and readfile('aetherv2/profiles/lastmodule.txt') or nil)
+pcall(writefile, 'aetherv2/profiles/startup_state.txt', 'starting')
 
 globalenv.used_init = true
 setPhase('Preparing loading artwork', 0.82, 0.84)
@@ -977,6 +989,20 @@ setPhase('Loading interface', 0.84, 0.88)
 vape = runLoadingChunk(downloadFile('aetherv2/guis/'..gui..'.lua'), 'gui', license)
 _G.vape = vape
 shared.vape = vape
+
+if shared.AetherStartupRecovery then
+	-- The existing GUI owns the prompt; it returns a small choice through shared
+	-- state. A bounded wait preserves the normal startup path when unattended.
+	local deadline = os.clock() + 30
+	repeat task.wait(0.1) until shared.AetherSafeModeChoice or os.clock() >= deadline
+	local choice = shared.AetherSafeModeChoice or 'normal'
+	if choice == 'disable' and type(shared.AetherLastModule) == 'string' and shared.AetherLastModule ~= '' then
+		shared.AetherDisabledModule = shared.AetherLastModule
+	elseif choice == 'core' then
+		finishLoading()
+		return vape
+	end
+end
 
 if shared.mainAether then
 	closeLoadingScreen()

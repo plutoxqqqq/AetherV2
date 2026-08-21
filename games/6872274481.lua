@@ -1514,10 +1514,18 @@ run(function()
 	bedwars.calculateBreakPath = calculatePath
 
 	bedwars.placeBlock = function(pos, item)
-		if getItem(item) then
+		local function place()
+			if not getItem(item) then return end
 			store.blockPlacer.blockType = item
 			return store.blockPlacer:placeBlock(bedwars.BlockController:getBlockPosition(pos))
 		end
+		-- IgnorePlaceHitboxes only suppresses avatar queries for this one placement
+		-- transaction. Leaving CanQuery disabled on characters also removes them from
+		-- projectile raycasts, which is why arrows could stop registering hits.
+		if bedwars.IgnorePlaceHitboxes then
+			return bedwars.IgnorePlaceHitboxes(place)
+		end
+		return place()
 	end
 
 	bedwars.breakBlock = function(block, effects, anim, customHealthbar, visualise, sort, angle, wallcheck, prefs)
@@ -4858,8 +4866,15 @@ run(function()
 						if velocity.Y < -30 then
 							root.Velocity = Vector3.new(0, 2.5 - dt, 0)
 							entitylib.character.Humanoid:ChangeState(Enum.HumanoidStateType.Landed)
-							runService.PreRender:Wait()
-							root.Velocity = velocity
+							-- Yielding a frame from inside PostSimulation left old callbacks alive
+							-- after a respawn/disable and could restore velocity onto the wrong root.
+							-- A deferred, guarded restore keeps the one-frame landed report without
+							-- turning the render callback into a hanging task.
+							task.defer(function()
+								if NoFall.Enabled and entitylib.isAlive and root:IsDescendantOf(workspace) then
+									root.Velocity = velocity
+								end
+							end)
 						end
 					end
 				end))
@@ -6338,32 +6353,30 @@ run(function()
     })
 end)
 
--- BedWars' client placement check queries character geometry before it sends the
--- placement remote. Excluding character parts from spatial queries lets the
--- normal placer select cells occupied by any avatar, including the cell above
--- the local player's head, without changing character collision or physics.
+-- BedWars' placement check queries character geometry before it sends the placement
+-- remote. Suppress those queries only for the synchronous placement request; keeping
+-- CanQuery false after it returns also hides an avatar from arrow/projectile raycasts.
 run(function()
     local IgnorePlaceHitboxes
-    local originals = {}
-
-    local function include(part)
-        if not part:IsA('BasePart') or originals[part] ~= nil then return end
-        originals[part] = part.CanQuery
-        part.CanQuery = false
-        IgnorePlaceHitboxes:Clean(part:GetPropertyChangedSignal('CanQuery'):Connect(function()
-            if IgnorePlaceHitboxes.Enabled and part.CanQuery then
-                part.CanQuery = false
+    local function withIgnoredHitboxes(callback)
+        local originals = {}
+        for _, plr in playersService:GetPlayers() do
+            local character = plr.Character
+            if character then
+                for _, part in character:GetDescendants() do
+                    if part:IsA('BasePart') then
+                        originals[part] = part.CanQuery
+                        part.CanQuery = false
+                    end
+                end
             end
-        end))
-        IgnorePlaceHitboxes:Clean(part.AncestryChanged:Connect(function(_, parent)
-            if not parent then originals[part] = nil end
-        end))
-    end
-
-    local function includeCharacter(character)
-        if not character then return end
-        for _, part in character:GetDescendants() do include(part) end
-        IgnorePlaceHitboxes:Clean(character.DescendantAdded:Connect(include))
+        end
+        local results = table.pack(xpcall(callback, function(err) return err end))
+        for part, value in originals do
+            if part.Parent then part.CanQuery = value end
+        end
+        if not results[1] then error(results[2], 0) end
+        return table.unpack(results, 2, results.n)
     end
 
     IgnorePlaceHitboxes = vape.Categories.World:CreateModule({
@@ -6371,18 +6384,9 @@ run(function()
         Tooltip = 'Allows block placement through players and your own character',
         Function = function(enabled)
             if enabled then
-                for _, plr in playersService:GetPlayers() do includeCharacter(plr.Character) end
-                IgnorePlaceHitboxes:Clean(playersService.PlayerAdded:Connect(function(plr)
-                    IgnorePlaceHitboxes:Clean(plr.CharacterAdded:Connect(includeCharacter))
-                end))
-                for _, plr in playersService:GetPlayers() do
-                    IgnorePlaceHitboxes:Clean(plr.CharacterAdded:Connect(includeCharacter))
-                end
+                bedwars.IgnorePlaceHitboxes = withIgnoredHitboxes
             else
-                for part, value in originals do
-                    if part.Parent then part.CanQuery = value end
-                    originals[part] = nil
-                end
+                bedwars.IgnorePlaceHitboxes = nil
             end
         end
     })
@@ -17349,11 +17353,17 @@ run(function()
 	local Diagonal
 	local LimitItem
 	local Mouse
+	local BridgeWidth
+	local KeepY
+	local JumpBridge
+	local BlockPreference
+	local RestoreSlot
 	local FillColor
 	local OutlineColor
 	local adjacent, lastpos, label, visualBlock = {}, Vector3.zero
 	local visualTween, visualPos
 	local visualSpeed = 0.1
+	local lockedY, restoreSlot, nextJump = nil, nil, 0
 
 	for x = -3, 3, 3 do
 		for y = -3, 3, 3 do
@@ -17400,16 +17410,20 @@ run(function()
 		if store.hand.toolType == 'block' then
 			return store.hand.tool.Name, store.hand.amount
 		elseif (not LimitItem.Enabled) then
-			local wool, amount = getWool()
-			if wool then
-				return wool, amount
-			else
-				for _, item in store.inventory.inventory.items do
-					if bedwars.ItemMeta[item.itemType].block then
-						return item.itemType, item.amount
-					end
+			local items = (store.inventory.inventory or {}).items or {}
+			if BlockPreference.Value == 'Wool first' then
+				local wool, amount = getWool()
+				if wool then return wool, amount end
+			end
+			local chosen
+			for _, item in items do
+				local meta = bedwars.ItemMeta[item.itemType]
+				if meta and meta.block and (not chosen or (BlockPreference.Value == 'Highest count' and (item.amount or 0) > (chosen.amount or 0))) then
+					chosen = item
+					if BlockPreference.Value == 'Nearest slot' then break end
 				end
 			end
+			if chosen then return chosen.itemType, chosen.amount end
 		end
 
 		return nil, 0
@@ -17455,6 +17469,7 @@ run(function()
 			end
 
 			if callback then
+				lockedY, restoreSlot, nextJump = nil, nil, 0
 				repeat
 					if entitylib.isAlive then
 						local wool, amount = getScaffoldBlock()
@@ -17473,12 +17488,34 @@ run(function()
 
 						if wool then
 							local root = entitylib.character.RootPart
+							-- Only take a block slot when needed, and restore the original slot
+							-- on disable. This keeps combat/inventory flow intact after bridging.
+							if store.hand.toolType ~= 'block' then
+								for slot, entry in store.inventory.hotbar or {} do
+									if entry.item and entry.item.itemType == wool then
+										restoreSlot = restoreSlot or store.inventory.hotbarSlot
+										hotbarSwitch(slot - 1)
+										break
+									end
+								end
+							end
 							if Tower.Enabled and inputService:IsKeyDown(Enum.KeyCode.Space) and (not inputService:GetFocusedTextBox()) then
 								root.Velocity = Vector3.new(root.Velocity.X, 38, root.Velocity.Z)
+							end
+							if JumpBridge.Enabled and not Tower.Enabled and entitylib.character.Humanoid.FloorMaterial ~= Enum.Material.Air and entitylib.character.Humanoid.MoveDirection.Magnitude > 0.05 and tick() >= nextJump then
+								entitylib.character.Humanoid.Jump = true
+								nextJump = tick() + 0.24
 							end
 
 							for i = Expand.Value, 1, -1 do
 								local currentpos = roundPos(root.Position - Vector3.new(0, entitylib.character.HipHeight + (Downwards.Enabled and inputService:IsKeyDown(Enum.KeyCode.LeftShift) and 4.5 or 1.5), 0) + entitylib.character.Humanoid.MoveDirection * (i * 3))
+								local downwards = Downwards.Enabled and inputService:IsKeyDown(Enum.KeyCode.LeftShift)
+								if KeepY.Enabled and not downwards then
+									lockedY = lockedY or currentpos.Y
+									currentpos = Vector3.new(currentpos.X, lockedY, currentpos.Z)
+								else
+									lockedY = currentpos.Y
+								end
 								if Diagonal.Enabled then
 									if math.abs(math.round(math.deg(math.atan2(-entitylib.character.Humanoid.MoveDirection.X, -entitylib.character.Humanoid.MoveDirection.Z)) / 45) * 45) % 90 == 45 then
 										local dt = (lastpos - currentpos)
@@ -17489,11 +17526,23 @@ run(function()
 								end
 
 								updateVisual(currentpos)
-								local block, blockpos = getPlacedBlock(currentpos)
-								if not block then
-									blockpos = checkAdjacent(blockpos * 3) and blockpos * 3 or blockProximity(currentpos)
-									if blockpos then
-										task.delay(0, bedwars.placeBlock, blockpos, wool, false)
+								local positions = {currentpos}
+								if BridgeWidth.Value > 1 then
+									local direction = entitylib.character.Humanoid.MoveDirection
+									if direction.Magnitude < 0.05 then direction = root.CFrame.LookVector end
+									local side = Vector3.new(-direction.Z, 0, direction.X)
+									if side.Magnitude > 0 then
+										side = side.Unit * 3
+										for offset = 1, BridgeWidth.Value - 1 do
+											table.insert(positions, currentpos + side * ((offset % 2 == 0 and -1 or 1) * math.ceil(offset / 2)))
+										end
+									end
+								end
+								for _, placepos in positions do
+									local block, blockpos = getPlacedBlock(placepos)
+									if not block then
+										blockpos = checkAdjacent(blockpos * 3) and blockpos * 3 or blockProximity(placepos)
+										if blockpos then Scaffold:Delay(0, function() bedwars.placeBlock(blockpos, wool, false) end) end
 									end
 								end
 								lastpos = currentpos
@@ -17503,6 +17552,8 @@ run(function()
 					task.wait(0.03)
 				until not Scaffold.Enabled
 				clearVisuals()
+				if RestoreSlot.Enabled and restoreSlot ~= nil then hotbarSwitch(restoreSlot) end
+				restoreSlot, lockedY = nil, nil
 			end
 		end,
 		Tooltip = 'Helps you make bridges/scaffold walk.'
@@ -17512,6 +17563,12 @@ run(function()
 		Min = 1,
 		Max = 6
 	})
+	BridgeWidth = Scaffold:CreateSlider({
+		Name = 'Bridge width', Min = 1, Max = 3, Default = 1,
+		Tooltip = 'Places up to three blocks across while bridging'
+	})
+	KeepY = Scaffold:CreateToggle({Name = 'Keep Y', Default = true, Tooltip = 'Keeps a level bridge unless downwards mode is held'})
+	JumpBridge = Scaffold:CreateToggle({Name = 'Jump bridge', Tooltip = 'Repeats natural jumps while moving on a bridge'})
 	Tower = Scaffold:CreateToggle({
 		Name = 'Tower',
 		Default = true
@@ -17525,6 +17582,11 @@ run(function()
 		Default = true
 	})
 	LimitItem = Scaffold:CreateToggle({Name = 'Limit to items'})
+	BlockPreference = Scaffold:CreateDropdown({
+		Name = 'Block preference', List = {'Wool first', 'Nearest slot', 'Highest count'}, Default = 'Wool first',
+		Tooltip = 'Chooses which inventory block Scaffold should use'
+	})
+	RestoreSlot = Scaffold:CreateToggle({Name = 'Restore slot', Default = true, Tooltip = 'Returns to the slot held before automatic block selection'})
 	Mouse = Scaffold:CreateToggle({Name = 'Require mouse down'})
 	Scaffold:CreateToggle({
 		Name = 'Visual',
@@ -26679,7 +26741,7 @@ run(function()
 end)
 
 run(function()
-    local Breaker
+    local Breaker, BreakerLegit
     local Mode
     local Range
     local Angle
@@ -26896,8 +26958,9 @@ run(function()
     -- as a side effect of the first hit. getBreakTool resolves the best tool the inventory holds for
     -- that break type - the axe for a bed frame, shears for wool - so this is "best compatible tool",
     -- not just "a tool".
-    local function autoTool(block)
-        if not AutoTool.Enabled or not block then return end
+    local function autoTool(block, enabled)
+        if enabled == nil then enabled = AutoTool.Enabled end
+        if not enabled or not block then return end
         local meta = bedwars.ItemMeta[block.Name]
         local breaktype = block.Name == 'gumdrop_bounce_pad' and 'stone' or (meta and meta.block and meta.block.breakType)
         if not breaktype then return end
@@ -27032,6 +27095,11 @@ run(function()
         Name = 'Breaker',
         Function = function(callback)
             if callback then
+				-- Keep the normal and constrained breakers independent; they target the same
+				-- server block controller and running both would make every swing look erratic.
+				if BreakerLegit and BreakerLegit.Enabled then
+					BreakerLegit:Toggle()
+				end
                 for _ = 1, 30 do
                     local part = Instance.new('Part')
                     part.Anchored = true
@@ -27224,6 +27292,64 @@ run(function()
         Name = 'Limit to items',
         Tooltip = 'Only breaks when tools are held'
     })
+
+	-- This is deliberately a separate module rather than another Breaker mode. It
+	-- shares the game-native break call, but keeps a modest range, verifies sight,
+	-- picks the closest available block and waits between swings so it behaves like
+	-- a normal player. The legacy Breaker Type selector remains for old configs.
+	local LegitRange, LegitDelay, LegitAutoTool, LegitBed, LegitLuckyBlock
+	local function canLegitBreak(block, localPosition)
+		if not block or not block.Parent then return false end
+		if (block.Position - localPosition).Magnitude > LegitRange.Value then return false end
+		if (block:GetAttribute('BedShieldEndTime') or 0) > workspace:GetServerTimeNow() then return false end
+		if not bedwars.BlockController:isBlockBreakable({blockPosition = block.Position / 3}, lplr) then return false end
+		return isVisible(block.Position)
+	end
+	local function chooseLegitBlock(tables, localPosition)
+		local candidates = {}
+		for _, tab in tables do
+			for _, block in tab do
+				if canLegitBreak(block, localPosition) then
+					table.insert(candidates, block)
+				end
+			end
+		end
+		table.sort(candidates, function(a, b)
+			return (a.Position - localPosition).Magnitude < (b.Position - localPosition).Magnitude
+		end)
+		return candidates[1]
+	end
+	BreakerLegit = vape.Categories.Minigames:CreateModule({
+		Name = 'BreakerLegit',
+		Function = function(callback)
+			if not callback then return end
+			if Breaker.Enabled then Breaker:Toggle() end
+			local beds = collection('bed', BreakerLegit)
+			local luckyBlocks = collection('LuckyBlock', BreakerLegit)
+			repeat
+				task.wait(0.12)
+				if entitylib.isAlive then
+					refreshFilter()
+					local localPosition = entitylib.character.RootPart.Position
+					local block = chooseLegitBlock({LegitBed.Enabled and beds or {}, LegitLuckyBlock.Enabled and luckyBlocks or {}}, localPosition)
+					if block then
+						autoTool(block, LegitAutoTool.Enabled)
+						-- Effects and the game's own swing animation are retained here. The
+						-- sight predicate is passed through as a final check immediately before
+						-- the controller sends the break request.
+						bedwars.breakBlock(block, true, true, nil, LegitAutoTool.Enabled, closestMethod, 85, isVisible, {Legit = true})
+						task.wait(LegitDelay.Value)
+					end
+				end
+			until not BreakerLegit.Enabled
+		end,
+		Tooltip = 'Breaks only nearby, visible blocks with natural timing'
+	})
+	LegitRange = BreakerLegit:CreateSlider({Name = 'Break range', Min = 1, Max = 12, Default = 9, Suffix = ' studs', Tooltip = 'Legitimate range limit'})
+	LegitDelay = BreakerLegit:CreateSlider({Name = 'Break delay', Min = 0.1, Max = 0.6, Default = 0.22, Decimal = 100, Suffix = ' seconds', Tooltip = 'Delay between natural break swings'})
+	LegitBed = BreakerLegit:CreateToggle({Name = 'Break Bed', Default = true})
+	LegitLuckyBlock = BreakerLegit:CreateToggle({Name = 'Break Lucky Block', Default = true})
+	LegitAutoTool = BreakerLegit:CreateToggle({Name = 'Auto Tool', Default = true, Tooltip = 'Uses the best compatible held-inventory tool'})
 end)
 
 --[[
@@ -27720,12 +27846,14 @@ run(function()
     local FPSBoost
     local Profile
     local Systems
-    local changed, killEffects, visualizers = {}, {}, {}
-    local profiles = {
-        Minimal = {'Particles'},
-        Balanced = {'Particles', 'Bloom', 'Weather'},
-        Competitive = {'Particles', 'Bloom', 'Weather', 'Shadows', 'Kill effects', 'Projectile effects'},
-        Max = {'Particles', 'Bloom', 'Weather', 'Shadows', 'Kill effects', 'Projectile effects', 'Textures', 'Materials', 'Lighting'}
+	local changed, killEffects, visualizers = {}, {}, {}
+	local profiles = {
+		Quality = {},
+		Balanced = {'Particles', 'Bloom', 'Weather'},
+		Performance = {'Particles', 'Bloom', 'Weather', 'Shadows', 'Kill effects', 'Projectile effects'},
+		Potato = {'Particles', 'Bloom', 'Weather', 'Shadows', 'Kill effects', 'Projectile effects', 'Textures', 'Materials', 'Lighting'},
+		-- Config aliases from the previous four-profile UI.
+		Minimal = {'Particles'}, Competitive = {'Particles', 'Bloom', 'Weather', 'Shadows', 'Kill effects', 'Projectile effects'}, Max = {'Particles', 'Bloom', 'Weather', 'Shadows', 'Kill effects', 'Projectile effects', 'Textures', 'Materials', 'Lighting'}
     }
 
     local function selected(name)
@@ -27750,7 +27878,7 @@ run(function()
         if selected('Weather') and (object:GetAttribute('WeatherEffect') or object.Name:lower():find('weather')) then
             if object:IsA('ParticleEmitter') or object:IsA('Trail') or object:IsA('Beam') then setProperty(object, 'Enabled', false) end
         end
-        if Profile.Value == 'Max' then
+		if Profile.Value == 'Potato' or Profile.Value == 'Max' then
             if object:IsA('BasePart') then
                 setProperty(object, 'CastShadow', false)
                 setProperty(object, 'Reflectance', 0)
@@ -27793,7 +27921,7 @@ run(function()
 
     local function apply()
         if selected('Shadows') then setProperty(game:GetService('Lighting'), 'GlobalShadows', false) end
-        if Profile.Value == 'Max' then
+		if Profile.Value == 'Potato' or Profile.Value == 'Max' then
             local lighting = game:GetService('Lighting')
             local terrain = workspace:FindFirstChildOfClass('Terrain')
             setProperty(lighting, 'Brightness', 1)
@@ -27831,15 +27959,31 @@ run(function()
         end,
         Tooltip = 'Reversibly reduces expensive visual effects'
     })
-    Profile = FPSBoost:CreateDropdown({
-        Name = 'Profile', List = {'Minimal', 'Balanced', 'Competitive', 'Max'}, Default = 'Balanced',
-        Function = function(value)
-            if not Systems then return end
-            Systems.ListEnabled = table.clone(profiles[value])
-            Systems:ChangeValue()
+	Profile = FPSBoost:CreateDropdown({
+		Name = 'Profile', List = {'Quality', 'Balanced', 'Performance', 'Potato'}, Default = 'Balanced',
+		Function = function(value)
+			local canonical = ({Minimal = 'Performance', Competitive = 'Performance', Max = 'Potato'})[value] or value
+			shared.AetherPerformancePreset = canonical
+			if not Systems then return end
+			Systems.ListEnabled = table.clone(profiles[canonical] or profiles.Balanced)
+			Systems:ChangeValue()
             if FPSBoost.Enabled then FPSBoost:Toggle(); FPSBoost:Toggle() end
         end
     })
+	-- Old profiles used Minimal / Competitive / Max. Keep those config values valid
+	-- without cluttering the current selector with duplicate presets.
+	local loadProfile = Profile.Load
+	function Profile:Load(tab)
+		if tab and type(tab.Value) == 'string' then
+			local legacy = ({Minimal = 'Quality', Competitive = 'Performance', Max = 'Potato'})[tab.Value]
+			if legacy then
+				local migrated = table.clone(tab)
+				migrated.Value = legacy
+				return loadProfile(self, migrated)
+			end
+		end
+		return loadProfile(self, tab)
+	end
     Systems = FPSBoost:CreateTextList({
         Name = 'Visual systems', Default = profiles.Balanced,
         Function = function() if FPSBoost.Enabled then FPSBoost:Toggle(); FPSBoost:Toggle() end end

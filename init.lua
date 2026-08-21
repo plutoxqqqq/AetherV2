@@ -560,6 +560,7 @@ end
 -- A load that dies here used to leave the loading screen sitting on the user's face forever, with
 -- the reason only in the console. Take the screen down and say what happened.
 local function failLoad(message)
+	pcall(writefile, 'aetherv2/profiles/startup_state.txt', 'failed')
 	table.clear(compileCache)
 	shared.AetherCompileCache = nil
 	if _G.AetherV2CloseLoadingScreen then
@@ -699,6 +700,18 @@ for _, folder in {'aetherv2', 'aetherv2/games', 'aetherv2/profiles', 'aetherv2/a
 	end
 end
 
+-- Leave a tiny, recoverable startup marker. It is intentionally just a profile
+-- file so it works with the current loader and every supported filesystem.
+local startupStatePath = 'aetherv2/profiles/startup_state.txt'
+local previousStartup = isfile(startupStatePath) and readfile(startupStatePath) or ''
+shared.AetherStartupRecovery = previousStartup == 'starting' or previousStartup == 'failed'
+shared.AetherSafeModeChoice = nil
+shared.AetherLastModule = isfile('aetherv2/profiles/lastmodule.txt') and readfile('aetherv2/profiles/lastmodule.txt') or nil
+pcall(writefile, startupStatePath, 'starting')
+if not isfile('aetherv2/profiles/releasechannel.txt') then
+	writefile('aetherv2/profiles/releasechannel.txt', 'stable')
+end
+
 -- Drop-a-song note, written once. MP3Player reads whatever is in aetherv2/songs, so the folder is
 -- no use to anyone who does not know it is there.
 if not isfile('aetherv2/songs/read me.txt') then
@@ -725,18 +738,25 @@ end
 -- call the error message was parsed as if it were the page, the match failed, and the commit
 -- silently became 'main' - which then looked like an update and wiped the entire install. On a flaky
 -- connection that happened on every injection. A lookup that fails now changes nothing at all.
+local function selectedReleaseChannel()
+	local value = isfile('aetherv2/profiles/releasechannel.txt') and readfile('aetherv2/profiles/releasechannel.txt'):lower():gsub('%s+', '') or 'stable'
+	return ({stable = 'stable', beta = 'beta', nightly = 'nightly'})[value] or 'stable'
+end
+
 local function resolveCommit()
+	local channel = selectedReleaseChannel()
+	local branch = channel == 'stable' and 'main' or channel
 	-- Reinjection in the same client should not repeat three update endpoints. The first injection
 	-- still performs the normal live check; this short in-memory reuse never survives a new client
 	-- session and therefore does not make persistent installs miss updates.
 	local recent = shared.AetherResolvedCommit
-	if type(recent) == 'table' and type(recent.Commit) == 'string' and os.clock() - (recent.CheckedAt or 0) < 60 then
+	if type(recent) == 'table' and recent.Channel == channel and type(recent.Commit) == 'string' and os.clock() - (recent.CheckedAt or 0) < 60 then
 		return recent.Commit
 	end
 	local sources = {
-		{Url = 'https://api.github.com/repos/plutoxqqqq/AetherV2/commits/main', Pattern = '"sha"%s*:%s*"(%x+)"'},
-		{Url = 'https://github.com/plutoxqqqq/AetherV2/commits/main.atom', Pattern = 'Commit/(%x+)'},
-		{Url = 'https://github.com/plutoxqqqq/AetherV2', Pattern = 'currentOid[^%x]*(%x+)'}
+		{Url = 'https://api.github.com/repos/plutoxqqqq/AetherV2/commits/'..branch, Pattern = '"sha"%s*:%s*"(%x+)"'},
+		{Url = 'https://github.com/plutoxqqqq/AetherV2/commits/'..branch..'.atom', Pattern = 'Commit/(%x+)'},
+		{Url = 'https://github.com/plutoxqqqq/AetherV2/tree/'..branch, Pattern = 'currentOid[^%x]*(%x+)'}
 	}
 	for _, source in sources do
 		local suc, body = pcall(function()
@@ -746,7 +766,7 @@ local function resolveCommit()
 			local found = body:match(source.Pattern)
 			if found and #found >= 40 then
 				found = found:sub(1, 40)
-				shared.AetherResolvedCommit = {Commit = found, CheckedAt = os.clock()}
+				shared.AetherResolvedCommit = {Commit = found, Channel = channel, CheckedAt = os.clock()}
 				return found
 			end
 		end
@@ -913,7 +933,8 @@ if not shared.VapeDeveloper then
 		prefetchPaths = newFiles
 	elseif oldCommit == '' then
 		-- First run with no answer from GitHub: fall back to main rather than having no ref at all.
-		writefile('aetherv2/profiles/commit.txt', commit or 'main')
+		local channel = selectedReleaseChannel()
+		writefile('aetherv2/profiles/commit.txt', commit or (channel == 'stable' and 'main' or channel))
 	else
 		-- Up to date. The stored list is this commit's file list, so it can drive the prefetch below
 		-- without another request.
