@@ -3886,7 +3886,7 @@ run(function()
     -- still beside us - it finds a real support block, lays a short platform in under our feet at
     -- our CURRENT height, and confirms each block arrived before asking for the next.
     ----------------------------------------------------------------------------
-    local clutchUntil, clutchBusy = 0, false
+    local clutchUntil, clutchBusy, clutchGeneration = 0, false, 0
 
     -- Wool first (it is what everything else buys), then any other sane block. Anything that
     -- explodes, sticks, traps or cannot be stood on is no use as a floor.
@@ -3962,22 +3962,25 @@ run(function()
         pcall(bedwars.placeBlock, world, block, false)
         -- Confirm it actually arrived instead of firing the next one blind. A placement the server
         -- refused has to be seen as refused, or the whole bridge is built on nothing.
-        local deadline = tick() + 0.35
+        -- A direct placement normally reaches the block store on the next few simulation steps.
+        -- Waiting a third of a second before trying another supported cell was enough to fall
+        -- outside of placement reach, so only reserve a short confirmation window here.
+        local deadline = tick() + 0.12
         repeat
             task.wait(0.03)
-        until getPlacedBlock(world) or tick() > deadline or not AntiFall.Enabled
+        until getPlacedBlock(world) or tick() > deadline or not AntiFall.Enabled or Mode.Value ~= 'Clutch'
         return getPlacedBlock(world) ~= nil
     end
 
-    local function clutch(predicted)
-        if clutchBusy or tick() < clutchUntil or not entitylib.isAlive then return end
+    local function clutch(predicted, token)
+        if clutchBusy or tick() < clutchUntil or not entitylib.isAlive or Mode.Value ~= 'Clutch' or token ~= clutchGeneration then return end
         local root = entitylib.character.RootPart
         if not root or not isnetworkowner(root) then return end
         local block = clutchBlock()
         if not block then return end
 
         clutchBusy = true
-        clutchUntil = tick() + 0.25
+        clutchUntil = tick() + 0.12
 
         -- Floor height: one cell under our feet, right where we are now. Catching us here instead
         -- of at barrier level is the difference between losing a couple of studs and losing the
@@ -3985,7 +3988,14 @@ run(function()
         local hip = entitylib.character.HipHeight or 3
         local feet = root.Position.Y - hip - (root.Size.Y * 0.5)
         local barrierTop = AntiFallPart and (AntiFallPart.Position.Y + (AntiFallPart.Size.Y * 0.5)) or -math.huge
+        -- The floor must be placed at the live foot height, and its horizontal lead must stay
+        -- inside a one-block placement reach. The old long ballistic prediction could put the
+        -- first request ten studs ahead of the player before the clutch had a supporting block.
         local targetPosition = predicted or root.Position
+        local lead = (targetPosition - root.Position) * Vector3.new(1, 0, 1)
+        if lead.Magnitude > CELL then
+            targetPosition = root.Position + lead.Unit * CELL
+        end
         local floorCell = bedwars.BlockController:getBlockPosition(Vector3.new(targetPosition.X, feet - 1.5, targetPosition.Z))
         local floorY = floorCell.Y * CELL
         -- Never build into the barrier itself.
@@ -4015,7 +4025,7 @@ run(function()
         steps = math.clamp(math.floor(steps + 0.5), 0, math.clamp(ClutchBlocks and ClutchBlocks.Value or 6, 1, 10))
         local cursor = Vector3.new(support.X, floorY, support.Z)
         for _ = 1, steps do
-            if not AntiFall.Enabled or Mode.Value ~= 'Clutch' then break end
+            if not AntiFall.Enabled or Mode.Value ~= 'Clutch' or token ~= clutchGeneration then break end
             if landBelow(root, 0.35) then break end
             if math.abs(under.X - cursor.X) > 0.1 then
                 cursor += Vector3.new(math.sign(under.X - cursor.X) * CELL, 0, 0)
@@ -4028,7 +4038,7 @@ run(function()
         end
 
         -- Finish under our feet (we have drifted while building, so recompute).
-        if entitylib.isAlive and AntiFall.Enabled then
+        if entitylib.isAlive and AntiFall.Enabled and Mode.Value == 'Clutch' and token == clutchGeneration then
             local now = entitylib.character.RootPart
             if now then
                 local cell = bedwars.BlockController:getBlockPosition(Vector3.new(now.Position.X, floorY, now.Position.Z))
@@ -4125,10 +4135,12 @@ run(function()
                 repeat task.wait() until store.matchState ~= 0 or (not AntiFall.Enabled)
                 if not AntiFall.Enabled then return end
 
+                clutchGeneration += 1
                 flyOwned, landSince, clutchBusy = false, 0, false
                 AntiFall:Clean(function()
                     stopFly(true)
                     clutchBusy = false
+                    clutchGeneration += 1
                 end)
 
                 -- Fly mode owns the whole job itself, so it runs whether or not the map has a
@@ -4207,7 +4219,7 @@ run(function()
                                 -- Last resort only. The predictive check below normally has us
                                 -- caught long before the barrier is ever touched.
                                 if not beingCarried() then
-                                    task.spawn(clutch)
+                                    task.spawn(clutch, nil, clutchGeneration)
                                 end
                             end
                         end
@@ -4223,21 +4235,27 @@ run(function()
                     local root = entitylib.character.RootPart
                     if not root or not isnetworkowner(root) then return end
                     if entitylib.character.Humanoid.FloorMaterial ~= Enum.Material.Air then return end
-                    -- A real fall, not a step down or a jump arc.
-                    if root.AssemblyLinearVelocity.Y >= -12 then return end
+                    -- Start while the ledge is still nearby. A clutch is a placement problem,
+                    -- not a barrier problem: once we are falling at -12, a normal sideways run
+                    -- has already carried the player several cells beyond the island edge.
+                    if root.AssemblyLinearVelocity.Y >= -2 then return end
                     -- And genuinely into the void: if there is anything at all to land on in the
                     -- column we are heading for, there is nothing to clutch. This single check is
                     -- what stops the false placing.
-                    if landBelow(root, 1.5) then return end
+                    if landBelow(root, 0.45) then return end
                     local velocity = root.AssemblyLinearVelocity
-                    local time = math.clamp(math.abs(velocity.Y) / workspace.Gravity + 0.3, 0.25, 1.5)
-                    local predicted = root.Position + velocity * time + Vector3.new(0, -0.5 * workspace.Gravity * time * time, 0)
-                    task.spawn(clutch, predicted)
+                    -- Only a tiny horizontal lead is useful for a floor placed at our current
+                    -- feet. It compensates for movement between the probe and request without
+                    -- asking the server to place a block outside of clutch reach.
+                    local time = math.clamp(0.08 + math.abs(velocity.Y) / workspace.Gravity * 0.12, 0.08, 0.18)
+                    local predicted = root.Position + Vector3.new(velocity.X * time, 0, velocity.Z * time)
+                    task.spawn(clutch, predicted, clutchGeneration)
                 end))
             else
                 AntiFallDirection = nil
                 stopFly(true)
                 clutchBusy = false
+                clutchGeneration += 1
             end
         end,
         Tooltip = 'Helps prevent you from falling into the void'
@@ -7504,10 +7522,20 @@ run(function()
     local AttackMode
 	local Particles, Boxes = {}, {}
     local anims, AnimDelay, AnimTween, armC0 = vape.Libraries.auraanims, tick()
-	local AttackRemote = {FireServer = function() end}
-    task.spawn(function()
-		AttackRemote = bedwars.Client:Get(remotes.AttackEntity).instance
-                end)
+	local AttackRemote
+	local lastRemoteRefresh = 0
+	local function refreshAttackRemote()
+		local ok, remote = pcall(function()
+			return bedwars.Client:Get(remotes.AttackEntity).instance
+		end)
+		if ok and remote and type(remote.FireServer) == 'function' then
+			AttackRemote = remote
+			lastRemoteRefresh = tick()
+			return true
+		end
+		return false
+	end
+	task.spawn(refreshAttackRemote)
 
     ----------------------------------------------------------------------------
     -- Skill-first targeting.
@@ -7577,6 +7605,9 @@ run(function()
     end
 
     local function getAttackData()
+		-- Entity data is briefly incomplete during every spawn and ownership hand-off.
+		-- Never let a missing root terminate the attack coroutine when Attackable check is off.
+		if not entitylib.isAlive or not entitylib.character or not entitylib.character.RootPart then return false end
         if Mouse.Enabled then
             -- A real click is released between swings, while the aura's hit cooldown can become
             -- ready during that tiny gap. Keep the click valid for a fraction of a second after
@@ -7596,10 +7627,11 @@ run(function()
             if bedwars.StatusEffectUtil:isActive(lplr.Character, 'frozen') then return false end
         end
 
-        local sword = Limit.Enabled and store.hand or store.tools.sword
-        if not sword or not sword.tool then return false end
+		local sword = Limit.Enabled and store.hand or store.tools.sword
+		if not sword or not sword.tool or not sword.tool.Parent then return false end
 
-        local meta = bedwars.ItemMeta[sword.tool.Name]
+		local meta = bedwars.ItemMeta[sword.tool.Name]
+		if type(meta) ~= 'table' then return false end
         if Limit.Enabled then
             if store.hand.toolType ~= 'sword' or bedwars.DaoController.chargingMaid then return false end
         end
@@ -7762,28 +7794,35 @@ run(function()
                                 hitRegUpdateInterval = math.clamp(math.min(hitRegAttackCooldown / 4, 1 / 30), 1 / 60, 0.1)
                             end
                         end
-                        local plrs = entitylib.AllPosition({
-                            Range = SwingRange.Value,
-                            Wallcheck = Targets.Walls.Enabled or nil,
-                            Part = 'RootPart',
-                            Players = Targets.Players.Enabled,
-                            NPCs = Targets.NPCs.Enabled,
+						-- Entity lists are rebuilt around respawns. Treat a transient rebuild failure as
+						-- an empty target list instead of letting the aura coroutine die while the
+						-- module itself remains enabled.
+						local found, plrs = pcall(entitylib.AllPosition, {
+							Range = SwingRange.Value,
+							Wallcheck = Targets.Walls.Enabled or nil,
+							Part = 'RootPart',
+							Players = Targets.Players.Enabled,
+							NPCs = Targets.NPCs.Enabled,
 							Limit = MaxTargets.Value,
-                            Sort = targetSort()
-                        })
+							Sort = targetSort()
+						})
+						if not found or type(plrs) ~= 'table' then plrs = {} end
 
                         if #plrs > 0 then
                             switchItem(sword.tool, 0)
-                            local selfpos = entitylib.character.RootPart.Position
-                            local localfacing = entitylib.character.RootPart.CFrame.LookVector * Vector3.new(1, 0, 1)
+							local selfpos = entitylib.character.RootPart.Position
+							local localfacing = entitylib.character.RootPart.CFrame.LookVector * Vector3.new(1, 0, 1)
+							if localfacing.Magnitude > 0.001 then localfacing = localfacing.Unit end
 
                             -- Everything inside the angle cone, and the subset of that which is
                             -- close enough to actually hit. Boxes and particles draw the first
                             -- list; Attack mode picks one entry off the second.
                             local inrange, hittable = {}, {}
 							for _, v in plrs do
-                                local delta = (v.RootPart.Position - selfpos)
-                                local angle = math.acos(localfacing:Dot((delta * Vector3.new(1, 0, 1)).Unit))
+								if not v.RootPart or not v.RootPart.Parent then continue end
+								local delta = (v.RootPart.Position - selfpos)
+								local flatDelta = delta * Vector3.new(1, 0, 1)
+								local angle = flatDelta.Magnitude > 0.001 and math.acos(math.clamp(localfacing:Dot(flatDelta.Unit), -1, 1)) or 0
 								if angle > (math.rad(AngleSlider.Value) / 2) then continue end
 
                                 local entry = {Entity = v, Delta = delta}
@@ -7825,12 +7864,14 @@ run(function()
                                 if not Attacking then
                                     Attacking = true
                                     store.KillauraTarget = focus and focus.Entity or v
-                                    if not Swing.Enabled and AnimDelay < tick() and not LegitAura.Enabled then
+								if not Swing.Enabled and AnimDelay < tick() and not LegitAura.Enabled then
 										AnimDelay = tick() + math.max(hitRegAnimationTime or SwingTime.Value, 0.05)
-                                        bedwars.SwordController:playSwordEffect(meta, false)
-                                        if meta.displayName:find(' Scythe') then
-                                            bedwars.ScytheController:playLocalAnimation()
-                                        end
+										pcall(function()
+											bedwars.SwordController:playSwordEffect(meta, false)
+											if type(meta.displayName) == 'string' and meta.displayName:find(' Scythe') then
+												bedwars.ScytheController:playLocalAnimation()
+											end
+										end)
 
                                         if vape.ThreadFix then
                                             setthreadidentity(8)
@@ -7840,12 +7881,14 @@ run(function()
 
                                 if entry ~= focus then continue end
 
-								local actualRoot = v.Character.PrimaryPart
+								local actualRoot = (v.Character and v.Character.PrimaryPart) or v.RootPart
 								local attackDelay = calculateAttackDelay(meta)
-								if actualRoot and (tick() - swingCooldown) >= (attackDelay or 0.292) then
+								if actualRoot and actualRoot.Parent and v.Character and v.Character.Parent and (tick() - swingCooldown) >= (attackDelay or 0.292) then
                                     switchIndex += 1
 									local dir = CFrame.lookAt(selfpos, actualRoot.Position).LookVector
 									local pos = selfpos + dir * math.max(delta.Magnitude - 14.399, 0)
+									if not AttackRemote or tick() - lastRemoteRefresh > 15 then refreshAttackRemote() end
+									if not AttackRemote then continue end
 									local sent = pcall(AttackRemote.FireServer, AttackRemote, {
 										weapon = sword.tool,
 										chargedAttack = {chargeRatio = 0},
@@ -7864,6 +7907,10 @@ run(function()
 										store.attackReach = (delta.Magnitude * 100) // 1 / 100
 										swingCooldown = tick()
 										store.attackReachUpdate = tick() + 1
+									else
+										-- A remote can be replaced on a soft reconnect. Rebind immediately and
+										-- leave the cooldown open so the next frame retries with the live one.
+										refreshAttackRemote()
 									end
                                     end
                             end
@@ -8277,7 +8324,10 @@ run(function()
     local abilityReady
     local function useHammer(hammer, ability)
         local fired = activateJadeTool(hammer)
-        local deadline = tick() + 0.75
+        -- Input-based casts flip the cooldown almost immediately. Do not spend most of a second
+        -- waiting on an input edge that an executor/game UI swallowed before trying the controller
+        -- fallback.
+        local deadline = tick() + 0.18
         repeat task.wait() until not abilityReady(ability) or tick() >= deadline
         if not abilityReady(ability) then return true end
 
@@ -8285,7 +8335,10 @@ run(function()
         -- a fallback, but never claim a cast succeeded merely because the input API did not throw.
         local success, result = pcall(bedwars.AbilityController.useAbility, bedwars.AbilityController, ability)
         if not success or result == false then tapScreen() end
-        return (fired or success) and result ~= false
+        if not (fired or success) or result == false then return false end
+        deadline = tick() + 0.18
+        repeat task.wait() until not abilityReady(ability) or tick() >= deadline
+        return not abilityReady(ability)
     end
 
     function abilityReady(ability)
@@ -8296,32 +8349,46 @@ run(function()
     end
 
     local function waitForCooldown(ability, generation)
+        local deadline = tick() + 5
         repeat task.wait(0.05)
-        until not JadeInstaKill.Enabled or generation ~= jobGeneration or not entitylib.isAlive or abilityReady(ability)
+        until not JadeInstaKill.Enabled or generation ~= jobGeneration or not entitylib.isAlive or abilityReady(ability) or tick() >= deadline
+    end
+
+    local function validTarget(target)
+        local root = entitylib.character and entitylib.character.RootPart
+        local targetRoot = target and target.RootPart
+        return root and targetRoot and targetRoot.Parent and target.Character and target.Character.Parent
+            and (targetRoot.Position - root.Position).Magnitude <= (Range.Value + 2)
     end
 
     local function spoof(target, hammer, generation)
         local root = entitylib.character.RootPart
+        if not validTarget(target) or generation ~= jobGeneration then return end
         local direction = target.RootPart.Position - root.Position
         if direction.Magnitude <= 0.01 then return end
         local ability = getJadeAbility(hammer)
         switchItem(hammer.tool, 0.1)
-        pcall(bedwars.AbilityController.useAbility, bedwars.AbilityController, ability, newproxy(true), {
+        local sent, result = pcall(bedwars.AbilityController.useAbility, bedwars.AbilityController, ability, newproxy(true), {
             direction = direction.Unit * math.huge,
             origin = root.Position,
             target = target.RootPart.Position,
             weapon = hammer.itemType
         })
+        -- A rejected payload used to enter the full cooldown wait even though no cooldown had
+        -- started, making Spoof look frozen for several seconds. Leave this job immediately so
+        -- the scanner can reacquire a valid target/cast on its normal short cadence.
+        if not sent or result == false then return end
         task.wait(Delay.Value)
-        waitForCooldown(ability, generation)
+        if not abilityReady(ability) then waitForCooldown(ability, generation) end
     end
 
     local function teleportSlam(target, hammer, generation)
         local character, root, humanoid = entitylib.character, entitylib.character.RootPart, entitylib.character.Humanoid
-        if not character or not root or not humanoid or not target.RootPart then return end
+        if not character or not root or not humanoid or not validTarget(target) then return end
         local ability = getJadeAbility(hammer)
         hideCharacter(character)
         lockCamera()
+		local originalPivot = character:GetPivot()
 		local targetOrigin = target.RootPart.Position
 		local playerOrigin = root.Position
 
@@ -8330,7 +8397,12 @@ run(function()
         character:PivotTo(character:GetPivot() + Vector3.new(0, 200, 0))
         root.AssemblyLinearVelocity = Vector3.zero
         switchItem(hammer.tool, 0.1)
-        if not useHammer(hammer, ability) then return end
+		if not useHammer(hammer, ability) then
+			-- A rejected cast must not strand the player above the map. This only restores
+			-- the pre-cast position; successful slams still use the game movement normally.
+			if character.Parent and generation == jobGeneration then character:PivotTo(originalPivot) end
+			return
+		end
 		-- FloorMaterial can retain its pre-teleport value for one simulation step. Waiting
 		-- for the airborne state prevents a job from completing before the slam starts.
 		local airborneDeadline = tick() + 1
@@ -8338,6 +8410,11 @@ run(function()
 			or tick() >= airborneDeadline
 			or generation ~= jobGeneration
 			or not JadeInstaKill.Enabled
+		if generation ~= jobGeneration or not JadeInstaKill.Enabled then return end
+		if humanoid.FloorMaterial ~= Enum.Material.Air then
+			if character.Parent then character:PivotTo(originalPivot) end
+			return
+		end
 
         local started = tick()
         runService:UnbindFromRenderStep(followBind)
@@ -8372,6 +8449,7 @@ run(function()
     end
 
     local function runJob(target, hammer)
+        if busy or not hammer or not validTarget(target) then return end
         busy = true
         jobGeneration += 1
         local generation = jobGeneration
@@ -8400,13 +8478,17 @@ run(function()
                 repeat
                     if not busy and entitylib.isAlive then
                         local hammer = getHammer()
-                        local target = hammer and entitylib.EntityPosition({
-                            Origin = entitylib.character.RootPart.Position,
-                            Range = Range.Value,
-                            Part = 'RootPart',
-                            Players = Targets.Players.Enabled,
-                            NPCs = Targets.NPCs.Enabled
-                        })
+                        local target
+                        if hammer and entitylib.character.RootPart then
+                            local found, result = pcall(entitylib.EntityPosition, {
+                                Origin = entitylib.character.RootPart.Position,
+                                Range = Range.Value,
+                                Part = 'RootPart',
+                                Players = Targets.Players.Enabled,
+                                NPCs = Targets.NPCs.Enabled
+                            })
+                            target = found and result or nil
+                        end
                         -- Do not gate the visible TP/lock job on canUseAbility. Unknown tier ids
                         -- can report false even though primary tool input is accepted.
                         if target then runJob(target, hammer) end
@@ -19947,7 +20029,8 @@ run(function()
 
     -- Queue for the next match. BedWars only accepts this from the party leader and only when the
     -- party is not already queued, so both are checked rather than fired blind.
-    local function joinQueue()
+    local function joinQueue(gen)
+        if gen and not running(gen) then return end
         if not Requeue or not Requeue.Enabled then return end
         if run_.queued then return end
         local ok = ask(function()
@@ -19966,7 +20049,7 @@ run(function()
         -- One retry a few seconds later: the first call right on the match-end frame is sometimes
         -- swallowed while the end screen is still animating in.
         task.delay(6, function()
-            if not running() then return end
+            if not running(gen) then return end
             local still = ask(function()
                 return bedwars.Store:getState().Party.queueState == 0
             end)
@@ -19984,7 +20067,8 @@ run(function()
     ----------------------------------------------------------------------------------------------
     local rejoining = false
 
-    local function rejoin()
+    local function rejoin(gen)
+        if not running(gen) then return end
         if not AutoRejoin or not AutoRejoin.Enabled then return end
         -- Once only. Both watchers below can fire for the same disconnect, and a second teleport
         -- request on top of one already in flight is how a rejoin turns into a kick.
@@ -19995,6 +20079,11 @@ run(function()
             local teleportService = cloneref(game:GetService('TeleportService'))
             teleportService:Teleport(LOBBY_PLACE, lplr)
         end)
+        -- Teleports can be refused during a transient Roblox outage. Let the next observed
+        -- prompt retry instead of holding the one-shot latch forever.
+        task.delay(8, function()
+            if running(gen) then rejoining = false end
+        end)
     end
 
     local function watchDisconnects(gen)
@@ -20003,7 +20092,9 @@ run(function()
             AutoWin:Clean(guiService.ErrorMessageChanged:Connect(function(message)
                 if not running(gen) then return end
                 if type(message) == 'string' and message ~= '' then
-                    task.delay(2, rejoin)
+                    task.delay(2, function()
+                        if running(gen) then rejoin(gen) end
+                    end)
                 end
             end))
         end)
@@ -20014,7 +20105,9 @@ run(function()
             AutoWin:Clean(prompt.ChildAdded:Connect(function(child)
                 if not running(gen) then return end
                 if string.find(child.Name, 'ErrorPrompt') then
-                    task.delay(2, rejoin)
+                    task.delay(2, function()
+                        if running(gen) then rejoin(gen) end
+                    end)
                 end
             end))
         end)
@@ -20028,7 +20121,7 @@ run(function()
         if store.matchState == 2 then
             status('Done', 'Match over', '')
             stopMoving()
-            joinQueue()
+            joinQueue(gen)
             task.wait(1)
             return
         end
@@ -20367,7 +20460,9 @@ run(function()
                 AutoWin:Clean(vapeEvents.MatchEndEvent.Event:Connect(function()
                     if not running(gen) then return end
                     stopMoving()
-                    task.delay(1.5, joinQueue)
+                    task.delay(1.5, function()
+                        if running(gen) then joinQueue(gen) end
+                    end)
                 end))
                 AutoWin:Clean(vapeEvents.EntityDeathEvent.Event:Connect(function(deathTable)
                     if not running(gen) then return end
@@ -20386,7 +20481,11 @@ run(function()
                         local alone = ask(function()
                             return #bedwars.Store:getState().Party.members <= 0
                         end)
-                        if alone and store.matchState ~= 2 then task.delay(3, joinQueue) end
+                        if alone and store.matchState ~= 2 then
+                            task.delay(3, function()
+                                if running(gen) then joinQueue(gen) end
+                            end)
+                        end
                     end
                 end))
                 AutoWin:Clean(shutdown)

@@ -4916,17 +4916,9 @@ function mainapi:CreateCategory(categorysettings)
 			if mainapi.ThreadFix then
 				setthreadidentity(8)
 			end
-			if not self.Enabled and shared.AetherDisabledModule == self.Name then
-				mainapi:CreateNotification('Safe Mode', self.Name..' was skipped for this launch.', 5, 'warning')
-				return
-			end
 			self.Generation += 1
 			local generation = self.Generation
 			self.Enabled = not self.Enabled
-			if self.Enabled then
-				shared.AetherLastModule = self.Name
-				pcall(writefile, 'aetherv2/profiles/lastmodule.txt', self.Name)
-			end
 			divider.Visible = self.Enabled
 			if modulesettings.Size and self.Children then
 				self.Children.Visible = self.Enabled
@@ -8028,17 +8020,9 @@ local function createPanel(config)
 		end
 
 		function moduleapi:Toggle()
-			if not moduleapi.Enabled and shared.AetherDisabledModule == moduleapi.Name then
-				mainapi:CreateNotification('Safe Mode', moduleapi.Name..' was skipped for this launch.', 5, 'warning')
-				return
-			end
 			moduleapi.Generation += 1
 			local generation = moduleapi.Generation
 			moduleapi.Enabled = not moduleapi.Enabled
-			if moduleapi.Enabled then
-				shared.AetherLastModule = moduleapi.Name
-				pcall(writefile, 'aetherv2/profiles/lastmodule.txt', moduleapi.Name)
-			end
 			if moduleapi.Children then
 				moduleapi.Children.Visible = moduleapi.Enabled
 			end
@@ -11398,26 +11382,6 @@ end))
 	copyErrors.MouseButton1Click:Connect(function()
 		if setclipboard then setclipboard(formatErrors()); mainapi:CreateNotification('Error Logs', 'Copied to clipboard.', 4, 'info') end
 	end)
-	if shared.AetherStartupRecovery then
-		local recovery = window('AetherSafeMode', 'AetherV2 Safe Mode', UDim2.fromOffset(430, 210))
-		local body = Instance.new('TextLabel')
-		body.Size, body.Position, body.BackgroundTransparency = UDim2.new(1, -28, 0, 74), UDim2.fromOffset(14, 46), 1
-		body.TextWrapped, body.TextXAlignment, body.TextYAlignment = true, Enum.TextXAlignment.Left, Enum.TextYAlignment.Top
-		body.TextColor3, body.TextSize, body.FontFace = color.Dark(uipallet.Text, 0.18), 12, uipallet.Font
-		body.Text = 'The previous startup did not finish. Choose how to continue.'; body.Parent = recovery
-		local function choice(text, x, value)
-			local button = Instance.new('TextButton')
-			button.Size, button.Position = UDim2.fromOffset(124, 30), UDim2.fromOffset(x, 152)
-			button.BackgroundColor3, button.Text, button.TextColor3 = color.Light(uipallet.Main, 0.05), text, uipallet.Text
-			button.TextSize, button.FontFace, button.Parent = 11, uipallet.Font, recovery; addCorner(button)
-			button.MouseButton1Click:Connect(function() shared.AetherSafeModeChoice = value; recovery.Visible = false end)
-		end
-		choice('Start normally', 14, 'normal')
-		choice('Core + GUI only', 150, 'core')
-		local last = tostring(shared.AetherLastModule or '')
-		if last ~= '' then choice('Disable '..last:sub(1, 12), 286, 'disable') else choice('Continue', 286, 'normal') end
-		recovery.Visible = true
-	end
 end)()
 
 -- Spotlight Search: press ` from anywhere to find and toggle a module without

@@ -560,7 +560,6 @@ end
 -- A load that dies here used to leave the loading screen sitting on the user's face forever, with
 -- the reason only in the console. Take the screen down and say what happened.
 local function failLoad(message)
-	pcall(writefile, 'aetherv2/profiles/startup_state.txt', 'failed')
 	table.clear(compileCache)
 	shared.AetherCompileCache = nil
 	if _G.AetherV2CloseLoadingScreen then
@@ -700,14 +699,6 @@ for _, folder in {'aetherv2', 'aetherv2/games', 'aetherv2/profiles', 'aetherv2/a
 	end
 end
 
--- Leave a tiny, recoverable startup marker. It is intentionally just a profile
--- file so it works with the current loader and every supported filesystem.
-local startupStatePath = 'aetherv2/profiles/startup_state.txt'
-local previousStartup = isfile(startupStatePath) and readfile(startupStatePath) or ''
-shared.AetherStartupRecovery = previousStartup == 'starting' or previousStartup == 'failed'
-shared.AetherSafeModeChoice = nil
-shared.AetherLastModule = isfile('aetherv2/profiles/lastmodule.txt') and readfile('aetherv2/profiles/lastmodule.txt') or nil
-pcall(writefile, startupStatePath, 'starting')
 if not isfile('aetherv2/profiles/releasechannel.txt') then
 	writefile('aetherv2/profiles/releasechannel.txt', 'stable')
 end
