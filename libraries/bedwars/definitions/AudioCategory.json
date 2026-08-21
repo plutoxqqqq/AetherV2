@@ -1,0 +1,12 @@
+{
+    "AudioCategory": {
+        "MUSIC": "Music",
+        "EFFECTS": "Effects",
+        "UI": "UI",
+        "AMBIENCE": "Ambience",
+        "COSMETICS": "Cosmetics",
+        "GAMEPLAY": "Gameplay"
+    },
+    "AUDIO_BUS_ATTRIBUTE": "AudioBus",
+    "AUDIO_CATEGORY_ATTRIBUTE": "AudioCategory"
+}

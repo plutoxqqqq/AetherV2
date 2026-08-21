@@ -1,0 +1,67 @@
+{
+    "remotes": {
+        "ProjectileFire": {
+            "rate": 0.05
+        },
+        "FrostyGunFire": {
+            "rate": 0.0666666667
+        },
+        "ElkKitMounted": {
+            "rate": 2
+        },
+        "CannonLookVectorUpdate": {
+            "rate": 0.1
+        },
+        "MomentumUpdate": {
+            "rate": 0.0666666667
+        },
+        "SwordSwingMiss": {
+            "rate": 0.05
+        },
+        "RadioEgg2025Submit": {
+            "rate": 2
+        },
+        "RequestLeaderboardTopEntities": {
+            "rate": 2
+        },
+        "FrostyGunFireActionRequest": {
+            "rate": 0.333333333
+        },
+        "useAbility": {
+            "rate": 1
+        },
+        "UseAbility": {
+            "rate": 1
+        },
+        "SetInvItem": {
+            "rate": 0.2
+        },
+        "SetArmorInvItem": {
+            "rate": 1
+        },
+        "RequestSelfDeath": {
+            "rate": 2
+        },
+        "UseInfernalShield": {
+            "rate": 0.2
+        },
+        "InteractDodoBird": {
+            "rate": 1
+        },
+        "DisruptionActivate": {
+            "rate": 1.71428571
+        },
+        "DisruptionChangeTarget": {
+            "rate": 1.71428571
+        },
+        "RequestAngelWingsEffect": {
+            "rate": 2
+        },
+        "EggHuntUI2025Collect": {
+            "rate": 2
+        },
+        "SwordHit": {
+            "rate": 0.289
+        }
+    }
+}
