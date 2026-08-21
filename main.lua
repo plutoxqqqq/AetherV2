@@ -110,6 +110,25 @@ local function closeLoadingScreen()
 	_G.AetherV2CloseLoadingScreen = nil
 end
 
+-- main.lua can be loaded directly by developer and teleport entrypoints, where
+-- init.lua's equivalent helper is not in scope.  Keep failures actionable and
+-- always remove the loader instead of replacing the original error with an
+-- "attempt to call a nil value" crash.
+local function failLoad(message)
+	table.clear(compileCache)
+	shared.AetherCompileCache = nil
+	closeLoadingScreen()
+	warn('[AetherV2] Load failed: '..tostring(message))
+	pcall(function()
+		game:GetService('StarterGui'):SetCore('SendNotification', {
+			Title = 'AetherV2 failed to load',
+			Text = tostring(message):sub(1, 180),
+			Duration = 12
+		})
+	end)
+	error(message, 0)
+end
+
 -- Safe Mode can also be reached after the bootstrap has dismissed its loader.
 -- It deliberately has its own parent resolver, rather than recreating loader UI.
 local function getSafeModeParent()
@@ -543,6 +562,23 @@ local function finishLoading()
 	task.defer(closeLoadingScreen)
 end
 
+-- init.lua creates these on the normal route, but main.lua is also a supported
+-- direct/teleport entrypoint.  Make that route self-sufficient before any
+-- profile or cache file is written.
+for _, folder in {
+	'aetherv2',
+	'aetherv2/profiles',
+	'aetherv2/assets',
+	'aetherv2/guis',
+	'aetherv2/games',
+	'aetherv2/libraries',
+	'aetherv2/songs'
+} do
+	if not isfolder(folder) then
+		makefolder(folder)
+	end
+end
+
 if not isfile('aetherv2/profiles/gui.txt') then
 	writefile('aetherv2/profiles/gui.txt', 'new')
 end
@@ -561,13 +597,6 @@ local guiCore = 'newer'
 
 if not isfolder('aetherv2/assets/'..gui) then
 	makefolder('aetherv2/assets/'..gui)
-end
--- Songs live here for MP3Player. Created from main as well as init, so loading the script directly
--- (without init) still leaves somewhere to put music.
-for _, folder in {'aetherv2/songs'} do
-	if not isfolder(folder) then
-		makefolder(folder)
-	end
 end
 if not isfile('aetherv2/profiles/commit.txt') then
 	writefile('aetherv2/profiles/commit.txt', 'main')

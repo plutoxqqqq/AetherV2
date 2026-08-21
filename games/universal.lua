@@ -1,6 +1,11 @@
 local vape = shared.vape
+-- Keep a reference to the executor's compiler before wrapping it.  Calling the
+-- locally-declared wrapper from inside itself recurses until the stack overflows,
+-- which prevented the first library from loading and left the entire universal
+-- module unavailable.
+local nativeLoadstring = loadstring
 local loadstring = function(...)
-	local res, err = loadstring(...)
+	local res, err = nativeLoadstring(...)
 	if err and vape then
 		vape:CreateNotification('AetherV2', 'Failed to load : ' .. err, 30, 'alert')
 	end
