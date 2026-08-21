@@ -7,7 +7,7 @@ AetherCore Rebirth rebirthed (thanks GitHub for deleting my repo)
 
 ## Usage
 
-> Paste the script below into your executor
+> Paste the loadstring below into your executor
 
 ```lua
 loadstring(game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/main/init.lua', true), 'init.lua')({
