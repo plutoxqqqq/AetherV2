@@ -1,6 +1,6 @@
 # AetherV2 Changelog
 
-Generated from module manifests and Git history for v4.0.0 at 2026-08-21T07:44:31.000Z.
+Generated from module manifests and Git history for v4.0.0 at 2026-08-21T07:45:23.000Z.
 
 ## Highlights
 
@@ -46,6 +46,8 @@ Generated from module manifests and Git history for v4.0.0 at 2026-08-21T07:44:3
 
 ## Other
 
+- Update init.lua
+- generate v9af11cf38326a2cb716b0596a8d671320164d453 changelog [skip ci]
 - Update main.lua
 - generate va5117ccb9a2b637f8edd8034e17d6ab15e35348a changelog [skip ci]
 - Merge pull request #141 from plutoxqqqq/fix/loader-startup-issues
