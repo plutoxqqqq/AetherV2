@@ -105,7 +105,11 @@ local function boundedHttpGet(url, timeout)
 end
 
 local function downloadFile(path, func)
-	if not isfile(path) then
+	local luaFile = path:sub(-4) == '.lua'
+	local readable, cached = pcall(readfile, path)
+	local validCache = readable and type(cached) == 'string' and cached ~= '' and (not luaFile or loadstring(cached, path))
+	if not validCache then
+		pcall(delfile, path)
 		local commit = 'main'
 		pcall(function()
 			local value = readfile('aetherv2/profiles/commit.txt')
@@ -117,7 +121,7 @@ local function downloadFile(path, func)
 		if not res or res == '404: Not Found' then
 			error(problem or res or 'empty response', 0)
 		end
-		if path:sub(-4) == '.lua' then
+		if luaFile then
 			if not loadstring(res, path) then
 				error('downloaded file did not compile', 0)
 			end
@@ -25702,7 +25706,8 @@ run(function()
 		Name = 'AutoBuy',
 		Function = function(callback)
 			if callback then
-				repeat task.wait() until store.queueType ~= 'bedwars_test'
+			repeat task.wait() until store.queueType ~= 'bedwars_test' or not AutoBuy.Enabled
+			if not AutoBuy.Enabled then return end
 				if BedwarsCheck.Enabled and not store.queueType:find('bedwars') then return end
 
 				local lastupgrades
@@ -29032,7 +29037,15 @@ run(function()
         end
 
         songobj.SoundId = assetfunction(split[1])
-        repeat task.wait() until songobj.IsLoaded or not SongBeats.Enabled
+		local loadDeadline = tick() + 20
+        repeat task.wait() until songobj.IsLoaded or not SongBeats.Enabled or tick() >= loadDeadline
+		if not songobj.IsLoaded then
+			if SongBeats.Enabled then
+				notif('SongBeats', 'Timed out while loading '..split[1], 10, 'warning')
+				SongBeats:Toggle()
+			end
+			return
+		end
         if SongBeats.Enabled then
             beattick = tick() + (tonumber(split[3]) or 0)
             songbpm = 60 / (tonumber(split[2]) or 50)

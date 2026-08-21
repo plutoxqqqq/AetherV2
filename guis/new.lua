@@ -454,20 +454,24 @@ local function createMobileButton(buttonapi, position)
 end
 
 local function downloadFile(path, func)
-	if not isfile(path) then
+	local luaFile = path:sub(-4) == '.lua'
+	local readable, cached = pcall(readfile, path)
+	if not (readable and type(cached) == 'string' and cached ~= '' and (not luaFile or loadstring(cached, path))) then
+		pcall(delfile, path)
 		createDownloader(path)
 		local suc, res = pcall(function()
 			return game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..readfile('aetherv2/profiles/commit.txt')..'/'..select(1, path:gsub('aetherv2/', '')), true)
 		end)
-		if not suc or res == '404: Not Found' then
-			error(res)
+		if not suc or type(res) ~= 'string' or res == '404: Not Found' then
+			error('Could not download '..path..': '..tostring(res))
 		end
-		if path:find('.lua') then
-			res = '--This watermark is used to delete the file if its cached, remove it to make the file persist after vape updates.\n'..res
+		if luaFile and not loadstring(res, path) then
+			error('Downloaded '..path..' is not valid Lua')
 		end
-		writefile(path, res)
+		cached = luaFile and '--This watermark is used to delete the file if its cached, remove it to make the file persist after vape updates.\n'..res or res
+		writefile(path, cached)
 	end
-	return (func or readfile)(path)
+	return func and func(path) or cached
 end
 
 getcustomasset = assetfunction and function(path)
@@ -839,7 +843,8 @@ function configapi.Presets.FetchList(sort)
 	local backendSuccess, backendResponse = pcall(function()
 		return game:HttpGet(
 			configapi.Presets.Backend()..'/public-configs?sort='..httpService:UrlEncode(tostring(sort or 'trending'))
-				..'&userId='..tostring(player.UserId),
+				..'&userId='..tostring(player.UserId)
+				..'&clientId='..httpService:UrlEncode(configapi.Presets.ClientId()),
 			true
 		)
 	end)
@@ -988,6 +993,21 @@ local function applyFeatureTags(tags, name)
 		end
 	end
 end
+
+-- Category bodies scroll after 500px. Keeping the grid rows 510px apart leaves
+-- two fully expanded rows visible on a 1080px screen instead of overlapping them.
+local windowGrid = {OriginX = 6, OriginY = 60, StepX = 230, StepY = 510, MaxHeight = 500}
+
+local function latticePosition(index)
+	local currentScale = scale and scale.Scale or 1
+	local screen = mainapi.gui and mainapi.gui.AbsoluteSize / currentScale or Vector2.new(1920, 1080)
+	local columns = math.max(1, math.floor((screen.X - (windowGrid.OriginX * 2)) / windowGrid.StepX))
+	return Vector2.new(
+		windowGrid.OriginX + (index % columns) * windowGrid.StepX,
+		windowGrid.OriginY + math.floor(index / columns) * windowGrid.StepY
+	)
+end
+
 local function makeDraggable(gui, window)
 	gui.InputBegan:Connect(function(inputObj)
 		if window and not window.Visible then return end
@@ -3174,11 +3194,6 @@ function mainapi:CreateGUI()
 	addCorner(window)
 	addWindowStroke(window)
 	makeDraggable(window)
-	window.Parent = clickgui
-	addBlur(window)
-	addCorner(window)
-	addWindowStroke(window)
-	makeDraggable(window)
 
 	-- Aether logo
 	local wordmark = Instance.new('ImageLabel')
@@ -3199,7 +3214,6 @@ function mainapi:CreateGUI()
 	v2badge.ScaleType = Enum.ScaleType.Fit
 	v2badge.Parent = window
 
-local children = Instance.new('Frame')			
 	local children = Instance.new('Frame')
 	children.Name = 'Children'
 	children.Size = UDim2.new(1, 0, 1, -33)
@@ -4372,17 +4386,12 @@ function mainapi:CreateCategory(categorysettings)
 		Expanded = false
 	}
 
-	-- Spread new category windows across a lattice instead of stacking every one at the same
-	-- spot. Previously every category defaulted to (236, 60), so opening several piled them on
-	-- top of each other; the ones underneath looked "open by default" yet were unmovable,
-	-- unopenable and untoggleable because the topmost window swallowed every click. Slot 0 is the
-	-- main window (6, 60); each category takes the next lattice cell (8 columns, wrapping to a new
-	-- row), matching the "Sort GUI" layout. A saved profile position still overrides this on load,
-	-- so arranged layouts are untouched.
+	-- Spread category windows across a screen-aware lattice. Its vertical step
+	-- clears a fully expanded panel; saved positions still override this default.
 	mainapi.CategorySlot = (mainapi.CategorySlot or 0) + 1
 	local slot = mainapi.CategorySlot
-	local defaultX = 6 + (slot % 8) * 230
-	local defaultY = 60 + math.floor(slot / 8) * 360
+	local default = latticePosition(slot)
+	local defaultX, defaultY = default.X, default.Y
 
 	local window = Instance.new('TextButton')
 	window.Name = categorysettings.Name..'Category'
@@ -5004,7 +5013,7 @@ function mainapi:CreateCategory(categorysettings)
 		self.Expanded = not self.Expanded
 		children.Visible = self.Expanded
 		arrow.Rotation = self.Expanded and 0 or 180
-		window.Size = UDim2.fromOffset(220, self.Expanded and math.min(41 + windowlist.AbsoluteContentSize.Y / scale.Scale, 601) or 41)
+		window.Size = UDim2.fromOffset(220, self.Expanded and math.min(41 + windowlist.AbsoluteContentSize.Y / scale.Scale, windowGrid.MaxHeight) or 41)
 		divider.Visible = children.CanvasPosition.Y > 10 and children.Visible
 	end
 
@@ -5037,7 +5046,7 @@ function mainapi:CreateCategory(categorysettings)
 		end
 		children.CanvasSize = UDim2.fromOffset(0, windowlist.AbsoluteContentSize.Y / scale.Scale)
 		if categoryapi.Expanded then
-			window.Size = UDim2.fromOffset(220, math.min(41 + windowlist.AbsoluteContentSize.Y / scale.Scale, 601))
+			window.Size = UDim2.fromOffset(220, math.min(41 + windowlist.AbsoluteContentSize.Y / scale.Scale, windowGrid.MaxHeight))
 		end
 	end)
 
@@ -5060,6 +5069,9 @@ end
 function mainapi:CreateOverlay(categorysettings)
 	local window
 	local categoryapi
+	mainapi.OverlaySlot = (mainapi.OverlaySlot or 0) + 1
+	local overlayIndex = mainapi.OverlaySlot - 1
+	local defaultPosition = Vector2.new(12 + (overlayIndex % 4) * 250, 12 + math.floor(overlayIndex / 4) * 160)
 	categoryapi = {
 		Type = 'Overlay',
 		Expanded = false,
@@ -5089,7 +5101,7 @@ function mainapi:CreateOverlay(categorysettings)
 	window = Instance.new('TextButton')
 	window.Name = categorysettings.Name..'Overlay'
 	window.Size = UDim2.fromOffset(categorysettings.CategorySize or 220, 41)
-	window.Position = UDim2.fromOffset(240, 46)
+	window.Position = UDim2.fromOffset(defaultPosition.X, defaultPosition.Y)
 	window.BackgroundColor3 = uipallet.Main
 	window.AutoButtonColor = false
 	window.Visible = false
@@ -5098,6 +5110,7 @@ function mainapi:CreateOverlay(categorysettings)
 	local blur = addBlur(window)
 	addCorner(window)
 	makeDraggable(window)
+	categoryapi.DefaultPosition = UDim2.fromOffset(defaultPosition.X, defaultPosition.Y)
 	local icon = Instance.new('ImageLabel')
 	icon.Name = 'Icon'
 	icon.Size = categorysettings.Size
@@ -5322,13 +5335,12 @@ function mainapi:CreateCategoryList(categorysettings)
 	}
 	categorysettings.Color = categorysettings.Color or Color3.fromRGB(190, 115, 255)
 
-	-- Take a lattice slot like the normal categories do. These list windows all defaulted to the
-	-- same (240, 46), so Friends, Targets and the config list opened stacked on each other (and on
-	-- top of the first category), which reads as "the tab won't open".
+	-- Take a lattice slot like normal categories, so list panels neither stack nor
+	-- overlap an expanded panel from the preceding row.
 	mainapi.CategorySlot = (mainapi.CategorySlot or 0) + 1
 	local slot = mainapi.CategorySlot
-	local defaultX = 6 + (slot % 8) * 230
-	local defaultY = 60 + math.floor(slot / 8) * 360
+	local default = latticePosition(slot)
+	local defaultX, defaultY = default.X, default.Y
 
 	local window = Instance.new('TextButton')
 	window.Name = displayName..'CategoryList'
@@ -6822,7 +6834,7 @@ function mainapi:CreateCategoryList(categorysettings)
 		self.Expanded = not self.Expanded
 		children.Visible = self.Expanded
 		arrow.Rotation = self.Expanded and 0 or 180
-		window.Size = UDim2.fromOffset(220, self.Expanded and math.min(51 + windowlist.AbsoluteContentSize.Y / scale.Scale, 611) or 45)
+		window.Size = UDim2.fromOffset(220, self.Expanded and math.min(51 + windowlist.AbsoluteContentSize.Y / scale.Scale, windowGrid.MaxHeight) or 45)
 		divider.Visible = children.CanvasPosition.Y > 10 and children.Visible
 	end
 
@@ -6905,7 +6917,7 @@ function mainapi:CreateCategoryList(categorysettings)
 		end
 		children.CanvasSize = UDim2.fromOffset(0, windowlist.AbsoluteContentSize.Y / scale.Scale)
 		if categoryapi.Expanded then
-			window.Size = UDim2.fromOffset(220, math.min(51 + windowlist.AbsoluteContentSize.Y / scale.Scale, 611))
+			window.Size = UDim2.fromOffset(220, math.min(51 + windowlist.AbsoluteContentSize.Y / scale.Scale, windowGrid.MaxHeight))
 		end
 	end)
 	windowlisttwo:GetPropertyChangedSignal('AbsoluteContentSize'):Connect(function()
@@ -9895,10 +9907,15 @@ guipane:CreateButton({
 	Name = 'Reset GUI positions',
 	Function = function()
 		for _, v in mainapi.Categories do
-			v.Object.Position = UDim2.fromOffset(6, 42)
+			if v.Type == 'MainWindow' then
+				v.Object.Position = UDim2.fromOffset(windowGrid.OriginX, windowGrid.OriginY)
+			elseif v.Type == 'Category' or v.Type == 'CategoryList' then
+				if v.Button and v.Button.Enabled then v.Button:Toggle(false) else v.Object.Visible = false end
+				v.Object.Position = v.DefaultPosition or UDim2.fromOffset(windowGrid.OriginX + windowGrid.StepX, windowGrid.OriginY)
+			end
 		end
 	end,
-	Tooltip = 'This will reset your GUI back to default'
+	Tooltip = 'Resets the menu and closes category panels so they cannot stack'
 })
 guipane:CreateButton({
 	Name = 'Sort GUI',
@@ -9931,7 +9948,8 @@ guipane:CreateButton({
 		local ind = 0
 		for _, v in categories do
 			if v.Object.Visible then
-				v.Object.Position = UDim2.fromOffset(6 + (ind % 8 * 230), 60 + (ind > 7 and 360 or 0))
+				local position = latticePosition(ind)
+				v.Object.Position = UDim2.fromOffset(position.X, position.Y)
 				ind += 1
 			end
 		end

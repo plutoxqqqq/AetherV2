@@ -134,6 +134,33 @@ test('ratings are one vote per user/install and expose aggregate statistics', as
   });
 });
 
+test('catalogue vote and favorite state belong to the requesting installation', async () => {
+  await withServer({}, async base => {
+    const first = {userId: 5, clientId: '12345678-1234-1234-1234-123456789abc'};
+    const second = {userId: 5, clientId: 'abcdefab-cdef-cdef-cdef-abcdefabcdef'};
+    const post = (route, body) => fetch(base + route, {
+      method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify(body)
+    });
+
+    await post('/public-configs/rage.json/ratings', {...first, rating: 1});
+    await post('/public-configs/rage.json/ratings', {...second, rating: -1});
+    await post('/public-configs/rage.json/favorites', {...first, favorite: true});
+
+    const catalogue = async identity => {
+      const response = await fetch(base + '/public-configs?userId=' + identity.userId + '&clientId=' + identity.clientId);
+      return (await response.json()).presets.find(item => item.file === 'rage.json');
+    };
+    assert.deepEqual(
+      {rating: (await catalogue(first)).userRating, favorited: (await catalogue(first)).favorited},
+      {rating: 1, favorited: true}
+    );
+    assert.deepEqual(
+      {rating: (await catalogue(second)).userRating, favorited: (await catalogue(second)).favorited},
+      {rating: -1, favorited: false}
+    );
+  });
+});
+
 test('favorites, reports, creator pages, forks and compatibility metadata use the v2 contract', async () => {
   await withServer({}, async (base, app) => {
     const identity = {userId: 5, clientId: '12345678-1234-1234-1234-123456789abc'};

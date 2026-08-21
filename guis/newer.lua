@@ -4,7 +4,7 @@
 	A clean, dark re-chrome of the AetherV2 interface. Fully compatible with the
 	existing AetherV2 backend: same asset table, keybind system, module API
 	(CreateCategory / CreateModule / CreateToggle / CreateSlider / ...), config
-	save & load format, and overlay system as guis/new.lua.
+	save & load format, and overlay system.
 
 	Visual language (v6 redesign):
 	 - Near-black "Onyx" base (#0C0D12) with a faint cool tint; crisp off-white
@@ -799,20 +799,24 @@ local function createMobileButton(buttonapi, position)
 end
 
 local function downloadFile(path, func)
-	if not isfile(path) then
+	local luaFile = path:sub(-4) == '.lua'
+	local readable, cached = pcall(readfile, path)
+	if not (readable and type(cached) == 'string' and cached ~= '' and (not luaFile or loadstring(cached, path))) then
+		pcall(delfile, path)
 		createDownloader(path)
 		local suc, res = pcall(function()
 			return game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..readfile('aetherv2/profiles/commit.txt')..'/'..select(1, path:gsub('aetherv2/', '')), true)
 		end)
-		if not suc or res == '404: Not Found' then
-			error(res)
+		if not suc or type(res) ~= 'string' or res == '404: Not Found' then
+			error('Could not download '..path..': '..tostring(res))
 		end
-		if path:find('.lua') then
-			res = '--This watermark is used to delete the file if its cached, remove it to make the file persist after vape updates.\n'..res
+		if luaFile and not loadstring(res, path) then
+			error('Downloaded '..path..' is not valid Lua')
 		end
-		writefile(path, res)
+		cached = luaFile and '--This watermark is used to delete the file if its cached, remove it to make the file persist after vape updates.\n'..res or res
+		writefile(path, cached)
 	end
-	return (func or readfile)(path)
+	return func and func(path) or cached
 end
 
 getcustomasset = assetfunction and function(path)
@@ -1184,7 +1188,8 @@ function configapi.Presets.FetchList(sort)
 	local backendSuccess, backendResponse = pcall(function()
 		return game:HttpGet(
 			configapi.Presets.Backend()..'/public-configs?sort='..httpService:UrlEncode(tostring(sort or 'trending'))
-				..'&userId='..tostring(player.UserId),
+				..'&userId='..tostring(player.UserId)
+				..'&clientId='..httpService:UrlEncode(configapi.Presets.ClientId()),
 			true
 		)
 	end)
@@ -1340,6 +1345,20 @@ end
 	smoothing and a global window lock. All maths happens in the scaled
 	coordinate space every window position already uses (screen px / scale).
 ]]
+-- Panels use a scrolling body, so 500px is enough room for the common case while
+-- keeping two complete rows visible on a 1080px display.
+local windowGrid = {OriginX = 6, OriginY = 60, StepX = 230, StepY = 510, MaxHeight = 500}
+
+local function latticePosition(index)
+	local currentScale = scale and scale.Scale or 1
+	local screen = mainapi.gui and mainapi.gui.AbsoluteSize / currentScale or Vector2.new(1920, 1080)
+	local columns = math.max(1, math.floor((screen.X - (windowGrid.OriginX * 2)) / windowGrid.StepX))
+	return Vector2.new(
+		windowGrid.OriginX + (index % columns) * windowGrid.StepX,
+		windowGrid.OriginY + math.floor(index / columns) * windowGrid.StepY
+	)
+end
+
 local function makeDraggable(gui, window)
 	-- Snaps a proposed position and reports which alignment edges (if any)
 	-- were matched so guides can be drawn along them.
@@ -1387,26 +1406,23 @@ local function makeDraggable(gui, window)
 				end
 			end
 		end
-		-- Sort-GUI lattice snapping. The "Sort GUI" button lays windows out on a
-		-- fixed lattice (origin 6,60 stepping 230px across, wrapping to a second
-		-- row at y=420). Snapping a hand-dragged window to that same lattice means
-		-- manual placement lines up perfectly with one-click sorting, instead of
-		-- landing a few pixels off. Shares the edge-snapping toggle.
+		-- Snap to the same lattice used by Sort GUI. Its vertical step clears a
+		-- fully expanded category, so a second row cannot sit underneath one.
 		if nexus.Drag.EdgeSnap then
-			local originX, stepX = 6, 230
-			local col = math.round((pos.X - originX) / stepX)
+			local col = math.round((pos.X - windowGrid.OriginX) / windowGrid.StepX)
 			if col >= 0 then
-				local snapX = originX + col * stepX
+				local snapX = windowGrid.OriginX + col * windowGrid.StepX
 				if math.abs(pos.X - snapX) < dist then
 					pos = Vector2.new(snapX, pos.Y)
 					guideX = guideX or snapX
 				end
 			end
-			for _, row in {60, 420} do
-				if math.abs(pos.Y - row) < dist then
-					pos = Vector2.new(pos.X, row)
-					guideY = guideY or row
-					break
+			local row = math.round((pos.Y - windowGrid.OriginY) / windowGrid.StepY)
+			if row >= 0 then
+				local snapY = windowGrid.OriginY + row * windowGrid.StepY
+				if math.abs(pos.Y - snapY) < dist then
+					pos = Vector2.new(pos.X, snapY)
+					guideY = guideY or snapY
 				end
 			end
 		end
@@ -5105,17 +5121,13 @@ function mainapi:CreateCategory(categorysettings)
 		Expanded = false
 	}
 
-	-- Spread new category windows across a lattice instead of stacking every one
-	-- at the same spot. Previously every category defaulted to (236, 60), so
-	-- opening several piled them on top of each other and the ones underneath
-	-- looked like they "wouldn't open". Slot 0 is the main window (6, 60); each
-	-- category takes the next lattice cell (8 columns, wrapping to a second row),
-	-- matching the "Sort GUI" layout. A saved profile position still overrides
-	-- this on load, so arranged layouts are untouched.
+	-- Spread new category windows across a screen-aware lattice instead of stacking
+	-- them. Its vertical step clears a fully expanded panel; a saved position
+	-- still overrides this default on load.
 	mainapi.CategorySlot = (mainapi.CategorySlot or 0) + 1
 	local slot = mainapi.CategorySlot
-	local defaultX = 6 + (slot % 8) * 230
-	local defaultY = 60 + math.floor(slot / 8) * 360
+	local default = latticePosition(slot)
+	local defaultX, defaultY = default.X, default.Y
 
 	local window = Instance.new('TextButton')
 	window.Name = categorysettings.Name..'Category'
@@ -6238,7 +6250,7 @@ function mainapi:CreateCategory(categorysettings)
 			self:ChangeValue()
 		end
 		self.Expanded = not self.Expanded
-		local targetHeight = self.Expanded and math.min(41 + windowlist.AbsoluteContentSize.Y / scale.Scale, 601) or 41
+		local targetHeight = self.Expanded and math.min(41 + windowlist.AbsoluteContentSize.Y / scale.Scale, windowGrid.MaxHeight) or 41
 		-- Animate the category open/closed instead of snapping. The children frame
 		-- is a clipping ScrollingFrame pinned to the window height, so tweening the
 		-- window height alone reveals/hides the rows cleanly. Keep the rows mounted
@@ -6286,7 +6298,7 @@ function mainapi:CreateCategory(categorysettings)
 		end
 		children.CanvasSize = UDim2.fromOffset(0, windowlist.AbsoluteContentSize.Y / scale.Scale)
 		if categoryapi.Expanded then
-			window.Size = UDim2.fromOffset(220, math.min(41 + windowlist.AbsoluteContentSize.Y / scale.Scale, 601))
+			window.Size = UDim2.fromOffset(220, math.min(41 + windowlist.AbsoluteContentSize.Y / scale.Scale, windowGrid.MaxHeight))
 		end
 	end)
 
@@ -6312,6 +6324,9 @@ end
 function mainapi:CreateOverlay(categorysettings)
 	local window
 	local categoryapi
+	mainapi.OverlaySlot = (mainapi.OverlaySlot or 0) + 1
+	local overlayIndex = mainapi.OverlaySlot - 1
+	local defaultPosition = Vector2.new(12 + (overlayIndex % 4) * 250, 12 + math.floor(overlayIndex / 4) * 160)
 	categoryapi = {
 		Type = 'Overlay',
 		Expanded = false,
@@ -6341,7 +6356,7 @@ function mainapi:CreateOverlay(categorysettings)
 	window = Instance.new('TextButton')
 	window.Name = categorysettings.Name..'Overlay'
 	window.Size = UDim2.fromOffset(categorysettings.CategorySize or 220, 41)
-	window.Position = UDim2.fromOffset(240, 46)
+	window.Position = UDim2.fromOffset(defaultPosition.X, defaultPosition.Y)
 	window.BackgroundColor3 = uipallet.Main
 	window.AutoButtonColor = false
 	window.Visible = false
@@ -6351,6 +6366,7 @@ function mainapi:CreateOverlay(categorysettings)
 	addCorner(window)
 	addWindowStroke(window)
 	makeDraggable(window)
+	categoryapi.DefaultPosition = UDim2.fromOffset(defaultPosition.X, defaultPosition.Y)
 	local icon = Instance.new('ImageLabel')
 	icon.Name = 'Icon'
 	icon.Size = categorysettings.Size
@@ -6575,13 +6591,12 @@ function mainapi:CreateCategoryList(categorysettings)
 	}
 	categorysettings.Color = categorysettings.Color or Color3.fromRGB(190, 115, 255)
 
-	-- Take a lattice slot like the normal categories do. These list windows all defaulted to the
-	-- same (240, 46), so Friends, Targets and the config list opened stacked on each other (and on
-	-- top of the first category), which reads as "the tab won't open".
+	-- Take a lattice slot like normal categories, so list panels neither stack nor
+	-- overlap an expanded panel from the preceding row.
 	mainapi.CategorySlot = (mainapi.CategorySlot or 0) + 1
 	local slot = mainapi.CategorySlot
-	local defaultX = 6 + (slot % 8) * 230
-	local defaultY = 60 + math.floor(slot / 8) * 360
+	local default = latticePosition(slot)
+	local defaultX, defaultY = default.X, default.Y
 
 	local window = Instance.new('TextButton')
 	window.Name = displayName..'CategoryList'
@@ -8169,7 +8184,7 @@ function mainapi:CreateCategoryList(categorysettings)
 		self.Expanded = not self.Expanded
 		children.Visible = self.Expanded
 		arrow.Rotation = self.Expanded and 0 or 180
-		window.Size = UDim2.fromOffset(220, self.Expanded and math.min(51 + windowlist.AbsoluteContentSize.Y / scale.Scale, 611) or 45)
+		window.Size = UDim2.fromOffset(220, self.Expanded and math.min(51 + windowlist.AbsoluteContentSize.Y / scale.Scale, windowGrid.MaxHeight) or 45)
 		divider.Visible = children.CanvasPosition.Y > 10 and children.Visible
 	end
 
@@ -8252,7 +8267,7 @@ function mainapi:CreateCategoryList(categorysettings)
 		end
 		children.CanvasSize = UDim2.fromOffset(0, windowlist.AbsoluteContentSize.Y / scale.Scale)
 		if categoryapi.Expanded then
-			window.Size = UDim2.fromOffset(220, math.min(51 + windowlist.AbsoluteContentSize.Y / scale.Scale, 611))
+			window.Size = UDim2.fromOffset(220, math.min(51 + windowlist.AbsoluteContentSize.Y / scale.Scale, windowGrid.MaxHeight))
 		end
 	end)
 	windowlisttwo:GetPropertyChangedSignal('AbsoluteContentSize'):Connect(function()
@@ -10920,10 +10935,10 @@ guipane:CreateButton({
 	Function = function()
 		for _, v in mainapi.Categories do
 			if v.Type == 'MainWindow' then
-				v.Object.Position = UDim2.fromOffset(6, 60)
+				v.Object.Position = UDim2.fromOffset(windowGrid.OriginX, windowGrid.OriginY)
 			elseif v.Type == 'Category' or v.Type == 'CategoryList' then
 				if v.Button and v.Button.Enabled then v.Button:Toggle(false) else v.Object.Visible = false end
-				v.Object.Position = v.DefaultPosition or UDim2.fromOffset(236, 60)
+				v.Object.Position = v.DefaultPosition or UDim2.fromOffset(windowGrid.OriginX + windowGrid.StepX, windowGrid.OriginY)
 			end
 		end
 		mainapi:CreateNotification('GUI', 'Positions reset. Select a category to open it in the workspace.', 5, 'info')
@@ -10958,12 +10973,11 @@ guipane:CreateButton({
 			return (priority[a.Object.Name] or 99) < (priority[b.Object.Name] or 99)
 		end)
 
-		local screen = mainapi.gui.AbsoluteSize / math.max(scale.Scale, 0.01)
-		local columns = math.max(1, math.floor((screen.X - 12) / 230))
 		local ind = 0
 		for _, v in categories do
 			if v.Object.Visible then
-				v.Object.Position = UDim2.fromOffset(6 + (ind % columns * 230), 60 + math.floor(ind / columns) * 360)
+				local position = latticePosition(ind)
+				v.Object.Position = UDim2.fromOffset(position.X, position.Y)
 				ind += 1
 			end
 		end
@@ -13419,7 +13433,8 @@ end
 				local row = 0
 				for _, category in mainapi.Categories do
 					if category.Type ~= 'Overlay' and category.Object then
-						category.Object.Position = UDim2.fromOffset(10, 58 + row * 54)
+						local position = latticePosition(row)
+						category.Object.Position = UDim2.fromOffset(position.X, position.Y)
 						row += 1
 					end
 				end

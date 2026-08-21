@@ -1,7 +1,5 @@
 --!nocheck
 local license = ... or {}
-local globalenv = (getgenv and getgenv()) or _G
-license.Whitelist = globalenv.whitelist or license.Whitelist
 
 -- A cached Lua file used to be compiled once to validate it and then compiled again moments later
 -- to execute it.  The GUI and game chunks are large, so that duplicate parser/codegen work was a
@@ -23,6 +21,7 @@ local function cachedLoadstring(source, chunkName)
 end
 
 local cloneref = cloneref or function(ref) return ref end
+local httpService = cloneref(game:GetService('HttpService'))
 local isfile = isfile or function(file)
 	local suc, res = pcall(function()
 		return readfile(file)
@@ -52,9 +51,9 @@ local function getLoadingScreenParent()
 	return parent
 end
 
--- Which GUI the user has selected (defaults to 'new' before the first pick).
--- Loading screens are per-GUI: 'new' and 'newer' each get their own design and
--- 'old' / 'rise' get none.
+-- Which skin the user selected (defaults to 'new' before the first pick).
+-- main.lua renders every skin through the same GUI core; the classic loading
+-- screen is therefore also the safe fallback for old and rise profiles.
 local function selectedGui()
 	local ok, res = pcall(readfile, 'aetherv2/profiles/gui.txt')
 	if ok and type(res) == 'string' then
@@ -394,7 +393,12 @@ local function buildNewLoadingScreen(screen)
 	logo.Size = UDim2.fromOffset(250, 96)
 	logo.BackgroundTransparency = 1
 	logo.ScaleType = Enum.ScaleType.Fit
-	logo.Image = isfile('aetherv2/assets/new/loading.png') and getcustomasset('aetherv2/assets/new/loading.png') or ''
+	local loadingAsset = ''
+	if isfile('aetherv2/assets/new/loading.png') and type(getcustomasset) == 'function' then
+		local ok, asset = pcall(getcustomasset, 'aetherv2/assets/new/loading.png')
+		if ok then loadingAsset = asset end
+	end
+	logo.Image = loadingAsset
 	logo.ImageTransparency = 1
 	logo.Parent = scrim
 	tweenService:Create(logo, TweenInfo.new(0.5), {ImageTransparency = 0}):Play()
@@ -515,8 +519,9 @@ local function buildNewLoadingScreen(screen)
 			end
 		end
 		-- The logo is downloaded during the load, so pick it up as soon as it lands.
-		if logo.Parent and logo.Image == '' and isfile('aetherv2/assets/new/loading.png') then
-			logo.Image = getcustomasset('aetherv2/assets/new/loading.png')
+		if logo.Parent and logo.Image == '' and isfile('aetherv2/assets/new/loading.png') and type(getcustomasset) == 'function' then
+			local ok, asset = pcall(getcustomasset, 'aetherv2/assets/new/loading.png')
+			if ok then logo.Image = asset end
 		end
 	end
 	return screen
@@ -524,9 +529,9 @@ end
 
 local function createLoadingScreen()
 	if license.Closet or isLoadingScreenDisabled() then return nil end
-	-- Per-GUI loading screens: only 'new' and 'newer' show one at all.
+	-- The Nexus skin has its own screen. Every other supported skin uses the
+	-- compatible classic screen so selecting old/rise cannot remove startup UI.
 	local gui = selectedGui()
-	if gui ~= 'new' and gui ~= 'newer' then return nil end
 	local parent = getLoadingScreenParent()
 	if not parent then return nil end
 	local existing = parent:FindFirstChild('AetherV2Loading')
@@ -540,7 +545,7 @@ local function createLoadingScreen()
 	screen.Parent = parent
 	screen:ClearAllChildren()
 
-	-- 'newer' keeps its own screen; 'new' uses the minimal fullscreen one.
+	-- 'newer' keeps its own screen; every other skin uses the minimal fullscreen one.
 	if gui == 'newer' then
 		buildNewerLoadingScreen(screen)
 		return screen
@@ -557,11 +562,7 @@ if not _G.AetherV2SetLoadingStatus then
 	_G.AetherV2SetLoadingStatus = function() end
 end
 
--- A load that dies here used to leave the loading screen sitting on the user's face forever, with
--- the reason only in the console. Take the screen down and say what happened.
-local function failLoad(message)
-	table.clear(compileCache)
-	shared.AetherCompileCache = nil
+local function closeLoadingScreen()
 	if _G.AetherV2CloseLoadingScreen then
 		pcall(_G.AetherV2CloseLoadingScreen)
 	elseif _G.AetherV2LoadingScreen then
@@ -570,6 +571,14 @@ local function failLoad(message)
 	_G.AetherV2LoadingScreen = nil
 	_G.AetherV2SetLoadingStatus = nil
 	_G.AetherV2CloseLoadingScreen = nil
+end
+
+-- A load that dies here used to leave the loading screen sitting on the user's face forever, with
+-- the reason only in the console. Take the screen down and say what happened.
+local function failLoad(message)
+	table.clear(compileCache)
+	shared.AetherCompileCache = nil
+	closeLoadingScreen()
 	warn('[AetherV2] Load failed: '..tostring(message))
 	pcall(function()
 		game:GetService('StarterGui'):SetCore('SendNotification', {
@@ -766,12 +775,17 @@ local function storeFile(path, body, backup)
 	end
 end
 
-local function downloadFile(path, func)
+local function downloadFile(path)
 	-- Heal a broken cache instead of trusting it forever.
 	local exists = isfile(path)
-	if exists and path:sub(-4) == '.lua' and not cachedLoadstring(readfile(path), path) then
+	local readOk, cached = false, nil
+	if exists then
+		readOk, cached = pcall(readfile, path)
+	end
+	if exists and (not readOk or type(cached) ~= 'string' or cached == ''
+		or (path:sub(-4) == '.lua' and not cachedLoadstring(cached, path))) then
 		warn('[AetherV2] Cached '..path..' is unusable, downloading it again')
-		delfile(path)
+		pcall(delfile, path)
 		exists = false
 	end
 	if not exists then
@@ -784,7 +798,7 @@ local function downloadFile(path, func)
 		end
 		storeFile(path, body)
 	end
-	return (func or readfile)(path)
+	return readfile(path)
 end
 
 -- Files under profiles/ that come FROM the repository rather than from the user.
@@ -811,20 +825,6 @@ local function isUserFile(normalized)
 	end
 	return false
 end
-
-local function wipeFolder(path)
-	if not isfolder(path) then return end
-	for _, file in listfiles(path) do
-		local normalized = tostring(file):gsub('\\', '/')
-		if isUserFile(normalized) then continue end
-		if isfile(file) then
-			delfile(file)
-		elseif isfolder(file) then
-			wipeFolder(file)
-		end
-	end
-end
-
 
 -- Spotify's clip cache is optional and is not read during startup.  In
 -- particular, never let the updater treat anything under songs/ as a repository
@@ -1067,6 +1067,7 @@ if not shared.VapeDeveloper and not updatesPaused and not shared.AetherRolledBac
 		-- a tree lookup failure leaves the known-good install untouched.
 		local newFiles = fetchFileList(commit)
 		local oldFiles = readFileList()
+		local updateProblem
 
 		-- How many files this update actually replaced. nil means the comparison was not
 		-- available and everything was refetched, so there is no honest number to report.
@@ -1082,28 +1083,31 @@ if not shared.VapeDeveloper and not updatesPaused and not shared.AetherRolledBac
 					-- A failed request therefore leaves the complete previous revision usable.
 					local body, problem = fetchFile(target, commit, 3)
 					if not body then
-						failLoad('Could not stage update for '..target..' - '..tostring(problem))
+						updateProblem = 'Could not stage update for '..target..' - '..tostring(problem)
+						break
 					end
 					staged[target] = body
 					changed += 1
 				end
 			end
-			for target, body in staged do
-				storeFile(target, body, true)
-			end
-			-- Files that no longer exist upstream.
-			for path in oldFiles do
-				if not newFiles[path] then
-					local target = 'aetherv2/'..path
-					if isfile(target) and not isUserFile('/'..target) then
-						rememberRollback(target)
-						delfile(target)
-						changed += 1
+			if not updateProblem then
+				for target, body in staged do
+					storeFile(target, body, true)
+				end
+				-- Files that no longer exist upstream.
+				for path in oldFiles do
+					if not newFiles[path] then
+						local target = 'aetherv2/'..path
+						if isfile(target) and not isUserFile('/'..target) then
+							rememberRollback(target)
+							delfile(target)
+							changed += 1
+						end
 					end
 				end
+				changedFiles = changed
+				_G.AetherV2SetLoadingStatus('Updating '..changed..' file'..(changed == 1 and '' or 's'), 0.16)
 			end
-			changedFiles = changed
-			_G.AetherV2SetLoadingStatus('Updating '..changed..' file'..(changed == 1 and '' or 's'), 0.16)
 		elseif newFiles then
 			-- No trustworthy old baseline: stage a complete refresh of repository files that
 			-- are already installed, then swap them individually. Keeping unknown local files is
@@ -1114,19 +1118,31 @@ if not shared.VapeDeveloper and not updatesPaused and not shared.AetherRolledBac
 				local target = 'aetherv2/'..path
 				if isfile(target) and not isUserFile('/'..target) then
 					local body, problem = fetchFile(target, commit, 3)
-					if not body then failLoad('Could not stage update for '..target..' - '..tostring(problem)) end
+					if not body then
+						updateProblem = 'Could not stage update for '..target..' - '..tostring(problem)
+						break
+					end
 					staged[target] = body
 					changed += 1
 				end
 			end
-			for target, body in staged do storeFile(target, body, true) end
-			changedFiles = changed
+			if not updateProblem then
+				for target, body in staged do storeFile(target, body, true) end
+				changedFiles = changed
+			end
 		else
 			-- A failed tree lookup is not permission to erase a good installation. Leave the
 			-- current revision intact and retry the update on the next injection.
 			-- A fresh install has no known-good ref yet. Keep it on main instead of
 			-- writing an empty commit file after a failed tree request.
 			commit = oldCommit ~= '' and oldCommit or 'main'
+			rollbackManifest = nil
+		end
+
+		if updateProblem then
+			warn('[AetherV2] Update skipped: '..updateProblem)
+			commit = oldCommit ~= '' and oldCommit or 'main'
+			newFiles = nil
 			rollbackManifest = nil
 		end
 
@@ -1183,13 +1199,11 @@ end
 -- pulled in by the module that needs them, which now runs after the menu is already up, so keeping
 -- them off the critical path is worth more than having them early.
 local deferredFiles = {
-	['libraries/cheatenginelib.lua'] = true,
-	['libraries/vm.lua'] = true
+	['libraries/cheatenginelib.lua'] = true
 }
 
 local function neededFiles(files)
 	if not files then return {} end
-	local gui = selectedGui()
 	local place = tostring(game.PlaceId)
 	if isfile('aetherv2/profiles/forcegame.txt')
 		and readfile('aetherv2/profiles/forcegame.txt') == 'true'
@@ -1245,20 +1259,24 @@ local function prefetch(files)
 	if total == 0 then return end
 
 	local index, done, active = 0, 0, 0
+	local cancelled = false
 	local workers = math.min(8, total)
 	active = workers
 	for _ = 1, workers do
 		task.spawn(function()
 			while true do
+				if cancelled then break end
 				index += 1
 				local path = queue[index]
 				if not path then break end
 				local body = fetchFile(path, nil, 2)
-				if body then
+				if not cancelled and body then
 					pcall(storeFile, path, body)
 				end
 				done += 1
-				_G.AetherV2SetLoadingStatus('Downloading files ('..done..'/'..total..')', 0.22 + (0.4 * (done / total)))
+				if not cancelled then
+					_G.AetherV2SetLoadingStatus('Downloading files ('..done..'/'..total..')', 0.22 + (0.4 * (done / total)))
+				end
 			end
 			active -= 1
 		end)
@@ -1267,6 +1285,7 @@ local function prefetch(files)
 	-- Bounded: a worker that somehow never returns must not hold the load open.
 	local deadline = os.clock() + 90
 	repeat task.wait(0.05) until active <= 0 or os.clock() > deadline
+	cancelled = true
 end
 
 _G.AetherV2SetLoadingStatus('Checking version', 0.18)
@@ -1298,6 +1317,8 @@ if maintenance and maintenance:match("^%s*true%s*$") then
 		setclipboard("https://discord.gg/aYu5c9v9zv")
 	end
 
+	pcall(delfile, startupMarkerPath)
+	closeLoadingScreen()
 	return
 end
 

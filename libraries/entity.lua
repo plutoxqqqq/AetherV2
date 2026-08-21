@@ -154,13 +154,11 @@ entitylib.EntityMouse = function(entitysettings)
 			if entitysettings.Wallcheck then
 				if entitylib.Wallcheck(entitysettings.Origin, v.Entity[entitysettings.Part].Position, entitysettings.Wallcheck) then continue end
 			end
-			table.clear(entitysettings)
 			table.clear(sortingTable)
 			return v.Entity
 		end
 		table.clear(sortingTable)
 	end
-	table.clear(entitysettings)
 end
 
 entitylib.EntityPosition = function(entitysettings)
@@ -194,13 +192,11 @@ entitylib.EntityPosition = function(entitysettings)
 			if entitysettings.Wallcheck then
 				if entitylib.Wallcheck(localPosition, v.Entity[entitysettings.Part].Position, entitysettings.Wallcheck) then continue end
 			end
-			table.clear(entitysettings)
 			table.clear(sortingTable)
 			return v.Entity
 		end
 		table.clear(sortingTable)
 	end
-	table.clear(entitysettings)
 end
 
 entitylib.AllPosition = function(entitysettings)
@@ -234,7 +230,6 @@ entitylib.AllPosition = function(entitysettings)
 		end
 		table.clear(sortingTable)
 	end
-	table.clear(entitysettings)
 	return returned
 end
 

@@ -11,6 +11,7 @@ class GitHubPublisher {
     this.repo = env.GITHUB_REPO || '';
     this.baseBranch = env.GITHUB_BRANCH || 'main';
     this.mode = (env.GITHUB_PUBLISH_MODE || 'pr').toLowerCase();
+    this.timeoutMs = Math.max(1_000, Math.min(Number(env.GITHUB_TIMEOUT_MS) || 15_000, 120_000));
     this.api = `https://api.github.com/repos/${this.repo}`;
   }
 
@@ -30,7 +31,17 @@ class GitHubPublisher {
 
   async request(endpoint, options = {}) {
     if (!this.configured) throw Object.assign(Error('GitHub publishing is not configured'), {status: 503});
-    const response = await fetch(`${this.api}${endpoint}`, {...options, headers: this.headers(options.headers)});
+    let response;
+    try {
+      response = await fetch(`${this.api}${endpoint}`, {
+        ...options,
+        headers: this.headers(options.headers),
+        signal: AbortSignal.timeout(this.timeoutMs)
+      });
+    } catch (error) {
+      const message = error?.name === 'TimeoutError' ? 'GitHub request timed out' : 'GitHub request could not be completed';
+      throw Object.assign(Error(message), {status: 502});
+    }
     const text = await response.text();
     const value = text ? (() => { try { return JSON.parse(text); } catch { return text; } })() : {};
     if (!response.ok) throw Object.assign(Error(`GitHub request failed (${response.status})`), {status: 502, details: value});

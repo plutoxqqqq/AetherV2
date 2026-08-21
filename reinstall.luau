@@ -2,12 +2,21 @@ local cloneref = cloneref or function(ref: any)
     return ref
 end
 
-if isfolder('aetherv2') then
-    delfolder('aetherv2')
+local removed, problem = true, nil
+if type(isfolder) ~= 'function' then
+    removed, problem = false, 'This executor cannot inspect folders'
+elseif isfolder('aetherv2') then
+    if type(delfolder) == 'function' then
+        removed, problem = pcall(delfolder, 'aetherv2')
+    else
+        removed, problem = false, 'This executor cannot remove folders'
+    end
 end
 
-cloneref(game:GetService('StarterGui')):SetCore('SendNotification', {
-    Title = 'AetherV2',
-    Text = 'Successfully reinstalled AetherV2, Please rejoin the game to take effect',
-    Duration = 20
-})
+pcall(function()
+    cloneref(game:GetService('StarterGui')):SetCore('SendNotification', {
+        Title = 'AetherV2',
+        Text = removed and 'Cache cleared. Please rejoin for a clean install.' or 'Could not clear the cache: '..tostring(problem),
+        Duration = 20
+    })
+end)

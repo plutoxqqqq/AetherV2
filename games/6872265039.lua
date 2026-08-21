@@ -261,7 +261,11 @@ end)
 	
 run(function()
     local ok, err = pcall(function()
-        repeat task.wait() until vape and vape.Categories and vape.Categories.Render
+        local categoryDeadline = tick() + 15
+        repeat task.wait() until (vape and vape.Categories and vape.Categories.Render) or tick() >= categoryDeadline
+        if not (vape and vape.Categories and vape.Categories.Render) then
+            error('Render category never became available')
+        end
         local ClanModule
         local ClanColor = Color3.new(1, 1, 1)
         local enabledFlag = false

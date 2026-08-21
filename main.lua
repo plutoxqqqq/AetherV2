@@ -1,12 +1,6 @@
 local license = ... or {}
 local globalenv = (getgenv and getgenv()) or _G
 license.Whitelist = globalenv.whitelist or license.Whitelist
-local acceptedWhitelistKey = '1234-5678-9012-3456'
-
-local function isWhitelisted()
-	return tostring(globalenv.whitelist or license.Whitelist or '') == acceptedWhitelistKey
-end
-repeat task.wait() until game:IsLoaded()
 -- If an AetherV2 instance is already injected, fully destroy it before loading
 -- this one. Running the loadstring again is a valid "reinject" - it must tear
 -- the old GUI down first, or two instances fight over input/GUI and the new one
@@ -31,6 +25,7 @@ end
 
 local vape
 local compile = loadstring
+local traceback = debug and debug.traceback or tostring
 local compileCache = type(shared.AetherCompileCache) == 'table' and shared.AetherCompileCache or {}
 local watermark = '--This watermark is used to delete the file if its cached, remove it to make the file persist after vape updates.\n'
 local function compileKey(source)
@@ -131,6 +126,12 @@ local function failLoad(message)
 		})
 	end)
 	error(message, 0)
+end
+
+local gameLoadDeadline = os.clock() + 60
+repeat task.wait() until game:IsLoaded() or os.clock() >= gameLoadDeadline
+if not game:IsLoaded() then
+	failLoad('Roblox did not finish loading within 60 seconds')
 end
 
 -- Safe Mode can also be reached after the bootstrap has dismissed its loader.
@@ -236,19 +237,17 @@ local redirect = function()
 		},
 		cmd = 'INVITE_BROWSER'
 	})
-	for i = 1, 2 do
-		task.spawn(function()
-			pcall(discordRequest, {
-				Method = 'POST',
-				Url = 'http://127.0.0.1:6463/rpc?v=1',
-				Headers = {
-					['Content-Type'] = 'application/json',
-					Origin = 'https://discord.com'
-				},
-				Body = body
-			})
-		end)
-	end
+	task.spawn(function()
+		pcall(discordRequest, {
+			Method = 'POST',
+			Url = 'http://127.0.0.1:6463/rpc?v=1',
+			Headers = {
+				['Content-Type'] = 'application/json',
+				Origin = 'https://discord.com'
+			},
+			Body = body
+		})
+	end)
 end
 
 -- Loading phases.
@@ -378,13 +377,18 @@ local function fetchFile(path, attempts)
 	return nil, problem
 end
 
-local function downloadFile(path, func)
+local function downloadFile(path)
 	-- Heal a broken cache before trusting it. Without this, one interrupted write means the script
 	-- never loads again on that machine, however many times it is re-injected.
 	local exists = isfile(path)
-	if exists and path:sub(-4) == '.lua' and not loadstring(readfile(path), path) then
+	local readOk, cached = false, nil
+	if exists then
+		readOk, cached = pcall(readfile, path)
+	end
+	if exists and (not readOk or type(cached) ~= 'string' or cached == ''
+		or (path:sub(-4) == '.lua' and not loadstring(cached, path))) then
 		warn('[AetherV2] Cached '..path..' is unusable, downloading it again')
-		delfile(path)
+		pcall(delfile, path)
 		exists = false
 	end
 	if not exists then
@@ -410,15 +414,7 @@ local function downloadFile(path, func)
 		end
 		setPhaseProgress('Downloaded '..path, 0.75)
 	end
-	return (func or readfile)(path)
-end
-
-local function downloadOptionalFile(path)
-	if isfile(path) then return true end
-	local res = httpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..storedCommit()..'/'..select(1, path:gsub('aetherv2/', '')), 15)
-	if not res or payloadProblem(path, res) then return false end
-	writefile(path, res)
-	return true
+	return readfile(path)
 end
 
 
@@ -448,7 +444,7 @@ local function runLoadingChunk(source, chunkName, ...)
 	local args = {...}
 	local ok, result = xpcall(function()
 		return chunk(table.unpack(args))
-	end, debug.traceback)
+	end, traceback)
 	if not ok then
 		failLoad(result)
 	end
@@ -457,11 +453,8 @@ end
 
 -- Modules that arrived after the menu was already built. Their saved settings have to be applied
 -- again, because vape:Load ran while they did not exist yet.
-local lateModules = false
-
 local function applyLateModules(chunkName)
 	if not vape then return end
-	lateModules = true
 	task.spawn(function()
 		-- Wait for the menu to exist before re-applying, in case the chunk finished first.
 		local deadline = os.clock() + 30
@@ -515,7 +508,7 @@ local function runWatchedChunk(source, chunkName, label, timeout, optional, ...)
 		end
 		ok, result = xpcall(function()
 			return chunk(table.unpack(args, 1, args.n))
-		end, debug.traceback)
+		end, traceback)
 		finished = true
 		if not ok then
 			warn('[AetherV2] '..chunkName..' failed: '..tostring(result))
@@ -549,7 +542,7 @@ end
 local function runWithTimeout(func, timeout, label)
 	local finished, success, result = false, false, nil
 	task.spawn(function()
-		success, result = xpcall(func, debug.traceback)
+		success, result = xpcall(func, traceback)
 		finished = true
 	end)
 	local deadline = os.clock() + timeout
@@ -669,6 +662,7 @@ for _, folder in {
 	'aetherv2',
 	'aetherv2/profiles',
 	'aetherv2/assets',
+	'aetherv2/assets/new',
 	'aetherv2/guis',
 	'aetherv2/games',
 	'aetherv2/libraries',
@@ -695,9 +689,6 @@ local guiSkin = ({new = 'Classic', newer = 'Nexus', old = 'Old', rise = 'Rise'})
 license.Skin = guiSkin
 local guiCore = 'newer'
 
-if not isfolder('aetherv2/assets/'..gui) then
-	makefolder('aetherv2/assets/'..gui)
-end
 if not isfile('aetherv2/profiles/commit.txt') then
 	writefile('aetherv2/profiles/commit.txt', 'main')
 end
@@ -705,9 +696,7 @@ if not isfile('aetherv2/profiles/disableloading.txt') then
 	writefile('aetherv2/profiles/disableloading.txt', 'false')
 end
 
-globalenv.used_init = true
 setPhase('Preparing loading artwork', 0.82, 0.84)
-downloadOptionalFile('aetherv2/assets/new/loading.png')
 setPhase('Loading interface', 0.84, 0.88)
 markStartup('gui', guiCore)
 vape = runLoadingChunk(downloadFile('aetherv2/guis/'..guiCore..'.lua'), 'gui', license)

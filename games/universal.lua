@@ -18,20 +18,29 @@ local isfile = isfile
 		end)
 		return suc and res ~= nil and res ~= ''
 	end
-local function downloadFile(path, func)
-	if not isfile(path) then
-		local suc, res = pcall(function()
-			return game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/' .. readfile('aetherv2/profiles/commit.txt') .. '/' .. select(1, path:gsub('aetherv2/', '')), true)
-		end)
-		if not suc or res == '404: Not Found' then
-			error(res)
-		end
-		if path:sub(-4) == '.lua' then
-			res = '--This watermark is used to delete the file if its cached, remove it to make the file persist after vape updates.\n'.. res
-		end
-		writefile(path, res)
+local function downloadFile(path)
+	local cached
+	local readable, body = pcall(readfile, path)
+	if readable and type(body) == 'string' and body ~= '' and nativeLoadstring(body, path) then
+		cached = body
+	else
+		pcall(delfile, path)
 	end
-	return (func or readfile)(path)
+	if cached then return cached end
+
+	local suc, res = pcall(function()
+		local commit = readfile('aetherv2/profiles/commit.txt')
+		return game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/' .. commit .. '/' .. select(1, path:gsub('aetherv2/', '')), true)
+	end)
+	if not suc or type(res) ~= 'string' or res == '404: Not Found' then
+		error('Could not download '..path..': '..tostring(res))
+	end
+	if not nativeLoadstring(res, path) then
+		error('Downloaded '..path..' is not valid Lua')
+	end
+	cached = '--This watermark is used to delete the file if its cached, remove it to make the file persist after vape updates.\n'..res
+	writefile(path, cached)
+	return cached
 end
 -- Each module registers through run(). A bare `func()` meant one bad module aborted the whole
 -- chunk part-way through, so a single error (a nil HUD frame, a missing remote) silently cost you
@@ -169,8 +178,13 @@ local function rakNetCheck(module)
 end
 
 local visited, attempted, tpSwitch = {}, {}, false
-local cacheExpire, cache = tick()
-local function serverHop(pointer, filter)
+local serverCache = {}
+local function serverHop(pointer, filter, pages)
+	pages = pages or 0
+	if pages >= 25 then
+		notif('AetherV2', 'Stopped after checking 25 server pages.', 5, 'warning')
+		return
+	end
 	visited = shared.vapeserverhoplist and shared.vapeserverhoplist:split('/') or {}
 	if not table.find(visited, game.JobId) then
 		table.insert(visited, game.JobId)
@@ -179,27 +193,32 @@ local function serverHop(pointer, filter)
 		notif('AetherV2', 'Searching for an available server.', 2)
 	end
 
+	local key = tostring(filter or '')..':'..tostring(pointer or '')
 	local suc, httpdata = pcall(function()
-		return cacheExpire < tick()
-				and game:HttpGet(
-					'https://games.roblox.com/v1/games/'
-						.. game.PlaceId
-						.. '/servers/Public?sortOrder='
-						.. (filter == 'Ascending' and 1 or 2)
-						.. '&excludeFullGames=true&limit=100'
-						.. (pointer and '&cursor=' .. pointer or '')
-				)
-			or cache
+		local cached = serverCache[key]
+		if cached and cached.expires > tick() then return cached.body end
+		local body = game:HttpGet(
+			'https://games.roblox.com/v1/games/'
+				.. game.PlaceId
+				.. '/servers/Public?sortOrder='
+				.. (filter == 'Ascending' and 1 or 2)
+				.. '&excludeFullGames=true&limit=100'
+				.. (pointer and '&cursor=' .. pointer or '')
+		)
+		serverCache[key] = {body = body, expires = tick() + 60}
+		return body
 	end)
-	local data = suc and httpService:JSONDecode(httpdata) or nil
-	if data and data.data then
+	local decoded, data = false, nil
+	if suc and type(httpdata) == 'string' then
+		decoded, data = pcall(httpService.JSONDecode, httpService, httpdata)
+	end
+	if decoded and type(data) == 'table' and type(data.data) == 'table' then
 		for _, v in data.data do
 			if
 				tonumber(v.playing) < playersService.MaxPlayers
 				and not table.find(visited, v.id)
 				and not table.find(attempted, v.id)
 			then
-				cacheExpire, cache = tick() + 60, httpdata
 				table.insert(attempted, v.id)
 
 				notif('AetherV2', 'Found! Teleporting.', 5)
@@ -209,14 +228,16 @@ local function serverHop(pointer, filter)
 		end
 
 		if data.nextPageCursor then
-			serverHop(data.nextPageCursor, filter)
+			task.defer(serverHop, data.nextPageCursor, filter, pages + 1)
 		else
 			notif('AetherV2', 'Failed to find an available server.', 5, 'warning')
 		end
 	else
+		local reason = type(data) == 'table' and type(data.errors) == 'table'
+			and data.errors[1] and data.errors[1].message or 'no data'
 		notif(
 			'AetherV2',
-			'Failed to grab servers. (' .. (data and data.errors[1].message or 'no data') .. ')',
+			'Failed to grab servers. (' .. tostring(reason) .. ')',
 			5,
 			'warning'
 		)
@@ -6684,11 +6705,14 @@ run(function()
 	return highest
     end
 
-    local function playerAdded(plr)
+	local function playerAdded(plr)
 	if not vape.Loaded then
 		repeat
 			task.wait()
-		until vape.Loaded
+		until vape.Loaded or not StaffDetector.Enabled
+		if not StaffDetector.Enabled then
+			return
+		end
 	end
 
 	local user = table.find(Users.ListEnabled, tostring(plr.UserId))
@@ -9617,9 +9641,17 @@ run(function()
 	end
 
 	songobj.SoundId = assetfunction(split[1])
+	local loadDeadline = tick() + 20
 	repeat
 		task.wait()
-	until songobj.IsLoaded or not SongBeats.Enabled
+	until songobj.IsLoaded or not SongBeats.Enabled or tick() >= loadDeadline
+	if not songobj.IsLoaded then
+		if SongBeats.Enabled then
+			notif('SongBeats', 'Timed out while loading '..split[1], 10, 'warning')
+			SongBeats:Toggle()
+		end
+		return
+	end
 	if SongBeats.Enabled then
 		beattick = tick() + (tonumber(split[3]) or 0)
 		songbpm = 60 / (tonumber(split[2]) or 50)

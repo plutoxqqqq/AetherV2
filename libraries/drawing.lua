@@ -112,7 +112,7 @@ commchannel.Event:Connect(function(...)
 	else
 		if key == 'new' then
 			local obj = Drawing.new(args[1])
-			local ref = httpService:GenerateGUID():sub(1, 6)
+			local ref = httpService:GenerateGUID()
 			local props = {}
 			for _, v in classes.Base do
 				props[v] = obj[v]
@@ -169,11 +169,15 @@ if isactor and not Drawing then
 
 	getgenv().Drawing = {
 		new = function(objtype)
-			local newid = httpService:GenerateGUID(true):sub(1, 6)
+			local newid = httpService:GenerateGUID(true)
 			commchannel:Fire(false, 'new', objtype, newid)
-			repeat task.wait() until queued[newid]
+			local deadline = os.clock() + 10
+			repeat task.wait() until queued[newid] or os.clock() >= deadline
 			local obj = queued[newid]
 			queued[newid] = nil
+			if not obj then
+				error('Drawing actor did not create an object within 10 seconds')
+			end
 			return obj
 		end,
 		kill = function()

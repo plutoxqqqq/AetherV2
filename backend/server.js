@@ -37,20 +37,26 @@ function requestId(req) {
 
 function readBody(req) {
   return new Promise((resolve, reject) => {
-    let text = '';
+    const chunks = [];
+    let bytes = 0;
     let settled = false;
     req.setEncoding('utf8');
     req.on('data', chunk => {
       if (settled) return;
-      text += chunk;
-      if (Buffer.byteLength(text) > MAX_BODY) {
+      bytes += Buffer.byteLength(chunk);
+      if (bytes > MAX_BODY) {
         settled = true;
+        // Keep consuming the request after responding. Leaving an oversized
+        // stream paused keeps its socket and parser work alive unnecessarily.
+        req.resume();
         reject(httpError(413, 'Request body is too large'));
+        return;
       }
+      chunks.push(chunk);
     });
     req.on('end', () => {
       if (settled) return;
-      try { resolve(JSON.parse(text || '{}')); }
+      try { resolve(JSON.parse(chunks.join('') || '{}')); }
       catch { reject(httpError(400, 'Invalid JSON')); }
     });
     req.on('error', error => { if (!settled) reject(error); });
@@ -216,7 +222,8 @@ function createApp(options = {}) {
     return false;
   }
 
-  function enrichPresets(items, data, userId) {
+  function enrichPresets(items, data, userId, clientId) {
+    const voter = userId && clientId ? String(userId) + ':' + hash(clientId).slice(0, 24) : undefined;
     return items.map(preset => {
       const stats = data.publicConfigs[preset.file] || {};
       const ratings = data.ratings[preset.file] || {};
@@ -224,8 +231,7 @@ function createApp(options = {}) {
       const likes = values.filter(value => value === 1).length;
       const dislikes = values.filter(value => value === -1).length;
       const ratingCount = likes + dislikes;
-      const prefix = userId ? String(userId) + ':' : '';
-      const userRating = prefix ? Object.entries(ratings).find(entry => entry[0].startsWith(prefix))?.[1] : undefined;
+      const userRating = voter ? ratings[voter] : undefined;
       const favorites = data.favorites[preset.file] || {};
       const creatorKey = String(preset.credits || '').toLowerCase();
       return {
@@ -237,7 +243,7 @@ function createApp(options = {}) {
         ratingPercentage: ratingCount ? Math.round(likes / ratingCount * 100) : 0,
         userRating,
         favoriteCount: Object.keys(favorites).length,
-        favorited: prefix ? Object.keys(favorites).some(key => key.startsWith(prefix)) : false,
+        favorited: voter ? Boolean(favorites[voter]) : false,
         verifiedCreator: verifiedCreators.has(creatorKey) || data.creators[creatorKey]?.verified === true
       };
     });
@@ -408,7 +414,11 @@ function createApp(options = {}) {
 
       if (req.method === 'GET' && pathname === '/public-configs') {
         const catalogue = await manifest();
-        const presets = enrichPresets(catalogue.presets || [], await database.read(), Number(url.searchParams.get('userId')) || undefined);
+        const rawUserId = url.searchParams.get('userId');
+        const userId = rawUserId === null ? undefined : validateUserId(rawUserId);
+        const rawClientId = url.searchParams.get('clientId');
+        const clientId = userId && rawClientId ? validateString(rawClientId, 'clientId', {min: 16, max: 80}) : undefined;
+        const presets = enrichPresets(catalogue.presets || [], await database.read(), userId, clientId);
         return send(res, context, 200, {success: true, apiVersion: API_VERSION, presets: sortPresets(presets, url.searchParams.get('sort'))}, {...rateHeaders, 'cache-control': 'public, max-age=30'});
       }
 

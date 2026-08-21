@@ -22,13 +22,21 @@ run(function()
 	end
 
 	local KnitInit, Knit
+	local knitDeadline = tick() + 45
 	repeat
 		KnitInit, Knit = pcall(function() return debug.getupvalue(require(lplr.PlayerScripts.TS.knit).setup, 9) end)
-		if KnitInit then break end
+		if KnitInit and Knit then break end
 		task.wait()
-	until KnitInit
+	until (KnitInit and Knit) or tick() >= knitDeadline
+	if not KnitInit or not Knit then
+		error('Knit never became available')
+	end
 	if not debug.getupvalue(Knit.Start, 1) then
-		repeat task.wait() until debug.getupvalue(Knit.Start, 1)
+		local startDeadline = tick() + 15
+		repeat task.wait() until debug.getupvalue(Knit.Start, 1) or tick() >= startDeadline
+		if not debug.getupvalue(Knit.Start, 1) then
+			error('Knit did not finish starting')
+		end
 	end
 	local Flamework = require(replicatedStorage['rbxts_include']['node_modules']['@flamework'].core.out).Flamework
 	local Client = require(replicatedStorage.TS.remotes).default.Client
