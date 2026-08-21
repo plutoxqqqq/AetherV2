@@ -1,5 +1,5 @@
 > [!WARNING]
-Skidded with GPT 5.5, Opus 4.8, Opus 5,GPT 5.6 Sol, GPT 5.6 Terra, GPT 5.6 Luna, and Fable 5
+Skidded with GPT 5.5, Opus 4.8, Opus 5, GPT 5.6 Sol, GPT 5.6 Terra, GPT 5.6 Luna, and Fable 5
 
 # AetherV2
 
