@@ -56,6 +56,9 @@ local isfile = isfile or function(file)
 	end)
 	return suc and res ~= nil and res ~= ''
 end
+local delfile = delfile or function(file)
+	pcall(writefile, file, '')
+end
 local cloneref = cloneref or function(obj)
 	return obj
 end
@@ -108,6 +111,24 @@ local function closeLoadingScreen()
 	_G.AetherV2LoadingScreen = nil
 	_G.AetherV2SetLoadingStatus = nil
 	_G.AetherV2CloseLoadingScreen = nil
+end
+
+-- main.lua owns failures after init.lua hands control over. Keeping this local
+-- prevents a failed download or module from leaving the bootstrap screen visible.
+local function failLoad(message)
+	message = tostring(message)
+	closeLoadingScreen()
+	table.clear(compileCache)
+	shared.AetherCompileCache = nil
+	warn('[AetherV2] Load failed: '..message)
+	pcall(function()
+		game:GetService('StarterGui'):SetCore('SendNotification', {
+			Title = 'AetherV2 failed to load',
+			Text = message:sub(1, 180),
+			Duration = 12
+		})
+	end)
+	error(message, 0)
 end
 
 -- Safe Mode can also be reached after the bootstrap has dismissed its loader.
@@ -203,6 +224,8 @@ local function promptSafeMode(failure)
 end
 
 local redirect = function()
+	local discordRequest = type(request) == 'function' and request or (type(http_request) == 'function' and http_request or (syn and type(syn.request) == 'function' and syn.request))
+	if type(discordRequest) ~= 'function' then return end
 	local body = httpService:JSONEncode({
 		nonce = httpService:GenerateGUID(false),
 		args = {
@@ -211,10 +234,9 @@ local redirect = function()
 		},
 		cmd = 'INVITE_BROWSER'
 	})
-
 	for i = 1, 2 do
 		task.spawn(function()
-			request({
+			pcall(discordRequest, {
 				Method = 'POST',
 				Url = 'http://127.0.0.1:6463/rpc?v=1',
 				Headers = {
@@ -265,21 +287,86 @@ local function payloadProblem(path, body)
 	return nil
 end
 
+-- Requests are bounded so an executor/network stall cannot hold the bootstrap forever.
+local function httpGet(url, timeout)
+	timeout = timeout or 15
+	local executorRequest = type(request) == 'function' and request or (type(http_request) == 'function' and http_request or (syn and type(syn.request) == 'function' and syn.request))
+	if type(executorRequest) == 'function' then
+		local finished, response = false, nil
+		task.spawn(function()
+			local success, result = pcall(executorRequest, {
+				Url = url,
+				Method = 'GET',
+				Timeout = timeout
+			})
+			response = {Success = success, Value = result}
+			finished = true
+		end)
+		local deadline = os.clock() + timeout
+		repeat
+			task.wait()
+		until finished or os.clock() >= deadline
+		if not finished then
+			return nil, 'request timed out after '..tostring(timeout)..' seconds'
+		end
+		if not response.Success then
+			return nil, tostring(response.Value)
+		end
+		if type(response.Value) == 'string' then
+			return response.Value
+		end
+		if type(response.Value) == 'table' then
+			local status = tonumber(response.Value.StatusCode or response.Value.status_code or response.Value.Status)
+			if status and (status < 200 or status >= 300) then
+				return nil, 'HTTP '..tostring(status)
+			end
+			return response.Value.Body or response.Value.body
+		end
+	end
+
+	local finished, response = false, nil
+	task.spawn(function()
+		local success, body = pcall(function()
+			return game:HttpGet(url, true)
+		end)
+		response = {Success = success, Body = body}
+		finished = true
+	end)
+	local deadline = os.clock() + timeout
+	repeat
+		task.wait()
+	until finished or os.clock() >= deadline
+	if not finished then
+		return nil, 'request timed out after '..tostring(timeout)..' seconds'
+	end
+	if not response.Success then
+		return nil, tostring(response.Body)
+	end
+	return response.Body
+end
+
+local function storedCommit()
+	local success, value = pcall(readfile, 'aetherv2/profiles/commit.txt')
+	if success and type(value) == 'string' then
+		value = value:gsub('%s+', '')
+		if value ~= '' then return value end
+	end
+	return 'main'
+end
+
 -- Fetch with retries. A single failed request used to end the whole load; most of them are
 -- transient (a dropped connection, a moment of rate limiting) and succeed on the next try.
 local function fetchFile(path, attempts)
 	attempts = attempts or 3
-	local url = 'https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..readfile('aetherv2/profiles/commit.txt')..'/'..select(1, path:gsub('aetherv2/', ''))
+	local url = 'https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..storedCommit()..'/'..select(1, path:gsub('aetherv2/', ''))
 	local problem
 	for attempt = 1, attempts do
-		local suc, res = pcall(function()
-			return game:HttpGet(url, true)
-		end)
-		if suc then
+		local res, requestProblem = httpGet(url, 20)
+		if res ~= nil then
 			problem = payloadProblem(path, res)
 			if not problem then return res end
 		else
-			problem = tostring(res)
+			problem = requestProblem or 'empty response'
 		end
 		if attempt < attempts then
 			setPhaseProgress('Retrying '..path..' ('..attempt..'/'..attempts..')', 0.2 * attempt)
@@ -326,10 +413,8 @@ end
 
 local function downloadOptionalFile(path)
 	if isfile(path) then return true end
-	local suc, res = pcall(function()
-		return game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..readfile('aetherv2/profiles/commit.txt')..'/'..select(1, path:gsub('aetherv2/', '')), true)
-	end)
-	if not suc or res == '404: Not Found' then return false end
+	local res = httpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..storedCommit()..'/'..select(1, path:gsub('aetherv2/', '')), 15)
+	if not res or payloadProblem(path, res) then return false end
 	writefile(path, res)
 	return true
 end
@@ -337,10 +422,26 @@ end
 
 local loadingWarnings = {}
 
+local function compileWithTimeout(source, chunkName, timeout)
+	local finished, chunk, compileError = false, nil, nil
+	task.spawn(function()
+		chunk, compileError = loadstring(source, chunkName)
+		finished = true
+	end)
+	local deadline = os.clock() + timeout
+	repeat
+		task.wait()
+	until finished or os.clock() >= deadline
+	if not finished then
+		return nil, 'timed out after '..tostring(timeout)..' seconds'
+	end
+	return chunk, compileError
+end
+
 local function runLoadingChunk(source, chunkName, ...)
-	local chunk = loadstring(source, chunkName)
+	local chunk, compileError = compileWithTimeout(source, chunkName, 30)
 	if not chunk then
-		failLoad('Failed to compile '..chunkName)
+		failLoad('Failed to compile '..chunkName..(compileError and ': '..tostring(compileError) or ''))
 	end
 	local args = {...}
 	local ok, result = xpcall(function()
@@ -392,9 +493,9 @@ end
 -- we build the menu without it. The chunk is not killed; if it does finish later, its modules are
 -- added and their saved settings re-applied.
 local function runWatchedChunk(source, chunkName, label, timeout, optional, ...)
-	local chunk = loadstring(source, chunkName)
+	local chunk, compileError = compileWithTimeout(source, chunkName, math.max(timeout or 15, 15))
 	if not chunk then
-		local message = 'Failed to compile '..chunkName
+		local message = 'Failed to compile '..chunkName..(compileError and ': '..tostring(compileError) or '')
 		if optional then
 			table.insert(loadingWarnings, message)
 			return nil
@@ -443,17 +544,33 @@ local function runWatchedChunk(source, chunkName, label, timeout, optional, ...)
 	return result
 end
 
+local function runWithTimeout(func, timeout, label)
+	local finished, success, result = false, false, nil
+	task.spawn(function()
+		success, result = xpcall(func, debug.traceback)
+		finished = true
+	end)
+	local deadline = os.clock() + timeout
+	repeat
+		task.wait(0.1)
+	until finished or os.clock() >= deadline
+	if not finished then
+		return false, false, label..' timed out after '..tostring(timeout)..' seconds'
+	end
+	return true, success, result
+end
+
 local function finishLoading()
 	setPhase('Finalizing', 0.97, 0.99)
 	vape.Init = nil
-	local loaded, loadError = xpcall(function()
+	local finished, loaded, loadError = runWithTimeout(function()
 		vape:Load()
-	end, debug.traceback)
+	end, 30, 'vape:Load')
 	-- Source strings can be hundreds of kilobytes. They are only useful during startup validation;
 	-- release both keys and compiled closures as soon as all startup chunks have run.
 	table.clear(compileCache)
 	shared.AetherCompileCache = nil
-	if not loaded then
+	if not finished or not loaded then
 		failLoad(loadError)
 	end
 	pcall(delfile, startupMarkerPath)

@@ -58,12 +58,12 @@ run(function()
 	local Client = require(replicatedStorage.TS.remotes).default.Client
 	local OldGet, OldBreak = Client.Get
 	local function safeGetProto(func, index)
-		if not func then return nil end
-		local success, proto = pcall(safeGetProto, func, index)
+		if not func or type(debug.getproto) ~= 'function' then return nil end
+		local success, proto = pcall(debug.getproto, func, index)
 		if success then
 			return proto
 		else
-			warn("function:", func, "index:", index) 
+			warn("function:", func, "index:", index)
 			return nil
 		end
 	end
@@ -148,10 +148,14 @@ end
 getgenv().getAeroTier = function(player)
     return getAccountTier(player)
 end  
-for _, v in vape.Modules do
+local modulesToRemove = {}
+for i, v in vape.Modules do
 	if v.Category == 'Combat' or v.Category == 'Render' then
-		vape:Remove(i)
+		table.insert(modulesToRemove, i)
 	end
+end
+for _, i in modulesToRemove do
+	vape:Remove(i)
 end
 
 run(function()
