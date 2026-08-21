@@ -826,10 +826,10 @@ local function wipeFolder(path)
 end
 
 
--- Spotify's clip cache is optional and is not read during startup.  Creating it
--- here can block the entire bootstrap on executors that reject nested folders
--- (or where an old install left a file at that path), so leave it to the
--- feature that eventually needs it.
+-- Spotify's clip cache is optional and is not read during startup.  In
+-- particular, never let the updater treat anything under songs/ as a repository
+-- dependency: those paths belong to the player and can be large local media
+-- files.  The player only probes its cache after it is actually enabled.
 for _, folder in {'aetherv2', 'aetherv2/games', 'aetherv2/profiles', 'aetherv2/assets', 'aetherv2/assets/new', 'aetherv2/libraries', 'aetherv2/guis', 'aetherv2/configs', 'aetherv2/songs'} do
 	if not isfolder(folder) then
 		_G.AetherV2SetLoadingStatus('Creating '..folder, 0.08)
@@ -979,7 +979,10 @@ local function fetchFileList(ref)
 			local path = entry:match('"path"%s*:%s*"([^"]+)"')
 			local blob = entry:match('"sha"%s*:%s*"(%x+)"')
 			-- Repository furniture - CI config, build scripts - is never part of an install.
-			if path and blob and path:sub(1, 1) ~= '.' and path:sub(1, 6) ~= 'tools/' then
+			-- Never turn a user-owned path into an update target. This also heals
+			-- old installs whose saved manifest still mentions songs/spotify.
+			if path and blob and path:sub(1, 1) ~= '.' and path:sub(1, 6) ~= 'tools/'
+				and not isUserFile('/aetherv2/'..path) then
 				files[path] = blob
 				count += 1
 			end
@@ -1074,7 +1077,7 @@ if not shared.VapeDeveloper and not updatesPaused and not shared.AetherRolledBac
 			local staged = {}
 			for path, blob in newFiles do
 				local target = 'aetherv2/'..path
-				if oldFiles[path] ~= blob and isfile(target) then
+				if not isUserFile('/'..target) and oldFiles[path] ~= blob and isfile(target) then
 					-- Download and validate every replacement before touching any live file.
 					-- A failed request therefore leaves the complete previous revision usable.
 					local body, problem = fetchFile(target, commit, 3)
@@ -1197,10 +1200,16 @@ local function neededFiles(files)
 	local wanted = {}
 	for path in files do
 		local include = false
+		-- `files.txt` can have been written by an older build (or a different
+		-- channel) that accidentally included a Spotify cache entry.  Do this
+		-- before the extension checks so a file such as songs/spotify.txt cannot
+		-- ever become a blocking startup download.
+		if isUserFile('/aetherv2/'..path) then
+			include = false
 		-- assets/ is tested FIRST and by prefix, not by extension: the artwork folders hold the odd
 		-- .json (a font descriptor) as well as images, and letting the extension rule see those first
 		-- pulled another GUI's files down.
-		if path:sub(1, 7) == 'assets/' then
+		elseif path:sub(1, 7) == 'assets/' then
 			-- All skins share Nexus UI Core, whose artwork is the former `new` asset set.  A
 			-- selected skin is data, not a second GUI implementation, so never prefetch a
 			-- second asset family just because an older profile says old/rise/new.
