@@ -13750,6 +13750,10 @@ run(function()
     local HUDColor
 
     local SONGS = 'aetherv2/songs'
+    -- This cache is optional. A missing local declaration here used to pass nil
+    -- into executor filesystem APIs, which can stall or throw instead of simply
+    -- reporting an empty cache.
+    local SPOTIFY = SONGS .. '/spotify'
 
     local sound
     local tracks, index = {}, 0
@@ -13762,10 +13766,18 @@ run(function()
 
     -- Every filesystem call is optional: some executors ship none of them, and the module has to
     -- degrade to "no songs found" rather than erroring on load.
-    local function fsList(path)
+    local function fsList(path, create)
+        if type(path) ~= 'string' or path == '' then return {} end
+        -- Without an isfolder capability there is no safe way to probe an
+        -- optional child directory. Avoid passing it to listfiles at all.
+        if not create and type(isfolder) ~= 'function' then return {} end
         local ok, res = pcall(function()
             if isfolder and not isfolder(path) then
-                if makefolder then makefolder(path) end
+                -- Do not create the Spotify cache merely because the player is
+                -- scanning. Older installs can have a file at this exact path,
+                -- and some executors hang while trying to replace it with a
+                -- folder. The normal songs root is safe to create on demand.
+                if create and makefolder then makefolder(path) end
                 return {}
             end
             return listfiles and listfiles(path) or {}
@@ -13785,15 +13797,17 @@ run(function()
     end
 
     local function scan(announce)
-        local found = {}
-        for _, file in fsList(SONGS) do
-            if isAudio(file) then
-                table.insert(found, {Name = fileName(file), Path = tostring(file):gsub('\\', '/')})
-            end
-        end
-        for _, file in fsList(SPOTIFY) do
-            if isAudio(file) then
-                table.insert(found, {Name = fileName(file), Path = tostring(file):gsub('\\', '/')})
+        local found, seen = {}, {}
+        -- Some executors return descendants while others return only direct
+        -- children. Scan both locations, but deduplicate absolute paths so a
+        -- Spotify clip never appears twice in the playlist.
+        for _, entry in {{Path = SONGS, Create = true}, {Path = SPOTIFY, Create = false}} do
+            for _, file in fsList(entry.Path, entry.Create) do
+                local path = tostring(file):gsub('\\', '/')
+                if isAudio(path) and not seen[path] then
+                    seen[path] = true
+                    table.insert(found, {Name = fileName(path), Path = path})
+                end
             end
         end
         table.sort(found, function(a, b)
