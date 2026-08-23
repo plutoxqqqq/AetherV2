@@ -1,0 +1,219 @@
+name: Apply AutoWin V7 and JIK V2 integration
+
+on:
+  push:
+    branches:
+      - rewrite/autowin-v7-jik-v2
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: rewrite/autowin-v7-jik-v2
+          fetch-depth: 0
+
+      - name: Replace legacy match-file implementations
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('games/6872274481.lua')
+          source = path.read_text()
+
+          auto_start_marker = "run(function()\n    ----------------------------------------------------------------------------------------------\n    -- AutoWin (v6) - the unattended match brain."
+          auto_end_marker = "\nrun(function()\n    -- EntityAnalyser"
+          auto_start = source.find(auto_start_marker)
+          auto_end = source.find(auto_end_marker, auto_start)
+          if auto_start < 0 or auto_end < 0:
+              raise SystemExit('AutoWin v6 integration markers not found')
+
+          bootstrap = r'''local AetherMatchRuntime
+          run(function()
+              -- AutoWin V7 and JadeInstaKill V2 live in a BedWars-specific runtime so their shared
+              -- snapshot, movement, capability and Jade adapters are not buried inside this match file.
+              -- The runtime receives Aether's already-resolved live dependencies first; the dump under
+              -- libraries/bedwars remains a compatibility/reference layer rather than a source of truth.
+              local runtimeSource = downloadFile('aetherv2/libraries/bedwars/aether/rewrite.lua')
+              local runtimeChunk, runtimeError = loadstring(runtimeSource, 'bedwars/aether/rewrite')
+              if not runtimeChunk then
+                  warn('[AetherV2] AutoWin/JIK runtime compile failed: '..tostring(runtimeError))
+                  notif('AetherV2', 'AutoWin/Jade runtime failed to compile. Check the console.', 8, 'warning')
+                  return
+              end
+
+              local context = {
+                  vape = vape,
+                  vapeEvents = vapeEvents,
+                  entitylib = entitylib,
+                  bedwars = bedwars,
+                  store = store,
+                  lplr = lplr,
+                  playersService = playersService,
+                  runService = runService,
+                  collectionService = collectionService,
+                  replicatedStorage = replicatedStorage,
+                  httpService = httpService,
+                  guiService = guiService,
+                  coreGui = coreGui,
+                  gameCamera = gameCamera,
+                  inputService = inputService,
+                  remotes = remotes,
+                  sortmethods = sortmethods,
+                  breakmethods = breakmethods,
+                  frictionTable = frictionTable,
+                  updateVelocity = updateVelocity,
+                  getItem = getItem,
+                  getWool = getWool,
+                  getBestArmor = getBestArmor,
+                  getPlacedBlock = getPlacedBlock,
+                  switchItem = switchItem,
+                  isnetworkowner = isnetworkowner,
+                  notif = notif,
+                  placeBlock = bedwars.placeBlock,
+                  breakBlock = bedwars.breakBlock,
+                  debug = debug
+              }
+
+              local loaded, result = xpcall(function()
+                  return runtimeChunk(context)
+              end, debug and debug.traceback or tostring)
+              if not loaded or type(result) ~= 'table' then
+                  warn('[AetherV2] AutoWin/JIK runtime failed: '..tostring(result))
+                  notif('AetherV2', 'AutoWin/Jade runtime failed to start. Check the console.', 8, 'warning')
+                  return
+              end
+              AetherMatchRuntime = result
+
+              local patchSource = downloadFile('aetherv2/libraries/bedwars/aether/rewrite_patch.lua')
+              local patchChunk, patchError = loadstring(patchSource, 'bedwars/aether/rewrite_patch')
+              if not patchChunk then
+                  warn('[AetherV2] AutoWin/JIK integration patch compile failed: '..tostring(patchError))
+                  return
+              end
+              local patched, patchResult = xpcall(function()
+                  return patchChunk(AetherMatchRuntime, context)
+              end, debug and debug.traceback or tostring)
+              if not patched then
+                  warn('[AetherV2] AutoWin/JIK integration patch failed: '..tostring(patchResult))
+              end
+          end)
+          '''
+
+          source = source[:auto_start] + bootstrap + source[auto_end:]
+
+          jik_start_marker = "-- Jade hammer execution has two strategies. TP performs the stock slam while following a\n-- moving target; Spoof keeps the server-side damage-scaling payload and never moves the character.\nrun(function()"
+          longjump_marker = "\nrun(function()\n    local Value\n    local CameraDir\n    local LimitItems"
+          jik_start = source.find(jik_start_marker)
+          jik_end = source.find(longjump_marker, jik_start)
+          if jik_start < 0 or jik_end < 0:
+              raise SystemExit('JadeInstaKill legacy integration markers not found')
+          source = source[:jik_start] + "-- JadeInstaKill V2 is registered by AetherMatchRuntime above.\n" + source[jik_end:]
+
+          jade_start_marker = "        jadeHammer = function(item, _, dir)\n"
+          jade_end_marker = "        tnt = function(item, pos, dir)\n"
+          jade_start = source.find(jade_start_marker)
+          jade_end = source.find(jade_end_marker, jade_start)
+          if jade_start < 0 or jade_end < 0:
+              raise SystemExit('LongJump Jade integration markers not found')
+
+          jade_body = r'''        jadeHammer = function(item, _, dir)
+              -- Jade activation is shared with JadeInstaKill V2. LongJump keeps ownership of its
+              -- boost window and steering; the adapter only resolves/equips/activates/confirms Jade.
+              local jade = AetherMatchRuntime and AetherMatchRuntime.Jade
+              if jade then
+                  local result = jade:ActivateForTraversal('LongJump', dir, function()
+                      return not LongJump.Enabled
+                  end)
+                  if not result.confirmed or not LongJump.Enabled then return end
+                  JumpSpeed = 1.4 * Value.Value
+                  JumpTick = tick() + 2.5
+                  Direction = Vector3.new(dir.X, 0, dir.Z).Unit
+                  return
+              end
+
+              -- Runtime failure fallback: preserve the previous controller path so LongJump does not
+              -- become unusable merely because the optional shared runtime failed to load.
+              local ability = getJadeAbility(item)
+              if not bedwars.AbilityController:canUseAbility(ability) then
+                  repeat task.wait() ability = getJadeAbility(item) until bedwars.AbilityController:canUseAbility(ability) or not LongJump.Enabled
+              end
+              if bedwars.AbilityController:canUseAbility(ability) and LongJump.Enabled then
+                  if not activateJadeTool(item) then bedwars.AbilityController:useAbility(ability) end
+                  local deadline = tick() + 0.75
+                  repeat task.wait() until not bedwars.AbilityController:canUseAbility(ability) or tick() >= deadline or not LongJump.Enabled
+                  if not LongJump.Enabled or bedwars.AbilityController:canUseAbility(ability) then return end
+                  JumpSpeed = 1.4 * Value.Value
+                  JumpTick = tick() + 2.5
+                  Direction = Vector3.new(dir.X, 0, dir.Z).Unit
+              end
+          end,
+'''
+          source = source[:jade_start] + jade_body + source[jade_end:]
+
+          # Structural acceptance checks for the integration itself.
+          checks = {
+              'legacy AutoWin marker remains': '-- AutoWin (v6) - the unattended match brain.' not in source,
+              'legacy JIK spoof marker remains': 'Spoof keeps the server-side damage-scaling payload' not in source,
+              'runtime bootstrap missing': "aetherv2/libraries/bedwars/aether/rewrite.lua" in source,
+              'runtime patch missing': "aetherv2/libraries/bedwars/aether/rewrite_patch.lua" in source,
+              'LongJump shared Jade adapter missing': "jade:ActivateForTraversal('LongJump'" in source,
+          }
+          failed = [name for name, ok in checks.items() if not ok]
+          if failed:
+              raise SystemExit('Integration validation failed: ' + ', '.join(failed))
+
+          path.write_text(source)
+          PY
+
+      - name: Static rewrite checks
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          match = Path('games/6872274481.lua').read_text()
+          runtime = Path('libraries/bedwars/aether/rewrite.lua').read_text()
+          patch = Path('libraries/bedwars/aether/rewrite_patch.lua').read_text()
+
+          required = [
+              'WorldSnapshot', 'ObjectivePlanner', 'ActionScheduler', 'MatchDirector',
+              'FailureMemory', 'SessionSupervisor', 'JIKState', 'CharacterTransaction',
+              "READY'", "BLOCKED'", "UNKNOWN'", 'ObserveActivation', 'held-tool-not-acknowledged',
+              'DescendantAdded', 'Movement:Acquire', 'RoutePlan', 'AbilityCandidates'
+          ]
+          missing = [token for token in required if token not in runtime + patch]
+          if missing:
+              raise SystemExit('Missing required runtime structures: ' + ', '.join(missing))
+
+          forbidden_runtime = [
+              'direction = direction.Unit * math.huge',
+              "Name = 'Spoof delay'",
+              "part.Anchored = false"
+          ]
+          found = [token for token in forbidden_runtime if token in runtime + patch]
+          if found:
+              raise SystemExit('Obsolete/unsafe JIK implementation remains: ' + ', '.join(found))
+
+          if runtime.count("Name='AutoWin'") != 1:
+              raise SystemExit('Reactive runtime does not register exactly one AutoWin')
+          if runtime.count("Name='JadeInstaKill'") != 1:
+              raise SystemExit('Reactive runtime does not register exactly one JadeInstaKill')
+          if 'AetherJadeCameraLock' in match or 'AetherJadeTargetFollow' in match:
+              raise SystemExit('Legacy JIK RenderStep bindings remain in match file')
+          PY
+
+      - name: Commit integrated rewrite and remove one-shot workflow
+        shell: bash
+        run: |
+          rm -f .github/workflows/apply-autowin-jik-rewrite.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add games/6872274481.lua .github/workflows/apply-autowin-jik-rewrite.yml
+          git commit -m "Integrate AutoWin V7 and JadeInstaKill V2"
+          git push origin HEAD:rewrite/autowin-v7-jik-v2
