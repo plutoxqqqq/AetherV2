@@ -4,6 +4,10 @@ on:
   push:
     branches:
       - rewrite/autowin-v7-jik-v2
+  pull_request:
+    branches:
+      - main
+    types: [opened, synchronize, reopened]
 
 permissions:
   contents: write
@@ -157,7 +161,6 @@ jobs:
 '''
           source = source[:jade_start] + jade_body + source[jade_end:]
 
-          # Structural acceptance checks for the integration itself.
           checks = {
               'legacy AutoWin marker remains': '-- AutoWin (v6) - the unattended match brain.' not in source,
               'legacy JIK spoof marker remains': 'Spoof keeps the server-side damage-scaling payload' not in source,
