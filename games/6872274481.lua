@@ -3,7 +3,8 @@
 -- The pre-rewrite BedWars match source is retained at games/6872274481.base.lua so the connector
 -- can reuse its existing Git blob instead of serialising ~1.4 MB through a contents update. This
 -- bootstrap removes the legacy AutoWin/JIK blocks before they are compiled, injects the shared
--- reactive runtime, and redirects LongJump's Jade path to the same JadeAbilityAdapter.
+-- reactive runtime, loads the Aether-native AlSploit ports, and redirects LongJump's Jade path to
+-- the same JadeAbilityAdapter.
 
 local license = ... or {}
 if type(license) ~= 'table' then license = {} end
@@ -113,6 +114,21 @@ run(function()
     if not patched then
         warn('[AetherV2] AutoWin/JIK integration patch failed: '..tostring(patchResult))
     end
+
+    local portsSource = downloadFile('aetherv2/libraries/bedwars/aether/alsploit_ports.lua')
+    local portsChunk, portsError = loadstring(portsSource, 'bedwars/aether/alsploit_ports')
+    if not portsChunk then
+        warn('[AetherV2] AlSploit ports failed to compile: '..tostring(portsError))
+        notif('AetherV2', 'BedWars port modules failed to compile. Check the console.', 8, 'warning')
+        return
+    end
+    local portsLoaded, portsResult = xpcall(function()
+        return portsChunk(AetherMatchRuntime, context)
+    end, debug and debug.traceback or tostring)
+    if not portsLoaded then
+        warn('[AetherV2] AlSploit ports failed to load: '..tostring(portsResult))
+        notif('AetherV2', 'BedWars port modules failed to load. Check the console.', 8, 'warning')
+    end
 end)
 
 ]=]
@@ -187,6 +203,7 @@ for _, token in ipairs(forbidden) do
 end
 if not source:find("jade:ActivateForTraversal('LongJump'", 1, true) then fail('LongJump Jade adapter was not installed') end
 if not source:find('aetherv2/libraries/bedwars/aether/rewrite.lua', 1, true) then fail('reactive runtime bootstrap was not installed') end
+if not source:find('aetherv2/libraries/bedwars/aether/alsploit_ports.lua', 1, true) then fail('BedWars port bootstrap was not installed') end
 
 local compiled, compileError
 local cache = type(shared.AetherCompileCache) == 'table' and shared.AetherCompileCache or nil
