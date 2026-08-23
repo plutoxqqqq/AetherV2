@@ -1986,6 +1986,14 @@ end
 local function activateJadeTool(item)
 	if not item or not item.tool then return false end
 	switchItem(item.tool, 0.1)
+	-- The input edge is ignored while the old hotbar item is still equipped.
+	-- Wait briefly for the inventory store and character tool to agree before
+	-- pressing the hammer, otherwise LongJump/JadeInstaKill can look enabled
+	-- while the Jade controller never sees its activation.
+	local equipDeadline = tick() + 0.6
+	repeat
+		task.wait()
+	until (store.hand and store.hand.tool == item.tool) or tick() >= equipDeadline or not entitylib.isAlive
 	local center = gameCamera.ViewportSize / 2
 	local fired = pcall(function()
 		local virtualInput = game:GetService('VirtualInputManager')
@@ -4883,30 +4891,27 @@ run(function()
 		Name = 'NoFallDamage',
 		Function = function(callback)
 			if callback then
-				-- cv base: remember the previous simulation velocity, briefly report a
-				-- landed state after a dangerous fall, then restore the actual velocity.
-				-- Legit remains Aether's existing clutch path below.
-				NoFall:Clean(runService.PostSimulation:Connect(function(dt)
-					if Mode.Value == 'Blatant' and entitylib.isAlive and store.matchState == 1 then
+				-- Exact cv Blatant path.  Legit keeps the Aether clutch loop below;
+				-- this path deliberately owns its own previous-frame velocity.
+				if entitylib.isAlive and getconnections then
+					for _, connection in getconnections(entitylib.character.Humanoid.StateChanged) do
+						connection:Disable()
+					end
+				end
+				local blatantTracked = 0
+				local groundHit = bedwars.Handler:Get('GroundHit')
+				NoFall:Clean(runService.PostSimulation:Connect(function()
+					if Mode.Value == 'Blatant' and entitylib.isAlive and store.matchState == 1 and not store.infinitefly then
 						local root = entitylib.character.RootPart
 						local velocity = root.Velocity
-						if trackedFall < -45 then
+						if blatantTracked < -45 then
 							root.Velocity = Vector3.new(0, 2.5, 0)
 							entitylib.character.Humanoid:ChangeState(Enum.HumanoidStateType.Landed)
-							-- Yielding a frame from inside PostSimulation left old callbacks alive
-							-- after a respawn/disable and could restore velocity onto the wrong root.
-							-- A deferred, guarded restore keeps the one-frame landed report without
-							-- turning the render callback into a hanging task.
-							task.defer(function()
-								if NoFall.Enabled and entitylib.isAlive and root:IsDescendantOf(workspace) then
-									root.Velocity = velocity
-								end
-							end)
-							pcall(function()
-								bedwars.Handler:Get('GroundHit'):Fire('SendToServer', nil, Vector3.new(0, trackedFall, 0), workspace:GetServerTimeNow())
-							end)
+							runService.PreRender:Wait()
+							root.Velocity = velocity
+							groundHit:Fire('SendToServer', nil, Vector3.new(0, blatantTracked, 0), workspace:GetServerTimeNow())
 						end
-						trackedFall = velocity.Y
+						blatantTracked = velocity.Y
 					end
 				end))
 
@@ -8354,13 +8359,13 @@ run(function()
     local cameraBind = 'AetherJadeCameraLock'
     local followBind = 'AetherJadeTargetFollow'
 
-    local function getHammer()
-        -- InstaKill deliberately requires one of the current tiered hammers. The legacy
-        -- jade_hammer entry stays supported by LongJump, but is not a valid damage tool here.
-        for index = 1, 3 do
-            local item = getItem(jadeHammerNames[index])
-            if item and item.tool then return item end
-        end
+	local function getHammer()
+		-- Some BedWars servers still expose the un-tiered Jade hammer.  Treat it as
+		-- the same tool family as LongJump instead of silently refusing to run.
+		for _, name in jadeHammerNames do
+			local item = getItem(name)
+			if item and item.tool then return item end
+		end
     end
 
     local function cleanupCharacter()
@@ -8417,7 +8422,7 @@ run(function()
 
     local abilityReady
     local function useHammer(hammer, ability)
-        local fired = activateJadeTool(hammer)
+        activateJadeTool(hammer)
         -- Input-based casts flip the cooldown almost immediately. Do not spend most of a second
         -- waiting on an input edge that an executor/game UI swallowed before trying the controller
         -- fallback.
@@ -8427,9 +8432,9 @@ run(function()
 
         -- Virtual input can be unavailable on some executors. Preserve the controller call as
         -- a fallback, but never claim a cast succeeded merely because the input API did not throw.
-        local success, result = pcall(bedwars.AbilityController.useAbility, bedwars.AbilityController, ability)
-        if not success or result == false then tapScreen() end
-        if not (fired or success) or result == false then return false end
+		local success, result = pcall(bedwars.AbilityController.useAbility, bedwars.AbilityController, ability)
+		if not success or result == false then tapScreen() end
+		if not success or result == false then return false end
         deadline = tick() + 0.18
         repeat task.wait() until not abilityReady(ability) or tick() >= deadline
         return not abilityReady(ability)
@@ -8733,27 +8738,44 @@ run(function()
         grappling_hook = function(item, pos, dir)
             launchProjectile(item, pos, 'grappling_hook_projectile', 140, dir)
         end,
-        jadeHammer = function(item, _, dir)
-            local ability = getJadeAbility(item)
-            if not bedwars.AbilityController:canUseAbility(ability) then
-                repeat task.wait() ability = getJadeAbility(item) until bedwars.AbilityController:canUseAbility(ability) or not LongJump.Enabled
-            end
+		jadeHammer = function(item, _, dir)
+			local ability = getJadeAbility(item)
+			local function ready()
+				local ok, available = pcall(bedwars.AbilityController.canUseAbility, bedwars.AbilityController, ability, {
+					disableBlockedAbilityAlert = true
+				})
+				return ok and available
+			end
+			if not ready() then
+				repeat task.wait() ability = getJadeAbility(item) until ready() or not LongJump.Enabled
+			end
 
-            if bedwars.AbilityController:canUseAbility(ability) and LongJump.Enabled then
-                -- The primary-input path starts Jade's local movement controller. Starting our
-                -- carry after a bare useAbility call made the server see impossible motion and
-                -- rubber-band it, just as it would for a dao whose dash handler never ran.
-                if not activateJadeTool(item) then
-					bedwars.AbilityController:useAbility(ability)
+			if ready() and LongJump.Enabled then
+				-- Match cv's activation order: equip, enter the jump state, then press/use
+				-- the ability. The Jade controller needs the local jump state before it
+				-- accepts the movement boost; a bare useAbility call is silently ignored.
+				if entitylib.isAlive and entitylib.character.Humanoid then
+					entitylib.character.Humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+					entitylib.character.Humanoid.Jump = true
+					if start then start += Vector3.new(0, 3.1, 0) end
 				end
+				activateJadeTool(item)
 				local function stillReady()
 					local ok, ready = pcall(bedwars.AbilityController.canUseAbility, bedwars.AbilityController, ability, {
 						disableBlockedAbilityAlert = true
 					})
 					return ok and ready
 				end
-				local deadline = tick() + 0.75
+				local deadline = tick() + 0.18
 				repeat task.wait() until not stillReady() or tick() >= deadline or not LongJump.Enabled
+				-- Virtual input may be accepted by the executor but ignored by Roblox's
+				-- focused UI.  The old code treated that as success and never used the
+				-- controller fallback, so Jade LongJump did nothing.
+				if LongJump.Enabled and stillReady() then
+					pcall(bedwars.AbilityController.useAbility, bedwars.AbilityController, ability)
+					deadline = tick() + 0.35
+					repeat task.wait() until not stillReady() or tick() >= deadline or not LongJump.Enabled
+				end
 				if not LongJump.Enabled or stillReady() then return end
                 JumpSpeed = 1.4 * Value.Value
                 JumpTick = tick() + 2.5
@@ -24430,8 +24452,10 @@ run(function()
         if pendingReclaims[drop] then return end
         pendingReclaims[drop] = true
 
-        local ok = pcall(function()
-            bedwars.Client:Get(remotes.PickupItem):CallServerAsync({itemDrop = drop}):andThen(function(success)
+		local ok = pcall(function()
+			-- Use the same stable handler path as cv.  The generated Client remote
+			-- changes shape between BedWars builds, which made reclaim silently stop.
+			bedwars.Handler:Get('PickupItemDrop'):Fire('CallServerAsync', {itemDrop = drop}):andThen(function(success)
                 pendingReclaims[drop] = nil
                 if not drop.Parent then
                     untrackDrop(drop)
@@ -24644,15 +24668,10 @@ run(function()
         amount.Parent = icon
         displayEntries[itemType] = amount
         icon.Activated:Connect(function()
-            if Mode.Value == 'Chest' then
-                local folder = ownPersonalFolder()
-                if folder and atPersonalChest() then
-                    withdrawFromChest(folder, itemType)
-                end
-            else
-                for _, drop in table.clone(droppedItems) do
-                    if drop.Name == itemType then reclaim(drop) end
-                end
+            -- cv storage is always a held item drop, so a resource icon returns
+            -- that matching drop directly instead of branching into Chest mode.
+            for _, drop in table.clone(droppedItems) do
+                if drop.Name == itemType then reclaim(drop) end
             end
         end)
     end
@@ -24660,6 +24679,122 @@ run(function()
     AutoBank = vape.Categories.Inventory:CreateModule({
         Name = 'AutoBank',
         Function = function(callback)
+            if callback then
+                -- cv's AutoBank loop.  Keep the current display helper and the
+                -- Before death hook, but use cv's direct drop/hold/reclaim flow
+                -- rather than the alternate chest/banking implementation below.
+                UI = Instance.new('Frame')
+                UI.Size = UDim2.new(1, 0, 0, 32)
+                UI.AnchorPoint = Vector2.new(0.5, 0)
+                UI.Position = UDim2.new(0.5, 0, 0, -240)
+                UI.BackgroundTransparency = 1
+                UI.Visible = DisplayResources.Enabled
+                UI.Parent = vape.gui
+                AutoBank:Clean(UI)
+                local layout = Instance.new('UIListLayout')
+                layout.FillDirection = Enum.FillDirection.Horizontal
+                layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+                layout.SortOrder = Enum.SortOrder.LayoutOrder
+                layout.Parent = UI
+
+                table.clear(displayEntries)
+                for _, itemType in Whitelist.ListEnabled do
+                    addDisplayEntry(itemType)
+                end
+
+                local near = false
+                local base = CFrame.new(1e3, 1e5, 1e3)
+                local rows = Random.new():NextInteger(1, 20000)
+                AutoBank:Clean(runService.PreRender:Connect(function()
+                    local totals = {}
+                    for index, drop in droppedItems do
+                        if drop and drop.Parent and drop.Parent == workspace.ItemDrops then
+                            totals[drop.Name] = (totals[drop.Name] or 0) + (drop:GetAttribute('Amount') or 0)
+                            drop.Velocity = Vector3.zero
+                            if entitylib.isAlive then
+                                drop.CFrame = near and entitylib.character.Head.CFrame
+                                    or base + Vector3.new((index % rows) * 1200, 0, math.floor(index / rows) * 1200)
+                            end
+                        elseif drop and drop.Parent then
+                            untrackDrop(drop)
+                        end
+                    end
+                    for itemType, label in displayEntries do
+                        label.Text = tostring(totals[itemType] or 0)
+                    end
+                end))
+
+                -- Retained Aether setting: make one chest deposit attempt when
+                -- health crosses the configured threshold, independent of cv's
+                -- normal Skybox storage loop.
+                AutoBank:Clean(runService.Heartbeat:Connect(function()
+                    if not BeforeDeath.Enabled then
+                        dangerTriggered, dangerCharacter = false, nil
+                        return
+                    end
+                    local character = lplr.Character
+                    if character ~= dangerCharacter then
+                        dangerCharacter, dangerTriggered = character, false
+                    end
+                    if not entitylib.isAlive then return end
+                    local percent = currentHealthPercent()
+                    if not percent then return end
+                    if percent <= HPThreshold.Value then
+                        if not dangerTriggered then
+                            dangerTriggered = true
+                            bankBeforeDeath()
+                        end
+                    elseif percent >= math.min(100, HPThreshold.Value + 5) then
+                        dangerTriggered = false
+                    end
+                end))
+
+                repeat
+                    local hotbar = lplr.PlayerGui:FindFirstChild('hotbar')
+                    local hotbarFrame = hotbar and hotbar:FindFirstChild('1')
+                    hotbar = hotbarFrame and hotbarFrame:FindFirstChild('HotbarHealthbarContainer')
+                    if hotbar then
+                        UI.Position = UDim2.new(0.5, 0, 0, (hotbar.AbsolutePosition.Y + guiService:GetGuiInset().Y) - 60)
+                    end
+
+					if entitylib.isAlive and not atShop() then
+						near = false
+						for _, item in store.inventory.inventory.items do
+							local name = item.tool and item.tool.Name or item.itemType
+							if name and item.tool and table.find(Whitelist.ListEnabled, name)
+								and not pendingDrops[item.tool] and (dropCooldowns[name] or 0) < os.clock() then
+								pendingDrops[item.tool] = true
+								task.spawn(function()
+									local ok, drop = pcall(function()
+										return bedwars.Handler:Get('DropItem'):Fire('CallServer', {
+											item = item.tool,
+											amount = item.amount
+										})
+									end)
+									pendingDrops[item.tool] = nil
+									if AutoBank.Enabled and ok and drop and drop.Parent and not table.find(droppedItems, drop) then
+										table.insert(droppedItems, drop)
+										drop:ClearAllChildren()
+										drop.AncestryChanged:Once(function()
+											untrackDrop(drop)
+										end)
+									elseif not ok or not drop then
+										dropCooldowns[name] = os.clock() + 5
+									end
+								end)
+							end
+                        end
+					elseif entitylib.isAlive then
+						near = true
+						for _, drop in droppedItems do
+							if drop and drop.Parent then reclaim(drop) end
+						end
+					end
+                    task.wait(0.1)
+                until not AutoBank.Enabled
+                return
+            end
+
             if not callback then
                 -- Give everything back rather than leaving it stranded in the sky. Bounded:
                 -- drain what we can and stop, instead of spinning until the module is switched
@@ -24814,8 +24949,10 @@ run(function()
                             pendingDrops[tool] = true
                             task.spawn(function()
                                 local drop
-                                pcall(function()
-                                    drop = bedwars.Client:Get(remotes.DropItem):CallServer({
+								pcall(function()
+									-- cv's Handler endpoint remains valid when the generated remote
+									-- table is refreshed, so Skybox banking continues to fire.
+									drop = bedwars.Handler:Get('DropItem'):Fire('CallServer', {
                                         item = tool,
                                         amount = item.amount
                                     })
@@ -24860,6 +24997,7 @@ run(function()
         Name = 'Mode',
         List = {'Skybox', 'Chest'},
         Default = 'Skybox',
+        Visible = false,
         Tooltip = 'Skybox - holds the drops above the map until a shop\nChest - walks up and banks them like you would',
         Function = function()
             -- Reload rather than switching under the running loop: leaving Skybox has to hand
@@ -38315,7 +38453,10 @@ run(function()
 		selection.SurfaceColor3 = Color3.new(1, 1, 1)
 		selection.SurfaceTransparency = 0.75
 		selection.Parent = part
-		local tagSize = textService:GetTextSize('Landing (000 studs)', 14, uipallet.Font, Vector2.new(1000, 1000))
+		-- uipallet.Font is a FontFace in Aether, while TextService:GetTextSize
+		-- only accepts Enum.Font.  The resulting type error occurred before the
+		-- aim request, so DaveyAim appeared not to fire whenever Show Target was on.
+		local tagSize = getfontsize('Landing (000 studs)', 14, uipallet.Font, Vector2.new(1000, 1000))
 		local billboard = Instance.new('BillboardGui')
 		billboard.Name = 'Tag'
 		billboard.Size = UDim2.fromOffset(tagSize.X + 8, tagSize.Y + 7)

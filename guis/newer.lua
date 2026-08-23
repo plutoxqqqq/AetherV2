@@ -247,8 +247,10 @@ local getcustomassets = {
 	['aetherv2/assets/new/miniicon.png'] = 'rbxassetid://14368326029',
 	['aetherv2/assets/new/notification.png'] = 'rbxassetid://16738721069',
 	['aetherv2/assets/new/overlaysicon.png'] = 'rbxassetid://14368339581',
-	['aetherv2/assets/new/favoritesicon.png'] = '',
-	['aetherv2/assets/new/star.png'] = '',
+	-- The local bundle does not include these images; use their Roblox assets
+	-- instead of returning an empty image string.
+	['aetherv2/assets/new/favoritesicon.png'] = 'rbxassetid://133471112203189',
+	['aetherv2/assets/new/star.png'] = 'rbxassetid://96102671351955',
 	['aetherv2/assets/new/overlaystab.png'] = 'rbxassetid://14397380433',
 	['aetherv2/assets/new/pin.png'] = 'rbxassetid://14368342301',
 	['aetherv2/assets/new/profilesicon.png'] = 'rbxassetid://14397465323',
@@ -5653,6 +5655,11 @@ function mainapi:CreateCategory(categorysettings)
 				modulebutton.TextColor3 = txtColor
 			end
 		end
+		-- UpdateGUI runs when the accent changes; exposing the row painter means
+		-- the v6 accent bar refreshes immediately instead of waiting for hover.
+		function moduleapi:RefreshVisual()
+			updateModuleButtonVisual(false)
+		end
 
 		function moduleapi:Toggle(multiple)
 			if mainapi.ThreadFix then
@@ -5673,17 +5680,27 @@ function mainapi:CreateCategory(categorysettings)
 				mainapi:UpdateTextGUI()
 			end
 			local enabled = self.Enabled
-			task.spawn(function()
+			-- Cancel the superseded lifecycle callback instead of queueing it. Many
+			-- enable callbacks own a repeat loop, so a queued restart can deadlock
+			-- and stale cleanup can switch the freshly enabled module back off.
+			local currentThread = coroutine.running()
+			if moduleapi.LifecycleThread and moduleapi.LifecycleThread ~= currentThread then
+				pcall(task.cancel, moduleapi.LifecycleThread)
+			end
+			local token = {}
+			moduleapi.LifecycleToken = token
+			local lifecycleThread = task.spawn(function()
 				local ok, err = xpcall(function()
 					modulesettings.Function(enabled)
 				end, function(message) return tostring(message) end)
 				if not ok and mainapi.RecordError then
 					mainapi:RecordError(moduleapi.Name, err)
 				end
-				if not ok and enabled and moduleapi:IsActive(generation) then
-					moduleapi:Toggle(true)
+				if moduleapi.LifecycleToken == token then
+					moduleapi.LifecycleThread = nil
 				end
 			end)
+			moduleapi.LifecycleThread = lifecycleThread
 		end
 
 		-- Capture, per logical option, every frame it adds to the settings panel.
@@ -6961,6 +6978,7 @@ function mainapi:CreateCategoryList(categorysettings)
 		syncbutton.Parent = sync
 		addCorner(syncbutton, UDim.new(0, 5))
 		addTooltip(syncbutton, 'Re-download this preset and apply it')
+		mainapi.PresetSyncButton = syncbutton
 
 		local syncing = false
 		local function refreshSync()
@@ -8492,17 +8510,24 @@ function mainapi:CreateLegit()
 			})
 			if not moduleapi.Enabled then moduleapi:Cleanup() end
 			local enabled = moduleapi.Enabled
-			task.spawn(function()
+			local currentThread = coroutine.running()
+			if moduleapi.LifecycleThread and moduleapi.LifecycleThread ~= currentThread then
+				pcall(task.cancel, moduleapi.LifecycleThread)
+			end
+			local token = {}
+			moduleapi.LifecycleToken = token
+			local lifecycleThread = task.spawn(function()
 				local ok, err = xpcall(function()
 					modulesettings.Function(enabled)
 				end, function(message) return tostring(message) end)
 				if not ok and mainapi.RecordError then
 					mainapi:RecordError(moduleapi.Name, err)
 				end
-				if not ok and enabled and moduleapi:IsActive(generation) then
-					moduleapi:Toggle()
+				if moduleapi.LifecycleToken == token then
+					moduleapi.LifecycleThread = nil
 				end
 			end)
+			moduleapi.LifecycleThread = lifecycleThread
 		end
 
 		-- Legit HUD modules used to also register a mirror toggle in the main
@@ -10873,8 +10898,11 @@ function mainapi:UpdateGUI(hue, sat, val, default)
 		end
 	end
 
-	if not clickgui.Visible and not mainapi.Legit.Window.Visible then return end
 	local rainbow = mainapi.GUIColor.Rainbow and mainapi.RainbowMode.Value ~= 'Retro'
+	if mainapi.PresetSyncButton and mainapi.PresetSyncButton.Parent then
+		mainapi.PresetSyncButton.BackgroundColor3 = Color3.fromHSV(hue, sat, val)
+		mainapi.PresetSyncButton.TextColor3 = mainapi:TextColor(hue, sat, val)
+	end
 
 	for i, v in mainapi.Categories do
 		if i == 'Main' then
@@ -10910,7 +10938,9 @@ function mainapi:UpdateGUI(hue, sat, val, default)
 	end
 
 	for _, button in mainapi.Modules do
-		if button.Enabled then
+		if button.RefreshVisual then
+			button:RefreshVisual()
+		elseif button.Enabled then
 			button.Object.BackgroundColor3 = rainbow and Color3.fromHSV(mainapi:Color((hue - (button.Index * 0.025)) % 1)) or Color3.fromHSV(hue, sat, val)
 			button.Object.TextColor3 = mainapi.GUIColor.Rainbow and Color3.new(0.19, 0.19, 0.19) or mainapi:TextColor(hue, sat, val)
 			button.Object.UIGradient.Enabled = rainbow and mainapi.RainbowMode.Value == 'Gradient'

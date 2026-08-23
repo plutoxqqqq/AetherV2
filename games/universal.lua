@@ -8367,7 +8367,9 @@ run(function()
 		if not profile then return end
 		local function set(option, value)
 			if not option or value == nil or not option.SetValue then return end
-			if typeof(value) == 'Color3' then option:SetValue(Color3.toHSV(value)) else option:SetValue(value) end
+			-- Color3 exposes ToHSV as an instance method. Calling the non-existent
+			-- static variant aborted preset application before the lighting pass.
+			if typeof(value) == 'Color3' then option:SetValue(value:ToHSV()) else option:SetValue(value) end
 		end
 		set(ClockTime, profile.ClockTime); set(Brightness, profile.Brightness); set(Exposure, profile.Exposure)
 		set(Ambient, profile.Ambient); set(OutdoorAmbient, profile.Outdoor); set(AtmosphereEnabled, profile.Atmosphere)

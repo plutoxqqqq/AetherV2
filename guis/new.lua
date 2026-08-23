@@ -93,8 +93,12 @@ local getcustomassets = {
 	['aetherv2/assets/new/discord.png'] = '',
 	['aetherv2/assets/new/dots.png'] = 'rbxassetid://14368314459',
 	['aetherv2/assets/new/edit.png'] = 'rbxassetid://14368315443',
-	['aetherv2/assets/new/favoritesicon.png'] = '',
-	['aetherv2/assets/new/star.png'] = '',
+	-- These two files are not shipped with the local asset bundle.  Leaving their
+	-- entries empty makes getcustomasset return an empty image string, so both
+	-- favourite controls render as invisible buttons.
+	['aetherv2/assets/new/favoritesicon.png'] = 'rbxassetid://133471112203189',
+	['aetherv2/assets/new/star.png'] = 'rbxassetid://96102671351955',
+	['aetherv2/assets/new/newhide.png'] = 'rbxassetid://74295679301920',
 	['aetherv2/assets/new/expandicon.png'] = 'rbxassetid://14368353032',
 	['aetherv2/assets/new/expandright.png'] = 'rbxassetid://14368316544',
 	['aetherv2/assets/new/expandup.png'] = 'rbxassetid://14368317595',
@@ -4526,6 +4530,47 @@ function mainapi:CreateCategory(categorysettings)
 	title.TextSize = 13
 	title.FontFace = uipallet.Font
 	title.Parent = window
+	-- Category edit mode mirrors the legacy GUI: it exposes every row in the
+	-- category and adds a small visibility switch at the left of each module.
+	local pencilbutton = Instance.new('TextButton')
+	pencilbutton.Name = 'EditModules'
+	pencilbutton.Size = UDim2.fromOffset(20, 40)
+	pencilbutton.Position = UDim2.new(1, -60, 0, 0)
+	pencilbutton.BackgroundTransparency = 1
+	pencilbutton.Text = ''
+	pencilbutton.Visible = false
+	pencilbutton.Parent = window
+	addTooltip(pencilbutton, 'Edit hidden modules')
+	local pencil = Instance.new('ImageLabel')
+	pencil.Size = UDim2.fromOffset(12, 12)
+	pencil.Position = UDim2.fromOffset(4, 14)
+	pencil.BackgroundTransparency = 1
+	pencil.Image = getcustomasset('aetherv2/assets/new/edit.png')
+	pencil.ImageColor3 = Color3.fromRGB(140, 140, 140)
+	pencil.Parent = pencilbutton
+	local hiddenCount = Instance.new('TextLabel')
+	hiddenCount.Name = 'HiddenCount'
+	hiddenCount.Size = UDim2.fromOffset(24, 41)
+	hiddenCount.Position = UDim2.new(1, -84, 0, 0)
+	hiddenCount.BackgroundTransparency = 1
+	hiddenCount.Text = ''
+	hiddenCount.TextColor3 = color.Dark(uipallet.Text, 0.16)
+	hiddenCount.TextSize = 12
+	hiddenCount.TextXAlignment = Enum.TextXAlignment.Right
+	hiddenCount.FontFace = uipallet.Font
+	hiddenCount.Visible = false
+	hiddenCount.Parent = window
+	local done = Instance.new('TextButton')
+	done.Name = 'DoneEditing'
+	done.Size = UDim2.fromOffset(44, 40)
+	done.Position = UDim2.new(1, -84, 0, 0)
+	done.BackgroundTransparency = 1
+	done.Text = 'DONE'
+	done.TextColor3 = Color3.fromRGB(140, 140, 140)
+	done.TextSize = 12
+	done.FontFace = uipallet.Font
+	done.Visible = false
+	done.Parent = window
 	local arrowbutton = Instance.new('TextButton')
 	arrowbutton.Name = 'Arrow'
 	arrowbutton.Size = UDim2.fromOffset(40, 40)
@@ -4595,8 +4640,9 @@ function mainapi:CreateCategory(categorysettings)
 
 	function categoryapi:CreateModule(modulesettings)
 		mainapi:Remove(modulesettings.Name)
-		local moduleapi = {
+	local moduleapi = {
 			Enabled = false,
+			Hidden = false,
 			Favorited = false,
 			Favourited = false, -- legacy config/API alias
 			FavoriteIndex = nil,
@@ -4675,6 +4721,27 @@ function mainapi:CreateCategory(categorysettings)
 		gradient.Rotation = 90
 		gradient.Enabled = false
 		gradient.Parent = modulebutton
+		local edit = Instance.new('TextButton')
+		edit.Name = 'Edit'
+		edit.Size = UDim2.fromOffset(40, 40)
+		edit.BackgroundColor3 = color.Dark(uipallet.Main, 0.02)
+		edit.BackgroundTransparency = 0
+		edit.BorderSizePixel = 0
+		edit.Text = ''
+		edit.Visible = false
+		edit.Parent = modulebutton
+		local editbox = Instance.new('Frame')
+		editbox.Size = UDim2.fromOffset(8, 8)
+		editbox.Position = UDim2.fromOffset(16, 16)
+		editbox.BorderSizePixel = 0
+		editbox.BackgroundColor3 = uipallet.Main
+		editbox.Parent = edit
+		addCorner(editbox, UDim.new(0, 2))
+		local editstroke = Instance.new('UIStroke')
+		editstroke.Name = 'State'
+		editstroke.Thickness = 1
+		editstroke.Color = color.Dark(uipallet.Text, 0.43)
+		editstroke.Parent = editbox
 		local modulechildren = Instance.new('Frame')
 		local bind = Instance.new('TextButton')
 		addTooltip(modulebutton, modulesettings.Tooltip)
@@ -4969,13 +5036,30 @@ function mainapi:CreateCategory(categorysettings)
 				dots.ImageColor3 = modulebutton.TextColor3
 				bindicon.ImageColor3 = modulebutton.TextColor3
 				bindtext.TextColor3 = modulebutton.TextColor3
-			else
+		else
 				modulebutton.TextColor3 = (hovered or modulechildren.Visible) and uipallet.Text or color.Dark(uipallet.Text, 0.16)
 				modulebutton.BackgroundColor3 = (hovered or modulechildren.Visible) and color.Light(uipallet.Main, 0.02) or uipallet.Main
 				dots.ImageColor3 = color.Light(uipallet.Main, 0.37)
 				bindicon.ImageColor3 = color.Dark(uipallet.Text, 0.43)
 				bindtext.TextColor3 = color.Dark(uipallet.Text, 0.43)
 			end
+		end
+		-- Repaint every row when the accent changes, including rows that are
+		-- currently unhovered. This keeps the accent state in sync with the
+		-- theme slider instead of relying on the next mouse event.
+		function moduleapi:RefreshVisual()
+			updateModuleButtonVisual()
+			local accent = Color3.fromHSV(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value)
+			editbox.BackgroundColor3 = self.Hidden and uipallet.Main or accent
+			editstroke.Color = self.Hidden and color.Dark(uipallet.Text, 0.43) or accent
+		end
+
+		function moduleapi:SetHidden(hidden)
+			self.Hidden = hidden and true or false
+			modulebutton.Visible = mainapi.EditGUI or not self.Hidden
+			editbox.BackgroundColor3 = self.Hidden and uipallet.Main or Color3.fromHSV(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value)
+			editstroke.Color = self.Hidden and color.Dark(uipallet.Text, 0.43) or Color3.fromHSV(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value)
+			if categoryapi.UpdateHidden then categoryapi:UpdateHidden() end
 		end
 
 		function moduleapi:Toggle(multiple)
@@ -4995,19 +5079,30 @@ function mainapi:CreateCategory(categorysettings)
 				mainapi:UpdateTextGUI()
 			end
 			local enabled = self.Enabled
-			task.spawn(function()
+			-- A setting commonly restarts a live module with Toggle(); Toggle().
+			-- Do not queue those callbacks: enable callbacks are often long-lived
+			-- loops, so a queued disable can wait forever and a stale cleanup can
+			-- turn the new enable back off. Cancel the superseded lifecycle task,
+			-- then start only the current state. A callback that toggles itself is
+			-- allowed to finish (DaveyAim and similar one-shot modules rely on that).
+			local currentThread = coroutine.running()
+			if moduleapi.LifecycleThread and moduleapi.LifecycleThread ~= currentThread then
+				pcall(task.cancel, moduleapi.LifecycleThread)
+			end
+			local token = {}
+			moduleapi.LifecycleToken = token
+			local lifecycleThread = task.spawn(function()
 				local ok, err = xpcall(function()
 					modulesettings.Function(enabled)
 				end, function(message) return tostring(message) end)
 				if not ok and mainapi.RecordError then
 					mainapi:RecordError(moduleapi.Name, err)
 				end
-				-- A failed enable must not leave a half-active module behind. The generation
-				-- check makes an older task harmless after a rapid off/on toggle.
-				if not ok and enabled and moduleapi:IsActive(generation) then
-					moduleapi:Toggle(true)
+				if moduleapi.LifecycleToken == token then
+					moduleapi.LifecycleThread = nil
 				end
 			end)
+			moduleapi.LifecycleThread = lifecycleThread
 		end
 
 		for i, v in components do
@@ -5035,6 +5130,10 @@ function mainapi:CreateCategory(categorysettings)
 			bindcover.Size = UDim2.fromOffset(getfontsize(bindcovertext.Text, bindcovertext.TextSize).X + 20, 40)
 			bindcover.Visible = true
 			mainapi.Binding = moduleapi
+		end)
+		edit.MouseButton1Click:Connect(function()
+			moduleapi:SetHidden(not moduleapi.Hidden)
+			mainapi:Save()
 		end)
 		dotsbutton.MouseEnter:Connect(function()
 			if not moduleapi.Enabled then
@@ -5065,6 +5164,7 @@ function mainapi:CreateCategory(categorysettings)
 			bind.Visible = #moduleapi.Bind > 0 or hovered or modulechildren.Visible
 		end)
 		modulebutton.MouseButton1Click:Connect(function()
+			if mainapi.EditGUI then return end
 			if mainapi.PushUndo then mainapi:PushUndo(moduleapi) end
 			moduleapi:Toggle()
 		end)
@@ -5143,6 +5243,30 @@ function mainapi:CreateCategory(categorysettings)
 		divider.Visible = children.CanvasPosition.Y > 10 and children.Visible
 	end
 
+	function categoryapi:UpdateHidden()
+		local count = 0
+		for _, module in mainapi.Modules do
+			if module.Category == categorysettings.Name and module.Hidden then count += 1 end
+		end
+		hiddenCount.Text = count > 0 and tostring(count) or ''
+		hiddenCount.Visible = count > 0 and pencilbutton.Visible
+		pencil.Image = getcustomasset(count > 0 and 'aetherv2/assets/new/newhide.png' or 'aetherv2/assets/new/edit.png')
+	end
+
+	function categoryapi:SetEditMode(enabled)
+		for _, module in mainapi.Modules do
+			if module.Category == categorysettings.Name then
+				module.Object.Visible = enabled or not module.Hidden
+				module.Object.Text = string.rep(' ', enabled and 50 or 12)..module.Name
+				local edit = module.Object:FindFirstChild('Edit')
+				if edit then edit.Visible = enabled end
+			end
+		end
+		done.Visible = enabled
+		pencilbutton.Visible = not enabled
+		self:UpdateHidden()
+	end
+
 	arrowbutton.MouseButton1Click:Connect(function()
 		categoryapi:Expand()
 	end)
@@ -5154,6 +5278,33 @@ function mainapi:CreateCategory(categorysettings)
 	end)
 	arrowbutton.MouseLeave:Connect(function()
 		arrow.ImageColor3 = Color3.fromRGB(140, 140, 140)
+	end)
+	pencilbutton.MouseButton1Click:Connect(function()
+		mainapi.EditGUI = true
+		for _, category in mainapi.Categories do
+			if category.Type == 'Category' and category.SetEditMode then category:SetEditMode(true) end
+		end
+	end)
+	pencilbutton.MouseEnter:Connect(function() pencil.ImageColor3 = Color3.fromRGB(220, 220, 220) end)
+	pencilbutton.MouseLeave:Connect(function() pencil.ImageColor3 = Color3.fromRGB(140, 140, 140) end)
+	done.MouseButton1Click:Connect(function()
+		mainapi.EditGUI = false
+		for _, category in mainapi.Categories do
+			if category.Type == 'Category' and category.SetEditMode then category:SetEditMode(false) end
+		end
+		mainapi:Save()
+	end)
+	done.MouseEnter:Connect(function() done.TextColor3 = Color3.fromRGB(220, 220, 220) end)
+	done.MouseLeave:Connect(function() done.TextColor3 = Color3.fromRGB(140, 140, 140) end)
+	window.MouseEnter:Connect(function()
+		pencilbutton.Visible = not mainapi.EditGUI
+		categoryapi:UpdateHidden()
+	end)
+	window.MouseLeave:Connect(function()
+		if not mainapi.EditGUI then
+			pencilbutton.Visible = false
+			hiddenCount.Visible = false
+		end
 	end)
 	children:GetPropertyChangedSignal('CanvasPosition'):Connect(function()
 		if self.ThreadFix then
@@ -6520,6 +6671,10 @@ function mainapi:CreateCategoryList(categorysettings)
 		syncbutton.Parent = sync
 		addCorner(syncbutton, UDim.new(0, 5))
 		addTooltip(syncbutton, 'Re-download this preset and apply it')
+		-- UpdateGUI owns the accent, including while this row is not focused.
+		-- Keeping the actual button reachable avoids a stale purple sync action
+		-- after changing the GUI colour.
+		mainapi.PresetSyncButton = syncbutton
 
 		local syncing = false
 		local function refreshSync()
@@ -8108,17 +8263,24 @@ local function createPanel(config)
 			})
 			if not moduleapi.Enabled then moduleapi:Cleanup() end
 			local enabled = moduleapi.Enabled
-			task.spawn(function()
+			local currentThread = coroutine.running()
+			if moduleapi.LifecycleThread and moduleapi.LifecycleThread ~= currentThread then
+				pcall(task.cancel, moduleapi.LifecycleThread)
+			end
+			local token = {}
+			moduleapi.LifecycleToken = token
+			local lifecycleThread = task.spawn(function()
 				local ok, err = xpcall(function()
 					modulesettings.Function(enabled)
 				end, function(message) return tostring(message) end)
 				if not ok and mainapi.RecordError then
 					mainapi:RecordError(moduleapi.Name, err)
 				end
-				if not ok and enabled and moduleapi:IsActive(generation) then
-					moduleapi:Toggle()
+				if moduleapi.LifecycleToken == token then
+					moduleapi.LifecycleThread = nil
 				end
 			end)
+			moduleapi.LifecycleThread = lifecycleThread
 		end
 
 		-- Legit HUD modules used to also register a mirror toggle in the main
@@ -8741,6 +8903,9 @@ function mainapi:Load(skipgui, profile)
 			if object.SetFavorite then
 				object:SetFavorite(v.Favorited or v.Favourited, true)
 			end
+			if object.SetHidden then
+				object:SetHidden(v.Hidden)
+			end
 		end
 		-- Snapshot the table first: a game module can still be registering itself on another
 		-- thread while this runs (the loader stops waiting on one that stalls), and adding to
@@ -8957,6 +9122,7 @@ function mainapi:Save(newprofile)
 	for i, v in self.Modules do
 		savedata.Modules[i] = {
 			Enabled = v.Enabled,
+			Hidden = v.Hidden or nil,
 			Favorited = v.Favorited and (v.FavoriteIndex or 1) or (v.Favourited and 1 or nil),
 			Favourited = v.Favorited or v.Favourited,
 			Bind = v.Bind.Button and {Mobile = true, X = v.Bind.Button.Position.X.Offset, Y = v.Bind.Button.Position.Y.Offset} or v.Bind,
@@ -10859,8 +11025,11 @@ function mainapi:UpdateGUI(hue, sat, val, default)
 		end
 	end
 
-	if not clickgui.Visible and not mainapi.Legit.Window.Visible and not mainapi.Kits.Window.Visible then return end
 	local rainbow = mainapi.GUIColor.Rainbow and mainapi.RainbowMode.Value ~= 'Retro'
+	if mainapi.PresetSyncButton and mainapi.PresetSyncButton.Parent then
+		mainapi.PresetSyncButton.BackgroundColor3 = Color3.fromHSV(hue, sat, val)
+		mainapi.PresetSyncButton.TextColor3 = mainapi:TextColor(hue, sat, val)
+	end
 
 	for i, v in mainapi.Categories do
 		if i == 'Main' then
@@ -10898,7 +11067,9 @@ function mainapi:UpdateGUI(hue, sat, val, default)
 	end
 
 	for _, button in mainapi.Modules do
-		if button.Enabled then
+		if button.RefreshVisual then
+			button:RefreshVisual()
+		elseif button.Enabled then
 			button.Object.BackgroundColor3 = rainbow and Color3.fromHSV(mainapi:Color((hue - (button.Index * 0.025)) % 1)) or Color3.fromHSV(hue, sat, val)
 			button.Object.TextColor3 = mainapi.GUIColor.Rainbow and Color3.new(0.19, 0.19, 0.19) or mainapi:TextColor(hue, sat, val)
 			button.Object.UIGradient.Enabled = rainbow and mainapi.RainbowMode.Value == 'Gradient'
