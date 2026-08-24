@@ -42,6 +42,11 @@ local function repositoryFile(path)
             lastError = result
         end
     end
+    local localPath = 'aetherv2/'..path
+    local localSuccess, localBody = pcall(readfile, localPath)
+    if localSuccess and type(localBody) == 'string' and localBody ~= '' then
+        return localBody
+    end
     fail('Could not load BedWars source '..path..': '..tostring(lastError))
 end
 
@@ -68,7 +73,20 @@ local function replaceBetweenNeedles(startNeedle, endNeedle, replacement, label)
     source = source:sub(1, startLine - 1)..replacement..source:sub(endLine)
 end
 
+-- Long-bracket strings do not interpret escape sequences. Older rewrite patches therefore
+-- passed the literal characters "\\t" as indentation and failed to find the tab-indented
+-- BedWars source, stopping startup before DaveyAim could register. Accept both forms so future
+-- patches cannot regress on whitespace-only changes.
+local function expandWhitespaceEscapes(value)
+    local expanded = value:gsub('\\t', '\t')
+    expanded = expanded:gsub('\\n', '\n')
+    expanded = expanded:gsub('\\r', '\r')
+    return expanded
+end
+
 local function replaceOnce(marker, replacement, label)
+    marker = expandWhitespaceEscapes(marker)
+    replacement = expandWhitespaceEscapes(replacement)
     local first, last = source:find(marker, 1, true)
     if not first then fail(label..' marker missing') end
     if source:find(marker, last + 1, true) then fail(label..' marker is not unique') end
@@ -104,6 +122,12 @@ run(function()
                     lastError = result
                 end
             end
+        end
+        local localSuccess, localBody = pcall(readfile, 'aetherv2/'..path)
+        if localSuccess and type(localBody) == 'string' and localBody ~= '' then
+            local chunk, compileError = loadstring(localBody, chunkName)
+            if chunk then return chunk end
+            lastError = compileError
         end
         return nil, 'download/compile failed: '..tostring(lastError)
     end

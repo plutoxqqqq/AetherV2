@@ -28,13 +28,13 @@ local function getCore()
 	local body, lastError = fetch(currentRef(), 'guis/newer.core.lua')
 	if body then return body end
 
+	body, lastError = fetch('main', 'guis/newer.core.lua')
+	if body then return body end
+
 	if isfile and isfile(CORE_LOCAL) then
 		local readOk, cached = pcall(readfile, CORE_LOCAL)
 		if readOk and validSource(cached) then return cached end
 	end
-
-	body, lastError = fetch('main', 'guis/newer.core.lua')
-	if body then return body end
 
 	body, lastError = fetch(FALLBACK_COMMIT, 'guis/newer.lua')
 	if body then return body end

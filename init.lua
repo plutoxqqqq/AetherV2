@@ -628,6 +628,19 @@ local function fetchFile(path, ref, attempts)
 end
 
 local function storeFile(path, body)
+	-- GitHub paths include nested module folders (for example games/aether and
+	-- libraries/bedwars/controllers). Executors generally do not create missing
+	-- parents for writefile, so create each parent segment before caching a file.
+	local parent = path:gsub('\\', '/'):match('^(.*)/[^/]+$')
+	if parent then
+		local built = ''
+		for segment in parent:gmatch('[^/]+') do
+			built = built == '' and segment or built..'/'..segment
+			if not isfolder(built) then
+				pcall(makefolder, built)
+			end
+		end
+	end
 	if path:sub(-4) == '.lua' then
 		body = watermark..body
 	end
@@ -987,8 +1000,16 @@ local function neededFiles(files)
 			-- Only this game's module, never the other twenty-odd.
 			if path:sub(1, 6) == 'games/' then
 				include = path == 'games/universal.lua' or path == 'games/'..place..'.lua'
+				-- BedWars is assembled from a local base plus small runtime/port modules.
+				-- Keep those companions warm too, otherwise a successful wrapper download
+				-- can still fail while its first rewrite dependency is fetched.
+				if place == '6872274481' then
+					include = include
+						or path == 'games/6872274481.base.lua'
+						or path:sub(1, #('games/aether/')) == 'games/aether/'
+				end
 			elseif path:sub(1, 5) == 'guis/' then
-				include = path == 'guis/'..gui..'.lua'
+				include = path == 'guis/'..gui..'.lua' or path == 'guis/'..gui..'.core.lua'
 			elseif path:sub(1, 6) == 'tools/' or path:sub(1, 1) == '.' then
 				include = false
 			elseif path == 'init.lua' then
