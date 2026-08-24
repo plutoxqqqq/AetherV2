@@ -1,6 +1,6 @@
 -- AetherV2 BedWars match entry.
 -- AutoWin V7 / JadeInstaKill V2 and the PR #144 BedWars additions are assembled here from the
--- reviewed PR snapshot so the repository keeps a single games/6872274481.lua entry.
+-- preserved BedWars base and rewrite helpers in this repository.
 
 local license = ... or {}
 if type(license) ~= 'table' then license = {} end
@@ -19,18 +19,36 @@ local function fail(message)
     error(message, 0)
 end
 
-local function archive(path)
-    local url = 'https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..ARCHIVE_COMMIT..'/'..path
-    local success, result = pcall(game.HttpGet, game, url, true)
-    if not success or type(result) ~= 'string' or result == '' or result == '404: Not Found' then
-        fail('Could not load archived BedWars source '..path..': '..tostring(result))
+local function currentRef()
+    local ok, ref = pcall(readfile, 'aetherv2/profiles/commit.txt')
+    if ok and type(ref) == 'string' then
+        ref = ref:gsub('%s+', '')
+        if ref ~= '' then return ref end
     end
-    return result
+    return 'main'
 end
 
--- This snapshot is an ancestor of PR #144 and contains the full pre-rewrite BedWars match source.
--- Keeping the source lookup pinned means the current PR tree does not need a duplicate base file.
-local source = archive('games/6872274481.base.lua')
+local function repositoryFile(path)
+    local lastError
+    local refs = {currentRef(), ARCHIVE_COMMIT}
+    local seen = {}
+    for _, ref in refs do
+        if not seen[ref] then
+            seen[ref] = true
+            local url = 'https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..ref..'/'..path
+            local success, result = pcall(game.HttpGet, game, url, true)
+            if success and type(result) == 'string' and result ~= '' and result ~= '404: Not Found' then
+                return result
+            end
+            lastError = result
+        end
+    end
+    fail('Could not load BedWars source '..path..': '..tostring(lastError))
+end
+
+-- The full pre-rewrite match source is kept beside this entry so the rewrite is reproducible from
+-- the current tree. The historical commit remains only as a compatibility fallback for old caches.
+local source = repositoryFile('games/6872274481.base.lua')
 
 local function replaceBetween(startMarker, endMarker, replacement, label)
     local first = source:find(startMarker, 1, true)
@@ -38,6 +56,22 @@ local function replaceBetween(startMarker, endMarker, replacement, label)
     local last = source:find(endMarker, first + #startMarker, true)
     if not last then fail(label..' end marker missing') end
     source = source:sub(1, first - 1)..replacement..source:sub(last)
+end
+
+-- Use semantic needles for sections whose indentation has changed between BedWars snapshots. The
+-- old loader searched the whole indented line exactly, so a tabs-vs-spaces cleanup made LongJump
+-- fail before any BedWars module could register.
+local function replaceBetweenNeedles(startNeedle, endNeedle, replacement, label)
+    local startAt = source:find(startNeedle, 1, true)
+    if not startAt then fail(label..' start marker missing') end
+    local endAt = source:find(endNeedle, startAt + #startNeedle, true)
+    if not endAt then fail(label..' end marker missing') end
+
+    local beforeStart = source:sub(1, startAt - 1)
+    local startLine = (beforeStart:match('.*()\n') or 0) + 1
+    local beforeEnd = source:sub(1, endAt - 1)
+    local endLine = (beforeEnd:match('.*()\n') or 0) + 1
+    source = source:sub(1, startLine - 1)..replacement..source:sub(endLine)
 end
 
 local function replaceOnce(marker, replacement, label)
@@ -49,16 +83,33 @@ end
 
 local runtimeBootstrap = [=[local AetherMatchRuntime
 run(function()
-    -- These sources are pinned to the reviewed PR snapshot. They are not separate files in the
-    -- current tree; this keeps games/6872274481.lua as the only BedWars implementation entry.
     local archiveCommit = '8c61b6f4cc72f07ee4838ed766e7833196e0f264'
-    local function loadArchived(path, chunkName)
-        local success, result = pcall(game.HttpGet, game,
-            'https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..archiveCommit..'/'..path, true)
-        if not success or type(result) ~= 'string' or result == '' or result == '404: Not Found' then
-            return nil, 'download failed: '..tostring(result)
+    local function activeRef()
+        local ok, ref = pcall(readfile, 'aetherv2/profiles/commit.txt')
+        if ok and type(ref) == 'string' then
+            ref = ref:gsub('%s+', '')
+            if ref ~= '' then return ref end
         end
-        return loadstring(result, chunkName)
+        return 'main'
+    end
+    local function loadArchived(path, chunkName)
+        local lastError
+        local seen = {}
+        for _, ref in {activeRef(), archiveCommit} do
+            if not seen[ref] then
+                seen[ref] = true
+                local success, result = pcall(game.HttpGet, game,
+                    'https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..ref..'/'..path, true)
+                if success and type(result) == 'string' and result ~= '' and result ~= '404: Not Found' then
+                    local chunk, compileError = loadstring(result, chunkName)
+                    if chunk then return chunk end
+                    lastError = compileError
+                else
+                    lastError = result
+                end
+            end
+        end
+        return nil, 'download/compile failed: '..tostring(lastError)
     end
 
     local runtimeChunk, runtimeError = loadArchived('games/aether/rewrite.lua', 'AetherMatchRuntime')
@@ -211,12 +262,14 @@ local jadeLongJump = [=[        jadeHammer = function(item, _, dir)
         end,
 ]=]
 
-replaceBetween(
-    "        jadeHammer = function(item, _, dir)\n",
-    "        tnt = function(item, pos, dir)\n",
-    jadeLongJump,
-    'LongJump Jade method'
-)
+if not source:find("jade:ActivateForTraversal('LongJump'", 1, true) then
+    replaceBetweenNeedles(
+        'jadeHammer = function(item, _, dir)',
+        'tnt = function(item, pos, dir)',
+        jadeLongJump,
+        'LongJump Jade method'
+    )
+end
 
 local forbidden = {
     '-- AutoWin (v6) - the unattended match brain.',
