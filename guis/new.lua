@@ -1,7 +1,5 @@
 -- AetherV2 classic GUI entry.
--- Keep the large implementation in new.core.lua and apply small compatibility fixes here before
--- compiling it. The patcher is intentionally idempotent: an already-fixed core is accepted, and
--- a future core layout change warns instead of taking the entire client down.
+-- Keep the large implementation in new.core.lua and apply compatibility fixes here before compiling it.
 
 local license = ... or {}
 local CORE_LOCAL = 'aetherv2/guis/new.core.lua'
@@ -30,13 +28,14 @@ local function getCore()
 	local body, lastError = fetch(currentRef(), 'guis/new.core.lua')
 	if body then return body end
 
+	body, lastError = fetch('main', 'guis/new.core.lua')
+	if body then return body end
+
 	if isfile and isfile(CORE_LOCAL) then
 		local readOk, cached = pcall(readfile, CORE_LOCAL)
 		if readOk and validSource(cached) then return cached end
 	end
 
-	-- Lets this fix branch run before the core alias has reached main, and gives old caches a
-	-- permanent recovery source without ever fetching the wrapper recursively.
 	body, lastError = fetch(FALLBACK_COMMIT, 'guis/new.lua')
 	if body then return body end
 	error('AetherV2 GUI: failed to load new.core.lua: '..tostring(lastError), 0)
@@ -135,7 +134,18 @@ patchExact('late module edit refresh', [=[
 		if categoryapi.UpdateHidden then categoryapi:UpdateHidden() end
 
 		mainapi:SortModules()
-]=], 'moduleapi:RefreshHiddenState(mainapi.EditGUI == true)')
+		task.defer(function()
+			if not moduleapi.Object or not moduleapi.Object.Parent then return end
+			moduleapi:RefreshHiddenState(mainapi.EditGUI == true)
+			if categoryapi.UpdateHidden then categoryapi:UpdateHidden() end
+			mainapi:SortModules()
+			local parent = moduleapi.Object.Parent
+			local layout = parent:FindFirstChildOfClass('UIListLayout')
+			if parent:IsA('ScrollingFrame') and layout then
+				parent.CanvasSize = UDim2.fromOffset(0, layout.AbsoluteContentSize.Y)
+			end
+		end)
+]=], 'task.defer(function()\n\t\t\tif not moduleapi.Object or not moduleapi.Object.Parent then return end')
 
 patchExact('category edit mode refresh', [=[
 	function categoryapi:SetEditMode(enabled)

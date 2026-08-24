@@ -1,6 +1,5 @@
 -- AetherV2 BedWars match entry.
--- AutoWin V7 / JadeInstaKill V2 and the PR #144 BedWars additions are assembled here from the
--- preserved BedWars base and rewrite helpers in this repository.
+-- Keeps the preserved BedWars base reproducible while applying small compatibility/runtime fixes.
 
 local license = ... or {}
 if type(license) ~= 'table' then license = {} end
@@ -46,8 +45,6 @@ local function repositoryFile(path)
     fail('Could not load BedWars source '..path..': '..tostring(lastError))
 end
 
--- The full pre-rewrite match source is kept beside this entry so the rewrite is reproducible from
--- the current tree. The historical commit remains only as a compatibility fallback for old caches.
 local source = repositoryFile('games/6872274481.base.lua')
 
 local function replaceBetween(startMarker, endMarker, replacement, label)
@@ -58,9 +55,6 @@ local function replaceBetween(startMarker, endMarker, replacement, label)
     source = source:sub(1, first - 1)..replacement..source:sub(last)
 end
 
--- Use semantic needles for sections whose indentation has changed between BedWars snapshots. The
--- old loader searched the whole indented line exactly, so a tabs-vs-spaces cleanup made LongJump
--- fail before any BedWars module could register.
 local function replaceBetweenNeedles(startNeedle, endNeedle, replacement, label)
     local startAt = source:find(startNeedle, 1, true)
     if not startAt then fail(label..' start marker missing') end
@@ -94,8 +88,6 @@ run(function()
         return 'main'
     end
 
-    -- Always try current main before the historical archive. A stale commit cache must never make
-    -- newly-added split helper files disappear from an otherwise current loader.
     local function loadArchived(path, chunkName)
         local lastError
         local seen = {}
@@ -151,15 +143,13 @@ run(function()
         canDebug = canDebug
     }
 
-    -- TrixieExploit does not depend on AutoWin/Jade runtime state. Load it independently so a
-    -- rewrite/patch/port failure cannot prevent the Kits entry from registering.
+    -- Trixie is independent from AutoWin/Jade. Never let an unrelated runtime failure hide it.
     task.spawn(function()
         local trixieChunk, trixieError = loadArchived('games/aether/trixie_exploit.lua', 'TrixieExploit')
         if not trixieChunk then
             warn('[AetherV2] TrixieExploit failed to compile: '..tostring(trixieError))
             return
         end
-
         local trixieLoaded, trixieResult = xpcall(function()
             return trixieChunk(context)
         end, debug and debug.traceback or tostring)
@@ -228,17 +218,36 @@ replaceBetween(
     'JadeInstaKill legacy'
 )
 
--- cv's DaveyAim reads store.ping.total before calling CannonHandController:launchSelf. Aether's
--- store did not provide that field, so the module stopped after aiming. Preserve cv's working
--- controller launch path and provide its missing latency dependency from Roblox's RTT API.
+-- The modern GUI has a Kits window but no Minigames category. Keep Kits for actual kit modules,
+-- then point old non-kit Minigames registrations (notably Breaker) at World instead of crashing.
+replaceOnce(
+    "local kits = vape.Categories.Kits or vape.Categories.Minigames",
+    [=[local kits = vape.Categories.Kits or vape.Categories.Minigames
+if vape.Categories and not vape.Categories.Minigames then
+    vape.Categories.Minigames = vape.Categories.World or vape.Categories.Utility
+end]=],
+    'legacy Minigames category compatibility'
+)
+
+-- AutoEnchant must always have a real visible category even on GUI variants which omit Inventory.
+replaceOnce(
+    "    AutoEnchant = (vape.Categories.Inventory or vape.Categories.Utility):CreateModule({",
+    [=[    local autoEnchantCategory = vape.Categories.Inventory or vape.Categories.Utility or vape.Categories.World
+    if not autoEnchantCategory then error('AutoEnchant: no compatible category is available') end
+    AutoEnchant = autoEnchantCategory:CreateModule({]=],
+    'AutoEnchant category compatibility'
+)
+
+-- cv modules read store.ping.total. Supply it from Roblox's RTT API without a polling loop.
 replaceOnce(
     "\tmatchState = 0,\n\tqueueType = 'bedwars_test',\n\ttools = {}\n}",
     "\tmatchState = 0,\n\tqueueType = 'bedwars_test',\n\ttools = {},\n\tping = setmetatable({}, {\n\t\t__index = function(_, key)\n\t\t\tif key == 'total' or key == 'incoming' then\n\t\t\t\tlocal success, value = pcall(lplr.GetNetworkPing, lplr)\n\t\t\t\treturn success and math.max(tonumber(value) or 0, 0) or 0\n\t\t\tend\n\t\tend\n\t})\n}",
     'cv ping compatibility'
 )
 
--- DaveyAim should dump cannon momentum when the player touches down, regardless of whether the
--- launch came from the automatic Legit/Blatant path or from the manual prompt after aiming.
+-- Davey launch state is shared with the trajectory corrector. The old Heartbeat poll could see an
+-- Air -> Ground flicker before the actual cannon impulse, and could also be overwritten by the
+-- trajectory loop one frame later. Arm only after real launch motion and latch the actual landing.
 replaceOnce(
 [=[\t\treturn aimed
 \tend
@@ -247,32 +256,116 @@ replaceOnce(
 [=[\t\treturn aimed
 \tend
 
+\tlocal daveyLandingGeneration = 0
+\tlocal daveyLanded = false
+
+\tlocal function stopDaveyHorizontal(root)
+\t\tif not root or not root.Parent then return end
+\t\tlocal velocity = root.AssemblyLinearVelocity
+\t\troot.AssemblyLinearVelocity = Vector3.new(0, velocity.Y, 0)
+\tend
+
+\tlocal function getCannonLaunchSpeed()
+\t\tlocal speed = 200
+\t\tlocal controller = bedwars.CannonHandController
+\t\tif canDebug and debug and type(debug.getconstant) == 'function' and controller and type(controller.launchSelf) == 'function' then
+\t\t\tlocal ok, value = pcall(debug.getconstant, controller.launchSelf, 15)
+\t\t\tif ok and type(value) == 'number' and value > 0 and value < 1000 then speed = value end
+\t\tend
+\t\treturn speed
+\tend
+
+\tlocal function ensureCannonMovement(cannon, launchDirection)
+\t\tlocal generation = daveyLandingGeneration
+\t\ttask.spawn(function()
+\t\t\tlocal character = entitylib.isAlive and entitylib.character
+\t\t\tlocal root = character and character.RootPart
+\t\t\tif not root then return end
+\t\t\tlocal startPosition = root.Position
+\t\t\tlocal direction = launchDirection and launchDirection.Magnitude > 0.001 and launchDirection.Unit or nil
+\t\t\tif not direction and cannon and cannon.Parent then
+\t\t\t\tlocal look = cannon:GetAttribute('LookVector')
+\t\t\t\tdirection = typeof(look) == 'Vector3' and look.Magnitude > 0.001 and look.Unit or cannon.CFrame.LookVector
+\t\t\tend
+\t\t\tif not direction then return end
+
+\t\t\t-- launchSelf normally supplies this impulse itself. In first person some builds fire the
+\t\t\t-- cannon/prompt but skip the local impulse, so only fill it in when no launch motion appears.
+\t\t\tfor _ = 1, 3 do
+\t\t\t\trunService.PreSimulation:Wait()
+\t\t\t\tif generation ~= daveyLandingGeneration or daveyLanded or not root.Parent then return end
+\t\t\t\tlocal velocity = root.AssemblyLinearVelocity
+\t\t\t\tif velocity:Dot(direction) > 20 or (root.Position - startPosition).Magnitude > 1 then return end
+\t\t\tend
+\t\t\troot.AssemblyLinearVelocity = direction * getCannonLaunchSpeed()
+\t\tend)
+\tend
+
 \tlocal function cancelHorizontalOnLanding()
+\t\tdaveyLandingGeneration += 1
+\t\tlocal generation = daveyLandingGeneration
+\t\tdaveyLanded = false
 \t\ttask.spawn(function()
 \t\t\tlocal character = entitylib.isAlive and entitylib.character
 \t\t\tlocal humanoid = character and character.Humanoid
 \t\t\tlocal root = character and character.RootPart
 \t\t\tif not humanoid or not root then return end
 
-\t\t\tlocal airborne = false
+\t\t\tlocal startPosition = root.Position
+\t\t\tlocal armed, finished = false, false
+\t\t\tlocal floorConnection, stateConnection
+
+\t\t\tlocal function cleanup()
+\t\t\t\tif floorConnection then floorConnection:Disconnect(); floorConnection = nil end
+\t\t\t\tif stateConnection then stateConnection:Disconnect(); stateConnection = nil end
+\t\t\tend
+
+\t\t\tlocal function landed()
+\t\t\t\tif finished or generation ~= daveyLandingGeneration then return end
+\t\t\t\tfinished = true
+\t\t\t\tdaveyLanded = true
+\t\t\t\tstopDaveyHorizontal(root)
+\t\t\t\tcleanup()
+\t\t\t\t-- Clamp the next two physics writes too; the cannon controller can write once more in
+\t\t\t\t-- the same contact step after Humanoid reports Landed.
+\t\t\t\ttask.spawn(function()
+\t\t\t\t\tfor _ = 1, 2 do
+\t\t\t\t\t\trunService.PreSimulation:Wait()
+\t\t\t\t\t\tif generation ~= daveyLandingGeneration or not root.Parent then return end
+\t\t\t\t\t\tstopDaveyHorizontal(root)
+\t\t\t\t\tend
+\t\t\t\tend)
+\t\t\tend
+
+\t\t\tfloorConnection = humanoid:GetPropertyChangedSignal('FloorMaterial'):Connect(function()
+\t\t\t\tif armed and humanoid.FloorMaterial ~= Enum.Material.Air then landed() end
+\t\t\tend)
+\t\t\tstateConnection = humanoid.StateChanged:Connect(function(_, newState)
+\t\t\t\tif armed and humanoid.FloorMaterial ~= Enum.Material.Air and (newState == Enum.HumanoidStateType.Landed or newState == Enum.HumanoidStateType.Running or newState == Enum.HumanoidStateType.RunningNoPhysics) then
+\t\t\t\t\tlanded()
+\t\t\t\tend
+\t\t\tend)
+
 \t\t\tlocal timeout = tick() + 15
 \t\t\trepeat
-\t\t\t\trunService.Heartbeat:Wait()
-\t\t\t\tif not entitylib.isAlive or entitylib.character ~= character or not root.Parent then return end
-
-\t\t\t\tif humanoid.FloorMaterial == Enum.Material.Air then
-\t\t\t\t\tairborne = true
-\t\t\t\telseif airborne then
-\t\t\t\t\tlocal velocity = root.AssemblyLinearVelocity
-\t\t\t\t\troot.AssemblyLinearVelocity = Vector3.new(0, velocity.Y, 0)
+\t\t\t\trunService.PreSimulation:Wait()
+\t\t\t\tif generation ~= daveyLandingGeneration or not entitylib.isAlive or entitylib.character ~= character or not root.Parent then
+\t\t\t\t\tcleanup()
 \t\t\t\t\treturn
 \t\t\t\tend
-\t\t\tuntil tick() >= timeout
+\t\t\t\tlocal velocity = root.AssemblyLinearVelocity
+\t\t\t\tlocal horizontal = Vector3.new(velocity.X, 0, velocity.Z).Magnitude
+\t\t\t\tif not armed and humanoid.FloorMaterial == Enum.Material.Air and ((root.Position - startPosition).Magnitude > 0.75 or math.abs(velocity.Y) > 8 or horizontal > 20) then
+\t\t\t\t\tarmed = true
+\t\t\t\tend
+\t\t\t\tif armed and humanoid.FloorMaterial ~= Enum.Material.Air then landed() end
+\t\t\tuntil finished or tick() >= timeout
+\t\t\tcleanup()
 \t\tend)
 \tend
 
 \tDaveyAim = kits:CreateModule({]=],
-    'DaveyAim landing movement helper'
+    'DaveyAim launch and landing state'
 )
 
 replaceOnce(
@@ -288,13 +381,13 @@ replaceOnce(
 \t\t\t\t\tif Mode.Value == 'Legit' then
 \t\t\t\t\t\tcannon.LaunchSelfPrompt:InputHoldBegin()
 \t\t\t\t\t\ttask.wait(cannon.LaunchSelfPrompt.HoldDuration + runService.PostSimulation:Wait())
-\t\t\t\t\t\tcancelHorizontalOnLanding()
 \t\t\t\t\telse
 \t\t\t\t\t\tbedwars.CannonHandController:launchSelf(cannon)
-\t\t\t\t\t\tcancelHorizontalOnLanding()
 \t\t\t\t\tend
+\t\t\t\t\tcancelHorizontalOnLanding()
+\t\t\t\t\tensureCannonMovement(cannon, launchDirection)
 \t\t\t\telse]=],
-    'DaveyAim automatic landing stop'
+    'DaveyAim automatic launch state'
 )
 
 replaceOnce(
@@ -307,9 +400,35 @@ replaceOnce(
 \t\t\t\t\t\tif plr == lplr then
 \t\t\t\t\t\t\tlaunched = true
 \t\t\t\t\t\t\tcancelHorizontalOnLanding()
+\t\t\t\t\t\t\tensureCannonMovement(cannon, launchDirection)
 \t\t\t\t\t\tend
 \t\t\t\t\tend)]=],
-    'DaveyAim manual landing stop'
+    'DaveyAim manual launch state'
+)
+
+-- Once the exact contact watcher has latched a landing, trajectory correction must immediately stop
+-- writing horizontal velocity or it will undo the contact-frame clamp.
+replaceOnce(
+[=[\t\t\t\tlocal landing = tick() + time
+\t\t\t\tlocal root
+\t\t\t\trepeat
+\t\t\t\t\trunService.PreSimulation:Wait()
+\t\t\t\t\troot = entitylib.isAlive and entitylib.character.RootPart
+\t\t\t\t\tif root then]=],
+[=[\t\t\t\tlocal landing = tick() + time
+\t\t\t\tlocal root
+\t\t\t\trepeat
+\t\t\t\t\trunService.PreSimulation:Wait()
+\t\t\t\t\troot = entitylib.isAlive and entitylib.character.RootPart
+\t\t\t\t\tif daveyLanded then break end
+\t\t\t\t\tif root then]=],
+    'DaveyAim correction landing gate'
+)
+
+replaceOnce(
+    "\t\t\t\tuntil not root or tick() > landing",
+    "\t\t\t\tuntil not root or tick() > landing or daveyLanded",
+    'DaveyAim correction stop condition'
 )
 
 local jadeLongJump = [=[        jadeHammer = function(item, _, dir)
@@ -364,10 +483,13 @@ local forbidden = {
 for _, token in ipairs(forbidden) do
     if source:find(token, 1, true) then fail('stale rewrite token remains: '..token) end
 end
+
 if not source:find("jade:ActivateForTraversal('LongJump'", 1, true) then fail('LongJump Jade adapter was not installed') end
 if not source:find("ping = setmetatable({}, {", 1, true) then fail('cv ping compatibility was not installed') end
-if not source:find("bedwars.CannonHandController:launchSelf(cannon)", 1, true) then fail('DaveyAim cv cannon launch path is missing') end
-if not source:find("cancelHorizontalOnLanding()", 1, true) then fail('DaveyAim landing stop was not installed') end
+if not source:find("vape.Categories.Minigames = vape.Categories.World", 1, true) then fail('legacy category compatibility was not installed') end
+if not source:find("autoEnchantCategory", 1, true) then fail('AutoEnchant category compatibility was not installed') end
+if not source:find("ensureCannonMovement(cannon, launchDirection)", 1, true) then fail('DaveyAim first-person movement fallback was not installed') end
+if not source:find("daveyLanded", 1, true) then fail('DaveyAim landing latch was not installed') end
 
 local compiled, compileError
 local cache = type(shared.AetherCompileCache) == 'table' and shared.AetherCompileCache or nil
