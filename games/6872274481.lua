@@ -228,6 +228,81 @@ replaceOnce(
     'cv ping compatibility'
 )
 
+-- DaveyAim should dump cannon momentum when the player touches down, regardless of whether the
+-- launch came from the automatic Legit/Blatant path or from the manual prompt after aiming.
+replaceOnce(
+[=[		return aimed
+	end
+
+	DaveyAim = kits:CreateModule({]=],
+[=[		return aimed
+	end
+
+	local function cancelHorizontalOnLanding()
+		task.spawn(function()
+			local character = entitylib.isAlive and entitylib.character
+			local humanoid = character and character.Humanoid
+			local root = character and character.RootPart
+			if not humanoid or not root then return end
+
+			local airborne = false
+			local timeout = tick() + 15
+			repeat
+				runService.Heartbeat:Wait()
+				if not entitylib.isAlive or entitylib.character ~= character or not root.Parent then return end
+
+				if humanoid.FloorMaterial == Enum.Material.Air then
+					airborne = true
+				elseif airborne then
+					local velocity = root.AssemblyLinearVelocity
+					root.AssemblyLinearVelocity = Vector3.new(0, velocity.Y, 0)
+					return
+				end
+			until tick() >= timeout
+		end)
+	end
+
+	DaveyAim = kits:CreateModule({]=],
+    'DaveyAim landing movement helper'
+)
+
+replaceOnce(
+[=[				if LaunchCannon.Enabled then
+					if Mode.Value == 'Legit' then
+						cannon.LaunchSelfPrompt:InputHoldBegin()
+						task.wait(cannon.LaunchSelfPrompt.HoldDuration + runService.PostSimulation:Wait())
+					else
+						bedwars.CannonHandController:launchSelf(cannon)
+					end
+				else]=],
+[=[				if LaunchCannon.Enabled then
+					if Mode.Value == 'Legit' then
+						cannon.LaunchSelfPrompt:InputHoldBegin()
+						task.wait(cannon.LaunchSelfPrompt.HoldDuration + runService.PostSimulation:Wait())
+						cancelHorizontalOnLanding()
+					else
+						bedwars.CannonHandController:launchSelf(cannon)
+						cancelHorizontalOnLanding()
+					end
+				else]=],
+    'DaveyAim automatic landing stop'
+)
+
+replaceOnce(
+[=[					local connection = cannon.LaunchSelfPrompt.Triggered:Connect(function(plr)
+						if plr == lplr then
+							launched = true
+						end
+					end)]=],
+[=[					local connection = cannon.LaunchSelfPrompt.Triggered:Connect(function(plr)
+						if plr == lplr then
+							launched = true
+							cancelHorizontalOnLanding()
+						end
+					end)]=],
+    'DaveyAim manual landing stop'
+)
+
 local jadeLongJump = [=[        jadeHammer = function(item, _, dir)
             local jade = AetherMatchRuntime and AetherMatchRuntime.Jade
             if jade then
@@ -283,6 +358,7 @@ end
 if not source:find("jade:ActivateForTraversal('LongJump'", 1, true) then fail('LongJump Jade adapter was not installed') end
 if not source:find("ping = setmetatable({}, {", 1, true) then fail('cv ping compatibility was not installed') end
 if not source:find("bedwars.CannonHandController:launchSelf(cannon)", 1, true) then fail('DaveyAim cv cannon launch path is missing') end
+if not source:find("cancelHorizontalOnLanding()", 1, true) then fail('DaveyAim landing stop was not installed') end
 
 local compiled, compileError
 local cache = type(shared.AetherCompileCache) == 'table' and shared.AetherCompileCache or nil
