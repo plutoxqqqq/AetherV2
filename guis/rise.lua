@@ -1,5 +1,7 @@
 -- AetherV2's accent, rgb(190, 115, 255), as the HSV the GUI works in. It is the
 -- default theme colour and stays changeable from the colour slider in settings.
+local license = ... or {}
+if type(license) ~= 'table' then license = {} end
 local accent = {Hue = 0.7559524, Sat = 0.5490196, Value = 1}
 local mainapi = {
 	Categories = {},
@@ -340,7 +342,9 @@ local function downloadFile(path, func)
 end
 
 getcustomasset = not inputService.TouchEnabled and assetfunction and function(path)
-	return downloadFile(path, assetfunction)
+	local success, result = pcall(downloadFile, path, assetfunction)
+	if success then return result end
+	return getcustomassets[path] or ''
 end or function(path)
 	return getcustomassets[path] or ''
 end
@@ -1341,7 +1345,7 @@ components = {
 					end)
 					object.MouseButton2Click:Connect(function()
 						if v.Name ~= mainapi.Profile then
-							categoryapi:ChangeValue(v.Name)
+							optionapi:ChangeValue(v.Name)
 						end
 					end)
 					if v.Name == mainapi.Profile then
@@ -2084,7 +2088,7 @@ function mainapi:CreateCategoryTheme(categorysettings)
 		if self.ThreadFix then
 			setthreadidentity(8)
 		end
-		holder.Parent.CanvasSize = UDim2.fromOffset(0, windowlist.AbsoluteContentSize.Y + (204 / scale.Scale))
+		holder.Parent.CanvasSize = UDim2.fromOffset(0, (windowlist.AbsoluteContentSize.Y + 204) / scale.Scale)
 	end)
 	categoryapi.Sort:Destroy()
 
@@ -2204,7 +2208,7 @@ function mainapi:CreateCategoryProfile(categorysettings)
 		if self.ThreadFix then
 			setthreadidentity(8)
 		end
-		windowlist.Parent.CanvasSize = UDim2.fromOffset(0, windowlist.AbsoluteContentSize.Y + 10)
+		windowlist.Parent.CanvasSize = UDim2.fromOffset(0, (windowlist.AbsoluteContentSize.Y / scale.Scale) + 10)
 	end)
 	categoryapi.Sort:Destroy()
 
@@ -2296,7 +2300,7 @@ function mainapi:CreateOverlay(categorysettings)
 	end))
 
 	categoryapi:Update()
-	categoryapi.Object = window
+	categoryapi.Object = customchildren
 	categoryapi.Children = customchildren
 	self.Categories[categorysettings.Name] = categoryapi
 
@@ -3606,6 +3610,7 @@ end
 function mainapi:UpdateGUI(hue, sat, val, default)
 	if self.Loaded == nil then return end
 	if not default and self.GUIColor.Rainbow then return end
+	local rainbowcheck = self.GUIColor.Rainbow == true
 	if interface.Button.Enabled then
 		watermarkgradient.Color = ColorSequence.new({
 			ColorSequenceKeypoint.new(0, uipallet.SecondaryColor:Lerp(uipallet.MainColor, 0.34)),

@@ -1,5 +1,7 @@
 -- AetherV2's accent, rgb(190, 115, 255), as the HSV the GUI works in. It is the
 -- default theme colour and stays changeable from the colour slider in settings.
+local license = ... or {}
+if type(license) ~= 'table' then license = {} end
 local accent = {Hue = 0.7559524, Sat = 0.5490196, Value = 1}
 local mainapi = {
 	Categories = {},
@@ -80,7 +82,9 @@ local getcustomassets = {
 	['aetherv2/assets/old/textvape.png'] = 'rbxasset://textvape.png',
 	['aetherv2/assets/old/utilityicon.png'] = 'rbxasset://utilityicon.png',
 	['aetherv2/assets/old/vape.png'] = 'rbxassetid://14373395239',
-	['aetherv2/assets/old/worldicon.png'] = 'rbxasset://worldicon.png'
+	['aetherv2/assets/old/worldicon.png'] = 'rbxasset://worldicon.png',
+	['aetherv2/assets/new/guivape.png'] = 'rbxassetid://14657521312',
+	['aetherv2/assets/new/guiv4.png'] = 'rbxassetid://14368322199'
 }
 
 local isfile = isfile or function(file)
@@ -317,7 +321,9 @@ local function downloadFile(path, func)
 end
 
 getcustomasset = not inputService.TouchEnabled and assetfunction and function(path)
-	return downloadFile(path, assetfunction)
+	local success, result = pcall(downloadFile, path, assetfunction)
+	if success then return result end
+	return getcustomassets[path] or ''
 end or function(path)
 	return getcustomassets[path] or ''
 end
@@ -4434,11 +4440,11 @@ local textguimodules = textgui:CreateToggle({
 		mainapi:UpdateTextGUI()
 	end
 })
---[[textguimoduleslist = textgui:CreateTextList({
+textguimoduleslist = textgui:CreateTextList({
 	Name = 'Blacklist',
 	Tooltip = 'Name of module to hide',
-	Icon = getcustomasset('new/blockedicon.png'),
-	Tab = getcustomasset('new/blockedtab.png'),
+	Icon = getcustomasset('aetherv2/assets/new/blockedicon.png'),
+	Tab = getcustomasset('aetherv2/assets/new/blockedtab.png'),
 	TabSize = UDim2.fromOffset(21, 16),
 	Color = Color3.fromRGB(250, 50, 56),
 	Function = function()
@@ -4446,7 +4452,7 @@ local textguimodules = textgui:CreateToggle({
 	end,
 	Visible = false,
 	Darker = true
-})]]
+})
 local textguirender = textgui:CreateToggle({
 	Name = 'Hide render',
 	Function = function(enabled)
@@ -4467,7 +4473,7 @@ VapeLogo.BackgroundTransparency = 1
 VapeLogo.BorderSizePixel = 0
 VapeLogo.Visible = true
 VapeLogo.BackgroundColor3 = Color3.new()
-VapeLogo.Image = getcustomasset('aetherv2/assets/old/textvape.png')
+VapeLogo.Image = getcustomasset('aetherv2/assets/new/guivape.png')
 VapeLogo.Parent = textgui.Children
 
 local lastside = textgui.Children.AbsolutePosition.X > (gui.AbsoluteSize.X / 2)
@@ -4489,7 +4495,7 @@ VapeLogoV4.Position = UDim2.new(1, 1, 0, -2)
 VapeLogoV4.BackgroundColor3 = Color3.new()
 VapeLogoV4.BackgroundTransparency = 1
 VapeLogoV4.BorderSizePixel = 0
-VapeLogoV4.Image = getcustomasset('aetherv2/assets/old/textv4.png')
+VapeLogoV4.Image = getcustomasset('aetherv2/assets/new/guiv4.png')
 VapeLogoV4.Parent = VapeLogo
 local VapeLogoShadow = VapeLogo:Clone()
 VapeLogoShadow.Position = UDim2.fromOffset(1, 1)
@@ -4634,7 +4640,7 @@ function mainapi:UpdateGUI(hue, sat, val, default)
 			ColorSequenceKeypoint.new(1, Color3.new(1, 1, 1))
 		})
 		for i, v in VapeLabels do
-			v.Text.TextColor3 = customcolor or (mainapi.GUIColor.Rainbow and Color3.fromHSV(mainapi:Color((hue - ((i + 2) * 0.025)) % 1)) or VapeLogoGradient.Color.Keypoints[2].Value)
+			v.Text.TextColor3 = mainapi.GUIColor.Rainbow and Color3.fromHSV(mainapi:Color((hue - ((i + 2) * 0.025)) % 1)) or VapeLogoGradient.Color.Keypoints[2].Value
 		end
 	end
 

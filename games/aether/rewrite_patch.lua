@@ -434,7 +434,8 @@ function Runtime.MatchDirector:_makeAction(objective, snapshot)
     if objective.Kind == 'BANK' then return SimpleBankAction.new() end
     if objective.Kind == 'RETURN_SAFE' then
         local route = self:_routeFor(objective, snapshot)
-        return route and ReactiveTravel.new(self, objective, route) or nil, route and nil or 'safe-route-unavailable'
+		if route then return ReactiveTravel.new(self, objective, route) end
+		return nil, 'safe-route-unavailable'
     end
     if objective.Kind == 'ATTACK_BED' and snapshot.Position and objective.Position and (snapshot.Position - objective.Position).Magnitude > 26 then
         local route = self:_routeFor(objective, snapshot)

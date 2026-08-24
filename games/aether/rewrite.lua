@@ -213,7 +213,7 @@ end
 function Movement:Acquire(owner, priority, ttl, onPreempt, allowExternal)
     self:_clearExpired()
     priority = priority or self.Priorities.Ordinary
-    local external = allowExternal and nil or self:GetExternalOwner(owner)
+	local external = if allowExternal then nil else self:GetExternalOwner(owner)
     if external and external ~= owner then return nil, 'external:'..external end
     local current = self.Current
     if current and current.Owner ~= owner and current.Priority > priority then return nil, 'owned:'..current.Owner end
@@ -312,20 +312,32 @@ end
 -- Shared JadeAbilityAdapter. Used by JIK and the LongJump Jade compatibility hook.
 --------------------------------------------------------------------------------
 local Jade = {
-    Compatibility = {'jade_hammer_3', 'jade_hammer_2', 'jade_hammer_1', 'jade_hammer'},
+    Compatibility = {'jade_hammer_3', 'jade_hammer_2', 'jade_hammer_1', 'jade_hammer', 'jade_hammer_jump'},
     AbilityMap = {
         jade_hammer_3 = {'jade_hammer_3_jump', 'jade_hammer_jump'},
         jade_hammer_2 = {'jade_hammer_2_jump', 'jade_hammer_jump'},
         jade_hammer_1 = {'jade_hammer_jump', 'jade_hammer_1_jump'},
-        jade_hammer = {'jade_hammer_jump'}
+        jade_hammer = {'jade_hammer_jump'},
+        jade_hammer_jump = {'jade_hammer_jump', 'jade_hammer_3_jump', 'jade_hammer_2_jump', 'jade_hammer_1_jump'}
     },
     Last = {}
 }
 Runtime.Jade = Jade
 
 local function jadeTier(name)
-    local tier = tonumber(tostring(name):match('jade_hammer_(%d+)$'))
-    return tier or (name == 'jade_hammer' and 0 or -1)
+    local normalized = tostring(name or ''):lower():gsub('[%s%-]+', '_')
+    local tier = tonumber(normalized:match('jade_hammer_(%d+)'))
+    return tier or (normalized:find('jade_hammer', 1, true) and 0 or -1)
+end
+
+local function normalizeItemType(value)
+    if type(value) ~= 'string' then return nil end
+    return value:lower():gsub('[%s%-]+', '_')
+end
+
+function Jade:IsHammerName(value)
+    local normalized = normalizeItemType(value)
+    return normalized == 'jade_hammer_jump' or (normalized ~= nil and normalized:match('^jade_hammer(_%d+)?$') ~= nil)
 end
 
 function Jade:_candidateNames()
@@ -333,7 +345,7 @@ function Jade:_candidateNames()
     for _, name in ipairs(self.Compatibility) do seen[name] = true; table.insert(names, name) end
     if type(bedwars.ItemMeta) == 'table' then
         for name, meta in pairs(bedwars.ItemMeta) do
-            if type(name) == 'string' and name:find('jade_hammer', 1, true) and type(meta) == 'table' and not seen[name] then
+			if type(name) == 'string' and self:IsHammerName(name) and type(meta) == 'table' and not seen[name] then
                 seen[name] = true
                 table.insert(names, name)
             end
@@ -344,9 +356,52 @@ function Jade:_candidateNames()
 end
 
 function Jade:GetBestHammer()
+    local found, seen = {}, {}
+    local function add(item, source, fallbackType)
+        if type(item) ~= 'table' then return end
+        local tool = item.tool
+        local itemType = normalizeItemType(item.itemType or fallbackType or (tool and tool.Name))
+        if not self:IsHammerName(itemType) then return end
+        if (not tool or typeof(tool) ~= 'Instance' or not tool.Parent) and lplr.Character then
+            local handValue = lplr.Character:FindFirstChild('HandInvItem')
+            handValue = handValue and handValue.Value
+            if handValue and self:IsHammerName(handValue.Name) then tool = handValue end
+        end
+        if not tool or typeof(tool) ~= 'Instance' or not tool.Parent then return end
+		if seen[tool] then return end
+		seen[tool] = true
+        table.insert(found, {
+            Item = {itemType = itemType, tool = tool, amount = item.amount or 1},
+            Source = source,
+            Tier = jadeTier(itemType)
+        })
+    end
+
     for _, name in ipairs(self:_candidateNames()) do
-        local item = ask('jade.item.'..name, getItem, name)
-        if item and item.tool then return item, {Source = Capabilities.Source.REPLICATED, Tier = jadeTier(name)} end
+        add(ask('jade.item.'..name, getItem, name), Capabilities.Source.REPLICATED, name)
+    end
+
+    local observed = store.inventory and store.inventory.inventory
+    if observed then
+        add(observed.hand, Capabilities.Source.REPLICATED)
+        for _, item in pairs(observed.items or {}) do add(item, Capabilities.Source.REPLICATED) end
+    end
+    add(store.hand, Capabilities.Source.LIVE)
+
+    local function addTools(container, source)
+        if not container then return end
+        for _, tool in ipairs(container:GetChildren()) do
+            if tool:IsA('Tool') and self:IsHammerName(tool.Name) then
+                add({itemType = tool.Name, tool = tool}, source)
+            end
+        end
+    end
+    addTools(lplr.Character, Capabilities.Source.LIVE)
+    addTools(lplr:FindFirstChildOfClass('Backpack'), Capabilities.Source.LIVE)
+
+    table.sort(found, function(a, b) return a.Tier > b.Tier end)
+    if found[1] then
+        return found[1].Item, {Source = found[1].Source, Tier = found[1].Tier}
     end
     return nil, {Source = Capabilities.Source.REPLICATED, Reason = 'not-in-inventory'}
 end
@@ -365,13 +420,14 @@ local function liveAbilityController()
 end
 
 function Jade:ResolveAbility(hammer)
-    local itemType = type(hammer) == 'table' and hammer.itemType or tostring(hammer or '')
+    local itemType = normalizeItemType(type(hammer) == 'table' and (hammer.itemType or (hammer.tool and hammer.tool.Name)) or tostring(hammer or ''))
+    if not self:IsHammerName(itemType) then return nil, {Source = Capabilities.Source.UNKNOWN, Reason = 'not-a-jade-hammer'} end
     local candidates, seen = {}, {}
     local function add(value)
         if type(value) == 'string' and value ~= '' and not seen[value] then seen[value] = true; table.insert(candidates, value) end
     end
     for _, value in ipairs(self.AbilityMap[itemType] or {}) do add(value) end
-    add(itemType..'_jump')
+    if itemType ~= 'jade_hammer_jump' then add(itemType..'_jump') end
     add('jade_hammer_jump')
 
     local meta = bedwars.ItemMeta and bedwars.ItemMeta[itemType]
@@ -1618,34 +1674,14 @@ JadeInstaKill.ExtraText=function() return JIK.State end
 function Runtime:GetJIKDiagnostics() return copyTable(JIK.Diagnostics) end
 
 --------------------------------------------------------------------------------
--- LongJump Jade integration hook. The existing LongJump implementation keeps all non-Jade
--- methods. Jade activation is intercepted here so JIK and LongJump share one adapter.
+-- LongJump Jade integration marker. games/6872274481.lua installs the adapter inside LongJump's
+-- own method table, where its private JumpTick/JumpSpeed/Direction state can be updated. Wrapping
+-- the module callback here used to activate Jade and return before those private values were set,
+-- so the cast was detected but LongJump never entered its boost window.
 --------------------------------------------------------------------------------
 function Runtime:InstallLongJumpJadeHook(longJumpModule)
     if not longJumpModule or longJumpModule._AetherJadeV2Hook then return end
     longJumpModule._AetherJadeV2Hook=true
-    local legacy=longJumpModule.Function
-    longJumpModule.Function=function(callback)
-        if callback then
-            local held=store.hand and store.hand.tool and store.hand.tool.Name or nil
-            local hammer=Jade:GetBestHammer()
-            local heldJade=held and tostring(held):find('jade_hammer',1,true)
-            local limit=longJumpModule.Options and longJumpModule.Options['Limit to items']
-            if hammer and (heldJade or not (limit and limit.Enabled)) then
-                frictionTable.LongJump=true;updateVelocity()
-                local root=rootOfLocal();local direction=root and ((longJumpModule.Options['Camera Direction'] and longJumpModule.Options['Camera Direction'].Enabled) and gameCamera.CFrame.LookVector or root.CFrame.LookVector) or Vector3.zAxis
-                task.spawn(function()
-                    local result=Jade:ActivateForTraversal('LongJump',direction,function() return not longJumpModule.Enabled end)
-                    if not result.confirmed and longJumpModule.Enabled and JIKOptions.Debug and JIKOptions.Debug.Enabled then warn('[AetherV2/LongJump] Jade activation: '..tostring(result.reason)) end
-                end)
-                return
-            end
-        else
-            local current=Movement.Current;if current and current.Owner=='LongJump' then current:Release() end
-            frictionTable.LongJump=nil;updateVelocity()
-        end
-        return legacy(callback)
-    end
 end
 
 Runtime:InstallLongJumpJadeHook(moduleByName('LongJump'))

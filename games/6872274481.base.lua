@@ -212,8 +212,9 @@ end
 
 local function getBestArmor(slot)
 	local closest, mag = nil, 0
+	local inventory = store.inventory and store.inventory.inventory
 
-	for _, item in store.inventory.inventory.items do
+	for _, item in pairs(inventory and inventory.items or {}) do
 		local meta = item and bedwars.ItemMeta[item.itemType] or {}
 
 		if meta.armor and meta.armor.slot == slot then
@@ -230,10 +231,15 @@ end
 
 local function getBow()
 	local bestBow, bestBowSlot, bestBowDamage = nil, nil, 0
-	for slot, item in store.inventory.inventory.items do
-		local bowMeta = bedwars.ItemMeta[item.itemType].projectileSource
-		if bowMeta and table.find(bowMeta.ammoItemTypes, 'arrow') then
-			local bowDamage = bedwars.ProjectileMeta[bowMeta.projectileType('arrow')].combat.damage or 0
+	local inventory = store.inventory and store.inventory.inventory
+	for slot, item in pairs(inventory and inventory.items or {}) do
+		local itemMeta = item and bedwars.ItemMeta[item.itemType]
+		local bowMeta = itemMeta and itemMeta.projectileSource
+		if bowMeta and type(bowMeta.ammoItemTypes) == 'table' and type(bowMeta.projectileType) == 'function'
+			and table.find(bowMeta.ammoItemTypes, 'arrow') then
+			local ok, projectileType = pcall(bowMeta.projectileType, 'arrow')
+			local projectileMeta = ok and bedwars.ProjectileMeta[projectileType]
+			local bowDamage = projectileMeta and projectileMeta.combat and projectileMeta.combat.damage or 0
 			if bowDamage > bestBowDamage then
 				bestBow, bestBowSlot, bestBowDamage = item, slot, bowDamage
 			end
@@ -243,8 +249,10 @@ local function getBow()
 end
 
 local function getItem(itemName, inv, find)
-	for slot, item in (inv or store.inventory.inventory.items) do
-		if find and item.itemType:find(itemName) or item.itemType == itemName then
+	local inventory = store.inventory and store.inventory.inventory
+	for slot, item in pairs(type(inv) == 'table' and inv or inventory and inventory.items or {}) do
+		local itemType = item and item.itemType
+		if itemType and ((find and itemType:find(itemName, 1, true)) or itemType == itemName) then
 			return item, slot
 		end
 	end
@@ -300,8 +308,10 @@ end
 
 local function getSword()
 	local bestSword, bestSwordSlot, bestSwordDamage = nil, nil, 0
-	for slot, item in store.inventory.inventory.items do
-		local swordMeta = bedwars.ItemMeta[item.itemType].sword
+	local inventory = store.inventory and store.inventory.inventory
+	for slot, item in pairs(inventory and inventory.items or {}) do
+		local itemMeta = item and bedwars.ItemMeta[item.itemType]
+		local swordMeta = itemMeta and itemMeta.sword
 		if swordMeta then
 			local swordDamage = swordMeta.damage or 0
 			if swordDamage > bestSwordDamage then
@@ -314,8 +324,10 @@ end
 
 local function getTool(breakType)
 	local bestTool, bestToolSlot, bestToolDamage = nil, nil, 0
-	for slot, item in store.inventory.inventory.items do
-		local toolMeta = bedwars.ItemMeta[item.itemType].breakBlock
+	local inventory = store.inventory and store.inventory.inventory
+	for slot, item in pairs(inventory and inventory.items or {}) do
+		local itemMeta = item and bedwars.ItemMeta[item.itemType]
+		local toolMeta = itemMeta and itemMeta.breakBlock
 		if toolMeta then
 			local toolDamage = toolMeta[breakType] or 0
 			if toolDamage > bestToolDamage then
@@ -345,8 +357,9 @@ local function getBreakTool(breakType)
 end
 
 local function getWool()
-	for _, wool in (inv or store.inventory.inventory.items) do
-		if wool.itemType:find('wool') then
+	local inventory = store.inventory and store.inventory.inventory
+	for _, wool in pairs(inventory and inventory.items or {}) do
+		if wool.itemType and wool.itemType:find('wool', 1, true) then
 			return wool and wool.itemType, wool and wool.amount
 		end
 	end
@@ -1656,17 +1669,31 @@ run(function()
 
 	local function updateStore(new, old)
 		if new.Bedwars ~= old.Bedwars then
-			store.equippedKit = new.Bedwars.kit ~= 'none' and new.Bedwars.kit or ''
+			local state = type(new.Bedwars) == 'table' and new.Bedwars or {}
+			store.equippedKit = state.kit and state.kit ~= 'none' and state.kit or ''
 		end
 
 		if new.Game ~= old.Game then
-			store.matchState = new.Game.matchState
-			store.queueType = new.Game.queueType or 'bedwars_test'
+			local state = type(new.Game) == 'table' and new.Game or {}
+			store.matchState = state.matchState or 0
+			store.queueType = state.queueType or 'bedwars_test'
 		end
 
 		if new.Inventory ~= old.Inventory then
-			local newinv = (new.Inventory and new.Inventory.observedInventory or {inventory = {}})
-			local oldinv = (old.Inventory and old.Inventory.observedInventory or {inventory = {}})
+			local function normalizeInventory(value)
+				value = type(value) == 'table' and value or {}
+				local inventory = type(value.inventory) == 'table' and value.inventory or {}
+				if type(value.inventory) == 'table' and type(inventory.items) == 'table'
+					and type(inventory.armor) == 'table' and type(value.hotbar) == 'table' then return value end
+				local normalized = table.clone(value)
+				normalized.inventory = table.clone(inventory)
+				normalized.inventory.items = type(inventory.items) == 'table' and inventory.items or {}
+				normalized.inventory.armor = type(inventory.armor) == 'table' and inventory.armor or {}
+				normalized.hotbar = type(value.hotbar) == 'table' and value.hotbar or {}
+				return normalized
+			end
+			local newinv = normalizeInventory(new.Inventory and new.Inventory.observedInventory)
+			local oldinv = normalizeInventory(old.Inventory and old.Inventory.observedInventory)
 			store.inventory = newinv
 
 			if newinv ~= oldinv then
@@ -1684,7 +1711,7 @@ run(function()
 			end
 
 			if newinv.inventory.hand ~= oldinv.inventory.hand then
-				local currentHand, toolType = new.Inventory.observedInventory.inventory.hand, ''
+				local currentHand, toolType = newinv.inventory.hand, ''
 				if currentHand then
 					local handData = bedwars.ItemMeta[currentHand.itemType]
 					if handData then
@@ -1694,6 +1721,7 @@ run(function()
 
 				store.hand = {
 					tool = currentHand and currentHand.tool,
+					itemType = currentHand and currentHand.itemType,
 					amount = currentHand and currentHand.amount or 0,
 					toolType = toolType
 				}
@@ -8646,8 +8674,10 @@ run(function()
         task.wait(0.1)
         bedwars.ProjectileController:createLocalProjectile(bedwars.ProjectileMeta[proj], proj, proj, shootPosition.Position, '', shootPosition.LookVector * speed, {drawDurationSeconds = 1})
         if projectileRemote:InvokeServer(item.tool, proj, proj, shootPosition.Position, pos, shootPosition.LookVector * speed, httpService:GenerateGUID(true), {drawDurationSeconds = 1}, workspace:GetServerTimeNow() - 0.045) then
-            local shoot = bedwars.ItemMeta[item.itemType].projectileSource.launchSound
-            shoot = shoot and shoot[math.random(1, #shoot)] or nil
+			local itemMeta = bedwars.ItemMeta[item.itemType]
+			local source = itemMeta and itemMeta.projectileSource
+			local shoot = source and type(source.launchSound) == 'table' and #source.launchSound > 0 and source.launchSound or nil
+			shoot = shoot and shoot[math.random(1, #shoot)] or nil
             if shoot then
                 bedwars.SoundManager:playSound(shoot)
             end
@@ -13042,7 +13072,9 @@ run(function()
     table.sort(enchantNames)
     local function amount(itemType)
         local total = 0
-        for _, item in bedwars.getInventory(lplr).items do
+        local success, inventory = pcall(bedwars.getInventory, lplr)
+        inventory = success and type(inventory) == 'table' and inventory or {}
+        for _, item in pairs(inventory.items or {}) do
             if item.itemType == itemType then total += item.amount or 1 end
         end
         return total
@@ -13050,10 +13082,16 @@ run(function()
     local function nearestTable()
         if not entitylib.isAlive then return end
         local nearest, distance
-        for _, tableModel in store.enchant do
-            local position = tableModel:IsA('Model') and tableModel:GetPivot().Position or tableModel.Position
-            local magnitude = (entitylib.character.RootPart.Position - position).Magnitude
-            if not distance or magnitude < distance then nearest, distance = tableModel, magnitude end
+        for _, tableModel in pairs(store.enchant or {}) do
+            if typeof(tableModel) == 'Instance' and tableModel.Parent then
+                local ok, position = pcall(function()
+                    return tableModel:IsA('Model') and tableModel:GetPivot().Position or tableModel.Position
+                end)
+                if ok and typeof(position) == 'Vector3' then
+                    local magnitude = (entitylib.character.RootPart.Position - position).Magnitude
+                    if not distance or magnitude < distance then nearest, distance = tableModel, magnitude end
+                end
+            end
         end
         return nearest, distance
     end
@@ -13062,17 +13100,23 @@ run(function()
         local controller = bedwars.EnchantTableController or bedwars.EnchantController
         for _, method in controllerMethods do
             if controller and type(controller[method]) == 'function' then
-				local ok = pcall(controller[method], controller, table.unpack(args, 1, args.n)); if ok then return true end
+				local ok, result = pcall(controller[method], controller, table.unpack(args, 1, args.n))
+				if ok and result ~= false then return true end
             end
         end
         for _, remote in remotes do
-			local ok = pcall(function() bedwars.Handler:Get(remote):Fire('CallServerAsync', table.unpack(args, 1, args.n)) end)
+			local ok = pcall(function()
+				local handler = bedwars.Handler and bedwars.Handler:Get(remote)
+				if not handler then error('missing remote '..remote) end
+				handler:Fire('CallServerAsync', table.unpack(args, 1, args.n))
+			end)
             if ok then return true end
         end
         return false
     end
     local function currentName()
-        local state = bedwars.Store:getState()
+        local ok, state = pcall(bedwars.Store.getState, bedwars.Store)
+        state = ok and type(state) == 'table' and state or {}
         local enchant = state.Bedwars and state.Bedwars.enchant or lplr:GetAttribute('Enchant')
         if type(enchant) == 'table' then enchant = enchant.enchant or enchant.type end
         return enchant and displayName(enchant, (bedwars.EnchantMeta or {})[enchant]) or ''
@@ -13092,7 +13136,8 @@ run(function()
                 repeat
                     local tableModel, distance = nearestTable()
                     if not tableModel or not distance or distance > 18 or not entitylib.isAlive then task.wait(0.25); continue end
-                    local broken = tableModel:HasTag('broken-enchant-table')
+                    local tagOK, broken = pcall(collectionService.HasTag, collectionService, tableModel, 'broken-enchant-table')
+                    broken = tagOK and broken or false
                     if broken then
                         if not Repair.Enabled or amount('diamond') < math.max(8, Reserve.Value + 8) then break end
                         if not invoke({'repairEnchantTable', 'repair'}, {'RepairEnchantTable', 'RepairEnchantTableRemote'}, tableModel) then break end
@@ -13100,7 +13145,8 @@ run(function()
                     end
                     if wanted(currentName()) or rolls >= MaxRolls.Value then break end
                     local before = currentName()
-                    local state = bedwars.Store:getState()
+                    local stateOK, state = pcall(bedwars.Store.getState, bedwars.Store)
+                    state = stateOK and type(state) == 'table' and state or {}
                     local cost = ((state.Bedwars or {}).enchantCost or (state.Game or {}).enchantCost or 2)
                     if amount('diamond') - cost < Reserve.Value then break end
                     if not invoke({'purchaseEnchant', 'rollEnchant'}, {'PurchaseEnchant', 'RequestEnchant'}, tableModel) then break end

@@ -3231,6 +3231,7 @@ end)
 
 run(function()
     local Speed
+	local CustomProperties
     local Mode
     local Options
     local AutoJump
@@ -5028,21 +5029,21 @@ run(function()
 							if currenttween then
 								currenttween:Cancel()
 							end
-							tween = tweenService:Create(chairlegs, TweenInfo.new(0.15), {
+							currenttween = tweenService:Create(chairlegs, TweenInfo.new(0.15), {
 								Size = Vector3.zero,
 							})
-							tween.Completed:Connect(function(state)
+							currenttween.Completed:Connect(function(state)
 								if state == Enum.PlaybackState.Completed then
 									chairfan.Transparency = 0
 									chairlegs.Transparency = 1
-									tween = tweenService:Create(chairfan, TweenInfo.new(0.15), {
+									currenttween = tweenService:Create(chairfan, TweenInfo.new(0.15), {
 										Size = Vector3.new(1.534, 0.328, 1.537)
 											/ Vector3.new(791.138, 168.824, 792.027),
 									})
-									tween:Play()
+									currenttween:Play()
 								end
 							end)
-							tween:Play()
+							currenttween:Play()
 						else
 							if flyingsound.IsPlaying then
 								flyingsound:Stop()
@@ -5053,20 +5054,20 @@ run(function()
 							if currenttween then
 								currenttween:Cancel()
 							end
-							tween = tweenService:Create(chairfan, TweenInfo.new(0.15), {
+							currenttween = tweenService:Create(chairfan, TweenInfo.new(0.15), {
 								Size = Vector3.zero,
 							})
-							tween.Completed:Connect(function(state)
+							currenttween.Completed:Connect(function(state)
 								if state == Enum.PlaybackState.Completed then
 									chairfan.Transparency = 1
 									chairlegs.Transparency = 0
-									tween = tweenService:Create(chairlegs, TweenInfo.new(0.15), {
+									currenttween = tweenService:Create(chairlegs, TweenInfo.new(0.15), {
 										Size = Vector3.new(1.8, 1.2, 1.8) / Vector3.new(10.432, 8.105, 9.488),
 									})
-									tween:Play()
+									currenttween:Play()
 								end
 							end)
-							tween:Play()
+							currenttween:Play()
 						end
 						oldflying = flying
 					end
@@ -6268,45 +6269,106 @@ run(function()
     local originalMode
     local renderName = 'AetherNoCameraCollision'
     local distance = 12
+    local manualInput
+    local cameraModule
+    local nextCameraLookup = 0
+    local firstPersonDistance = 1
 
     local function stopManual()
 		runService:UnbindFromRenderStep(renderName)
+		if manualInput then
+			manualInput:Disconnect()
+			manualInput = nil
+		end
+		cameraModule = nil
+		nextCameraLookup = 0
 	end
+
+    local function getCameraController()
+		if cameraModule then return cameraModule.activeCameraController end
+		if os.clock() < nextCameraLookup then return end
+		nextCameraLookup = os.clock() + 2
+
+		pcall(function()
+			local playerScripts = lplr:FindFirstChild('PlayerScripts')
+			local playerModuleScript = playerScripts and playerScripts:FindFirstChild('PlayerModule')
+			if not playerModuleScript then return end
+			local playerModule = require(playerModuleScript)
+			if type(playerModule.GetCameras) == 'function' then
+				cameraModule = playerModule:GetCameras()
+			end
+		end)
+		return cameraModule and cameraModule.activeCameraController
+    end
+
+    local function getCameraDistance()
+		local controller = getCameraController()
+		local firstPerson = lplr.CameraMode == Enum.CameraMode.LockFirstPerson
+		local controllerDistance
+		if controller then
+			local success, value = pcall(function()
+				firstPerson = firstPerson or controller.inFirstPerson == true
+				return controller:GetCameraToSubjectDistance()
+			end)
+			if success and type(value) == 'number' and value == value and value < math.huge then
+				controllerDistance = value
+			end
+		end
+		return controllerDistance or distance, firstPerson
+    end
 
     local function startManual()
 		stopManual()
 		distance = math.clamp((gameCamera.CFrame.Position - gameCamera.Focus.Position).Magnitude, 0.5, lplr.CameraMaxZoomDistance)
-		NoCameraCollision:Clean(inputService.InputChanged:Connect(function(input)
+		manualInput = inputService.InputChanged:Connect(function(input)
 			if input.UserInputType == Enum.UserInputType.MouseWheel then
 				distance = math.clamp(distance - input.Position.Z * math.max(distance * 0.15, 1), 0.5, lplr.CameraMaxZoomDistance)
 			end
-		end))
+		end)
 		runService:BindToRenderStep(renderName, Enum.RenderPriority.Camera.Value + 1, function()
-			if distance <= 1 then return end
+			-- Roblox updates character transparency from its own zoom state before this
+			-- callback. Respect that state in first person instead of moving an already
+			-- hidden character back into third person.
+			local cameraDistance, firstPerson = getCameraDistance()
+			distance = math.clamp(cameraDistance, 0.5, lplr.CameraMaxZoomDistance)
+			if firstPerson or distance <= firstPersonDistance or gameCamera.CameraType == Enum.CameraType.Scriptable then return end
 			local focus, look = gameCamera.Focus, gameCamera.CFrame.LookVector
 			gameCamera.CFrame = CFrame.lookAlong(focus.Position - look * distance, look)
 		end)
-		NoCameraCollision:Clean(stopManual)
 	end
+
+    local function applyMode()
+		stopManual()
+		local success = pcall(function()
+			lplr.DevCameraOcclusionMode = Mode.Value == 'Manual' and Enum.DevCameraOcclusionMode.Zoom or Enum.DevCameraOcclusionMode.Invisicam
+		end)
+		if success and Mode.Value == 'Manual' then startManual() end
+		return success
+    end
 
     NoCameraCollision = vape.Categories.Utility:CreateModule({
 	Name = 'NoCameraCollision',
 	Function = function(callback)
-	    stopManual()
 	    if callback then
-		originalMode = lplr.DevCameraOcclusionMode
-		local success = pcall(function()
-		    lplr.DevCameraOcclusionMode = Mode.Value == 'Manual' and Enum.DevCameraOcclusionMode.Zoom or Enum.DevCameraOcclusionMode.Invisicam
-		end)
+		local success, currentMode = pcall(function() return lplr.DevCameraOcclusionMode end)
 		if not success then
 		    notif('NoCameraCollision', 'Camera occlusion mode is unavailable in this game.', 5, 'warning')
 		    NoCameraCollision:Toggle()
 		    return
 		end
-		if Mode.Value == 'Manual' then startManual() end
-	    elseif originalMode then
+		originalMode = originalMode or currentMode
+		NoCameraCollision:Clean(stopManual)
+		if not applyMode() then
+		    notif('NoCameraCollision', 'Camera occlusion mode is unavailable in this game.', 5, 'warning')
+		    NoCameraCollision:Toggle()
+		    return
+		end
+	    else
+		stopManual()
+		if originalMode then
 		pcall(function() lplr.DevCameraOcclusionMode = originalMode end)
 		originalMode = nil
+		end
 	    end
 	end,
 	Tooltip = 'Prevents walls from forcing the third-person camera to zoom in'
@@ -6316,7 +6378,10 @@ run(function()
 	List = {'Manual', 'Invisicam'},
 	Tooltip = 'Manual bypasses camera collision without making obstructing blocks transparent',
 	Function = function()
-		if NoCameraCollision.Enabled then NoCameraCollision:Toggle(); NoCameraCollision:Toggle() end
+		if NoCameraCollision.Enabled and not applyMode() then
+			notif('NoCameraCollision', 'Camera occlusion mode is unavailable in this game.', 5, 'warning')
+			NoCameraCollision:Toggle()
+		end
 	end
     })
 end)
@@ -6877,65 +6942,88 @@ end)
 
 
 run(function()
-    local ProximityExtender
-    local ExtraRange
-    local originals = {}
-    local applying = {}
+    local InteractExtender
+    local Distance
+    local Sight
+    local modified = setmetatable({}, {__mode = 'k'})
+    local environment = (getgenv and getgenv()) or _G
+    local api = environment.AetherInteractExtender or {}
 
-    local function restorePrompt(prompt)
-        local original = originals[prompt]
-        if original ~= nil and prompt.Parent then
-            applying[prompt] = true
-            prompt.MaxActivationDistance = original
-            applying[prompt] = nil
+    local function extendPrompt(prompt)
+        if typeof(prompt) ~= 'Instance' or not prompt:IsA('ProximityPrompt') then return false end
+        if not modified[prompt] then
+            local ok, original = pcall(function()
+                return {Distance = prompt.MaxActivationDistance, Sight = prompt.RequiresLineOfSight}
+            end)
+            if not ok then return false end
+            modified[prompt] = original
         end
-        originals[prompt] = nil
+        local ok = pcall(function()
+            prompt.MaxActivationDistance = Distance.Value
+            prompt.RequiresLineOfSight = not Sight.Enabled
+        end)
+        return ok
     end
 
-    local function applyPrompt(prompt)
-        if not prompt:IsA('ProximityPrompt') then return end
-        if originals[prompt] == nil then
-            originals[prompt] = prompt.MaxActivationDistance
-            ProximityExtender:Clean(prompt.AncestryChanged:Connect(function(_, parent)
-                if not parent then
-                    originals[prompt] = nil
-                    applying[prompt] = nil
-                end
-            end))
-            ProximityExtender:Clean(prompt:GetPropertyChangedSignal('MaxActivationDistance'):Connect(function()
-                if applying[prompt] or not ProximityExtender.Enabled then return end
-                originals[prompt] = prompt.MaxActivationDistance
-                applying[prompt] = true
-                prompt.MaxActivationDistance = originals[prompt] + ExtraRange.Value
-                applying[prompt] = nil
-            end))
+    local function restorePrompt(prompt, original)
+        if original then
+            pcall(function()
+                prompt.MaxActivationDistance = original.Distance
+                prompt.RequiresLineOfSight = original.Sight
+            end)
         end
-        applying[prompt] = true
-        prompt.MaxActivationDistance = originals[prompt] + ExtraRange.Value
-        applying[prompt] = nil
+        modified[prompt] = nil
     end
 
-    ProximityExtender = vape.Categories.World:CreateModule({
-        Name = 'ProximityExtender',
-        Tooltip = 'Adds interaction range and restores every prompt when disabled',
-        Function = function(enabled)
-            if enabled then
-                ProximityExtender:Clean(workspace.DescendantAdded:Connect(applyPrompt))
-                for _, prompt in workspace:GetDescendants() do applyPrompt(prompt) end
+    -- BedWars helpers use this small public surface to activate a prompt after the user has
+    -- explicitly enabled InteractExtender. It avoids a second, competing prompt modifier.
+    api.IsEnabled = function()
+        return InteractExtender and InteractExtender.Enabled == true
+    end
+    api.Activate = function(prompt)
+        if not api.IsEnabled() then return false, 'InteractExtender is disabled' end
+        if not extendPrompt(prompt) then return false, 'invalid prompt' end
+        if type(fireproximityprompt) ~= 'function' then return false, 'fireproximityprompt unavailable' end
+        local ok, result = pcall(fireproximityprompt, prompt)
+        return ok and result ~= false, ok and nil or tostring(result)
+    end
+    environment.AetherInteractExtender = api
+
+    InteractExtender = vape.Categories.World:CreateModule({
+        Name = 'InteractExtender',
+        Function = function(callback)
+            if callback then
+                InteractExtender:Clean(workspace.DescendantAdded:Connect(extendPrompt))
+                for _, prompt in workspace:GetDescendants() do extendPrompt(prompt) end
             else
-                for prompt in originals do restorePrompt(prompt) end
-                table.clear(applying)
+                for prompt, original in modified do restorePrompt(prompt, original) end
+                table.clear(modified)
+            end
+        end,
+        Tooltip = 'Lets you use proximity prompts from further away'
+    })
+
+    Distance = InteractExtender:CreateSlider({
+        Name = 'Distance',
+        Min = 1,
+        Max = 500,
+        Default = 50,
+        Suffix = function(value) return value == 1 and 'stud' or 'studs' end,
+        Function = function(value)
+            if InteractExtender.Enabled then
+                for prompt in modified do pcall(function() prompt.MaxActivationDistance = value end) end
             end
         end
     })
-    ExtraRange = ProximityExtender:CreateSlider({
-        Name = 'Extra activation range', Min = 0, Max = 20, Default = 10, Decimal = 10,
-        Function = function()
-            if ProximityExtender.Enabled then
-                for prompt in originals do applyPrompt(prompt) end
+
+    Sight = InteractExtender:CreateToggle({
+        Name = 'Through walls',
+        Function = function(callback)
+            if InteractExtender.Enabled then
+                for prompt in modified do pcall(function() prompt.RequiresLineOfSight = not callback end) end
             end
         end,
-        Suffix = function(value) return value == 1 and 'stud' or 'studs' end
+        Tooltip = 'Also removes the line of sight requirement'
     })
 end)
 

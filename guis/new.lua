@@ -142,7 +142,7 @@ patchExact('late module edit refresh', [=[
 			local parent = moduleapi.Object.Parent
 			local layout = parent:FindFirstChildOfClass('UIListLayout')
 			if parent:IsA('ScrollingFrame') and layout then
-				parent.CanvasSize = UDim2.fromOffset(0, layout.AbsoluteContentSize.Y)
+				parent.CanvasSize = UDim2.fromOffset(0, layout.AbsoluteContentSize.Y / scale.Scale)
 			end
 		end)
 ]=], 'task.defer(function()\n\t\t\tif not moduleapi.Object or not moduleapi.Object.Parent then return end')
@@ -205,6 +205,33 @@ patchExact('category hover refresh', [=[
 			pencilbutton.Visible = false
 			hiddenCount.Visible = false
 		end
+	end)
+	clickgui:GetPropertyChangedSignal('Visible'):Connect(function()
+		if not clickgui.Visible then
+			-- Closing the whole menu is also the end of a global category-edit session.
+			-- Otherwise Done/pencil visibility and hidden rows retain half of the old state
+			-- when Roblox suppresses MouseLeave on an invisible ScreenGui.
+			if mainapi.EditGUI then
+				mainapi.EditGUI = false
+				for _, category in mainapi.Categories do
+					if category.Type == 'Category' and category.SetEditMode then category:SetEditMode(false) end
+				end
+				pcall(mainapi.Save, mainapi)
+			end
+			categoryHovered = false
+			pencilbutton.Visible = false
+			hiddenCount.Visible = false
+			return
+		end
+		task.defer(function()
+			if not clickgui.Visible or not window.Visible then return end
+			local mouse = inputService:GetMouseLocation()
+			local position, size = window.AbsolutePosition, window.AbsoluteSize
+			categoryHovered = mouse.X >= position.X and mouse.X <= position.X + size.X
+				and mouse.Y >= position.Y and mouse.Y <= position.Y + size.Y
+			pencilbutton.Visible = categoryHovered and not mainapi.EditGUI
+			categoryapi:UpdateHidden()
+		end)
 	end)
 ]=], 'categoryHovered = true')
 

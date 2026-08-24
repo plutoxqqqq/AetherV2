@@ -247,10 +247,6 @@ local getcustomassets = {
 	['aetherv2/assets/new/miniicon.png'] = 'rbxassetid://14368326029',
 	['aetherv2/assets/new/notification.png'] = 'rbxassetid://16738721069',
 	['aetherv2/assets/new/overlaysicon.png'] = 'rbxassetid://14368339581',
-	-- The local bundle does not include these images; use their Roblox assets
-	-- instead of returning an empty image string.
-	['aetherv2/assets/new/favoritesicon.png'] = 'rbxassetid://133471112203189',
-	['aetherv2/assets/new/star.png'] = 'rbxassetid://96102671351955',
 	['aetherv2/assets/new/overlaystab.png'] = 'rbxassetid://14397380433',
 	['aetherv2/assets/new/pin.png'] = 'rbxassetid://14368342301',
 	['aetherv2/assets/new/profilesicon.png'] = 'rbxassetid://14397465323',
@@ -271,8 +267,6 @@ local getcustomassets = {
 	['aetherv2/assets/new/targetplayers2.png'] = 'rbxassetid://14497397862',
 	['aetherv2/assets/new/targetstab.png'] = 'rbxassetid://14497393895',
 	['aetherv2/assets/new/textguiicon.png'] = 'rbxassetid://14368355456',
-	['aetherv2/assets/new/textv4.png'] = 'rbxassetid://14368357095',
-	['aetherv2/assets/new/textvape.png'] = 'rbxassetid://14368358200',
 	['aetherv2/assets/new/utilityicon.png'] = 'rbxassetid://14368359107',
 	['aetherv2/assets/new/vape.png'] = 'rbxassetid://14373395239',
 	['aetherv2/assets/new/warning.png'] = 'rbxassetid://14368361552',
@@ -3997,21 +3991,22 @@ button.MouseButton1Click:Connect(clicked)
 		button.Parent = bar
 		addCorner(button, UDim.new(1, 0))
 		addTooltip(button, 'Open overlays menu')
-		local favoritesbutton = Instance.new('ImageButton')
+		local favoritesbutton = Instance.new('TextButton')
 		favoritesbutton.Name = 'Favorites'
 		favoritesbutton.Size = UDim2.fromOffset(16, 17)
 		favoritesbutton.Position = UDim2.new(1, -59, 0, 11)
 		favoritesbutton.BackgroundTransparency = 1
 		favoritesbutton.AutoButtonColor = false
-		favoritesbutton.Image = getcustomasset('aetherv2/assets/new/favoritesicon.png')
-		favoritesbutton.ImageColor3 = vapecolors.Icon
-		favoritesbutton.ScaleType = Enum.ScaleType.Fit
+		favoritesbutton.Text = '★'
+		favoritesbutton.TextSize = 17
+		favoritesbutton.TextColor3 = vapecolors.Icon
+		favoritesbutton.FontFace = Font.fromEnum(Enum.Font.GothamBold)
 		favoritesbutton.Parent = bar
 		addCorner(favoritesbutton, UDim.new(1, 0))
 		addTooltip(favoritesbutton, 'Favorites')
 		local function paintFavorites()
 			local favorites = mainapi.Categories.Favorites
-			favoritesbutton.ImageColor3 = (favorites and favorites.Standalone) and vapecolors.Favorite or vapecolors.Icon
+			favoritesbutton.TextColor3 = (favorites and favorites.Standalone) and vapecolors.Favorite or vapecolors.Icon
 		end
 		mainapi.PaintFavorites = paintFavorites
 		favoritesbutton.MouseButton1Click:Connect(function()
@@ -4024,7 +4019,7 @@ button.MouseButton1Click:Connect(clicked)
 		end)
 		favoritesbutton.MouseEnter:Connect(function()
 			local favorites = mainapi.Categories.Favorites
-			favoritesbutton.ImageColor3 = (favorites and favorites.Standalone) and Color3.fromRGB(255, 160, 84) or vapecolors.IconHover
+			favoritesbutton.TextColor3 = (favorites and favorites.Standalone) and Color3.fromRGB(255, 160, 84) or vapecolors.IconHover
 		end)
 		favoritesbutton.MouseLeave:Connect(paintFavorites)
 		local homebutton = Instance.new('TextButton')
@@ -5092,7 +5087,7 @@ function mainapi:CreateCategory(categorysettings)
 	title.Size = UDim2.new(1, -(categorysettings.Size.X.Offset > 18 and 40 or 33), 0, 41)
 	title.Position = UDim2.fromOffset(math.abs(title.Size.X.Offset), 0)
 	title.BackgroundTransparency = 1
-	title.Text = categorysettings.Name
+	title.Text = categorysettings.Name == 'Favorites' and '★ Favorites' or categorysettings.Name
 	title.TextXAlignment = Enum.TextXAlignment.Left
 	title.TextColor3 = uipallet.Text
 	title.TextSize = 13
@@ -5325,14 +5320,16 @@ function mainapi:CreateCategory(categorysettings)
 		addTooltip(favourite, 'Add module to favorites')
 		-- Draw the star ourselves instead of depending on the old CatV6 bitmap.  Apart
 		-- from avoiding an asset download, a text glyph scales cleanly with the UI.
-		local favouriteicon = Instance.new('ImageLabel')
+		local favouriteicon = Instance.new('TextLabel')
 		favouriteicon.Name = 'Icon'
 		favouriteicon.Size = UDim2.fromOffset(16, 15)
 		favouriteicon.AnchorPoint = Vector2.new(0.5, 0.5)
 		favouriteicon.Position = UDim2.fromScale(0.5, 0.5)
 		favouriteicon.BackgroundTransparency = 1
-		favouriteicon.Image = getcustomasset('aetherv2/assets/new/star.png')
-		favouriteicon.ImageColor3 = vapecolors.Icon
+		favouriteicon.Text = '★'
+		favouriteicon.TextSize = 15
+		favouriteicon.TextColor3 = vapecolors.Icon
+		favouriteicon.FontFace = Font.fromEnum(Enum.Font.GothamBold)
 		favouriteicon.Parent = favourite
 		local favscale = Instance.new('UIScale')
 		favscale.Parent = favourite
@@ -5341,7 +5338,7 @@ function mainapi:CreateCategory(categorysettings)
 		local function updateFavouriteVisual(instant)
 			local starcolor = moduleapi.Favorited and vapecolors.Favorite or ((hovered or settingsOpen) and vapecolors.IconHover or vapecolors.Icon)
 			favourite.Visible = moduleapi.Favorited or hovered or settingsOpen
-			favouriteicon.ImageColor3 = starcolor
+			favouriteicon.TextColor3 = starcolor
 			favstroke.Enabled = moduleapi.Favorited
 			favstroke.Transparency = moduleapi.Favorited and 0.1 or 1
 		end
@@ -7948,7 +7945,7 @@ function mainapi:CreateOnline()
 	addBlur(window); addCorner(window); addWindowStroke(window); makeDraggable(window)
 	local logo = Instance.new('ImageLabel')
 	logo.Size, logo.Position, logo.BackgroundTransparency = UDim2.fromOffset(16, 16), UDim2.fromOffset(10, 10), 1
-	logo.Image, logo.ImageColor3, logo.Parent = getcustomasset('aetherv2/assets/new/catvape-onlineicon.png'), Color3.fromHSV(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value), window
+	logo.Image, logo.ImageColor3, logo.Parent = getcustomasset('aetherv2/assets/new/aetherlogo.png'), Color3.fromHSV(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value), window
 	local title = Instance.new('TextLabel')
 	title.Size, title.Position, title.BackgroundTransparency = UDim2.fromOffset(140, 38), UDim2.fromOffset(36, 0), 1
 	title.Text, title.TextColor3, title.TextSize, title.FontFace, title.Parent = 'AetherV2 Home', uipallet.Text, 14, uipallet.Font, window
@@ -7960,7 +7957,7 @@ function mainapi:CreateOnline()
 	local avatar = Instance.new('ImageLabel')
 	avatar.Size, avatar.Position = UDim2.fromOffset(52, 52), UDim2.fromOffset(78, 52)
 	avatar.BackgroundColor3, avatar.BorderSizePixel, avatar.Parent = color.Light(uipallet.Main, 0.05), 0, window
-	avatar.Image, avatar.ScaleType = getcustomasset('aetherv2/assets/new/catvape-onlineicon.png'), Enum.ScaleType.Fit
+	avatar.Image, avatar.ScaleType = getcustomasset('aetherv2/assets/new/aetherlogo.png'), Enum.ScaleType.Fit
 	addCorner(avatar, UDim.new(1, 0))
 	local welcome = Instance.new('TextLabel')
 	welcome.Size, welcome.Position, welcome.BackgroundTransparency = UDim2.new(1, -16, 0, 24), UDim2.fromOffset(8, 116), 1
@@ -9522,8 +9519,9 @@ mainapi:CreateCategory({
 -- Favorites category uses the reference GUI's direct MirrorModule implementation.
 mainapi:CreateCategory({
 	Name = 'Favorites',
-	Icon = getcustomasset('aetherv2/assets/new/favoritesicon.png'),
-	Size = UDim2.fromOffset(13, 12),
+	-- The title itself carries a code-native star; no missing bitmap dependency.
+	Icon = '',
+	Size = UDim2.fromOffset(0, 0),
 	Position = UDim2.fromOffset(850, 460),
 	NoButton = true
 })
@@ -10404,7 +10402,7 @@ VapeLogo.BackgroundTransparency = 1
 VapeLogo.BorderSizePixel = 0
 VapeLogo.Visible = false
 VapeLogo.BackgroundColor3 = Color3.new()
-VapeLogo.Image = getcustomasset('aetherv2/assets/new/textvape.png')
+VapeLogo.Image = getcustomasset('aetherv2/assets/new/guivape.png')
 VapeLogo.Parent = textgui.Children
 
 local lastside = textgui.Children.AbsolutePosition.X > (gui.AbsoluteSize.X / 2)
@@ -10426,7 +10424,7 @@ VapeLogoV4.Position = UDim2.new(1, 1, 0, 1)
 VapeLogoV4.BackgroundColor3 = Color3.new()
 VapeLogoV4.BackgroundTransparency = 1
 VapeLogoV4.BorderSizePixel = 0
-VapeLogoV4.Image = getcustomasset('aetherv2/assets/new/textv4.png')
+VapeLogoV4.Image = getcustomasset('aetherv2/assets/new/guiv4.png')
 VapeLogoV4.Parent = VapeLogo
 local VapeLogoShadow = VapeLogo:Clone()
 VapeLogoShadow.Position = UDim2.fromOffset(1, 1)

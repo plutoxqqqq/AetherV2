@@ -95,7 +95,7 @@ patchExact('late module row refresh', [=[
 			local parent = modulebutton.Parent
 			local layout = parent:FindFirstChildOfClass('UIListLayout')
 			if parent:IsA('ScrollingFrame') and layout then
-				parent.CanvasSize = UDim2.fromOffset(0, layout.AbsoluteContentSize.Y)
+				parent.CanvasSize = UDim2.fromOffset(0, layout.AbsoluteContentSize.Y / scale.Scale)
 			end
 		end)
 

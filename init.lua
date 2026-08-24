@@ -628,8 +628,8 @@ local function fetchFile(path, ref, attempts)
 end
 
 local function storeFile(path, body)
-	-- GitHub paths include nested module folders (for example games/aether and
-	-- libraries/bedwars/controllers). Executors generally do not create missing
+	-- GitHub paths include nested folders (for example libraries/bedwars/controllers).
+	-- Executors generally do not create missing
 	-- parents for writefile, so create each parent segment before caching a file.
 	local parent = path:gsub('\\', '/'):match('^(.*)/[^/]+$')
 	if parent then
@@ -980,6 +980,9 @@ local deferredFiles = {
 local function neededFiles(files)
 	if not files then return {} end
 	local gui = selectedGui()
+	-- Nexus shares the shipped assets/new bundle. Looking for assets/newer left every
+	-- icon cold and forced the GUI to fetch them serially while constructing the menu.
+	local assetFolder = gui == 'newer' and 'new' or gui
 	local place = tostring(game.PlaceId)
 	if isfile('aetherv2/profiles/forcegame.txt')
 		and readfile('aetherv2/profiles/forcegame.txt') == 'true'
@@ -995,19 +998,13 @@ local function neededFiles(files)
 		-- pulled another GUI's files down.
 		if path:sub(1, 7) == 'assets/' then
 			-- Only the selected GUI's artwork, plus the loading logo which is always shown.
-			include = path:sub(1, 8 + #gui) == 'assets/'..gui..'/' or path == 'assets/new/loading.png'
+			include = path:sub(1, 8 + #assetFolder) == 'assets/'..assetFolder..'/'
+				or path == 'assets/new/loading.png'
+				or gui == 'old' and (path == 'assets/new/guivape.png' or path == 'assets/new/guiv4.png')
 		elseif path:sub(-4) == '.lua' or path:sub(-5) == '.json' or path:sub(-4) == '.txt' then
 			-- Only this game's module, never the other twenty-odd.
 			if path:sub(1, 6) == 'games/' then
 				include = path == 'games/universal.lua' or path == 'games/'..place..'.lua'
-				-- BedWars is assembled from a local base plus small runtime/port modules.
-				-- Keep those companions warm too, otherwise a successful wrapper download
-				-- can still fail while its first rewrite dependency is fetched.
-				if place == '6872274481' then
-					include = include
-						or path == 'games/6872274481.base.lua'
-						or path:sub(1, #('games/aether/')) == 'games/aether/'
-				end
 			elseif path:sub(1, 5) == 'guis/' then
 				include = path == 'guis/'..gui..'.lua' or path == 'guis/'..gui..'.core.lua'
 			elseif path:sub(1, 6) == 'tools/' or path:sub(1, 1) == '.' then
