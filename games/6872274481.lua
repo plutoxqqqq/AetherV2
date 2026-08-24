@@ -48,6 +48,13 @@ local function replaceBetween(startMarker, endMarker, replacement, label)
     source = source:sub(1, first - 1)..replacement..source:sub(last)
 end
 
+local function replaceOnce(marker, replacement, label)
+    local first, last = source:find(marker, 1, true)
+    if not first then fail(label..' marker missing') end
+    if source:find(marker, last + 1, true) then fail(label..' marker is not unique') end
+    source = source:sub(1, first - 1)..replacement..source:sub(last + 1)
+end
+
 local runtimeBootstrap = [=[local AetherMatchRuntime
 run(function()
     -- AutoWin V7 and JadeInstaKill V2 share one live BedWars capability/runtime layer.
@@ -89,7 +96,9 @@ run(function()
         notif = notif,
         placeBlock = bedwars.placeBlock,
         breakBlock = bedwars.breakBlock,
-        debug = debug
+        debug = debug,
+        Knit = Knit,
+        canDebug = canDebug
     }
 
     local loaded, result = xpcall(function()
@@ -128,6 +137,19 @@ run(function()
     if not portsLoaded then
         warn('[AetherV2] AlSploit ports failed to load: '..tostring(portsResult))
         notif('AetherV2', 'BedWars port modules failed to load. Check the console.', 8, 'warning')
+    end
+
+    local trixieSource = downloadFile('aetherv2/libraries/bedwars/aether/trixie_exploit.lua')
+    local trixieChunk, trixieError = loadstring(trixieSource, 'bedwars/aether/trixie_exploit')
+    if not trixieChunk then
+        warn('[AetherV2] TrixieExploit failed to compile: '..tostring(trixieError))
+    else
+        local trixieLoaded, trixieResult = xpcall(function()
+            return trixieChunk(context)
+        end, debug and debug.traceback or tostring)
+        if not trixieLoaded then
+            warn('[AetherV2] TrixieExploit failed to load: '..tostring(trixieResult))
+        end
     end
 end)
 
@@ -189,6 +211,44 @@ replaceBetween(
     'LongJump Jade method'
 )
 
+local daveyRemoteLaunch = [=[                        local launched = false
+                        local blockpos
+                        local positionOk = pcall(function()
+                            blockpos = bedwars.BlockController:getBlockPosition(cannon.Position)
+                        end)
+
+                        -- CannonHandController:launchSelf currently resolves this exact remote, but
+                        -- its client state gate can reject DaveyAim after automated placement/aim.
+                        -- Send the authoritative launch request directly, matching LongJump's known-
+                        -- working cannon path, and only fall back to the controller if the remote fails.
+                        if positionOk and blockpos and remotes.CannonLaunch then
+                            for _ = 1, 3 do
+                                local sent, result = pcall(function()
+                                    return bedwars.Client:Get(remotes.CannonLaunch):CallServer({cannonBlockPos = blockpos})
+                                end)
+                                if sent and result then
+                                    launched = true
+                                    break
+                                end
+                                runService.PostSimulation:Wait()
+                            end
+                        end
+
+                        if not launched and bedwars.CannonHandController and type(bedwars.CannonHandController.launchSelf) == 'function' then
+                            local sent, result = pcall(bedwars.CannonHandController.launchSelf, bedwars.CannonHandController, cannon)
+                            launched = sent and result ~= false
+                        end
+
+                        if not launched then
+                            notif('DaveyAim', 'Cannon launch was rejected by BedWars.', 5, 'warning')
+                        end]=]
+
+replaceOnce(
+    "\t\t\t\t\t\tbedwars.CannonHandController:launchSelf(cannon)",
+    daveyRemoteLaunch,
+    'DaveyAim direct cannon launch'
+)
+
 -- Acceptance checks happen before the transformed match source is compiled, so a BedWars update
 -- that changes one of the expected boundaries fails loudly instead of executing a half-rewritten
 -- mix of old and new state machines.
@@ -202,8 +262,10 @@ for _, token in ipairs(forbidden) do
     if source:find(token, 1, true) then fail('stale rewrite token remains: '..token) end
 end
 if not source:find("jade:ActivateForTraversal('LongJump'", 1, true) then fail('LongJump Jade adapter was not installed') end
+if not source:find('Cannon launch was rejected by BedWars.', 1, true) then fail('DaveyAim cannon remote fix was not installed') end
 if not source:find('aetherv2/libraries/bedwars/aether/rewrite.lua', 1, true) then fail('reactive runtime bootstrap was not installed') end
 if not source:find('aetherv2/libraries/bedwars/aether/alsploit_ports.lua', 1, true) then fail('BedWars port bootstrap was not installed') end
+if not source:find('aetherv2/libraries/bedwars/aether/trixie_exploit.lua', 1, true) then fail('TrixieExploit bootstrap was not installed') end
 
 local compiled, compileError
 local cache = type(shared.AetherCompileCache) == 'table' and shared.AetherCompileCache or nil
