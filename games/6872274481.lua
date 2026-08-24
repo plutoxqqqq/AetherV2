@@ -30,7 +30,7 @@ end
 
 local function repositoryFile(path)
     local lastError
-    local refs = {currentRef(), ARCHIVE_COMMIT}
+    local refs = {currentRef(), 'main', ARCHIVE_COMMIT}
     local seen = {}
     for _, ref in refs do
         if not seen[ref] then
@@ -84,6 +84,7 @@ end
 local runtimeBootstrap = [=[local AetherMatchRuntime
 run(function()
     local archiveCommit = '8c61b6f4cc72f07ee4838ed766e7833196e0f264'
+
     local function activeRef()
         local ok, ref = pcall(readfile, 'aetherv2/profiles/commit.txt')
         if ok and type(ref) == 'string' then
@@ -92,10 +93,13 @@ run(function()
         end
         return 'main'
     end
+
+    -- Always try current main before the historical archive. A stale commit cache must never make
+    -- newly-added split helper files disappear from an otherwise current loader.
     local function loadArchived(path, chunkName)
         local lastError
         local seen = {}
-        for _, ref in {activeRef(), archiveCommit} do
+        for _, ref in {activeRef(), 'main', archiveCommit} do
             if not seen[ref] then
                 seen[ref] = true
                 local success, result = pcall(game.HttpGet, game,
@@ -110,13 +114,6 @@ run(function()
             end
         end
         return nil, 'download/compile failed: '..tostring(lastError)
-    end
-
-    local runtimeChunk, runtimeError = loadArchived('games/aether/rewrite.lua', 'AetherMatchRuntime')
-    if not runtimeChunk then
-        warn('[AetherV2] AutoWin/JIK runtime compile failed: '..tostring(runtimeError))
-        notif('AetherV2', 'AutoWin/Jade runtime failed to compile. Check the console.', 8, 'warning')
-        return
     end
 
     local context = {
@@ -154,6 +151,30 @@ run(function()
         canDebug = canDebug
     }
 
+    -- TrixieExploit does not depend on AutoWin/Jade runtime state. Load it independently so a
+    -- rewrite/patch/port failure cannot prevent the Kits entry from registering.
+    task.spawn(function()
+        local trixieChunk, trixieError = loadArchived('games/aether/trixie_exploit.lua', 'TrixieExploit')
+        if not trixieChunk then
+            warn('[AetherV2] TrixieExploit failed to compile: '..tostring(trixieError))
+            return
+        end
+
+        local trixieLoaded, trixieResult = xpcall(function()
+            return trixieChunk(context)
+        end, debug and debug.traceback or tostring)
+        if not trixieLoaded then
+            warn('[AetherV2] TrixieExploit failed to load: '..tostring(trixieResult))
+        end
+    end)
+
+    local runtimeChunk, runtimeError = loadArchived('games/aether/rewrite.lua', 'AetherMatchRuntime')
+    if not runtimeChunk then
+        warn('[AetherV2] AutoWin/JIK runtime compile failed: '..tostring(runtimeError))
+        notif('AetherV2', 'AutoWin/Jade runtime failed to compile. Check the console.', 8, 'warning')
+        return
+    end
+
     local loaded, result = xpcall(function()
         return runtimeChunk(context)
     end, debug and debug.traceback or tostring)
@@ -167,38 +188,26 @@ run(function()
     local patchChunk, patchError = loadArchived('games/aether/rewrite_patch.lua', 'AetherMatchRuntimePatch')
     if not patchChunk then
         warn('[AetherV2] AutoWin/JIK integration patch compile failed: '..tostring(patchError))
-        return
-    end
-    local patched, patchResult = xpcall(function()
-        return patchChunk(AetherMatchRuntime, context)
-    end, debug and debug.traceback or tostring)
-    if not patched then
-        warn('[AetherV2] AutoWin/JIK integration patch failed: '..tostring(patchResult))
+    else
+        local patched, patchResult = xpcall(function()
+            return patchChunk(AetherMatchRuntime, context)
+        end, debug and debug.traceback or tostring)
+        if not patched then
+            warn('[AetherV2] AutoWin/JIK integration patch failed: '..tostring(patchResult))
+        end
     end
 
     local portsChunk, portsError = loadArchived('games/aether/alsploit_ports.lua', 'AetherBedWarsPorts')
     if not portsChunk then
         warn('[AetherV2] BedWars ports failed to compile: '..tostring(portsError))
         notif('AetherV2', 'BedWars port modules failed to compile. Check the console.', 8, 'warning')
-        return
-    end
-    local portsLoaded, portsResult = xpcall(function()
-        return portsChunk(AetherMatchRuntime, context)
-    end, debug and debug.traceback or tostring)
-    if not portsLoaded then
-        warn('[AetherV2] BedWars ports failed to load: '..tostring(portsResult))
-        notif('AetherV2', 'BedWars port modules failed to load. Check the console.', 8, 'warning')
-    end
-
-    local trixieChunk, trixieError = loadArchived('games/aether/trixie_exploit.lua', 'TrixieExploit')
-    if not trixieChunk then
-        warn('[AetherV2] TrixieExploit failed to compile: '..tostring(trixieError))
     else
-        local trixieLoaded, trixieResult = xpcall(function()
-            return trixieChunk(context)
+        local portsLoaded, portsResult = xpcall(function()
+            return portsChunk(AetherMatchRuntime, context)
         end, debug and debug.traceback or tostring)
-        if not trixieLoaded then
-            warn('[AetherV2] TrixieExploit failed to load: '..tostring(trixieResult))
+        if not portsLoaded then
+            warn('[AetherV2] BedWars ports failed to load: '..tostring(portsResult))
+            notif('AetherV2', 'BedWars port modules failed to load. Check the console.', 8, 'warning')
         end
     end
 end)
@@ -231,75 +240,75 @@ replaceOnce(
 -- DaveyAim should dump cannon momentum when the player touches down, regardless of whether the
 -- launch came from the automatic Legit/Blatant path or from the manual prompt after aiming.
 replaceOnce(
-[=[		return aimed
-	end
+[=[\t\treturn aimed
+\tend
 
-	DaveyAim = kits:CreateModule({]=],
-[=[		return aimed
-	end
+\tDaveyAim = kits:CreateModule({]=],
+[=[\t\treturn aimed
+\tend
 
-	local function cancelHorizontalOnLanding()
-		task.spawn(function()
-			local character = entitylib.isAlive and entitylib.character
-			local humanoid = character and character.Humanoid
-			local root = character and character.RootPart
-			if not humanoid or not root then return end
+\tlocal function cancelHorizontalOnLanding()
+\t\ttask.spawn(function()
+\t\t\tlocal character = entitylib.isAlive and entitylib.character
+\t\t\tlocal humanoid = character and character.Humanoid
+\t\t\tlocal root = character and character.RootPart
+\t\t\tif not humanoid or not root then return end
 
-			local airborne = false
-			local timeout = tick() + 15
-			repeat
-				runService.Heartbeat:Wait()
-				if not entitylib.isAlive or entitylib.character ~= character or not root.Parent then return end
+\t\t\tlocal airborne = false
+\t\t\tlocal timeout = tick() + 15
+\t\t\trepeat
+\t\t\t\trunService.Heartbeat:Wait()
+\t\t\t\tif not entitylib.isAlive or entitylib.character ~= character or not root.Parent then return end
 
-				if humanoid.FloorMaterial == Enum.Material.Air then
-					airborne = true
-				elseif airborne then
-					local velocity = root.AssemblyLinearVelocity
-					root.AssemblyLinearVelocity = Vector3.new(0, velocity.Y, 0)
-					return
-				end
-			until tick() >= timeout
-		end)
-	end
+\t\t\t\tif humanoid.FloorMaterial == Enum.Material.Air then
+\t\t\t\t\tairborne = true
+\t\t\t\telseif airborne then
+\t\t\t\t\tlocal velocity = root.AssemblyLinearVelocity
+\t\t\t\t\troot.AssemblyLinearVelocity = Vector3.new(0, velocity.Y, 0)
+\t\t\t\t\treturn
+\t\t\t\tend
+\t\t\tuntil tick() >= timeout
+\t\tend)
+\tend
 
-	DaveyAim = kits:CreateModule({]=],
+\tDaveyAim = kits:CreateModule({]=],
     'DaveyAim landing movement helper'
 )
 
 replaceOnce(
-[=[				if LaunchCannon.Enabled then
-					if Mode.Value == 'Legit' then
-						cannon.LaunchSelfPrompt:InputHoldBegin()
-						task.wait(cannon.LaunchSelfPrompt.HoldDuration + runService.PostSimulation:Wait())
-					else
-						bedwars.CannonHandController:launchSelf(cannon)
-					end
-				else]=],
-[=[				if LaunchCannon.Enabled then
-					if Mode.Value == 'Legit' then
-						cannon.LaunchSelfPrompt:InputHoldBegin()
-						task.wait(cannon.LaunchSelfPrompt.HoldDuration + runService.PostSimulation:Wait())
-						cancelHorizontalOnLanding()
-					else
-						bedwars.CannonHandController:launchSelf(cannon)
-						cancelHorizontalOnLanding()
-					end
-				else]=],
+[=[\t\t\t\tif LaunchCannon.Enabled then
+\t\t\t\t\tif Mode.Value == 'Legit' then
+\t\t\t\t\t\tcannon.LaunchSelfPrompt:InputHoldBegin()
+\t\t\t\t\t\ttask.wait(cannon.LaunchSelfPrompt.HoldDuration + runService.PostSimulation:Wait())
+\t\t\t\t\telse
+\t\t\t\t\t\tbedwars.CannonHandController:launchSelf(cannon)
+\t\t\t\t\tend
+\t\t\t\telse]=],
+[=[\t\t\t\tif LaunchCannon.Enabled then
+\t\t\t\t\tif Mode.Value == 'Legit' then
+\t\t\t\t\t\tcannon.LaunchSelfPrompt:InputHoldBegin()
+\t\t\t\t\t\ttask.wait(cannon.LaunchSelfPrompt.HoldDuration + runService.PostSimulation:Wait())
+\t\t\t\t\t\tcancelHorizontalOnLanding()
+\t\t\t\t\telse
+\t\t\t\t\t\tbedwars.CannonHandController:launchSelf(cannon)
+\t\t\t\t\t\tcancelHorizontalOnLanding()
+\t\t\t\t\tend
+\t\t\t\telse]=],
     'DaveyAim automatic landing stop'
 )
 
 replaceOnce(
-[=[					local connection = cannon.LaunchSelfPrompt.Triggered:Connect(function(plr)
-						if plr == lplr then
-							launched = true
-						end
-					end)]=],
-[=[					local connection = cannon.LaunchSelfPrompt.Triggered:Connect(function(plr)
-						if plr == lplr then
-							launched = true
-							cancelHorizontalOnLanding()
-						end
-					end)]=],
+[=[\t\t\t\t\tlocal connection = cannon.LaunchSelfPrompt.Triggered:Connect(function(plr)
+\t\t\t\t\t\tif plr == lplr then
+\t\t\t\t\t\t\tlaunched = true
+\t\t\t\t\t\tend
+\t\t\t\t\tend)]=],
+[=[\t\t\t\t\tlocal connection = cannon.LaunchSelfPrompt.Triggered:Connect(function(plr)
+\t\t\t\t\t\tif plr == lplr then
+\t\t\t\t\t\t\tlaunched = true
+\t\t\t\t\t\t\tcancelHorizontalOnLanding()
+\t\t\t\t\t\tend
+\t\t\t\t\tend)]=],
     'DaveyAim manual landing stop'
 )
 
