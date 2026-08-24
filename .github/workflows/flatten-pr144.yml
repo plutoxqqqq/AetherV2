@@ -2,8 +2,7 @@ name: Flatten PR 144 BedWars file
 
 on:
   push:
-    branches:
-      - rewrite/autowin-v7-jik-v2
+    branches: [rewrite/autowin-v7-jik-v2]
 
 permissions:
   contents: write
@@ -17,160 +16,79 @@ jobs:
         with:
           ref: rewrite/autowin-v7-jik-v2
           fetch-depth: 0
-
-      - name: Flatten BedWars runtime into match file
+      - name: Flatten into games/6872274481.lua
         shell: bash
         run: |
           python3 <<'PY'
           from pathlib import Path
+          g = Path('games')
+          source = (g/'6872274481.base.lua').read_text()
+          runtime = (g/'aether/rewrite.lua').read_text()
+          patch = (g/'aether/rewrite_patch.lua').read_text().replace('libraries/bedwars/aether/rewrite.lua', 'inline Aether BedWars runtime')
+          ports = (g/'aether/alsploit_ports.lua').read_text()
+          trixie = (g/'aether/trixie_exploit.lua').read_text()
 
-          root = Path('.')
-          base_path = root / 'games/6872274481.base.lua'
-          runtime_path = root / 'games/aether/rewrite.lua'
-          patch_path = root / 'games/aether/rewrite_patch.lua'
-          ports_path = root / 'games/aether/alsploit_ports.lua'
-          trixie_path = root / 'games/aether/trixie_exploit.lua'
-          output_path = root / 'games/6872274481.lua'
+          def between(text, a, b, value, label):
+              x = text.find(a)
+              y = text.find(b, x + len(a)) if x >= 0 else -1
+              if x < 0 or y < 0: raise RuntimeError(label + ' markers missing')
+              return text[:x] + value + text[y:]
 
-          source = base_path.read_text(encoding='utf-8')
-          runtime = runtime_path.read_text(encoding='utf-8')
-          patch = patch_path.read_text(encoding='utf-8').replace(
-              '-- Hardening/integration layer for libraries/bedwars/aether/rewrite.lua.',
-              '-- Hardening/integration layer for the inline Aether BedWars runtime.',
-              1,
-          )
-          ports = ports_path.read_text(encoding='utf-8')
-          trixie = trixie_path.read_text(encoding='utf-8')
+          def once(text, old, new, label):
+              if text.count(old) != 1: raise RuntimeError(label + ' marker count != 1')
+              return text.replace(old, new, 1)
 
-          def replace_between(text, start_marker, end_marker, replacement, label):
-              first = text.find(start_marker)
-              if first < 0:
-                  raise RuntimeError(f'{label} start marker missing')
-              last = text.find(end_marker, first + len(start_marker))
-              if last < 0:
-                  raise RuntimeError(f'{label} end marker missing')
-              return text[:first] + replacement + text[last:]
-
-          def replace_once(text, marker, replacement, label):
-              first = text.find(marker)
-              if first < 0:
-                  raise RuntimeError(f'{label} marker missing')
-              if text.find(marker, first + len(marker)) >= 0:
-                  raise RuntimeError(f'{label} marker is not unique')
-              return text[:first] + replacement + text[first + len(marker):]
-
-          runtime_bootstrap = (
-              "local AetherMatchRuntime\n"
-              "run(function()\n"
-              "\t-- AutoWin V7 and JadeInstaKill V2 share one live BedWars runtime, kept inline so\n"
-              "\t-- games/6872274481.lua remains the single BedWars match implementation file.\n"
-              "\tlocal context = {\n"
-              "\t\tvape = vape,\n"
-              "\t\tvapeEvents = vapeEvents,\n"
-              "\t\tentitylib = entitylib,\n"
-              "\t\tbedwars = bedwars,\n"
-              "\t\tstore = store,\n"
-              "\t\tlplr = lplr,\n"
-              "\t\tplayersService = playersService,\n"
-              "\t\trunService = runService,\n"
-              "\t\tcollectionService = collectionService,\n"
-              "\t\treplicatedStorage = replicatedStorage,\n"
-              "\t\thttpService = httpService,\n"
-              "\t\tguiService = guiService,\n"
-              "\t\tcoreGui = coreGui,\n"
-              "\t\tgameCamera = gameCamera,\n"
-              "\t\tinputService = inputService,\n"
-              "\t\tremotes = remotes,\n"
-              "\t\tsortmethods = sortmethods,\n"
-              "\t\tbreakmethods = breakmethods,\n"
-              "\t\tfrictionTable = frictionTable,\n"
-              "\t\tupdateVelocity = updateVelocity,\n"
-              "\t\tgetItem = getItem,\n"
-              "\t\tgetWool = getWool,\n"
-              "\t\tgetBestArmor = getBestArmor,\n"
-              "\t\tgetPlacedBlock = getPlacedBlock,\n"
-              "\t\tswitchItem = switchItem,\n"
-              "\t\tisnetworkowner = isnetworkowner,\n"
-              "\t\tnotif = notif,\n"
-              "\t\tplaceBlock = bedwars.placeBlock,\n"
-              "\t\tbreakBlock = bedwars.breakBlock,\n"
-              "\t\tdebug = debug,\n"
-              "\t\tKnit = Knit,\n"
-              "\t\tcanDebug = canDebug\n"
-              "\t}\n\n"
-              "\tlocal function __AetherRuntime(...)\n" + runtime + "\n\tend\n"
-              "\tlocal loaded, result = xpcall(function()\n"
-              "\t\treturn __AetherRuntime(context)\n"
-              "\tend, debug and debug.traceback or tostring)\n"
-              "\tif not loaded or type(result) ~= 'table' then\n"
-              "\t\twarn('[AetherV2] AutoWin/JIK runtime failed: '..tostring(result))\n"
-              "\t\tnotif('AetherV2', 'AutoWin/Jade runtime failed to start. Check the console.', 8, 'warning')\n"
-              "\t\treturn\n"
-              "\tend\n"
-              "\tAetherMatchRuntime = result\n\n"
-              "\tlocal function __AetherPatch(...)\n" + patch + "\n\tend\n"
-              "\tlocal patched, patchResult = xpcall(function()\n"
-              "\t\treturn __AetherPatch(AetherMatchRuntime, context)\n"
-              "\tend, debug and debug.traceback or tostring)\n"
-              "\tif not patched then\n"
-              "\t\twarn('[AetherV2] AutoWin/JIK integration patch failed: '..tostring(patchResult))\n"
-              "\tend\n\n"
-              "\tlocal function __AetherPorts(...)\n" + ports + "\n\tend\n"
-              "\tlocal portsLoaded, portsResult = xpcall(function()\n"
-              "\t\treturn __AetherPorts(AetherMatchRuntime, context)\n"
-              "\tend, debug and debug.traceback or tostring)\n"
-              "\tif not portsLoaded then\n"
-              "\t\twarn('[AetherV2] BedWars ports failed to load: '..tostring(portsResult))\n"
-              "\t\tnotif('AetherV2', 'BedWars port modules failed to load. Check the console.', 8, 'warning')\n"
-              "\tend\n\n"
-              "\tlocal function __AetherTrixieFactory()\n" + trixie + "\n\tend\n"
-              "\tlocal trixieLoaded, trixieResult = xpcall(function()\n"
-              "\t\tlocal trixieChunk = __AetherTrixieFactory()\n"
-              "\t\treturn trixieChunk and trixieChunk(context)\n"
-              "\tend, debug and debug.traceback or tostring)\n"
-              "\tif not trixieLoaded then\n"
-              "\t\twarn('[AetherV2] TrixieExploit failed to load: '..tostring(trixieResult))\n"
-              "\tend\n"
-              "end)\n\n"
+          context = '''\tlocal context = {
+\t\tvape = vape, vapeEvents = vapeEvents, entitylib = entitylib, bedwars = bedwars, store = store,
+\t\tlplr = lplr, playersService = playersService, runService = runService,
+\t\tcollectionService = collectionService, replicatedStorage = replicatedStorage, httpService = httpService,
+\t\tguiService = guiService, coreGui = coreGui, gameCamera = gameCamera, inputService = inputService,
+\t\tremotes = remotes, sortmethods = sortmethods, breakmethods = breakmethods, frictionTable = frictionTable,
+\t\tupdateVelocity = updateVelocity, getItem = getItem, getWool = getWool, getBestArmor = getBestArmor,
+\t\tgetPlacedBlock = getPlacedBlock, switchItem = switchItem, isnetworkowner = isnetworkowner,
+\t\tnotif = notif, placeBlock = bedwars.placeBlock, breakBlock = bedwars.breakBlock,
+\t\tdebug = debug, Knit = Knit, canDebug = canDebug
+\t}
+'''
+          inline = (
+              'local AetherMatchRuntime\nrun(function()\n' + context +
+              '\tlocal function __AetherRuntime(...)\n' + runtime + '\n\tend\n' +
+              "\tlocal ok, result = xpcall(function() return __AetherRuntime(context) end, debug and debug.traceback or tostring)\n" +
+              "\tif not ok or type(result) ~= 'table' then warn('[AetherV2] AutoWin/JIK runtime failed: '..tostring(result)); return end\n" +
+              '\tAetherMatchRuntime = result\n' +
+              '\tlocal function __AetherPatch(...)\n' + patch + '\n\tend\n' +
+              "\tlocal pok, perr = xpcall(function() return __AetherPatch(AetherMatchRuntime, context) end, debug and debug.traceback or tostring)\n" +
+              "\tif not pok then warn('[AetherV2] AutoWin/JIK patch failed: '..tostring(perr)) end\n" +
+              '\tlocal function __AetherPorts(...)\n' + ports + '\n\tend\n' +
+              "\tlocal aok, aerr = xpcall(function() return __AetherPorts(AetherMatchRuntime, context) end, debug and debug.traceback or tostring)\n" +
+              "\tif not aok then warn('[AetherV2] BedWars ports failed: '..tostring(aerr)) end\n" +
+              '\tlocal function __AetherTrixieFactory()\n' + trixie + '\n\tend\n' +
+              "\tlocal tok, terr = xpcall(function() local f = __AetherTrixieFactory(); return f and f(context) end, debug and debug.traceback or tostring)\n" +
+              "\tif not tok then warn('[AetherV2] TrixieExploit failed: '..tostring(terr)) end\n" +
+              'end)\n\n'
           )
 
-          source = replace_between(
-              source,
+          source = between(source,
               "run(function()\n    ----------------------------------------------------------------------------------------------\n    -- AutoWin (v6) - the unattended match brain.",
-              "\nrun(function()\n    -- EntityAnalyser",
-              runtime_bootstrap,
-              'AutoWin v6',
-          )
-
-          source = replace_between(
-              source,
+              "\nrun(function()\n    -- EntityAnalyser", inline, 'AutoWin')
+          source = between(source,
               "-- Jade hammer execution has two strategies. TP performs the stock slam while following a\n-- moving target; Spoof keeps the server-side damage-scaling payload and never moves the character.\nrun(function()",
               "\nrun(function()\n    local Value\n    local CameraDir\n    local LimitItems",
-              "-- JadeInstaKill V2 is registered by the inline AetherMatchRuntime above.\n",
-              'JadeInstaKill legacy',
-          )
+              "-- JadeInstaKill V2 is registered by the inline AetherMatchRuntime above.\n", 'JadeInstaKill')
 
-          jade_long_jump = '''        jadeHammer = function(item, _, dir)
-            -- LongJump and JadeInstaKill share one Jade resolver/equip/readiness/activation path.
+          jade = '''        jadeHammer = function(item, _, dir)
             local jade = AetherMatchRuntime and AetherMatchRuntime.Jade
             if jade then
-                local result = jade:ActivateForTraversal('LongJump', dir, function()
-                    return not LongJump.Enabled
-                end)
+                local result = jade:ActivateForTraversal('LongJump', dir, function() return not LongJump.Enabled end)
                 if not result.confirmed or not LongJump.Enabled then return end
                 JumpSpeed = 1.4 * Value.Value
                 JumpTick = tick() + 2.5
                 Direction = Vector3.new(dir.X, 0, dir.Z).Unit
                 return
             end
-
-            -- Compatibility fallback if the inline runtime failed to initialize.
             local ability = getJadeAbility(item)
             if not bedwars.AbilityController:canUseAbility(ability) then
-                repeat
-                    task.wait()
-                    ability = getJadeAbility(item)
-                until bedwars.AbilityController:canUseAbility(ability) or not LongJump.Enabled
+                repeat task.wait(); ability = getJadeAbility(item) until bedwars.AbilityController:canUseAbility(ability) or not LongJump.Enabled
             end
             if bedwars.AbilityController:canUseAbility(ability) and LongJump.Enabled then
                 if not activateJadeTool(item) then bedwars.AbilityController:useAbility(ability) end
@@ -183,54 +101,22 @@ jobs:
             end
         end,
 '''
-          source = replace_between(
-              source,
-              "        jadeHammer = function(item, _, dir)\n",
-              "        tnt = function(item, pos, dir)\n",
-              jade_long_jump,
-              'LongJump Jade method',
-          )
+          source = between(source, "        jadeHammer = function(item, _, dir)\n", "        tnt = function(item, pos, dir)\n", jade, 'LongJump Jade')
 
-          ping_marker = "\tmatchState = 0,\n\tqueueType = 'bedwars_test',\n\ttools = {}\n}"
-          ping_replacement = "\tmatchState = 0,\n\tqueueType = 'bedwars_test',\n\ttools = {},\n\tping = setmetatable({}, {\n\t\t__index = function(_, key)\n\t\t\tif key == 'total' or key == 'incoming' then\n\t\t\t\tlocal success, value = pcall(lplr.GetNetworkPing, lplr)\n\t\t\t\treturn success and math.max(tonumber(value) or 0, 0) or 0\n\t\t\tend\n\t\tend\n\t})\n}"
-          source = replace_once(source, ping_marker, ping_replacement, 'cv ping compatibility')
+          old = "\tmatchState = 0,\n\tqueueType = 'bedwars_test',\n\ttools = {}\n}"
+          new = "\tmatchState = 0,\n\tqueueType = 'bedwars_test',\n\ttools = {},\n\tping = setmetatable({}, {\n\t\t__index = function(_, key)\n\t\t\tif key == 'total' or key == 'incoming' then\n\t\t\t\tlocal ok, value = pcall(lplr.GetNetworkPing, lplr)\n\t\t\t\treturn ok and math.max(tonumber(value) or 0, 0) or 0\n\t\t\tend\n\t\tend\n\t})\n}"
+          source = once(source, old, new, 'cv ping')
 
-          required = [
-              "Name = 'AutoWin'",
-              "Name = 'JadeInstaKill'",
-              "Name = 'TrixieExploit'",
-              "Name = 'YaminiExploit'",
-              "Name = 'JadeExploit'",
-              "Name = 'AntiHitBETA'",
-              "Name = 'NoFallDamageV2'",
-              "Name = 'InstantWin'",
-              "Name = 'AntiLagback'",
-              "jade:ActivateForTraversal('LongJump'",
-              "ping = setmetatable({}, {",
-              "bedwars.CannonHandController:launchSelf(cannon)",
-          ]
-          for token in required:
-              if token not in source:
-                  raise RuntimeError(f'missing required flattened token: {token}')
+          for token in ["Name = 'AutoWin'", "Name = 'JadeInstaKill'", "Name = 'TrixieExploit'", "Name = 'YaminiExploit'", "Name = 'JadeExploit'", "Name = 'AntiHitBETA'", "Name = 'NoFallDamageV2'", "Name = 'InstantWin'", "Name = 'AntiLagback'", "jade:ActivateForTraversal('LongJump'", "ping = setmetatable({}, {", "bedwars.CannonHandController:launchSelf(cannon)"]:
+              if token not in source: raise RuntimeError('missing ' + token)
+          for token in ['-- AutoWin (v6) - the unattended match brain.', 'Spoof keeps the server-side damage-scaling payload', "aetherv2/games/aether/", "6872274481.base.lua"]:
+              if token in source: raise RuntimeError('stale split token ' + token)
 
-          forbidden = [
-              '-- AutoWin (v6) - the unattended match brain.',
-              'Spoof keeps the server-side damage-scaling payload',
-              "downloadFile('aetherv2/games/aether/",
-              "raw('games/6872274481.base.lua')",
-          ]
-          for token in forbidden:
-              if token in source:
-                  raise RuntimeError(f'stale split/bootstrap token remains: {token}')
-
-          output_path.write_text(source, encoding='utf-8')
-          print(f'Flattened {len(source):,} bytes into {output_path}')
+          (g/'6872274481.lua').write_text(source)
+          print('flattened bytes:', len(source.encode()))
           PY
-
           rm -f games/6872274481.base.lua
           rm -rf games/aether
-          rm -f .github/workflows/flatten-pr144.yml
-
           test -f games/6872274481.lua
           test ! -e games/6872274481.base.lua
           test ! -e games/aether
@@ -238,14 +124,11 @@ jobs:
           grep -Fq "Name = 'JadeInstaKill'" games/6872274481.lua
           grep -Fq "Name = 'TrixieExploit'" games/6872274481.lua
           grep -Fq "bedwars.CannonHandController:launchSelf(cannon)" games/6872274481.lua
-          ! grep -Fq "aetherv2/games/aether/" games/6872274481.lua
-
-      - name: Commit flattened file
+      - name: Commit to PR branch
         shell: bash
         run: |
-          git config user.name "AetherV2 Automation"
-          git config user.email "actions@users.noreply.github.com"
-          git add -A
-          git status --short
-          git commit -m "Flatten BedWars rewrite back into match file"
+          git config user.name 'AetherV2 Automation'
+          git config user.email 'actions@users.noreply.github.com'
+          git add -A games
+          git commit -m 'Flatten BedWars rewrite into games/6872274481.lua'
           git push origin HEAD:rewrite/autowin-v7-jik-v2
