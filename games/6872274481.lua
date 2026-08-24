@@ -1,16 +1,14 @@
--- AutoWin V7 / JadeInstaKill V2 match bootstrap.
---
--- The pre-rewrite BedWars match source is retained at games/6872274481.base.lua so the connector
--- can reuse its existing Git blob instead of serialising ~1.4 MB through a contents update. This
--- bootstrap removes the legacy AutoWin/JIK blocks before they are compiled, injects the shared
--- reactive runtime, loads the Aether-native ports from games/aether, and redirects LongJump's Jade
--- path to the same JadeAbilityAdapter.
+-- AetherV2 BedWars match entry.
+-- AutoWin V7 / JadeInstaKill V2 and the PR #144 BedWars additions are assembled here from the
+-- reviewed PR snapshot so the repository keeps a single games/6872274481.lua entry.
 
 local license = ... or {}
 if type(license) ~= 'table' then license = {} end
 
+local ARCHIVE_COMMIT = '8c61b6f4cc72f07ee4838ed766e7833196e0f264'
+
 local function fail(message)
-    warn('[AetherV2] BedWars rewrite bootstrap failed: '..tostring(message))
+    warn('[AetherV2] BedWars rewrite failed: '..tostring(message))
     pcall(function()
         game:GetService('StarterGui'):SetCore('SendNotification', {
             Title = 'AetherV2 BedWars rewrite failed',
@@ -21,24 +19,18 @@ local function fail(message)
     error(message, 0)
 end
 
-local commit
-local ok, err = pcall(function()
-    commit = readfile('aetherv2/profiles/commit.txt')
-end)
-if not ok or type(commit) ~= 'string' or commit == '' then
-    fail('Could not resolve the active Aether commit: '..tostring(err))
-end
-
-local function raw(path)
-    local url = 'https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..commit..'/'..path
+local function archive(path)
+    local url = 'https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..ARCHIVE_COMMIT..'/'..path
     local success, result = pcall(game.HttpGet, game, url, true)
     if not success or type(result) ~= 'string' or result == '' or result == '404: Not Found' then
-        fail('Could not load '..path..': '..tostring(result))
+        fail('Could not load archived BedWars source '..path..': '..tostring(result))
     end
     return result
 end
 
-local source = raw('games/6872274481.base.lua')
+-- This snapshot is an ancestor of PR #144 and contains the full pre-rewrite BedWars match source.
+-- Keeping the source lookup pinned means the current PR tree does not need a duplicate base file.
+local source = archive('games/6872274481.base.lua')
 
 local function replaceBetween(startMarker, endMarker, replacement, label)
     local first = source:find(startMarker, 1, true)
@@ -57,9 +49,19 @@ end
 
 local runtimeBootstrap = [=[local AetherMatchRuntime
 run(function()
-    -- AutoWin V7 and JadeInstaKill V2 share one live BedWars capability/runtime layer.
-    local runtimeSource = downloadFile('aetherv2/games/aether/rewrite.lua')
-    local runtimeChunk, runtimeError = loadstring(runtimeSource, 'games/aether/rewrite')
+    -- These sources are pinned to the reviewed PR snapshot. They are not separate files in the
+    -- current tree; this keeps games/6872274481.lua as the only BedWars implementation entry.
+    local archiveCommit = '8c61b6f4cc72f07ee4838ed766e7833196e0f264'
+    local function loadArchived(path, chunkName)
+        local success, result = pcall(game.HttpGet, game,
+            'https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..archiveCommit..'/'..path, true)
+        if not success or type(result) ~= 'string' or result == '' or result == '404: Not Found' then
+            return nil, 'download failed: '..tostring(result)
+        end
+        return loadstring(result, chunkName)
+    end
+
+    local runtimeChunk, runtimeError = loadArchived('games/aether/rewrite.lua', 'AetherMatchRuntime')
     if not runtimeChunk then
         warn('[AetherV2] AutoWin/JIK runtime compile failed: '..tostring(runtimeError))
         notif('AetherV2', 'AutoWin/Jade runtime failed to compile. Check the console.', 8, 'warning')
@@ -111,8 +113,7 @@ run(function()
     end
     AetherMatchRuntime = result
 
-    local patchSource = downloadFile('aetherv2/games/aether/rewrite_patch.lua')
-    local patchChunk, patchError = loadstring(patchSource, 'games/aether/rewrite_patch')
+    local patchChunk, patchError = loadArchived('games/aether/rewrite_patch.lua', 'AetherMatchRuntimePatch')
     if not patchChunk then
         warn('[AetherV2] AutoWin/JIK integration patch compile failed: '..tostring(patchError))
         return
@@ -124,10 +125,9 @@ run(function()
         warn('[AetherV2] AutoWin/JIK integration patch failed: '..tostring(patchResult))
     end
 
-    local portsSource = downloadFile('aetherv2/games/aether/alsploit_ports.lua')
-    local portsChunk, portsError = loadstring(portsSource, 'games/aether/alsploit_ports')
+    local portsChunk, portsError = loadArchived('games/aether/alsploit_ports.lua', 'AetherBedWarsPorts')
     if not portsChunk then
-        warn('[AetherV2] AlSploit ports failed to compile: '..tostring(portsError))
+        warn('[AetherV2] BedWars ports failed to compile: '..tostring(portsError))
         notif('AetherV2', 'BedWars port modules failed to compile. Check the console.', 8, 'warning')
         return
     end
@@ -135,12 +135,11 @@ run(function()
         return portsChunk(AetherMatchRuntime, context)
     end, debug and debug.traceback or tostring)
     if not portsLoaded then
-        warn('[AetherV2] AlSploit ports failed to load: '..tostring(portsResult))
+        warn('[AetherV2] BedWars ports failed to load: '..tostring(portsResult))
         notif('AetherV2', 'BedWars port modules failed to load. Check the console.', 8, 'warning')
     end
 
-    local trixieSource = downloadFile('aetherv2/games/aether/trixie_exploit.lua')
-    local trixieChunk, trixieError = loadstring(trixieSource, 'games/aether/trixie_exploit')
+    local trixieChunk, trixieError = loadArchived('games/aether/trixie_exploit.lua', 'TrixieExploit')
     if not trixieChunk then
         warn('[AetherV2] TrixieExploit failed to compile: '..tostring(trixieError))
     else
@@ -169,10 +168,9 @@ replaceBetween(
     'JadeInstaKill legacy'
 )
 
--- Several modules imported from cv expect store.ping.total to exist. cv owns a separate RTT sampler,
--- while Aether did not create store.ping at all; DaveyAim therefore errored after aiming and before
--- CannonHandController:launchSelf() was reached. Keep cv's proven launch flow and provide the missing
--- compatibility surface from Roblox's native round-trip ping instead of probing a gameplay remote.
+-- cv's DaveyAim reads store.ping.total before calling CannonHandController:launchSelf. Aether's
+-- store did not provide that field, so the module stopped after aiming. Preserve cv's working
+-- controller launch path and provide its missing latency dependency from Roblox's RTT API.
 replaceOnce(
     "\tmatchState = 0,\n\tqueueType = 'bedwars_test',\n\ttools = {}\n}",
     "\tmatchState = 0,\n\tqueueType = 'bedwars_test',\n\ttools = {},\n\tping = setmetatable({}, {\n\t\t__index = function(_, key)\n\t\t\tif key == 'total' or key == 'incoming' then\n\t\t\t\tlocal success, value = pcall(lplr.GetNetworkPing, lplr)\n\t\t\t\treturn success and math.max(tonumber(value) or 0, 0) or 0\n\t\t\tend\n\t\tend\n\t})\n}",
@@ -180,7 +178,6 @@ replaceOnce(
 )
 
 local jadeLongJump = [=[        jadeHammer = function(item, _, dir)
-            -- LongJump and JadeInstaKill share one Jade resolver/equip/readiness/activation path.
             local jade = AetherMatchRuntime and AetherMatchRuntime.Jade
             if jade then
                 local result = jade:ActivateForTraversal('LongJump', dir, function()
@@ -193,8 +190,6 @@ local jadeLongJump = [=[        jadeHammer = function(item, _, dir)
                 return
             end
 
-            -- If the optional runtime failed to load, preserve the old controller path rather than
-            -- breaking LongJump entirely. This is compatibility only; normal runs use the adapter.
             local ability = getJadeAbility(item)
             if not bedwars.AbilityController:canUseAbility(ability) then
                 repeat
@@ -205,7 +200,9 @@ local jadeLongJump = [=[        jadeHammer = function(item, _, dir)
             if bedwars.AbilityController:canUseAbility(ability) and LongJump.Enabled then
                 if not activateJadeTool(item) then bedwars.AbilityController:useAbility(ability) end
                 local deadline = tick() + 0.75
-                repeat task.wait() until not bedwars.AbilityController:canUseAbility(ability) or tick() >= deadline or not LongJump.Enabled
+                repeat
+                    task.wait()
+                until not bedwars.AbilityController:canUseAbility(ability) or tick() >= deadline or not LongJump.Enabled
                 if not LongJump.Enabled or bedwars.AbilityController:canUseAbility(ability) then return end
                 JumpSpeed = 1.4 * Value.Value
                 JumpTick = tick() + 2.5
@@ -221,9 +218,6 @@ replaceBetween(
     'LongJump Jade method'
 )
 
--- Acceptance checks happen before the transformed match source is compiled, so a BedWars update
--- that changes one of the expected boundaries fails loudly instead of executing a half-rewritten
--- mix of old and new state machines.
 local forbidden = {
     '-- AutoWin (v6) - the unattended match brain.',
     'Spoof keeps the server-side damage-scaling payload',
@@ -236,9 +230,6 @@ end
 if not source:find("jade:ActivateForTraversal('LongJump'", 1, true) then fail('LongJump Jade adapter was not installed') end
 if not source:find("ping = setmetatable({}, {", 1, true) then fail('cv ping compatibility was not installed') end
 if not source:find("bedwars.CannonHandController:launchSelf(cannon)", 1, true) then fail('DaveyAim cv cannon launch path is missing') end
-if not source:find('aetherv2/games/aether/rewrite.lua', 1, true) then fail('reactive runtime bootstrap was not installed') end
-if not source:find('aetherv2/games/aether/alsploit_ports.lua', 1, true) then fail('BedWars port bootstrap was not installed') end
-if not source:find('aetherv2/games/aether/trixie_exploit.lua', 1, true) then fail('TrixieExploit bootstrap was not installed') end
 
 local compiled, compileError
 local cache = type(shared.AetherCompileCache) == 'table' and shared.AetherCompileCache or nil
