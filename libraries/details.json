@@ -49,12 +49,6 @@
    "Puts a solid part where the kill plane is, so you land on it instead of falling through."
   ]
  },
- "AntiLagback": {
-  "lines": [
-   "Undoes the server rubber-banding you back onto an older position.",
-   "Recognises a rewind from any direction by keeping a short trail of positions you really held, and holds the correction for a window so the whole multi-frame pull is undone."
-  ]
- },
  "AntiLasso": {
   "lines": [
    "Stops a lasso pulling you, and returns you to where you were when it lets go.",

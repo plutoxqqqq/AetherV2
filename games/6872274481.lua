@@ -18037,11 +18037,8 @@ local function registerTrixie(context)
         return studCandidates, blockCandidates
     end
 
-    local function disableAfterFailure(message)
+    local function reportFailure(message)
         notify(message)
-        task.defer(function()
-            if TrixieExploit and TrixieExploit.Enabled then TrixieExploit:Toggle() end
-        end)
         return false
     end
 
@@ -18050,10 +18047,10 @@ local function registerTrixie(context)
 
         if not (TrixieExploit and TrixieExploit.Enabled) then return false end
         if not isTrixie() then
-            return disableAfterFailure('Equip Trixie before enabling this module.')
+            return reportFailure('Equip Trixie before using this module.')
         end
         if not (canDebug and dbg and type(dbg.getconstants) == 'function' and type(dbg.setconstant) == 'function') then
-            return disableAfterFailure('Your executor cannot patch the Rift Warp range calculation.')
+            return reportFailure('Your executor cannot patch the Rift Warp range calculation.')
         end
 
         local studCandidates, blockCandidates = discover()
@@ -18061,7 +18058,7 @@ local function registerTrixie(context)
         -- Trixie/Rift function exposes 27, which avoids touching unrelated duration constants.
         local candidates = #studCandidates > 0 and studCandidates or blockCandidates
         if #candidates == 0 then
-            return disableAfterFailure('No live Rift Warp range constant was found; BedWars may now validate it server-side.')
+            return reportFailure('No live Rift Warp range constant was found; BedWars may now validate it server-side.')
         end
 
         local desiredBlocks = Distance.Value
@@ -18074,7 +18071,7 @@ local function registerTrixie(context)
         end
 
         if #patched == 0 then
-            return disableAfterFailure('Rift Warp was found but its range could not be patched.')
+            return reportFailure('Rift Warp was found but its range could not be patched.')
         end
 
         return true
@@ -20340,12 +20337,9 @@ local store = assert(ctx.store, 'missing store')
 local lplr = assert(ctx.lplr, 'missing local player')
 local runService = assert(ctx.runService, 'missing RunService')
 local gameCamera = ctx.gameCamera or workspace.CurrentCamera
-local remotes = ctx.remotes or {}
 local getItem = assert(ctx.getItem, 'missing getItem')
-local isnetworkowner = ctx.isnetworkowner or function() return true end
 local notif = ctx.notif or function() end
 local workspaceService = game:GetService('Workspace')
-local teleportService = game:GetService('TeleportService')
 
 local Ports = {Version = 1, Modules = {}, Diagnostics = {}}
 Runtime.AlSploitPorts = Ports
@@ -20462,7 +20456,7 @@ local function addMovementOwner(name)
     if not table.find(movement.ExternalNames, name) then table.insert(movement.ExternalNames, name) end
 end
 
-for _, name in ipairs({'JadeExploit', 'AntiHitBETA', 'AntiLagback'}) do addMovementOwner(name) end
+for _, name in ipairs({'JadeExploit', 'AntiHitBETA'}) do addMovementOwner(name) end
 
 --------------------------------------------------------------------------------
 -- YaminiExploit
@@ -20595,7 +20589,7 @@ if jadeCreated then
 end
 
 --------------------------------------------------------------------------------
--- Shared visual decoy used by AntiHitBETA and AntiLagback
+-- Shared visual decoy used by AntiHitBETA.
 --------------------------------------------------------------------------------
 local function createDecoy(followHorizontal)
     local root, character, humanoid = rootOfLocal()
@@ -20761,165 +20755,6 @@ NoFallDamageV2, noFallCreated = register('Blatant', 'NoFallDamageV2', {
         NoFallDamageV2:Clean(connection)
     end
 })
-
---------------------------------------------------------------------------------
--- InstantWin
---------------------------------------------------------------------------------
-local InstantWin
-local instantCreated
-local instantGeneration = 0
-InstantWin, instantCreated = register('World', 'InstantWin', {
-    Tooltip = 'Ports the original InstantWin teleport-data rejoin sequence.',
-    Function = function(callback)
-        instantGeneration = instantGeneration + 1
-        local generation = instantGeneration
-        if not callback then return end
-        task.spawn(function()
-            local notified = false
-            while InstantWin.Enabled and generation == instantGeneration and not matchRunning() do
-                if not notified then notify('Waiting for match to start for InstantWin', 5); notified = true end
-                task.wait(0.2)
-            end
-            if not InstantWin.Enabled or generation ~= instantGeneration then return end
-            notify('Starting InstantWin', 3)
-            local data
-            safe('instantwin.teleportData', function() data = teleportService:GetLocalPlayerTeleportData() end)
-            if InstantWin.Enabled then InstantWin:Toggle() end
-            safe('instantwin.teleport', teleportService.Teleport, teleportService, game.PlaceId, lplr, data)
-        end)
-    end
-})
-
---------------------------------------------------------------------------------
--- AntiLagback
---------------------------------------------------------------------------------
-local AntiLagback
-local antiLagbackCreated
-local AntiLagbackOptions = {}
-local antiLagbackGeneration = 0
-local antiLagbackBusy = false
-local antiLagbackDecoy
-
-local function fireRemote(remote, payload)
-    if not remote then return false end
-    if typeof(remote) == 'Instance' then
-        if remote:IsA('RemoteEvent') then return pcall(remote.FireServer, remote, payload) end
-        if remote:IsA('RemoteFunction') then return pcall(remote.InvokeServer, remote, payload) end
-    end
-    for _, method in ipairs({'FireServer', 'SendToServer', 'CallServer', 'InvokeServer'}) do
-        if type(remote[method]) == 'function' then
-            local ok = pcall(remote[method], remote, payload)
-            if ok then return true end
-        end
-    end
-    return false
-end
-
-local function voidWalkerRecovery(generation)
-    local root = rootOfLocal()
-    if not root then return false end
-    local direction = horizontalUnit(root.CFrame.LookVector) or Vector3.zAxis
-    local remote = remotes.VoidWalker_ClientUsedWarpAbility or bedwars.VoidWalker_ClientUsedWarpAbility
-    local payload = {
-        clientStartPosition = root.Position + direction * 10,
-        direction = direction,
-        clientDestinationPosition = root.Position + direction * 5
-    }
-    fireRemote(remote, payload)
-    waitCancelable(0.1, function() return generation ~= antiLagbackGeneration or not AntiLagback.Enabled end)
-    useAbility('void_walker_rewind')
-    return true
-end
-
-local function antiLagbackCleanup()
-    if antiLagbackDecoy then antiLagbackDecoy:Destroy(); antiLagbackDecoy = nil end
-    antiLagbackBusy = false
-    local movement = Runtime.Movement
-    local current = movement and movement.Current
-    if current and current.Owner == 'AntiLagback' then current:Release() end
-end
-
-local function genericLagbackRecovery(generation)
-    if antiLagbackBusy then return end
-    antiLagbackBusy = true
-    local movement = Runtime.Movement
-    local lease = movement and movement:Acquire('AntiLagback', movement.Priorities.Emergency, 5, antiLagbackCleanup, true) or nil
-    if movement and not lease then antiLagbackBusy = false; return end
-    antiLagbackDecoy = createDecoy(false)
-    notify('Lagback detected, attempting bypass', 2)
-    local start = tick()
-    local stableSince
-    local ok, err = xpcall(function()
-        while AntiLagback.Enabled and generation == antiLagbackGeneration and tick() - start < 4.5 do
-            local root, character, humanoid = rootOfLocal()
-            if not root or not character or not humanoid or character:FindFirstChildWhichIsA('ForceField') then break end
-            if lease then lease:Renew(0.6) end
-            local owned = isnetworkowner(root)
-            if owned then
-                stableSince = stableSince or tick()
-                if tick() - stableSince > 0.45 then break end
-            else
-                stableSince = nil
-            end
-
-            local direction
-            if AntiLagbackOptions.MovementMethod.Value == 'Manual' then
-                direction = horizontalUnit(humanoid.MoveDirection)
-            end
-            direction = direction or horizontalUnit(gameCamera.CFrame.LookVector)
-            if direction and (not movement or movement:CanWrite('AntiLagback')) then
-                local params = RaycastParams.new()
-                params.FilterType = Enum.RaycastFilterType.Exclude
-                params.FilterDescendantsInstances = antiLagbackDecoy and {character, antiLagbackDecoy.Model} or {character}
-                local ahead = root.Position + direction * 5
-                local ground = workspaceService:Raycast(ahead, Vector3.new(0, -1000, 0), params)
-                local under = workspaceService:Raycast(root.Position - Vector3.new(0, 15, 0) + direction * 5, Vector3.new(0, -1000, 0), params)
-                if ground or under then
-                    local horizontalSpeed = Vector3.new(root.AssemblyLinearVelocity.X, 0, root.AssemblyLinearVelocity.Z).Magnitude
-                    local step = math.clamp(horizontalSpeed / 16, 0.5, 2.5)
-                    root.CFrame = CFrame.new(root.Position + direction * step) * root.CFrame.Rotation
-                end
-            end
-            task.wait()
-        end
-    end, debug and debug.traceback or tostring)
-    if not ok then Ports.Diagnostics.AntiLagback = {At = tick(), Error = tostring(err)} end
-    if antiLagbackDecoy then antiLagbackDecoy:Destroy(); antiLagbackDecoy = nil end
-    if lease then lease:Release() end
-    antiLagbackBusy = false
-    if AntiLagback.Enabled and generation == antiLagbackGeneration then notify('Lagback recovery finished', 2) end
-end
-
-AntiLagback, antiLagbackCreated = register('Exploits', 'AntiLagback', {
-    Tooltip = 'Detects LastTeleported lagbacks and runs a bounded movement/kit recovery path with full cleanup.',
-    Function = function(callback)
-        antiLagbackGeneration = antiLagbackGeneration + 1
-        local generation = antiLagbackGeneration
-        if not callback then antiLagbackCleanup(); return end
-        AntiLagback:Clean(antiLagbackCleanup)
-        local lastHandled = 0
-        local connection = lplr:GetAttributeChangedSignal('LastTeleported'):Connect(function()
-            if not AntiLagback.Enabled or generation ~= antiLagbackGeneration or tick() - lastHandled < 0.75 then return end
-            local _, character = rootOfLocal()
-            if not character or not matchRunning() or character:FindFirstChildWhichIsA('ForceField') then return end
-            lastHandled = tick()
-            task.spawn(function()
-                local kit = tostring(equippedKit() or ''):lower()
-                if AntiLagbackOptions.KitAntiLagback.Enabled and kit == 'void_walker' then
-                    voidWalkerRecovery(generation)
-                else
-                    genericLagbackRecovery(generation)
-                end
-            end)
-        end)
-        AntiLagback:Clean(connection)
-    end
-})
-if antiLagbackCreated then
-    AntiLagbackOptions.KitAntiLagback = AntiLagback:CreateToggle({Name = 'Kit anti-lagback', Default = true})
-    AntiLagbackOptions.MovementMethod = AntiLagback:CreateDropdown({Name = 'Movement method', List = {'Manual', 'Automatic'}})
-    pcall(function() AntiLagbackOptions.MovementMethod:SetValue('Manual') end)
-end
 
 return Ports
 
@@ -38762,10 +38597,18 @@ run(function()
 	local LaunchCannon
 	local ShowTarget
 	local PlaceCannon
+	local LandingColor
+	local SafeLand
 	local nextCannonPlacement = 0
 
 	local rayCheck = RaycastParams.new()
 	rayCheck.RespectCanCollide = true
+	local aimRayCheck = RaycastParams.new()
+	aimRayCheck.FilterType = Enum.RaycastFilterType.Exclude
+	aimRayCheck.RespectCanCollide = true
+	local safeLandingRayCheck = RaycastParams.new()
+	safeLandingRayCheck.FilterType = Enum.RaycastFilterType.Exclude
+	safeLandingRayCheck.RespectCanCollide = true
 
 	local function getLaunchVelocity(delta, velocity, time)
 		return (delta + Vector3.new(0, workspace.Gravity * time * time * 0.5, 0)) / time - velocity
@@ -38867,6 +38710,52 @@ run(function()
 		return middle
 	end
 
+	local function findSafeLanding(aimPosition, cannon)
+		local root = entitylib.character and entitylib.character.RootPart
+		if not root then return nil end
+
+		local ignored = {lplr.Character, gameCamera}
+		if cannon then
+			table.insert(ignored, cannon)
+		end
+		safeLandingRayCheck.FilterDescendantsInstances = ignored
+
+		local directions = {
+			Vector3.zero,
+			Vector3.new(1, 0, 0), Vector3.new(-1, 0, 0), Vector3.new(0, 0, 1), Vector3.new(0, 0, -1),
+			Vector3.new(1, 0, 1).Unit, Vector3.new(1, 0, -1).Unit,
+			Vector3.new(-1, 0, 1).Unit, Vector3.new(-1, 0, -1).Unit
+		}
+		local height = math.max(aimPosition.Y, root.Position.Y) + 72
+
+		-- Search the aimed column first, then expanding rings.  A valid landing needs a
+		-- walkable upward-facing surface, so aiming just beyond an edge selects the nearest
+		-- supported block instead of preserving a void-facing target.
+		for distance = 0, 18, 3 do
+			for index, direction in ipairs(directions) do
+				if distance > 0 or index == 1 then
+					local origin = Vector3.new(aimPosition.X, height, aimPosition.Z) + direction * distance
+					local hit = workspace:Raycast(origin, Vector3.new(0, -180, 0), safeLandingRayCheck)
+					local instance = hit and hit.Instance
+					if hit and hit.Position.Y >= aimPosition.Y - 18 and hit.Normal.Y > 0.65 and (not instance:IsA('BasePart') or instance.CanCollide) then
+						return hit
+					end
+				end
+			end
+		end
+	end
+
+	local function getAimRay(origin, direction)
+		local ignored = {lplr.Character, gameCamera}
+		-- Resolve the cursor before placing a cannon, and ignore any existing cannon blocks.
+		-- This keeps first-person aim from terminating on the cannon in front of the camera.
+		for _, block in store.blocks do
+			if block.Name == 'cannon' then table.insert(ignored, block) end
+		end
+		aimRayCheck.FilterDescendantsInstances = ignored
+		return workspace:Raycast(origin, direction * 10000, aimRayCheck)
+	end
+
 	local function makeVisual(target, blockPosition)
 		local part = Instance.new('Part')
 		part.Size = Vector3.new(3, 3, 3)
@@ -38902,7 +38791,7 @@ run(function()
 		tag.RichText = true
 		tag.FontFace = uipallet.Font
 		tag.TextSize = 14
-		tag.TextColor3 = Color3.new(1, 1, 1)
+		tag.TextColor3 = Color3.fromHSV(LandingColor.Hue, LandingColor.Sat, LandingColor.Value)
 		tag.Parent = billboard
 		bedwars.QueryUtil:setQueryIgnored(part, true)
 		part.Parent = gameCamera
@@ -38997,14 +38886,15 @@ run(function()
 				daveyLanded = true
 				stopDaveyHorizontal(root)
 				cleanup()
-				-- Clamp the next two physics writes too; the cannon controller can write once more in
-				-- the same contact step after Humanoid reports Landed.
+				-- Keep cancelling the velocity through the settling window. The cannon controller and
+				-- humanoid can both write a horizontal impulse after the first Landed frame.
 				task.spawn(function()
-					for _ = 1, 2 do
+					local settleUntil = tick() + 0.35
+					repeat
 						runService.PreSimulation:Wait()
 						if generation ~= daveyLandingGeneration or not root.Parent then return end
 						stopDaveyHorizontal(root)
-					end
+					until tick() >= settleUntil
 				end)
 			end
 
@@ -39041,6 +38931,14 @@ run(function()
 			if callback then
 				DaveyAim:Toggle()
 				if not entitylib.isAlive then return end
+				local mouseRay = cloneref(lplr:GetMouse()).UnitRay
+				local origin = Position.Value == 'Camera' and gameCamera.CFrame.Position or mouseRay.Origin
+				local direction = Position.Value == 'Camera' and gameCamera.CFrame.LookVector or mouseRay.Direction
+				local ray = getAimRay(origin, direction)
+				if not ray then
+					notif('DaveyAim', 'No position found.', 5, 'warning')
+					return
+				end
 
 				local cannon = getCannon()
 				if not cannon then
@@ -39051,14 +38949,14 @@ run(function()
 					end
 				end
 
-				local mouseRay = cloneref(lplr:GetMouse()).UnitRay
-				local origin = Position.Value == 'Camera' and gameCamera.CFrame.Position or mouseRay.Origin
-				local direction = Position.Value == 'Camera' and gameCamera.CFrame.LookVector or mouseRay.Direction
 				rayCheck.FilterDescendantsInstances = {lplr.Character, gameCamera, cannon}
-				local ray = workspace:Raycast(origin, direction * 10000, rayCheck)
-				if not ray then
-					notif('DaveyAim', 'No position found.', 5, 'warning')
-					return
+				if SafeLand.Enabled then
+					local safeRay = findSafeLanding(ray.Position, cannon)
+					if not safeRay then
+						notif('DaveyAim', 'No safe landing surface was found near your aim.', 5, 'warning')
+						return
+					end
+					ray = safeRay
 				end
 
 				local localPosition = entitylib.character.RootPart.Position
@@ -39206,6 +39104,16 @@ run(function()
 		Name = 'Show Target',
 		Default = true,
 		Tooltip = 'Highlights the block you are landing on until you land'
+	})
+	LandingColor = DaveyAim:CreateColorSlider({
+		Name = 'Landing text color',
+		DefaultHue = 0,
+		DefaultSat = 0.001,
+		DefaultValue = 1
+	})
+	SafeLand = DaveyAim:CreateToggle({
+		Name = 'Safe land',
+		Tooltip = 'Moves the target to the nearest supported ground near your aim instead of risking a void landing'
 	})
 	PlaceCannon = DaveyAim:CreateToggle({
 		Name = 'Place cannon',

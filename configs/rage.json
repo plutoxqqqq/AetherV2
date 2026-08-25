@@ -3466,37 +3466,6 @@
       },
       "Bind": []
     },
-    "AntiLagback": {
-      "Enabled": false,
-      "Favourited": false,
-      "Options": {
-        "Force position": {
-          "Enabled": true
-        },
-        "Max Correction": {
-          "Value": 150,
-          "Max": 150
-        },
-        "Sensitivity": {
-          "Value": 30,
-          "Max": 30
-        },
-        "Notifications": {
-          "Enabled": true
-        },
-        "Mode": {
-          "Value": "Freeze"
-        },
-        "Hold time": {
-          "Value": 0.3,
-          "Max": 1
-        },
-        "Vertical pulls": {
-          "Enabled": true
-        }
-      },
-      "Bind": []
-    },
     "Sprint": {
       "Enabled": true,
       "Favourited": false,
