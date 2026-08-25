@@ -1531,7 +1531,7 @@ components = {
 		addGlass(button)
 		button.BorderSizePixel = 0
 		button.AutoButtonColor = false
-		button.Visible = optionsettings.Visible == nil or optionsettings.Visible
+		button.Visible = optionsettings.Visible == nil or type(optionsettings.Visible) == 'function' or optionsettings.Visible
 		button.Text = ''
 		button.Parent = children
 		addTooltip(button, optionsettings.Tooltip)
@@ -1680,7 +1680,7 @@ components = {
 		addGlass(slider)
 		slider.BorderSizePixel = 0
 		slider.AutoButtonColor = false
-		slider.Visible = optionsettings.Visible == nil or optionsettings.Visible
+		slider.Visible = optionsettings.Visible == nil or type(optionsettings.Visible) == 'function' or optionsettings.Visible
 		slider.Text = ''
 		slider.Parent = children
 		addTooltip(slider, optionsettings.Tooltip)
@@ -1996,7 +1996,7 @@ components = {
 	Dropdown = function(optionsettings, children, api)
 		local optionapi = {
 			Type = 'Dropdown',
-			Value = optionsettings.List[1] or 'None',
+			Value = table.find(optionsettings.List, optionsettings.Default) and optionsettings.Default or optionsettings.List[1] or 'None',
 			Index = 0
 		}
 		
@@ -2007,7 +2007,7 @@ components = {
 		addGlass(dropdown)
 		dropdown.BorderSizePixel = 0
 		dropdown.AutoButtonColor = false
-		dropdown.Visible = optionsettings.Visible == nil or optionsettings.Visible
+		dropdown.Visible = optionsettings.Visible == nil or type(optionsettings.Visible) == 'function' or optionsettings.Visible
 		dropdown.Text = ''
 		dropdown.Parent = children
 		addTooltip(dropdown, optionsettings.Tooltip or optionsettings.Name)
@@ -2216,7 +2216,7 @@ components = {
 		addGlass(slider)
 		slider.BorderSizePixel = 0
 		slider.AutoButtonColor = false
-		slider.Visible = optionsettings.Visible == nil or optionsettings.Visible
+		slider.Visible = optionsettings.Visible == nil or type(optionsettings.Visible) == 'function' or optionsettings.Visible
 		slider.Text = ''
 		slider.Parent = children
 		addTooltip(slider, optionsettings.Tooltip)
@@ -2396,7 +2396,7 @@ components = {
 		addGlass(textlist)
 		textlist.BorderSizePixel = 0
 		textlist.AutoButtonColor = false
-		textlist.Visible = optionsettings.Visible == nil or optionsettings.Visible
+		textlist.Visible = optionsettings.Visible == nil or type(optionsettings.Visible) == 'function' or optionsettings.Visible
 		textlist.Text = ''
 		textlist.Parent = children
 		addTooltip(textlist, optionsettings.Tooltip)
@@ -2627,7 +2627,7 @@ components = {
 		targetbutton.Position = optionsettings.Position
 		targetbutton.BackgroundColor3 = color.Light(uipallet.Main, 0.05)
 		targetbutton.AutoButtonColor = false
-		targetbutton.Visible = optionsettings.Visible == nil or optionsettings.Visible
+		targetbutton.Visible = optionsettings.Visible == nil or type(optionsettings.Visible) == 'function' or optionsettings.Visible
 		targetbutton.Text = ''
 		targetbutton.Parent = children
 		addCorner(targetbutton)
@@ -2713,7 +2713,7 @@ components = {
 		addGlass(textbox)
 		textbox.BorderSizePixel = 0
 		textbox.AutoButtonColor = false
-		textbox.Visible = optionsettings.Visible == nil or optionsettings.Visible
+		textbox.Visible = optionsettings.Visible == nil or type(optionsettings.Visible) == 'function' or optionsettings.Visible
 		textbox.Text = ''
 		textbox.Parent = children
 		addTooltip(textbox, optionsettings.Tooltip)
@@ -2799,7 +2799,7 @@ components = {
 		addGlass(textlist)
 		textlist.BorderSizePixel = 0
 		textlist.AutoButtonColor = false
-		textlist.Visible = optionsettings.Visible == nil or optionsettings.Visible
+		textlist.Visible = optionsettings.Visible == nil or type(optionsettings.Visible) == 'function' or optionsettings.Visible
 		textlist.Text = ''
 		textlist.Parent = children
 		addTooltip(textlist, optionsettings.Tooltip)
@@ -3150,7 +3150,7 @@ components = {
 		addGlass(toggle)
 		toggle.BorderSizePixel = 0
 		toggle.AutoButtonColor = false
-		toggle.Visible = optionsettings.Visible == nil or optionsettings.Visible
+		toggle.Visible = optionsettings.Visible == nil or type(optionsettings.Visible) == 'function' or optionsettings.Visible
 		toggle.Text = '          '..optionsettings.Name
 		toggle.TextXAlignment = Enum.TextXAlignment.Left
 		toggle.TextColor3 = color.Dark(uipallet.Text, 0.16)
@@ -3253,7 +3253,7 @@ components = {
 		addGlass(slider)
 		slider.BorderSizePixel = 0
 		slider.AutoButtonColor = false
-		slider.Visible = optionsettings.Visible == nil or optionsettings.Visible
+		slider.Visible = optionsettings.Visible == nil or type(optionsettings.Visible) == 'function' or optionsettings.Visible
 		slider.Text = ''
 		slider.Parent = children
 		addTooltip(slider, optionsettings.Tooltip)
@@ -8913,6 +8913,30 @@ function mainapi:Load(skipgui, profile)
 		savedata.Categories = savedata.Categories or {}
 		savedata.Modules = savedata.Modules or {}
 		savedata.Legit = savedata.Legit or {}
+
+		local mouseTP = savedata.Modules.MouseTP
+		if mouseTP and type(mouseTP.Options) == 'table' then
+			local oldTarget = mouseTP.Options.Mode and mouseTP.Options.Mode.Value
+			if table.find({'Mouse', 'Player', 'Waypoint'}, oldTarget) then
+				mouseTP.Options.Target = mouseTP.Options.Target or {Value = oldTarget}
+				mouseTP.Options.Mode = {Value = 'TP'}
+			end
+			mouseTP.Options.Movement = nil
+			mouseTP.Options.Length = nil
+			mouseTP.Options.Delay = nil
+		end
+
+		local autoEnchant = savedata.Modules.AutoEnchant
+		if autoEnchant and type(autoEnchant.Options) == 'table' and not autoEnchant.Options['Desired enchant'] then
+			local priority = autoEnchant.Options['Priority order']
+			local previous = autoEnchant.Options['Desired enchants'] or autoEnchant.Options['Preferred enchant']
+			local desired = priority and priority.Value
+				or previous and ((previous.ListEnabled and previous.ListEnabled[1]) or (previous.List and previous.List[1]))
+			if desired then autoEnchant.Options['Desired enchant'] = {Value = desired} end
+			autoEnchant.Options['Priority order'] = nil
+			autoEnchant.Options['Desired enchants'] = nil
+			autoEnchant.Options['Preferred enchant'] = nil
+		end
 
 		for i, v in savedata.Categories do
 			local object = self.Categories[i]

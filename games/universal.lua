@@ -46,6 +46,7 @@ end
 local playersService = cloneref(game:GetService('Players'))
 local replicatedStorage = cloneref(game:GetService('ReplicatedStorage'))
 local runService = cloneref(game:GetService('RunService'))
+local pathfindingService = cloneref(game:GetService('PathfindingService'))
 local inputService = cloneref(game:GetService('UserInputService'))
 local textService = cloneref(game:GetService('TextService'))
 local tweenService = cloneref(game:GetService('TweenService'))
@@ -1900,6 +1901,106 @@ run(function()
 end)
 
 run(function()
+    local AirWalk
+    local platform = Instance.new('Part')
+    platform.Name = 'AetherAirWalkGround'
+    platform.Anchored = true
+    platform.CanCollide = true
+    platform.CanQuery = false
+    platform.CanTouch = false
+    platform.Transparency = 1
+    platform.Size = Vector3.new(7, 0.3, 7)
+    platform.CFrame = CFrame.new(0, -10000, 0)
+
+    local rayCheck = RaycastParams.new()
+    rayCheck.FilterType = Enum.RaycastFilterType.Exclude
+    rayCheck.RespectCanCollide = true
+    local lastGroundY
+    local trackedCharacter
+
+    local function clearance(character)
+	return character.HipHeight
+		or ((character.Humanoid and character.Humanoid.HipHeight or 2) + (character.RootPart.Size.Y * 0.5))
+    end
+
+    AirWalk = vape.Categories.Blatant:CreateModule({
+	Name = 'AirWalk',
+	Function = function(callback)
+		if callback then
+			platform.CFrame = CFrame.new(0, -10000, 0)
+			platform.Parent = workspace
+			AirWalk:Clean(runService.PreSimulation:Connect(function()
+				if not entitylib.isAlive then
+					platform.CFrame = CFrame.new(0, -10000, 0)
+					lastGroundY = nil
+					trackedCharacter = nil
+					return
+				end
+
+				local character = entitylib.character
+				if trackedCharacter ~= character.Character then
+					trackedCharacter = character.Character
+					lastGroundY = nil
+				end
+				local root = character.RootPart
+				local standHeight = clearance(character)
+				rayCheck.FilterDescendantsInstances = {lplr.Character, gameCamera, platform}
+				pcall(function() rayCheck.CollisionGroup = root.CollisionGroup end)
+				local ground = workspace:Raycast(
+					root.Position + Vector3.new(0, 0.75, 0),
+					Vector3.new(0, -(standHeight + 2.25), 0),
+					rayCheck
+				)
+
+				if ground and ground.Normal.Y > 0.15 then
+					lastGroundY = ground.Position.Y
+					platform.CFrame = CFrame.new(0, -10000, 0)
+					return
+				end
+
+				if lastGroundY then
+					platform.CFrame = CFrame.new(root.Position.X, lastGroundY - (platform.Size.Y * 0.5), root.Position.Z)
+				else
+					platform.CFrame = CFrame.new(0, -10000, 0)
+				end
+			end))
+		else
+			platform.Parent = nil
+		end
+	end,
+	Tooltip = 'Creates stable fake ground over void at the height of your most recent real floor',
+    })
+
+    -- Remember real floor while the module is off too, so enabling it just after walking
+    -- over an edge uses the ledge height instead of inventing ground at the current air height.
+    vape:Clean(runService.PreSimulation:Connect(function()
+	if AirWalk.Enabled or not entitylib.isAlive then
+		if not entitylib.isAlive then
+			lastGroundY = nil
+			trackedCharacter = nil
+		end
+		return
+	end
+	local character = entitylib.character
+	if trackedCharacter ~= character.Character then
+		trackedCharacter = character.Character
+		lastGroundY = nil
+	end
+	if character.Humanoid.FloorMaterial == Enum.Material.Air then return end
+	local root = character.RootPart
+	local standHeight = clearance(character)
+	rayCheck.FilterDescendantsInstances = {lplr.Character, gameCamera, platform}
+	pcall(function() rayCheck.CollisionGroup = root.CollisionGroup end)
+	local ground = workspace:Raycast(root.Position + Vector3.new(0, 0.75, 0), Vector3.new(0, -(standHeight + 2.25), 0), rayCheck)
+	if ground and ground.Normal.Y > 0.15 then lastGroundY = ground.Position.Y end
+    end))
+
+    vape:Clean(function()
+	platform:Destroy()
+    end)
+end)
+
+run(function()
     local Desync
     local hook
 
@@ -2887,6 +2988,271 @@ run(function()
 end)
 
 run(function()
+    local NoFallDamage
+    local Mode
+    local hook
+    local spoofFalling = false
+    local rayCheck = RaycastParams.new()
+    rayCheck.FilterType = Enum.RaycastFilterType.Exclude
+    rayCheck.RespectCanCollide = true
+
+    local function removeHook()
+	spoofFalling = false
+	if hook then
+		pcall(raknet.remove_send_hook, hook)
+		hook = nil
+	end
+    end
+
+    local function installHook()
+	if hook then return true end
+	if not rakNetCheck('NoFallDamage') then return false end
+	hook = function(packet)
+		if not spoofFalling then return end
+		pcall(function()
+			local data = packet.AsBuffer
+			local packetId = packet.AsArray and packet.AsArray[1]
+			if not packetId and data and buffer.len(data) > 0 then packetId = buffer.readu8(data, 0) end
+			if packetId == 0x1b and data and buffer.len(data) >= 26 then
+				buffer.writeu8(data, 25, Enum.HumanoidStateType.Landed.Value + 32)
+				packet:SetData(data)
+			end
+		end)
+	end
+	raknet.add_send_hook(hook)
+	return true
+    end
+
+    local function standClearance(character)
+	return character.HipHeight
+		or ((character.Humanoid and character.Humanoid.HipHeight or 2) + (character.RootPart.Size.Y * 0.5))
+    end
+
+    local function groundBelow(character, distance)
+	local root = character.RootPart
+	rayCheck.FilterDescendantsInstances = {character.Character, gameCamera}
+	pcall(function() rayCheck.CollisionGroup = root.CollisionGroup end)
+	local result = workspace:Raycast(root.Position, Vector3.new(0, -distance, 0), rayCheck)
+	return result and result.Normal.Y > 0.15 and result or nil
+    end
+
+    NoFallDamage = vape.Categories.Blatant:CreateModule({
+	Name = 'NoFallDamage',
+	Function = function(callback)
+		if callback then
+			if Mode.Value == 'State' and not installHook() then
+				NoFallDamage:Toggle()
+				return
+			end
+
+			NoFallDamage:Clean(runService.PostSimulation:Connect(function()
+				if not entitylib.isAlive then
+					spoofFalling = false
+					return
+				end
+
+				local character = entitylib.character
+				local root, humanoid = character.RootPart, character.Humanoid
+				local velocity = root.AssemblyLinearVelocity
+				local falling = humanoid.FloorMaterial == Enum.Material.Air and velocity.Y < -1
+				spoofFalling = Mode.Value == 'State' and falling
+				if not falling or Mode.Value == 'State' or velocity.Y > -20 then return end
+
+				local ground = groundBelow(character, 2000)
+				if not ground then return end
+				local floorY = ground.Position.Y + standClearance(character)
+				local remaining = root.Position.Y - floorY
+				if remaining <= 1 then return end
+
+				if Mode.Value == 'TP' and velocity.Y <= -55 then
+					character.Character:PivotTo(root.CFrame - Vector3.new(0, remaining, 0))
+					root.AssemblyLinearVelocity = Vector3.new(velocity.X, 0, velocity.Z)
+					humanoid:ChangeState(Enum.HumanoidStateType.Landed)
+				elseif Mode.Value == 'Velocity' and velocity.Y <= -45 then
+					local impactTime = remaining / math.max(math.abs(velocity.Y), 1)
+					if remaining <= 8 or impactTime <= 0.2 then
+						root.AssemblyLinearVelocity = Vector3.new(velocity.X, math.max(velocity.Y, -18), velocity.Z)
+					end
+				end
+			end))
+		else
+			removeHook()
+		end
+	end,
+	ExtraText = function() return Mode.Value end,
+	Tooltip = 'Prevents universal fall damage with a ground teleport, impact slowdown, or landed-state spoof',
+    })
+    Mode = NoFallDamage:CreateDropdown({
+	Name = 'Mode',
+	List = {'TP', 'Velocity', 'State'},
+	Default = 'TP',
+	Function = function()
+		if NoFallDamage.Enabled then
+			NoFallDamage:Toggle()
+			NoFallDamage:Toggle()
+		end
+	end,
+    })
+    vape:Clean(removeHook)
+end)
+
+run(function()
+    local Step
+    local Mode
+    local StepHeight
+    local JumpPower
+    local activeTween
+    local busy = false
+    local nextStep = 0
+
+    local rayCheck = RaycastParams.new()
+    rayCheck.FilterType = Enum.RaycastFilterType.Exclude
+    rayCheck.RespectCanCollide = true
+    local overlapCheck = OverlapParams.new()
+    overlapCheck.FilterType = Enum.RaycastFilterType.Exclude
+    overlapCheck.RespectCanCollide = true
+
+    local function clearance(character)
+	return character.HipHeight
+		or ((character.Humanoid and character.Humanoid.HipHeight or 2) + (character.RootPart.Size.Y * 0.5))
+    end
+
+    local function findStep(character)
+	local root, humanoid = character.RootPart, character.Humanoid
+	local direction = humanoid.MoveDirection * Vector3.new(1, 0, 1)
+	if direction.Magnitude < 0.05 or humanoid.FloorMaterial == Enum.Material.Air then return nil end
+	direction = direction.Unit
+
+	rayCheck.FilterDescendantsInstances = {character.Character, gameCamera}
+	pcall(function() rayCheck.CollisionGroup = root.CollisionGroup end)
+	local standHeight = clearance(character)
+	local ground = workspace:Raycast(
+		root.Position + Vector3.new(0, 0.5, 0),
+		Vector3.new(0, -(standHeight + 3), 0),
+		rayCheck
+	)
+	if not ground or ground.Normal.Y <= 0.15 then return nil end
+
+	local castHeight = math.max(root.Size.Y, 2)
+	local wallOrigin = root.Position - Vector3.new(0, math.max(standHeight - (castHeight * 0.5), 0), 0)
+	local wall = workspace:Blockcast(
+		CFrame.new(wallOrigin),
+		Vector3.new(math.max(root.Size.X * 0.8, 1.4), castHeight, math.max(root.Size.Z * 0.8, 1.4)),
+		direction * 2.75,
+		rayCheck
+	)
+	if not wall or math.abs(wall.Normal.Y) > 0.25 then return nil end
+
+	local wallNormal = wall.Normal * Vector3.new(1, 0, 1)
+	if wallNormal.Magnitude < 0.1 then return nil end
+	wallNormal = wallNormal.Unit
+	local sample = wall.Position - (wallNormal * 0.75)
+	local top = workspace:Raycast(
+		Vector3.new(sample.X, ground.Position.Y + StepHeight.Value + 3, sample.Z),
+		Vector3.new(0, -(StepHeight.Value + 4), 0),
+		rayCheck
+	)
+	if not top or top.Normal.Y <= 0.15 then return nil end
+
+	local height = top.Position.Y - ground.Position.Y
+	if height <= 0.1 or height > StepHeight.Value + 0.05 then return nil end
+	local landing = wall.Position - (wallNormal * (math.max(root.Size.X, root.Size.Z) * 0.55 + 0.65))
+	local target = Vector3.new(landing.X, top.Position.Y + standHeight, landing.Z)
+
+	overlapCheck.FilterDescendantsInstances = {character.Character, top.Instance}
+	pcall(function() overlapCheck.CollisionGroup = root.CollisionGroup end)
+	local occupied = workspace:GetPartBoundsInBox(
+		CFrame.new(target),
+		Vector3.new(math.max(root.Size.X * 0.85, 1.5), math.max(root.Size.Y * 0.9, 1.8), math.max(root.Size.Z * 0.85, 1.5)),
+		overlapCheck
+	)
+	for _, part in ipairs(occupied) do
+		if part.CanCollide then return nil end
+	end
+	return target, height
+    end
+
+    local function clearMotion()
+	busy = false
+	if activeTween then
+		activeTween:Cancel()
+		activeTween = nil
+	end
+    end
+
+    Step = vape.Categories.Blatant:CreateModule({
+	Name = 'Step',
+	Function = function(callback)
+		if callback then
+			nextStep = 0
+			Step:Clean(clearMotion)
+			Step:Clean(runService.PreSimulation:Connect(function()
+				if busy or tick() < nextStep or not entitylib.isAlive then return end
+				local character = entitylib.character
+				local target, height = findStep(character)
+				if not target then return end
+
+				local root, humanoid = character.RootPart, character.Humanoid
+				local rotation = root.CFrame.Rotation
+				nextStep = tick() + 0.2
+				if Mode.Value == 'TP' then
+					character.Character:PivotTo(CFrame.new(target) * rotation)
+					local velocity = root.AssemblyLinearVelocity
+					root.AssemblyLinearVelocity = Vector3.new(velocity.X, math.max(velocity.Y, 0), velocity.Z)
+				elseif Mode.Value == 'Glide' then
+					busy = true
+					activeTween = tweenService:Create(
+						root,
+						TweenInfo.new(math.clamp(height / 18, 0.12, 0.45), Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+						{CFrame = CFrame.new(target) * rotation}
+					)
+					activeTween.Completed:Once(function()
+						activeTween = nil
+						busy = false
+					end)
+					activeTween:Play()
+				else
+					busy = true
+					humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+					humanoid.Jump = true
+					local velocity = root.AssemblyLinearVelocity
+					root.AssemblyLinearVelocity = Vector3.new(velocity.X, JumpPower.Value, velocity.Z)
+					task.delay(0.25, function() busy = false end)
+				end
+			end))
+		else
+			clearMotion()
+		end
+	end,
+	ExtraText = function() return Mode.Value end,
+	Tooltip = 'Moves onto walls only when their top is within the configured height above the real ground',
+    })
+    Mode = Step:CreateDropdown({
+	Name = 'Mode',
+	List = {'TP', 'Glide', 'Jump'},
+	Default = 'TP',
+	Function = function(value)
+		if JumpPower and JumpPower.Object then JumpPower.Object.Visible = value == 'Jump' end
+	end,
+    })
+    StepHeight = Step:CreateSlider({
+	Name = 'Step height',
+	Min = 1,
+	Max = 10,
+	Default = 3,
+	Suffix = function(value) return value == 1 and 'stud' or 'studs' end,
+    })
+    JumpPower = Step:CreateSlider({
+	Name = 'JumpPower',
+	Min = 1,
+	Max = 100,
+	Default = 50,
+	Darker = true,
+	Visible = function() return Mode and Mode.Value == 'Jump' end,
+    })
+end)
+
+run(function()
     local Mode
     local Value
     local AutoDisable
@@ -2952,13 +3318,23 @@ end)
 run(function()
     local MouseTP
     local Mode
-    local MovementMode
-    local Length
-    local Delay
+    local Target
+    local TravelGaps
     local rayCheck = RaycastParams.new()
     rayCheck.RespectCanCollide = true
+    rayCheck.FilterType = Enum.RaycastFilterType.Exclude
+
+    local bridgeApi = {}
+
+    local function standClearance()
+	if not entitylib.isAlive then return 3 end
+	local character = entitylib.character
+	return character.HipHeight
+		or ((character.Humanoid and character.Humanoid.HipHeight or 2) + (character.RootPart.Size.Y * 0.5))
+    end
 
     local function getWaypointInMouse()
+	if not WaypointFolder then return nil end
 	local returned, distance, mouseLocation = nil, math.huge, inputService:GetMouseLocation()
 	for _, v in WaypointFolder:GetChildren() do
 		local position, vis = gameCamera:WorldToViewportPoint(v.StudsOffsetWorldSpace)
@@ -2973,107 +3349,274 @@ run(function()
 	return returned
     end
 
+    local function selectedPosition()
+	if not entitylib.isAlive then return nil end
+	if Target.Value == 'Mouse' then
+		local ray = cloneref(lplr:GetMouse()).UnitRay
+		rayCheck.FilterDescendantsInstances = {lplr.Character, gameCamera}
+		local result = workspace:Raycast(ray.Origin, ray.Direction * 10000, rayCheck)
+		if not result then return nil end
+		local clearance = standClearance()
+		local downOrigin = result.Position + Vector3.new(0, math.max(clearance + 4, 8), 0)
+		local floor = workspace:Raycast(downOrigin, Vector3.new(0, -math.max(clearance + 12, 24), 0), rayCheck)
+		return (floor and floor.Normal.Y > 0.15 and floor.Position or result.Position) + Vector3.new(0, clearance, 0)
+	elseif Target.Value == 'Waypoint' then
+		local waypoint = getWaypointInMouse()
+		return waypoint and waypoint.StudsOffsetWorldSpace
+	end
+
+	local ent = entitylib.EntityMouse({
+		Range = math.huge,
+		Part = 'RootPart',
+		Players = true,
+	})
+	return ent and ent.RootPart.Position
+    end
+
+    local function currentGroundY(root)
+	local clearance = standClearance()
+	rayCheck.FilterDescendantsInstances = {lplr.Character, gameCamera}
+	local result = workspace:Raycast(root.Position + Vector3.new(0, 1, 0), Vector3.new(0, -(clearance + 7), 0), rayCheck)
+	return result and result.Normal.Y > 0.15 and result.Position.Y or (root.Position.Y - clearance)
+    end
+
+    local function createGapBridge(startPosition, destination, groundY, root)
+	local delta = (destination - startPosition) * Vector3.new(1, 0, 1)
+	local distance = delta.Magnitude
+	if distance <= 7 then return nil end
+
+	local support = Instance.new('Part')
+	support.Name = 'AetherMouseTPGapSupport'
+	support.Anchored = true
+	support.CanCollide = true
+	support.CanQuery = false
+	support.CanTouch = false
+	support.Transparency = 1
+	support.Size = Vector3.new(math.clamp(distance * 0.25, 8, 30), 0.35, math.max(distance - 6, 2))
+	local centre = startPosition + (delta * 0.5)
+	centre = Vector3.new(centre.X, groundY - (support.Size.Y * 0.5), centre.Z)
+	support.CFrame = CFrame.lookAt(centre, centre + delta.Unit)
+	pcall(function() support.CollisionGroup = root.CollisionGroup end)
+	support.Parent = workspace
+	MouseTP:Clean(function()
+		if support then support:Destroy() end
+	end)
+	return support
+    end
+
+    local function showPath(waypoints)
+	local folder = Instance.new('Folder')
+	folder.Name = 'AetherMouseTPPath'
+	folder.Parent = workspace
+	local clearance = standClearance()
+	local guiColor = vape.GUIColor
+	local pathColor = guiColor and Color3.fromHSV(guiColor.Hue, guiColor.Sat, guiColor.Value) or Color3.fromRGB(135, 90, 255)
+
+	for index, waypoint in ipairs(waypoints) do
+		local marker = Instance.new('Part')
+		marker.Name = 'AetherPathNode'
+		marker.Anchored = true
+		marker.CanCollide = false
+		marker.CanQuery = false
+		marker.CanTouch = false
+		marker.Transparency = 1
+		marker.Size = Vector3.new(index == #waypoints and 2.8 or 2.2, 0.12, index == #waypoints and 2.8 or 2.2)
+		marker.CFrame = CFrame.new(waypoint.Position - Vector3.new(0, clearance - 0.06, 0))
+		marker:SetAttribute('AetherBlockSelection', true)
+		marker.Parent = folder
+
+		local selection = Instance.new('SelectionBox')
+		selection.Name = 'AetherPathSelection'
+		selection.Adornee = marker
+		selection.Color3 = pathColor
+		selection.SurfaceColor3 = pathColor
+		selection.LineThickness = 0.035
+		selection.Transparency = 0.1
+		selection.SurfaceTransparency = 0.78
+		selection.Parent = marker
+	end
+
+	MouseTP:Clean(function()
+		if folder then folder:Destroy() end
+	end)
+	return folder
+    end
+
+    local function computePath(startPosition, destination, canJump)
+	local path = pathfindingService:CreatePath({
+		AgentRadius = 2,
+		AgentHeight = math.max(5, standClearance() * 2),
+		AgentCanJump = canJump ~= false,
+		AgentCanClimb = true,
+		WaypointSpacing = 2,
+	})
+	local success = pcall(path.ComputeAsync, path, startPosition, destination)
+	if not success or path.Status ~= Enum.PathStatus.Success then return nil end
+	local waypoints = path:GetWaypoints()
+	return #waypoints > 0 and path or nil, waypoints
+    end
+
+    local function pathCrossesVoid(waypoints, support)
+	if #waypoints < 2 then return false end
+	local character = entitylib.character
+	local root = character.RootPart
+	rayCheck.FilterDescendantsInstances = {character.Character, gameCamera, support}
+	pcall(function() rayCheck.CollisionGroup = root.CollisionGroup end)
+	for index = 2, #waypoints do
+		local from, to = waypoints[index - 1].Position, waypoints[index].Position
+		local flat = (to - from) * Vector3.new(1, 0, 1)
+		local steps = math.max(1, math.ceil(flat.Magnitude / 2))
+		for step = 0, steps do
+			local alpha = step / steps
+			local sample = from:Lerp(to, alpha)
+			local origin = Vector3.new(sample.X, math.max(from.Y, to.Y) + 8, sample.Z)
+			local ground = workspace:Raycast(origin, Vector3.new(0, -2000, 0), rayCheck)
+			if not ground or ground.Normal.Y <= 0.15 then return true end
+		end
+	end
+	return false
+    end
+
+    local function travelLegit(destination)
+	local support
+	if TravelGaps.Enabled and entitylib.isAlive then
+		local root = entitylib.character.RootPart
+		support = createGapBridge(root.Position, destination, currentGroundY(root), root)
+	end
+
+	local attempts = 0
+	while MouseTP.Enabled and entitylib.isAlive and attempts < 4 do
+		attempts += 1
+		local character = entitylib.character
+		local root, humanoid = character.RootPart, character.Humanoid
+		local path, waypoints = computePath(root.Position, destination)
+		if path and not TravelGaps.Enabled and pathCrossesVoid(waypoints) then
+			-- Pathfinding may prefer a jump across a small void over a slightly longer walk.
+			-- Recompute without jump links first so a real-floor detour wins when one exists.
+			local groundPath, groundWaypoints = computePath(root.Position, destination, false)
+			if groundPath and not pathCrossesVoid(groundWaypoints) then
+				path, waypoints = groundPath, groundWaypoints
+			else
+				path, waypoints = nil, nil
+			end
+		end
+		if not path then
+			if support then
+				notif('MouseTP', 'No valid route was found, even with gap travel.', 5, 'warning')
+			else
+				notif('MouseTP', 'No gapless route was found. Enable Travel over gaps to bridge voids.', 5, 'warning')
+			end
+			return false
+		end
+
+		local pathFolder = showPath(waypoints)
+		local blockedAt
+		local blocked = path.Blocked:Connect(function(index)
+			blockedAt = index
+		end)
+		local repath = false
+
+		for index, waypoint in ipairs(waypoints) do
+			if not MouseTP.Enabled or not entitylib.isAlive or entitylib.character ~= character then
+				blocked:Disconnect()
+				if pathFolder then pathFolder:Destroy() end
+				return false
+			end
+			if blockedAt and blockedAt <= index + 1 then
+				repath = true
+				break
+			end
+
+			if waypoint.Action == Enum.PathWaypointAction.Jump then
+				humanoid.Jump = true
+				humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+			end
+			humanoid:MoveTo(waypoint.Position)
+			local distance = (root.Position - waypoint.Position).Magnitude
+			local deadline = tick() + math.max(2, distance / math.max(humanoid.WalkSpeed, 1) + 1.5)
+			repeat
+				runService.Heartbeat:Wait()
+				distance = root.Parent and (root.Position - waypoint.Position).Magnitude or math.huge
+			until distance <= 2.5 or tick() >= deadline or not MouseTP.Enabled or (blockedAt and blockedAt <= index + 1)
+			if distance > 2.5 then
+				repath = true
+				break
+			end
+		end
+
+		blocked:Disconnect()
+		if pathFolder then pathFolder:Destroy() end
+		if not repath and (root.Position - destination).Magnitude <= 5 then return true end
+	end
+
+	if MouseTP.Enabled then notif('MouseTP', 'The route became blocked before it could be completed.', 5, 'warning') end
+	return false
+    end
+
     MouseTP = vape.Categories.Blatant:CreateModule({
 	Name = 'MouseTP',
 	Function = function(callback)
-		if callback then
-			local position
-			if Mode.Value == 'Mouse' then
-				local ray = cloneref(lplr:GetMouse()).UnitRay
-				rayCheck.FilterDescendantsInstances = { lplr.Character, gameCamera }
-				ray = workspace:Raycast(ray.Origin, ray.Direction * 10000, rayCheck)
-				position = ray and ray.Position + Vector3.new(0, entitylib.character.HipHeight or 2, 0)
-			elseif Mode.Value == 'Waypoint' then
-				local waypoint = getWaypointInMouse()
-				position = waypoint and waypoint.StudsOffsetWorldSpace
-			else
-				local ent = entitylib.EntityMouse({
-					Range = math.huge,
-					Part = 'RootPart',
-					Players = true,
-				})
-				position = ent and ent.RootPart.Position
-			end
-
-			if not position then
-				notif('MouseTP', 'No position found.', 5)
-				MouseTP:Toggle()
-				return
-			end
-
-			if MovementMode.Value ~= 'Lerp' then
-				MouseTP:Toggle()
-				if entitylib.isAlive then
-					if MovementMode.Value == 'Motor' then
-						motorMove(
-							entitylib.character.RootPart,
-							CFrame.lookAlong(position, entitylib.character.RootPart.CFrame.LookVector)
-						)
-					else
-						entitylib.character.RootPart.CFrame =
-							CFrame.lookAlong(position, entitylib.character.RootPart.CFrame.LookVector)
-					end
-				end
-			else
-				MouseTP:Clean(runService.Heartbeat:Connect(function()
-					if entitylib.isAlive then
-						entitylib.character.RootPart.Velocity = Vector3.zero
-					end
-				end))
-
-				repeat
-					if entitylib.isAlive then
-						local direction = CFrame.lookAt(entitylib.character.RootPart.Position, position).LookVector
-							* math.min((entitylib.character.RootPart.Position - position).Magnitude, Length.Value)
-						entitylib.character.RootPart.CFrame += direction
-						if (entitylib.character.RootPart.Position - position).Magnitude < 3 and MouseTP.Enabled then
-							MouseTP:Toggle()
-						end
-					elseif MouseTP.Enabled then
-						MouseTP:Toggle()
-						notif('MouseTP', 'Character missing', 5, 'warning')
-					end
-
-					task.wait(Delay.Value)
-				until not MouseTP.Enabled
-			end
+		if not callback then return end
+		if not entitylib.isAlive then
+			notif('MouseTP', 'Character missing.', 5, 'warning')
+			MouseTP:Toggle()
+			return
 		end
+
+		local position = selectedPosition()
+		if not position then
+			notif('MouseTP', 'No position found.', 5, 'warning')
+			MouseTP:Toggle()
+			return
+		end
+
+		if Mode.Value == 'Legit' then
+			travelLegit(position)
+		elseif Mode.Value == 'BedWars' then
+			local called, success, reason = pcall(bridgeApi.BedWars, position)
+			if not called or not success then
+				notif('MouseTP', tostring(reason or success or 'No supported BedWars travel item is available.'), 5, 'warning')
+			end
+		else
+			local root = entitylib.character.RootPart
+			root.CFrame = CFrame.lookAlong(position, root.CFrame.LookVector)
+		end
+
+		if MouseTP.Enabled then MouseTP:Toggle() end
 	end,
-	Tooltip = 'Teleports to a selected position',
+	ExtraText = function() return Mode.Value end,
+	Tooltip = 'Travels to the selected mouse, player, or waypoint position',
     })
     Mode = MouseTP:CreateDropdown({
 	Name = 'Mode',
-	List = { 'Mouse', 'Player', 'Waypoint' },
-    })
-    MovementMode = MouseTP:CreateDropdown({
-	Name = 'Movement',
-	List = { 'CFrame', 'Motor', 'Lerp' },
-	Function = function(val)
-		Length.Object.Visible = val == 'Lerp'
-		Delay.Object.Visible = val == 'Lerp'
+	List = {'Legit', 'TP'},
+	Default = 'TP',
+	Function = function(value)
+		if TravelGaps and TravelGaps.Object then TravelGaps.Object.Visible = value == 'Legit' end
 	end,
     })
-    Length = MouseTP:CreateSlider({
-	Name = 'Length',
-	Min = 0,
-	Max = 150,
+    Target = MouseTP:CreateDropdown({
+	Name = 'Target',
+	List = {'Mouse', 'Player', 'Waypoint'},
+	Default = 'Mouse',
+    })
+    TravelGaps = MouseTP:CreateToggle({
+	Name = 'Travel over gaps',
 	Darker = true,
-	Visible = false,
-	Suffix = function(val)
-		return val == 1 and 'stud' or 'studs'
-	end,
+	Visible = function() return Mode and Mode.Value == 'Legit' end,
+	Tooltip = 'Lets Legit paths use temporary AirWalk-style ground across void gaps',
     })
-    Delay = MouseTP:CreateSlider({
-	Name = 'Delay',
-	Min = 0,
-	Max = 1,
-	Decimal = 100,
-	Darker = true,
-	Visible = false,
-	Suffix = function(val)
-		return val == 1 and 'second' or 'seconds'
-	end,
-    })
+
+    function bridgeApi:SetBedWars(callback)
+	local bedWarsSelected = Mode.Value == 'BedWars'
+	self.BedWars = callback
+	Mode:Change(callback and {'Legit', 'TP', 'BedWars'} or {'Legit', 'TP'})
+	if not callback and bedWarsSelected then Mode:SetValue('TP') end
+    end
+    vape.Libraries.MouseTPBridge = bridgeApi
+    vape:Clean(function()
+	if vape.Libraries.MouseTPBridge == bridgeApi then vape.Libraries.MouseTPBridge = nil end
+    end)
 end)
 
 run(function()
@@ -4748,8 +5291,9 @@ run(function()
 			ESP:Toggle()
 			ESP:Toggle()
 		end
-		DisplayName.Object.Visible = callback
-		Background.Object.Visible = callback
+		local visible = callback and Method.Value == '2D'
+		DisplayName.Object.Visible = visible
+		Background.Object.Visible = visible
 	end,
 	Darker = true,
     })
@@ -4763,6 +5307,7 @@ run(function()
 	end,
 	Default = true,
 	Darker = true,
+	Visible = function() return Method and Method.Value == '2D' and Name and Name.Enabled end,
     })
     Background = ESP:CreateToggle({
 	Name = 'Show Background',
@@ -4773,6 +5318,7 @@ run(function()
 		end
 	end,
 	Darker = true,
+	Visible = function() return Method and Method.Value == '2D' and Name and Name.Enabled end,
     })
     Teammates = ESP:CreateToggle({
 	Name = 'Priority Only',
@@ -8126,6 +8672,60 @@ run(function()
 	Tooltip = 'Hides the game interface while filming. The AetherV2 menu stays up'
     })
     Collision = Freecam:CreateToggle({Name = 'Camera collision', Default = true, Tooltip = 'Slides along solid geometry'})
+end)
+
+run(function()
+    local ForcePlayerCollisions
+    local Mode
+    local originals = setmetatable({}, {__mode = 'k'})
+    local collidableParts = {
+	Head = true,
+	HumanoidRootPart = true,
+	Torso = true,
+	UpperTorso = true,
+	LowerTorso = true,
+    }
+
+    local function applyCharacter(character, state)
+	if not character then return end
+	for _, part in ipairs(character:GetChildren()) do
+		if part:IsA('BasePart') and collidableParts[part.Name] then
+			if originals[part] == nil then originals[part] = part.CanCollide end
+			part.CanCollide = state
+		end
+	end
+    end
+
+    local function restore()
+	for part, state in pairs(originals) do
+		if part.Parent then part.CanCollide = state end
+		originals[part] = nil
+	end
+    end
+
+    ForcePlayerCollisions = vape.Categories.World:CreateModule({
+	Name = 'ForcePlayerCollisions',
+	Function = function(callback)
+		if callback then
+			ForcePlayerCollisions:Clean(restore)
+			ForcePlayerCollisions:Clean(runService.PreSimulation:Connect(function()
+				local state = Mode.Value == 'On'
+				for _, player in ipairs(playersService:GetPlayers()) do
+					if player ~= lplr then applyCharacter(player.Character, state) end
+				end
+			end))
+		else
+			restore()
+		end
+	end,
+	ExtraText = function() return Mode.Value end,
+	Tooltip = 'Forces other player characters to be collidable so you can stand on them',
+    })
+    Mode = ForcePlayerCollisions:CreateDropdown({
+	Name = 'Mode',
+	List = {'On', 'Off'},
+	Default = 'On',
+    })
 end)
 
 run(function()
