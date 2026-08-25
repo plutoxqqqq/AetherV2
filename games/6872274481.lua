@@ -493,25 +493,40 @@ local function getHotbar(tool)
 end
 getgenv().getHotbar = getHotbar
 
+local function getReplicatedHand()
+	local character = lplr.Character
+	local hand = character and character:FindFirstChild('HandInvItem')
+	return hand, hand and hand.Value or nil
+end
+
+local function getHotbarTool(inventory, slot)
+	local entry = inventory and inventory.hotbar and inventory.hotbar[slot + 1]
+	return entry and entry.item and entry.item.tool or nil
+end
+
 local function hotbarSwitch(slot)
+	if type(slot) ~= 'number' then return false end
 	local inventory = store.inventory or {}
-	if slot ~= nil and inventory.hotbarSlot ~= slot then
-		local changed = false
-		local connection = vapeEvents.InventoryChanged.Event:Connect(function()
-			changed = true
-		end)
-		bedwars.Store:dispatch({
-			type = 'InventorySelectHotbarSlot',
-			slot = slot
-		})
-		-- Redux dispatch may publish InventoryChanged synchronously. Connecting first avoids
-		-- missing that event, and the deadline prevents a renamed action from hanging a module.
-		local deadline = tick() + 0.6
-		repeat task.wait() until changed or (store.inventory and store.inventory.hotbarSlot == slot) or tick() >= deadline
-		connection:Disconnect()
-		return changed or (store.inventory and store.inventory.hotbarSlot == slot) or false
-	end
-	return inventory.hotbarSlot == slot
+	local expectedTool = getHotbarTool(inventory, slot)
+	local _, liveTool = getReplicatedHand()
+	if inventory.hotbarSlot == slot and liveTool == expectedTool then return true end
+
+	local dispatched = pcall(bedwars.Store.dispatch, bedwars.Store, {
+		type = 'InventorySelectHotbarSlot',
+		slot = slot
+	})
+	if not dispatched then return false end
+
+	-- A changed Redux slot only updates the highlighted hotbar cell. The authoritative equip is
+	-- HandInvItem, so wait for both halves before a module attacks, places, or restores another slot.
+	local deadline = tick() + 0.75
+	repeat
+		task.wait()
+		inventory = store.inventory or inventory
+		expectedTool = getHotbarTool(inventory, slot)
+		_, liveTool = getReplicatedHand()
+	until (inventory.hotbarSlot == slot and liveTool == expectedTool) or tick() >= deadline
+	return inventory.hotbarSlot == slot and liveTool == expectedTool
 end
 getgenv().hotbarSwitch = hotbarSwitch
 
@@ -713,17 +728,26 @@ end
 
 local function switchItem(tool, delayTime)
 	delayTime = delayTime or 0.05
+	-- Hotbar tools must go through the native selection action so the highlighted slot and the
+	-- equipped hand advance together. The direct equip remote is only for inventory-only tools.
+	local slot = tool and getHotbar(tool)
+	if slot ~= nil then return hotbarSwitch(slot) end
 	local check = lplr.Character and lplr.Character:FindFirstChild('HandInvItem') or nil
-	if check and check.Value ~= tool and tool.Parent ~= nil then
-		task.spawn(function()
-			bedwars.Client:Get(remotes.EquipItem):CallServerAsync({hand = tool})
-		end)
-		check.Value = tool
-		if delayTime > 0 then
-			task.wait(delayTime)
-		end
-		return true
-	end
+	if not check or not tool or tool.Parent == nil then return false end
+	if check.Value == tool then return true end
+
+	local requested = pcall(function()
+		bedwars.Client:Get(remotes.EquipItem):CallServerAsync({hand = tool})
+	end)
+	if not requested then return false end
+
+	-- Never assign HandInvItem locally. Doing so changes the viewmodel while the server can still
+	-- reject the equip, leaving a bow on screen while placement/combat continues with the old block.
+	local deadline = tick() + math.max(0.75, delayTime)
+	repeat task.wait() until check.Value == tool or check.Parent == nil or tool.Parent == nil or tick() >= deadline
+	if check.Value ~= tool then return false end
+	if delayTime > 0 then task.wait(delayTime) end
+	return true
 end
 getgenv().switchItem = switchItem
 
@@ -1789,6 +1813,39 @@ run(function()
 		table.insert(sides, Vector3.FromNormalId(v) * 3)
 	end
 
+	local function findInventoryHand(tool)
+		if not tool then return nil end
+		local inventory = store.inventory or {}
+		local observed = inventory.inventory or {}
+		for _, item in (observed.items or {}) do
+			if item.tool == tool then return item end
+		end
+		for _, entry in (inventory.hotbar or {}) do
+			if entry.item and entry.item.tool == tool then return entry.item end
+		end
+		return {tool = tool, itemType = tool.Name, amount = 1}
+	end
+
+	local function syncHand(observedHand)
+		local handObject, liveTool = getReplicatedHand()
+		local currentHand = observedHand
+		-- HandInvItem is replicated by the equip remote. Prefer it whenever Redux and the character
+		-- arrive on different frames so consumers never act on a stale block/bow classification.
+		if handObject and (not currentHand or currentHand.tool ~= liveTool) then
+			currentHand = findInventoryHand(liveTool)
+		end
+
+		local itemType = currentHand and (currentHand.itemType or (currentHand.tool and currentHand.tool.Name))
+		local handData = itemType and bedwars.ItemMeta[itemType]
+		local toolType = handData and (handData.sword and 'sword' or handData.block and 'block' or itemType:find('bow') and 'bow') or ''
+		store.hand = {
+			tool = currentHand and currentHand.tool,
+			itemType = itemType,
+			amount = currentHand and currentHand.amount or 0,
+			toolType = toolType
+		}
+	end
+
 	local function updateStore(new, old)
 		if new.Bedwars ~= old.Bedwars then
 			local state = type(new.Bedwars) == 'table' and new.Bedwars or {}
@@ -1832,27 +1889,42 @@ run(function()
 				end
 			end
 
-			if newinv.inventory.hand ~= oldinv.inventory.hand then
-				local currentHand, toolType = newinv.inventory.hand, ''
-				if currentHand then
-					local handData = bedwars.ItemMeta[currentHand.itemType]
-					if handData then
-						toolType = handData.sword and 'sword' or handData.block and 'block' or currentHand.itemType:find('bow') and 'bow'
-					end
-				end
-
-				store.hand = {
-					tool = currentHand and currentHand.tool,
-					itemType = currentHand and currentHand.itemType,
-					amount = currentHand and currentHand.amount or 0,
-					toolType = toolType
-				}
-			end
+			-- Some BedWars reducers mutate the hand record in place. Always resynchronise it on an
+			-- inventory action instead of relying on table identity to notice a selected-slot change.
+			syncHand(newinv.inventory.hand)
 		end
 	end
 
 	local storeChanged = bedwars.Store.changed:connect(updateStore)
 	updateStore(bedwars.Store:getState(), {})
+
+	local handValueConnection, handAddedConnection
+	local function bindReplicatedHand(character)
+		if handValueConnection then handValueConnection:Disconnect(); handValueConnection = nil end
+		if handAddedConnection then handAddedConnection:Disconnect(); handAddedConnection = nil end
+		local function attach(hand)
+			if not hand or hand.Name ~= 'HandInvItem' then return false end
+			handValueConnection = hand:GetPropertyChangedSignal('Value'):Connect(function()
+				syncHand((store.inventory.inventory or {}).hand)
+			end)
+			syncHand((store.inventory.inventory or {}).hand)
+			return true
+		end
+		if not attach(character and character:FindFirstChild('HandInvItem')) and character then
+			handAddedConnection = character.ChildAdded:Connect(function(child)
+				if attach(child) and handAddedConnection then
+					handAddedConnection:Disconnect()
+					handAddedConnection = nil
+				end
+			end)
+		end
+	end
+	bindReplicatedHand(lplr.Character)
+	vape:Clean(lplr.CharacterAdded:Connect(bindReplicatedHand))
+	vape:Clean(function()
+		if handValueConnection then handValueConnection:Disconnect() end
+		if handAddedConnection then handAddedConnection:Disconnect() end
+	end)
 
 	for _, event in {'MatchEndEvent', 'EntityDeathEvent', 'BedwarsBedBreak', 'BalloonPopped', 'AngelProgress', 'GrapplingHookFunctions'} do
 		if not vape.Connections then return end
@@ -1881,6 +1953,7 @@ run(function()
 	vape:Clean(workspace.ChildAdded:Connect(function(projectile)
 		task.delay(0, function()
 			if projectile and projectile.Parent and entitylib.isAlive and projectile:GetAttribute('ProjectileShooter') == lplr.UserId then
+				if bedwars.ProtectProjectileCollision then bedwars.ProtectProjectileCollision(8) end
 				table.insert(store.selfProjectiles, projectile)
 				projectile.Destroying:Once(function()
 					local index = table.find(store.selfProjectiles, projectile)
@@ -6336,7 +6409,7 @@ run(function()
 	local previousCleanup = shared.AetherMultiActionCleanup
     local hooks, activeCalls, lastBypass = {}, {}, {}
     local controllerCache = {}
-    local actionNames = {'Hotbar switching', 'Melee attacking', 'Block placement'}
+    local actionNames = {'Melee attacking', 'Block placement'}
     local contextNames = {'Projectile charging', 'Consuming', 'Ability aiming'}
 
     local function selected(option, name)
@@ -6404,18 +6477,13 @@ run(function()
         for controller, contextStates in found do
             -- Hide the active-state marker only for the duration of the requested action. This
             -- bypasses the local guard without advancing or completing the underlying action.
-			-- Hotbar changes are different: equipping another tool can genuinely cancel a draw,
-			-- consume, or kit aim. Leave its progress marker visible so the native equip path can
-			-- perform that cancellation, and clear only a separate generic busy gate below.
-			if action ~= 'Hotbar switching' then
-				for _, state in contextStates do
-					table.insert(bypasses, {
-						Object = controller,
-						Key = state.Key,
-						Value = state.Value,
-						Temporary = if type(state.Value) == 'boolean' then false else nil
-					})
-				end
+			for _, state in contextStates do
+				table.insert(bypasses, {
+					Object = controller,
+					Key = state.Key,
+					Value = state.Value,
+					Temporary = if type(state.Value) == 'boolean' then false else nil
+				})
 			end
             -- Builds that split `isCharging` from `busy` check the latter in block/melee methods.
             for key, value in controller do
@@ -6486,11 +6554,6 @@ run(function()
         hook(placement, 'placeBlock', 'Block placement')
         hook(placement and placement.blockPlacer, 'placeBlock', 'Block placement')
         hook(store.blockPlacer, 'placeBlock', 'Block placement')
-
-        local storeController = bedwars.Store
-        hook(storeController, 'dispatch', 'Hotbar switching', function(_, action)
-            return type(action) == 'table' and action.type == 'InventorySelectHotbarSlot'
-        end)
     end
 
     MultiAction = vape.Categories.Exploits:CreateModule({
@@ -6513,7 +6576,7 @@ run(function()
         end,
         Tooltip = 'Separates compatible local action locks without changing progress, speed, cooldowns, inputs, or remotes'
     })
-    AllowedActions = MultiAction:CreateTextList({Name = 'Allowed actions', Default = actionNames, Tooltip = 'Enable only these exact entries: Hotbar switching, Melee attacking, Block placement'})
+    AllowedActions = MultiAction:CreateTextList({Name = 'Allowed actions', Default = actionNames, Tooltip = 'Enable only these exact entries: Melee attacking, Block placement. Hotbar switching stays native so equips cannot desynchronise.'})
     ActiveContexts = MultiAction:CreateTextList({Name = 'Active contexts', Default = contextNames, Tooltip = 'Enable only these exact entries: Projectile charging, Consuming, Ability aiming'})
 end)
 
@@ -6569,30 +6632,96 @@ end)
 -- CanQuery false after it returns also hides an avatar from arrow/projectile raycasts.
 run(function()
     local IgnorePlaceHitboxes
+	local activeScopes = 0
+	local collisionProtectedUntil = 0
+	local lastRepair = 0
+	local scopedParts = setmetatable({}, {__mode = 'k'})
+
+	local function repairCharacterQueries(force)
+		if activeScopes > 0 and not force then return false end
+		local now = tick()
+		if now - lastRepair < 0.1 and not (force and activeScopes > 0) then return true end
+		lastRepair = now
+		for _, plr in playersService:GetPlayers() do
+			local character = plr.Character
+			local humanoid = character and character:FindFirstChildOfClass('Humanoid')
+			if humanoid then
+				-- Direct character parts are the actual avatar hit geometry. Do not touch effect or
+				-- accessory descendants which may intentionally be non-queryable.
+				for _, part in character:GetChildren() do
+					if part:IsA('BasePart') and not part.CanQuery then part.CanQuery = true end
+				end
+			end
+		end
+		return true
+	end
+
+	local function protectProjectileCollision(duration)
+		collisionProtectedUntil = math.max(collisionProtectedUntil, tick() + (duration or 8))
+		repairCharacterQueries(true)
+	end
+
+	local function projectileCollisionProtected()
+		return tick() < collisionProtectedUntil or (store.selfProjectiles and #store.selfProjectiles > 0)
+	end
+
     local function withIgnoredHitboxes(callback)
-        local originals = {}
+		-- Projectile collision wins over placement-through-players. The old implementation could
+		-- make every avatar non-queryable during a shot and overlapping calls could leave them that
+		-- way permanently.
+		if projectileCollisionProtected() then return callback() end
+
+		activeScopes += 1
+		local acquired = {}
         for _, plr in playersService:GetPlayers() do
             local character = plr.Character
             if character then
                 for _, part in character:GetDescendants() do
                     if part:IsA('BasePart') then
-                        originals[part] = part.CanQuery
+						local state = scopedParts[part]
+						if state then
+							state.Depth += 1
+						else
+							state = {Depth = 1, Original = part.CanQuery}
+							scopedParts[part] = state
+						end
+						table.insert(acquired, part)
                         part.CanQuery = false
                     end
                 end
             end
         end
         local results = table.pack(xpcall(callback, function(err) return err end))
-        for part, value in originals do
-            if part.Parent then part.CanQuery = value end
-        end
+		for _, part in acquired do
+			local state = scopedParts[part]
+			if state then
+				state.Depth -= 1
+				if state.Depth <= 0 then
+					if part.Parent then part.CanQuery = state.Original end
+					scopedParts[part] = nil
+				end
+			end
+		end
+		activeScopes = math.max(activeScopes - 1, 0)
+		if activeScopes == 0 then repairCharacterQueries(false) end
         if not results[1] then error(results[2], 0) end
         return table.unpack(results, 2, results.n)
     end
 
+	bedwars.EnsureProjectileCollision = repairCharacterQueries
+	bedwars.ProtectProjectileCollision = protectProjectileCollision
+	repairCharacterQueries(true)
+	local removeProjectileGuard
+	if bedwars.ProjectileLaunchHook then
+		removeProjectileGuard = bedwars.ProjectileLaunchHook:Add('ProjectileCollisionGuard', 0, function(nextLaunch, ...)
+			protectProjectileCollision(8)
+			return nextLaunch(...)
+		end)
+	end
+
     IgnorePlaceHitboxes = vape.Categories.World:CreateModule({
         Name = 'IgnorePlaceHitboxes',
-        Tooltip = 'Allows block placement through players and your own character',
+		Tooltip = 'Allows block placement through players without disabling projectile hit detection',
         Function = function(enabled)
             if enabled then
                 bedwars.IgnorePlaceHitboxes = withIgnoredHitboxes
@@ -6601,6 +6730,18 @@ run(function()
             end
         end
     })
+	vape:Clean(function()
+		bedwars.IgnorePlaceHitboxes = nil
+		if removeProjectileGuard then removeProjectileGuard(); removeProjectileGuard = nil end
+		for part, state in scopedParts do
+			if part.Parent then part.CanQuery = state.Original end
+		end
+		table.clear(scopedParts)
+		activeScopes = 0
+		repairCharacterQueries(true)
+		bedwars.EnsureProjectileCollision = nil
+		bedwars.ProtectProjectileCollision = nil
+	end)
 end)
 
 run(function()
@@ -9527,6 +9668,7 @@ run(function()
 			if callback then
 				old = bedwars.ProjectileController.calculateImportantLaunchValues
 				bedwars.ProjectileController.calculateImportantLaunchValues = function(...)
+					if bedwars.ProtectProjectileCollision then bedwars.ProtectProjectileCollision(8) end
 					local self, projmeta, worldmeta, origin, shootpos = ...
 					local plr = entitylib.EntityMouse({
 						Part = 'RootPart',
@@ -9577,6 +9719,8 @@ run(function()
 
 						local newlook = CFrame.new(offsetpos, plr[TargetPart.Value].Position) * CFrame.new(projmeta.projectile == 'owl_projectile' and Vector3.zero or Vector3.new(bedwars.BowConstantsTable.RelX, bedwars.BowConstantsTable.RelY, bedwars.BowConstantsTable.RelZ))
 						local predictionScale = maxAccuracyScale
+						local map = store.map or workspace:FindFirstChild('Map')
+						rayCheck.FilterDescendantsInstances = map and {map} or {}
 						local calc = prediction.SolveTrajectory(newlook.p, projSpeed * predictionScale, gravity, plr[TargetPart.Value].Position, projmeta.projectile == 'telepearl' and Vector3.zero or plr[TargetPart.Value].Velocity, playerGravity, plr.HipHeight, plr.Jumping and 42.6 or nil, rayCheck, plr.Humanoid.FloorMaterial == Enum.Material.Air or math.abs(plr.RootPart.Velocity.Y) > 0.01, plr.RootPart.Position, plr.RootPart, nil, true)
 						if calc then
 							targetinfo.Targets[plr] = tick() + 1
@@ -9680,6 +9824,9 @@ run(function()
 	local rayCheck = RaycastParams.new()
 	rayCheck.FilterType = Enum.RaycastFilterType.Include
 	rayCheck.FilterDescendantsInstances = {workspace:FindFirstChild('Map')}
+	local arcRayCheck = RaycastParams.new()
+	arcRayCheck.FilterType = Enum.RaycastFilterType.Exclude
+	arcRayCheck.RespectCanCollide = true
 
 	local launchHook
 
@@ -9716,6 +9863,21 @@ run(function()
 		return
 	end
 
+	local function clearProjectileArc(origin, velocity, gravity, travelTime, target)
+		if not (Targets.Walls and Targets.Walls.Enabled) then return true end
+		arcRayCheck.FilterDescendantsInstances = {lplr.Character, gameCamera, target and target.Character}
+		local previous = origin
+		local traceTime = travelTime * 0.92
+		local steps = math.clamp(math.ceil(traceTime * 30), 8, 90)
+		for index = 1, steps do
+			local elapsed = traceTime * index / steps
+			local point = origin + velocity * elapsed - Vector3.new(0, gravity * elapsed * elapsed * 0.5, 0)
+			if workspace:Raycast(previous, point - previous, arcRayCheck) then return false end
+			previous = point
+		end
+		return true
+	end
+
 	local function solveSilent(launch, launchMeta)
 		local origin = launch and launch.positionFrom
 		local velocity = launch and launch.initialVelocity
@@ -9737,7 +9899,7 @@ run(function()
 
 		local speed = velocity.Magnitude
 		if speed <= 0 then return end
-		local gravity = meta.gravitationalAcceleration or 196.2
+		local gravity = tonumber(launch.gravitationalAcceleration) or meta.gravitationalAcceleration or 196.2
 
 		local plr = entitylib.EntityMouse({
 			Part = 'RootPart',
@@ -9762,11 +9924,15 @@ run(function()
 		local pearl = projType == 'telepearl'
 		local targetVelocity = pearl and Vector3.zero or plr.RootPart.AssemblyLinearVelocity
 		local targetAirborne = not pearl and plr.Humanoid.FloorMaterial == Enum.Material.Air or math.abs(targetVelocity.Y) > 0.01
+		local map = store.map or workspace:FindFirstChild('Map')
+		rayCheck.FilterDescendantsInstances = map and {map} or {}
 		local calc, _, travelTime = prediction.SolveTrajectory(origin, speed * Prediction.Value, gravity, targetpos, targetVelocity, playerGravity, plr.HipHeight, plr.Jumping and 42.6 or nil, rayCheck, targetAirborne, plr.RootPart.Position, plr.RootPart, nil, true)
 		if not calc or not travelTime or travelTime > (meta.lifetimeSec or 3) then return end
 
+		local redirect = CFrame.lookAt(origin, calc).LookVector * speed
+		if not clearProjectileArc(origin, redirect, gravity, travelTime, plr) then return end
 		targetinfo.Targets[plr] = tick() + 1
-		return CFrame.lookAt(origin, calc).LookVector * speed
+		return redirect
 	end
 
 	SilentAim = vape.Categories.Combat:CreateModule({
@@ -9780,10 +9946,15 @@ run(function()
 				end
 				launchHook = bedwars.ProjectileLaunchHook:Add('SilentAim', 15, function(nextLaunch, ...)
 					local launch = nextLaunch(...)
+					-- The controller can reuse launch tables between preview/fire calls. Clone before
+					-- redirecting so SilentAim state cannot leak into a later native projectile.
 					-- ProjectileAimbot is the stronger explicit aim module; do not overwrite its result.
 					if not (vape.Modules.ProjectileAimbot and vape.Modules.ProjectileAimbot.Enabled) then
 						local velocity = solveSilent(launch, select(2, ...))
-						if velocity then launch.initialVelocity = velocity end
+						if velocity and type(launch) == 'table' then
+							launch = table.clone(launch)
+							launch.initialVelocity = velocity
+						end
 					end
 					return launch
 				end)
@@ -12942,7 +13113,7 @@ run(function()
 end)
 
 run(function()
-    local AutoEnchant, Repair, Preferred, Priority, MaxRolls, Reserve, Rate
+    local AutoEnchant, Repair, Preferred, MaxRolls, Reserve, Rate
     local enchantGeneration = 0
     local enchantNames = {}
     local function displayName(key, meta)
@@ -13008,8 +13179,7 @@ run(function()
         return enchant and displayName(enchant, (bedwars.EnchantMeta or {})[enchant]) or ''
     end
     local function wanted(name)
-        for _, selected in Preferred.ListEnabled do if selected == name then return true end end
-        return false
+        return Preferred and Preferred.Value == name
     end
     local autoEnchantCategory = vape.Categories.Inventory or vape.Categories.Utility or vape.Categories.World
     if not autoEnchantCategory then error('AutoEnchant: no compatible category is available') end
@@ -13049,8 +13219,7 @@ run(function()
         Tooltip = 'Rolls the nearby team enchant table until a selected enchant is obtained'
     })
     Repair = AutoEnchant:CreateToggle({Name = 'Repair enchant table', Default = true})
-    Preferred = AutoEnchant:CreateTextList({Name = 'Preferred enchant', Default = enchantNames, Tooltip = 'Enabled entries are acceptable targets; generated live from EnchantMeta'})
-    Priority = AutoEnchant:CreateDropdown({Name = 'Priority order', List = enchantNames, Tooltip = 'Highest-priority acceptable enchant'})
+    Preferred = AutoEnchant:CreateDropdown({Name = 'Preferred enchant', List = enchantNames, Default = enchantNames[1], Tooltip = 'Stops rolling when this enchant is obtained; generated live from EnchantMeta.'})
     MaxRolls = AutoEnchant:CreateSlider({Name = 'Maximum rolls', Min = 1, Max = 50, Default = 10})
     Reserve = AutoEnchant:CreateSlider({Name = 'Resource reserve', Min = 0, Max = 32, Default = 0, Suffix = ' diamonds'})
     Rate = AutoEnchant:CreateSlider({Name = 'Request interval', Min = 0.25, Max = 2, Default = 0.6, Decimal = 100, Suffix = 's'})
@@ -13066,7 +13235,7 @@ run(function()
 		return
 	end
 
-	local AutoEnchant, Repair, Desired, MaximumRolls, Reserve, Interval
+	local AutoEnchant, Repair, Preference, MaximumRolls, Reserve, Interval
 	local generation = 0
 	local fallbackNames = {'Critical Strike', 'Fire', 'Life Steal', 'Shield Gen', 'Static', 'Updraft', 'Wind'}
 
@@ -13077,6 +13246,15 @@ run(function()
 	local function displayName(key, meta)
 		return tostring((type(meta) == 'table' and (meta.displayName or meta.name)) or key):gsub('_', ' ')
 	end
+
+	local enchantNames = {}
+	for key, meta in pairs(type(bedwars.EnchantMeta) == 'table' and bedwars.EnchantMeta or {}) do
+		if type(meta) ~= 'table' or not meta.disabled then
+			table.insert(enchantNames, displayName(key, meta))
+		end
+	end
+	if #enchantNames == 0 then enchantNames = fallbackNames end
+	table.sort(enchantNames)
 
 	local function diamonds()
 		local item = getItem('diamond')
@@ -13093,11 +13271,7 @@ run(function()
 	end
 
 	local function hasDesired(value)
-		local selected = Desired and Desired.ListEnabled or {}
-		for _, name in pairs(selected) do
-			if normalise(name) == normalise(value) then return true end
-		end
-		return false
+		return Preference and normalise(Preference.Value) == normalise(value)
 	end
 
 	local function findTable()
@@ -13173,7 +13347,7 @@ run(function()
 		end
 	})
 	Repair = AutoEnchant:CreateToggle({Name = 'Repair enchant table', Default = true})
-	Desired = AutoEnchant:CreateTextList({Name = 'Desired enchants', Default = fallbackNames, Tooltip = 'Stops rolling when the current enchant is in this list.'})
+	Preference = AutoEnchant:CreateDropdown({Name = 'Preferred enchant', List = enchantNames, Default = enchantNames[1], Tooltip = 'Stops rolling when this enchant is obtained.'})
 	MaximumRolls = AutoEnchant:CreateSlider({Name = 'Maximum rolls', Min = 1, Max = 50, Default = 10})
 	Reserve = AutoEnchant:CreateSlider({Name = 'Diamond reserve', Min = 0, Max = 32, Default = 0, Suffix = ' diamonds'})
 	Interval = AutoEnchant:CreateSlider({Name = 'Request interval', Min = 0.25, Max = 2, Default = 0.6, Decimal = 100, Suffix = 's'})
@@ -38602,6 +38776,7 @@ run(function()
 	local nextCannonPlacement = 0
 
 	local rayCheck = RaycastParams.new()
+	rayCheck.FilterType = Enum.RaycastFilterType.Exclude
 	rayCheck.RespectCanCollide = true
 	local aimRayCheck = RaycastParams.new()
 	aimRayCheck.FilterType = Enum.RaycastFilterType.Exclude
@@ -38610,15 +38785,57 @@ run(function()
 	safeLandingRayCheck.FilterType = Enum.RaycastFilterType.Exclude
 	safeLandingRayCheck.RespectCanCollide = true
 
+	local function cannonRoot(instance)
+		if not instance then return nil end
+		local current, found = instance, nil
+		while current and current ~= workspace do
+			local lower = current.Name:lower()
+			if lower:find('cannon', 1, true) or current:FindFirstChild('AimPrompt') or current:FindFirstChild('LaunchSelfPrompt') then
+				found = current
+			end
+			current = current.Parent
+		end
+		if found then return found end
+		for _, block in store.blocks do
+			if block.Name == 'cannon' and (instance == block or instance:IsDescendantOf(block) or block:IsDescendantOf(instance)) then
+				return block
+			end
+		end
+	end
+
+	local function cannonFilter(extra)
+		local ignored, seen = {lplr.Character, gameCamera}, {}
+		local function add(object)
+			if object and not seen[object] then
+				seen[object] = true
+				table.insert(ignored, object)
+			end
+		end
+		for _, block in store.blocks do
+			if block.Name == 'cannon' then
+				add(block)
+				add(cannonRoot(block))
+			end
+		end
+		for _, tag in {'cannon', 'Cannon'} do
+			local ok, tagged = pcall(collectionService.GetTagged, collectionService, tag)
+			if ok then
+				for _, object in tagged do add(cannonRoot(object) or object) end
+			end
+		end
+		add(extra)
+		add(cannonRoot(extra))
+		return ignored
+	end
+
 	local function getLaunchVelocity(delta, velocity, time)
 		return (delta + Vector3.new(0, workspace.Gravity * time * time * 0.5, 0)) / time - velocity
 	end
 
-	local function softenLanding(root)
-		local velocity = root.AssemblyLinearVelocity
-		if velocity.Y < 0 then
-			root.AssemblyLinearVelocity = Vector3.new(velocity.X, 0, velocity.Z)
-		end
+	local function directionMatches(first, second)
+		return typeof(first) == 'Vector3' and typeof(second) == 'Vector3'
+			and first.Magnitude > 0.001 and second.Magnitude > 0.001
+			and first.Unit:Dot(second.Unit) >= 0.9995
 	end
 
 	local function getCannon()
@@ -38655,16 +38872,27 @@ run(function()
 		if not target then return nil end
 		nextCannonPlacement = tick() + 1.5
 		local slot, previous = getHotbar(item.tool), store.inventory.hotbarSlot
-		if slot ~= nil then pcall(hotbarSwitch, slot) end
-		pcall(switchItem, item.tool, 0.1)
-		pcall(bedwars.placeBlock, target, 'cannon')
-		if previous ~= nil then pcall(hotbarSwitch, previous) end
+		local _, held = getReplicatedHand()
+		local equipped = held == item.tool
+		if not equipped then
+			equipped = slot ~= nil and hotbarSwitch(slot) or switchItem(item.tool, 0.1)
+		end
+		if not equipped then return nil end
+		local requested = pcall(bedwars.placeBlock, target, 'cannon')
+		if not requested then
+			if previous ~= nil then hotbarSwitch(previous) end
+			return nil
+		end
 		local deadline = tick() + 1.5
 		repeat
 			local block = getPlacedBlock(target)
-			if block and block.Parent and block.Name == 'cannon' then return block end
+			if block and block.Parent and block.Name == 'cannon' then
+				if previous ~= nil then hotbarSwitch(previous) end
+				return block
+			end
 			task.wait(0.05)
 		until tick() >= deadline or not entitylib.isAlive
+		if previous ~= nil then hotbarSwitch(previous) end
 		return nil
 	end
 
@@ -38707,18 +38935,51 @@ run(function()
 			end
 		end
 
-		return middle
+		-- Safe land must not deliberately use the known-blocked fallback arc.
+		return SafeLand.Enabled and nil or middle
+	end
+
+	local function validSafeLanding(hit, cannon)
+		local root = entitylib.character and entitylib.character.RootPart
+		local instance = hit and hit.Instance
+		if not root or not instance or hit.Normal.Y < 0.7 or cannonRoot(instance) then return false end
+		if instance:IsA('BasePart') and not instance.CanCollide then return false end
+
+		-- Require broad support around the landing point. A single corner/rail hit is not enough to
+		-- call the location safe because the humanoid can immediately slide into the void.
+		local support = 0
+		for _, offset in {
+			Vector3.new(0.75, 0, 0.75), Vector3.new(0.75, 0, -0.75),
+			Vector3.new(-0.75, 0, 0.75), Vector3.new(-0.75, 0, -0.75)
+		} do
+			local sample = workspace:Raycast(hit.Position + offset + Vector3.new(0, 2, 0), Vector3.new(0, -4, 0), safeLandingRayCheck)
+			if sample and sample.Normal.Y >= 0.7 and math.abs(sample.Position.Y - hit.Position.Y) <= 1 then
+				support += 1
+			end
+		end
+		if support < 3 then return false end
+
+		-- Check the full character-height volume above the surface, excluding the floor itself.
+		-- This avoids selecting a supported point under a low roof where the cannon embeds the player.
+		local overlap = OverlapParams.new()
+		overlap.FilterType = Enum.RaycastFilterType.Exclude
+		local ignored = cannonFilter(cannon)
+		table.insert(ignored, instance)
+		overlap.FilterDescendantsInstances = ignored
+		local clearance = math.max(entitylib.character.HipHeight * 2, 5)
+		local width = math.max(root.Size.X, root.Size.Z, 2)
+		local center = hit.Position + Vector3.new(0, clearance / 2 + 0.1, 0)
+		for _, part in workspace:GetPartBoundsInBox(CFrame.new(center), Vector3.new(width, clearance, width), overlap) do
+			if part.CanCollide then return false end
+		end
+		return true
 	end
 
 	local function findSafeLanding(aimPosition, cannon)
 		local root = entitylib.character and entitylib.character.RootPart
 		if not root then return nil end
 
-		local ignored = {lplr.Character, gameCamera}
-		if cannon then
-			table.insert(ignored, cannon)
-		end
-		safeLandingRayCheck.FilterDescendantsInstances = ignored
+		safeLandingRayCheck.FilterDescendantsInstances = cannonFilter(cannon)
 
 		local directions = {
 			Vector3.zero,
@@ -38726,7 +38987,7 @@ run(function()
 			Vector3.new(1, 0, 1).Unit, Vector3.new(1, 0, -1).Unit,
 			Vector3.new(-1, 0, 1).Unit, Vector3.new(-1, 0, -1).Unit
 		}
-		local height = math.max(aimPosition.Y, root.Position.Y) + 72
+		local height = math.max(aimPosition.Y, root.Position.Y) + 96
 
 		-- Search the aimed column first, then expanding rings.  A valid landing needs a
 		-- walkable upward-facing surface, so aiming just beyond an edge selects the nearest
@@ -38735,9 +38996,8 @@ run(function()
 			for index, direction in ipairs(directions) do
 				if distance > 0 or index == 1 then
 					local origin = Vector3.new(aimPosition.X, height, aimPosition.Z) + direction * distance
-					local hit = workspace:Raycast(origin, Vector3.new(0, -180, 0), safeLandingRayCheck)
-					local instance = hit and hit.Instance
-					if hit and hit.Position.Y >= aimPosition.Y - 18 and hit.Normal.Y > 0.65 and (not instance:IsA('BasePart') or instance.CanCollide) then
+					local hit = workspace:Raycast(origin, Vector3.new(0, -320, 0), safeLandingRayCheck)
+					if hit and hit.Position.Y >= aimPosition.Y - 24 and validSafeLanding(hit, cannon) then
 						return hit
 					end
 				end
@@ -38746,14 +39006,19 @@ run(function()
 	end
 
 	local function getAimRay(origin, direction)
-		local ignored = {lplr.Character, gameCamera}
-		-- Resolve the cursor before placing a cannon, and ignore any existing cannon blocks.
-		-- This keeps first-person aim from terminating on the cannon in front of the camera.
-		for _, block in store.blocks do
-			if block.Name == 'cannon' then table.insert(ignored, block) end
-		end
+		local ignored = cannonFilter()
 		aimRayCheck.FilterDescendantsInstances = ignored
-		return workspace:Raycast(origin, direction * 10000, aimRayCheck)
+		-- Cannon cosmetics/prompts can live beside the block rather than below it. If a build exposes
+		-- one outside the initial filter, peel it away and continue the same first-person ray.
+		for _ = 1, 8 do
+			local hit = workspace:Raycast(origin, direction * 10000, aimRayCheck)
+			if not hit then return nil end
+			local container = cannonRoot(hit.Instance)
+			if not container then return hit end
+			table.insert(ignored, container)
+			aimRayCheck.FilterDescendantsInstances = ignored
+		end
+		return nil
 	end
 
 	local function makeVisual(target, blockPosition)
@@ -38810,7 +39075,7 @@ run(function()
 			})
 			task.wait(0.15)
 			local look = cannon:GetAttribute('LookVector')
-			aimed = look and (look - direction).Magnitude < 0.0001
+			aimed = directionMatches(look, direction)
 		until aimed or tick() > timeout or not cannon.Parent
 
 		return aimed
@@ -38818,12 +39083,6 @@ run(function()
 
 	local daveyLandingGeneration = 0
 	local daveyLanded = false
-
-	local function stopDaveyHorizontal(root)
-		if not root or not root.Parent then return end
-		local velocity = root.AssemblyLinearVelocity
-		root.AssemblyLinearVelocity = Vector3.new(0, velocity.Y, 0)
-	end
 
 	local function getCannonLaunchSpeed()
 		local speed = 200
@@ -38835,7 +39094,7 @@ run(function()
 		return speed
 	end
 
-	local function ensureCannonMovement(cannon, launchDirection)
+	local function ensureCannonMovement(cannon, launchDirection, retryController)
 		local generation = daveyLandingGeneration
 		task.spawn(function()
 			local character = entitylib.isAlive and entitylib.character
@@ -38848,20 +39107,36 @@ run(function()
 				direction = typeof(look) == 'Vector3' and look.Magnitude > 0.001 and look.Unit or cannon.CFrame.LookVector
 			end
 			if not direction then return end
+			local function moving()
+				local velocity = root.AssemblyLinearVelocity
+				return velocity:Dot(direction) > 20 or (root.Position - startPosition).Magnitude > 1
+			end
 
 			-- launchSelf normally supplies this impulse itself. In first person some builds fire the
 			-- cannon/prompt but skip the local impulse, so only fill it in when no launch motion appears.
 			for _ = 1, 3 do
 				runService.PreSimulation:Wait()
 				if generation ~= daveyLandingGeneration or daveyLanded or not root.Parent then return end
-				local velocity = root.AssemblyLinearVelocity
-				if velocity:Dot(direction) > 20 or (root.Position - startPosition).Magnitude > 1 then return end
+				if moving() then return end
 			end
-			root.AssemblyLinearVelocity = direction * getCannonLaunchSpeed()
+			if retryController and cannon and cannon.Parent then
+				pcall(bedwars.CannonHandController.launchSelf, bedwars.CannonHandController, cannon)
+				for _ = 1, 2 do
+					runService.PreSimulation:Wait()
+					if generation ~= daveyLandingGeneration or daveyLanded or not root.Parent then return end
+					if moving() then return end
+				end
+			end
+			-- A single ownership-aware impulse repairs the rare missing local launch without
+			-- continuously fighting the server or other movement controllers.
+			if not isnetworkowner(root) then return end
+			local desiredVelocity = direction * getCannonLaunchSpeed()
+			local impulse = (desiredVelocity - root.AssemblyLinearVelocity) * root.AssemblyMass
+			pcall(root.ApplyImpulse, root, impulse)
 		end)
 	end
 
-	local function cancelHorizontalOnLanding()
+	local function watchDaveyLanding()
 		daveyLandingGeneration += 1
 		local generation = daveyLandingGeneration
 		daveyLanded = false
@@ -38884,18 +39159,7 @@ run(function()
 				if finished or generation ~= daveyLandingGeneration then return end
 				finished = true
 				daveyLanded = true
-				stopDaveyHorizontal(root)
 				cleanup()
-				-- Keep cancelling the velocity through the settling window. The cannon controller and
-				-- humanoid can both write a horizontal impulse after the first Landed frame.
-				task.spawn(function()
-					local settleUntil = tick() + 0.35
-					repeat
-						runService.PreSimulation:Wait()
-						if generation ~= daveyLandingGeneration or not root.Parent then return end
-						stopDaveyHorizontal(root)
-					until tick() >= settleUntil
-				end)
 			end
 
 			floorConnection = humanoid:GetPropertyChangedSignal('FloorMaterial'):Connect(function()
@@ -38932,8 +39196,11 @@ run(function()
 				DaveyAim:Toggle()
 				if not entitylib.isAlive then return end
 				local mouseRay = cloneref(lplr:GetMouse()).UnitRay
-				local origin = Position.Value == 'Camera' and gameCamera.CFrame.Position or mouseRay.Origin
-				local direction = Position.Value == 'Camera' and gameCamera.CFrame.LookVector or mouseRay.Direction
+				-- Mouse.UnitRay can remain attached to the cannon prompt while the camera is locked in
+				-- first person. In that perspective the camera crosshair is the only stable aim source.
+				local cameraAim = Position.Value == 'Camera' or isFirstPerson()
+				local origin = cameraAim and gameCamera.CFrame.Position or mouseRay.Origin
+				local direction = cameraAim and gameCamera.CFrame.LookVector or mouseRay.Direction
 				local ray = getAimRay(origin, direction)
 				if not ray then
 					notif('DaveyAim', 'No position found.', 5, 'warning')
@@ -38949,7 +39216,7 @@ run(function()
 					end
 				end
 
-				rayCheck.FilterDescendantsInstances = {lplr.Character, gameCamera, cannon}
+				rayCheck.FilterDescendantsInstances = cannonFilter(cannon)
 				if SafeLand.Enabled then
 					local safeRay = findSafeLanding(ray.Position, cannon)
 					if not safeRay then
@@ -38969,7 +39236,9 @@ run(function()
 
 				local time = getLaunchTime(localPosition, target - localPosition, velocity, math.sqrt(320 * workspace.Gravity))
 				if not time then
-					notif('DaveyAim', `Out of cannon range ({math.floor((target - localPosition).Magnitude)} studs away, 300 max).`, 5, 'warning')
+					local message = SafeLand.Enabled and 'No clear cannon arc reaches that safe landing.'
+						or `Out of cannon range ({math.floor((target - localPosition).Magnitude)} studs away, 300 max).`
+					notif('DaveyAim', message, 5, 'warning')
 					return
 				end
 
@@ -38983,6 +39252,7 @@ run(function()
 				if Mode.Value == 'Legit' then
 					cannon.AimPrompt:InputHoldBegin()
 					task.wait(cannon.AimPrompt.HoldDuration)
+					cannon.AimPrompt:InputHoldEnd()
 
 					local timeout = tick() + 0.3
 					repeat
@@ -39006,22 +39276,26 @@ run(function()
 					cannon.StopAimingPrompt:InputHoldBegin()
 				end
 				task.wait((cannon.StopAimingPrompt.HoldDuration + (0.2 + store.ping.total)) + runService.PostSimulation:Wait())
+				if Mode.Value == 'Legit' then
+					cannon.StopAimingPrompt:InputHoldEnd()
+				end
 
 				if LaunchCannon.Enabled then
 					if Mode.Value == 'Legit' then
 						cannon.LaunchSelfPrompt:InputHoldBegin()
 						task.wait(cannon.LaunchSelfPrompt.HoldDuration + runService.PostSimulation:Wait())
+						cannon.LaunchSelfPrompt:InputHoldEnd()
 					else
 						bedwars.CannonHandController:launchSelf(cannon)
 					end
-					cancelHorizontalOnLanding()
-					ensureCannonMovement(cannon, launchDirection)
+					watchDaveyLanding()
+					ensureCannonMovement(cannon, launchDirection, Mode.Value == 'Legit')
 				else
 					local launched, aimed = false, true
 					local connection = cannon.LaunchSelfPrompt.Triggered:Connect(function(plr)
 						if plr == lplr then
 							launched = true
-							cancelHorizontalOnLanding()
+							watchDaveyLanding()
 							ensureCannonMovement(cannon, launchDirection)
 						end
 					end)
@@ -39030,7 +39304,7 @@ run(function()
 					repeat
 						runService.PostSimulation:Wait()
 						local look = cannon.Parent and cannon:GetAttribute('LookVector')
-						aimed = look and (look - launchDirection).Magnitude < 0.0001
+						aimed = directionMatches(look, launchDirection)
 					until launched or not aimed or tick() > timeout or not entitylib.isAlive
 
 					connection:Disconnect()
@@ -39045,29 +39319,19 @@ run(function()
 					end
 				end
 
-				local landing = tick() + time
+				-- Observe the landing for target visuals only. The cannon/server owns the actual
+				-- trajectory; rewriting velocity every physics frame caused severe correction
+				-- lagback when falling, walking, attacking, or sliding during/after a launch.
+				local landingTimeout = tick() + math.min(math.max(time + 2, 3), 15)
 				local root
 				repeat
 					runService.PreSimulation:Wait()
 					root = entitylib.isAlive and entitylib.character.RootPart
 					if daveyLanded then break end
-					if root then
-						local remaining = landing - tick()
-						if remaining > 0.03 then
-							local correction = getLaunchVelocity(target - root.Position, Vector3.zero, remaining)
-							root.AssemblyLinearVelocity = correction.Magnitude > 600 and correction.Unit * 600 or correction
-						else
-							softenLanding(root)
-						end
-						if visual then
-							visual.Tag.TextLabel.Text = `Landing ({math.floor((target - root.Position).Magnitude)} studs)`
-						end
+					if root and visual then
+						visual.Tag.TextLabel.Text = `Landing ({math.floor((target - root.Position).Magnitude)} studs)`
 					end
-				until not root or tick() > landing or daveyLanded
-
-				if entitylib.isAlive then
-					softenLanding(entitylib.character.RootPart)
-				end
+				until not root or tick() > landingTimeout or daveyLanded
 
 				if visual then
 					visual:Destroy()
