@@ -1,3 +1,19 @@
-loadstring(game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/main/init.lua', true), 'init.lua')({
-    Closet = false -- Change to true to disable notifs, loading screen, and console messages
-})
+-- Set this before running if AetherV2 is hosted behind the private-source proxy:
+-- getgenv().AetherV2SourceEndpoint = 'https://your-backend.example'
+local env = (getgenv and getgenv()) or _G
+local sourceEndpoint = env and env.AetherV2SourceEndpoint
+if type(sourceEndpoint) == 'string' then
+    sourceEndpoint = sourceEndpoint:gsub('/+$', '')
+end
+
+if sourceEndpoint and sourceEndpoint ~= '' then
+    loadstring(game:HttpGet(sourceEndpoint..'/source?path=init.lua&ref=main', true), 'init.lua')({
+        Closet = false,
+        SourceEndpoint = sourceEndpoint
+    })
+else
+    -- Temporary public-repository fallback. This stops working once the repository is private.
+    loadstring(game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/main/init.lua', true), 'init.lua')({
+        Closet = false
+    })
+end

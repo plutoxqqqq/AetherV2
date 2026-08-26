@@ -80,6 +80,33 @@ local cloneref = cloneref or function(obj)
 end
 local playersService = cloneref(game:GetService('Players'))
 local httpService = cloneref(game:GetService('HttpService'))
+local function normalizeSourceEndpoint(value)
+	if type(value) ~= 'string' then return nil end
+	value = value:gsub('%s+', '')
+	while value:sub(-1) == '/' do value = value:sub(1, -2) end
+	return value ~= '' and value or nil
+end
+local function urlEncode(value)
+	return tostring(value):gsub('([^%w%-%._~])', function(character)
+		return string.format('%%%02X', string.byte(character))
+	end)
+end
+local sourceEndpoint
+if type(license) == 'table' then
+	sourceEndpoint = normalizeSourceEndpoint(license.SourceEndpoint)
+end
+if not sourceEndpoint and getgenv then
+	pcall(function()
+		sourceEndpoint = normalizeSourceEndpoint(getgenv().AetherV2SourceEndpoint)
+	end)
+end
+if not sourceEndpoint then
+	sourceEndpoint = normalizeSourceEndpoint(shared.AetherV2SourceEndpoint)
+end
+local function privateSourceUrl(path, ref)
+	if not sourceEndpoint then return nil end
+	return sourceEndpoint..'/source?path='..urlEncode(path:gsub('^aetherv2/', ''))..'&ref='..urlEncode(ref or readfile('aetherv2/profiles/commit.txt'))
+end
 
 -- init.lua owns the loading UI.  main.lua only reports progress to that shared screen.
 
@@ -193,7 +220,8 @@ end
 -- transient (a dropped connection, a moment of rate limiting) and succeed on the next try.
 local function fetchFile(path, attempts)
 	attempts = attempts or 3
-	local url = 'https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..readfile('aetherv2/profiles/commit.txt')..'/'..select(1, path:gsub('aetherv2/', ''))
+	local ref = readfile('aetherv2/profiles/commit.txt')
+	local url = privateSourceUrl(path, ref) or ('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..ref..'/'..select(1, path:gsub('aetherv2/', '')))
 	local problem
 	for attempt = 1, attempts do
 		local suc, res = pcall(function()
@@ -240,7 +268,8 @@ end
 local function downloadOptionalFile(path)
 	if isfile(path) then return true end
 	local suc, res = pcall(function()
-		return game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..readfile('aetherv2/profiles/commit.txt')..'/'..select(1, path:gsub('aetherv2/', '')), true)
+		local ref = readfile('aetherv2/profiles/commit.txt')
+		return game:HttpGet(privateSourceUrl(path, ref) or ('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..ref..'/'..select(1, path:gsub('aetherv2/', ''))), true)
 	end)
 	if not suc or res == '404: Not Found' then return false end
 	writefile(path, res)
@@ -384,7 +413,12 @@ local function finishLoading()
 				if shared.VapeDeveloper then
 					loadstring(readfile('aetherv2/main.lua'), 'main')(_scriptconfig)
 				else
-					loadstring(game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/main/init.lua', true), 'init.lua')(_scriptconfig)
+					local config = _scriptconfig
+					if config.SourceEndpoint then
+						loadstring(game:HttpGet(config.SourceEndpoint..'/source?path=init.lua&ref=main', true), 'init.lua')(config)
+					else
+						loadstring(game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/main/init.lua', true), 'init.lua')(config)
+					end
 				end
 			]]
 			local teleportConfig = httpService:JSONEncode(license)

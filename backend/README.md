@@ -23,7 +23,37 @@ npm start
 
 `PORT` defaults to `3000`. `DATA_FILE` must be on a persistent volume in production. Back it up: it contains uploader receipt tokens and review outcomes (but no GitHub credential). Put the service behind HTTPS; the Roblox executor sends metadata and the admin key to it.
 
-## 3. Deploy
+## 3. Private Aether source proxy
+
+`private-source.js` is a minimal source proxy for the owner-only loader. It keeps the GitHub token on the server and exposes:
+
+* `GET /loader` — generates the public first-stage Lua loader.
+* `GET /source?path=init.lua&ref=main` — returns a repository file.
+* `GET /commit?ref=main` — returns the commit SHA.
+* `GET /tree?ref=<sha>` — returns the recursive Git tree used by the updater.
+* `GET /health` — confirms that the service is online.
+
+This is source-at-rest protection, not impossible copying protection. Once an executor receives Lua source, that client can inspect or copy it. The existing owner lock still performs the runtime account check, but no client-side Lua system can make copied code impossible to modify.
+
+## 4. Deploy the free source proxy
+
+Render's free web-service tier can run this Node service at no charge, although free services can sleep when idle. Create a web service from the private repository with:
+
+1. Root directory: `backend`
+2. Build command: leave blank
+3. Start command: `node private-source.js`
+4. Environment variables: `GITHUB_TOKEN`, `GITHUB_REPO=plutoxqqqq/AetherV2`, and `GITHUB_BRANCH=main`
+5. Optional `PUBLIC_ORIGIN`: the assigned HTTPS Render URL
+
+No persistent disk is needed for the source proxy. After deployment, test `/health`, then run:
+
+```lua
+loadstring(game:HttpGet('https://YOUR-RENDER-HOST/loader', true))()
+```
+
+The generated loader automatically points back to the proxy. Do not expose `GITHUB_TOKEN` in Lua, logs, or a committed file.
+
+## 5. Deploy the config-review backend
 
 1. Create a new service from this repository and set its root/working directory to `backend`.
 2. Use `npm start` as the start command; no build command is needed.
@@ -34,7 +64,7 @@ npm start
 
 Accepted submissions create/update `configs/<slug>.json`, then update `configs/presets.json`. GitHub therefore records auditable commits. Protect `main` appropriately; if direct writes are prohibited, set `GITHUB_BRANCH` to a publishing branch and merge its commits through a pull request.
 
-## 4. Connect Aether clients
+## 6. Connect Aether clients
 
 Create this local executor file (the directory exists after Aether first starts):
 
@@ -46,7 +76,7 @@ Its only content is the HTTPS origin, with no trailing route, for example `https
 
 Only the maintainer should create `aetherv2/profiles/configadminkey.txt`, containing the exact `ADMIN_KEY`. Do **not** share a config folder containing this file. Regular uploaders need no secret. They receive a random per-submission receipt token, stored locally in `configsubmissions.json`, which can reveal only that submission's decision.
 
-## 5. API contract and operations
+## 7. API contract and operations
 
 * `POST /submissions` validates metadata and config data and returns `{id, token, status}`. The server returns HTTP 409 when the config data is identical to any prior submission.
 * `GET /submissions?status=pending` requires `Authorization: Bearer <ADMIN_KEY>` and powers the review queue.

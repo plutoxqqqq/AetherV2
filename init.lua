@@ -21,6 +21,37 @@ local function cachedLoadstring(source, chunkName)
 end
 
 local cloneref = cloneref or function(ref) return ref end
+-- Optional private-source proxy. The proxy keeps the GitHub token server-side while preserving
+-- the existing raw-GitHub fallback for installations that have not configured one yet.
+local function normalizeSourceEndpoint(value)
+	if type(value) ~= 'string' then return nil end
+	value = value:gsub('%s+', '')
+	while value:sub(-1) == '/' do value = value:sub(1, -2) end
+	return value ~= '' and value or nil
+end
+local function urlEncode(value)
+	return tostring(value):gsub('([^%w%-%._~])', function(character)
+		return string.format('%%%02X', string.byte(character))
+	end)
+end
+local sourceEndpoint
+if type(license) == 'table' then
+	sourceEndpoint = normalizeSourceEndpoint(license.SourceEndpoint)
+end
+if not sourceEndpoint and getgenv then
+	pcall(function()
+		sourceEndpoint = normalizeSourceEndpoint(getgenv().AetherV2SourceEndpoint)
+	end)
+end
+if not sourceEndpoint then
+	sourceEndpoint = normalizeSourceEndpoint(shared.AetherV2SourceEndpoint)
+end
+local function privateSourceUrl(route, path, ref)
+	if not sourceEndpoint then return nil end
+	local query = '?ref='..urlEncode(ref or 'main')
+	if path then query = '?path='..urlEncode(path:gsub('^aetherv2/', ''))..'&ref='..urlEncode(ref or 'main') end
+	return sourceEndpoint..'/'..route..query
+end
 local isfile = isfile or function(file)
 	local suc, res = pcall(function()
 		return readfile(file)
@@ -627,7 +658,9 @@ local function payloadProblem(path, body)
 end
 
 local function repoUrl(path, ref)
-	return 'https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..(ref or readfile('aetherv2/profiles/commit.txt'))..'/'..select(1, path:gsub('aetherv2/', ''))
+	local selectedRef = ref or readfile('aetherv2/profiles/commit.txt')
+	return privateSourceUrl('source', path, selectedRef)
+		or ('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..selectedRef..'/'..select(1, path:gsub('aetherv2/', '')))
 end
 
 -- Fetch with retries, returning the body or nil plus a reason. Most failures here are transient - a
@@ -783,11 +816,18 @@ local function resolveCommit()
 	if type(recent) == 'table' and recent.Channel == channel and type(recent.Commit) == 'string' and os.clock() - (recent.CheckedAt or 0) < 60 then
 		return recent.Commit
 	end
-	local sources = {
-		{Url = 'https://api.github.com/repos/plutoxqqqq/AetherV2/commits/'..branch, Pattern = '"sha"%s*:%s*"(%x+)"'},
-		{Url = 'https://github.com/plutoxqqqq/AetherV2/commits/'..branch..'.atom', Pattern = 'Commit/(%x+)'},
-		{Url = 'https://github.com/plutoxqqqq/AetherV2/tree/'..branch, Pattern = 'currentOid[^%x]*(%x+)'}
-	}
+	local sources
+	if sourceEndpoint then
+		sources = {
+			{Url = privateSourceUrl('commit', nil, branch), Pattern = '^%s*(%x+)'}
+		}
+	else
+		sources = {
+			{Url = 'https://api.github.com/repos/plutoxqqqq/AetherV2/commits/'..branch, Pattern = '"sha"%s*:%s*"(%x+)'},
+			{Url = 'https://github.com/plutoxqqqq/AetherV2/commits/'..branch..'.atom', Pattern = 'Commit/(%x+)'},
+			{Url = 'https://github.com/plutoxqqqq/AetherV2/tree/'..branch, Pattern = 'currentOid[^%x]*(%x+)'}
+		}
+	end
 	for _, source in sources do
 		local suc, body = pcall(function()
 			return game:HttpGet(source.Url, true)
@@ -820,7 +860,7 @@ end
 -- everything, which is exactly what used to happen anyway.
 local function fetchFileList(ref)
 	local suc, body = pcall(function()
-		return game:HttpGet('https://api.github.com/repos/plutoxqqqq/AetherV2/git/trees/'..ref..'?recursive=1', true)
+		return game:HttpGet(privateSourceUrl('tree', nil, ref) or ('https://api.github.com/repos/plutoxqqqq/AetherV2/git/trees/'..ref..'?recursive=1'), true)
 	end)
 	if not suc or type(body) ~= 'string' then return nil end
 	-- Only ever set on a repository far larger than this one, but a partial list would silently
