@@ -7,7 +7,7 @@
       "source": "discord",
       "createdAt": "2026-08-26T08:57:59.645Z",
       "createdBy": "plutoxqq (1364123154196336661)",
-      "enabled": true,
+      "enabled": false,
       "expiresAt": null
     }
   },
@@ -18,6 +18,15 @@
       "keyId": "25ec6e748ea1382f7917e1778622e607e7f00bfefcb106fab73d441dcd3e9c24",
       "actor": "plutoxqq (1364123154196336661)",
       "label": "Unlabelled"
+    },
+    {
+      "at": "2026-08-26T09:43:58.875Z",
+      "action": "edit",
+      "keyId": "25ec6e748ea1382f7917e1778622e607e7f00bfefcb106fab73d441dcd3e9c24",
+      "actor": "plutoxqq (1364123154196336661)",
+      "changes": {
+        "enabled": false
+      }
     }
   ]
 }
