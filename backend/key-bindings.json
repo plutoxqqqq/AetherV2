@@ -1,4 +1,23 @@
 {
-  "version": 1,
-  "bindings": {}
+  "version": 2,
+  "bindings": {},
+  "keys": {
+    "25ec6e748ea1382f7917e1778622e607e7f00bfefcb106fab73d441dcd3e9c24": {
+      "label": "Unlabelled",
+      "source": "discord",
+      "createdAt": "2026-08-26T08:57:59.645Z",
+      "createdBy": "plutoxqq (1364123154196336661)",
+      "enabled": true,
+      "expiresAt": null
+    }
+  },
+  "audit": [
+    {
+      "at": "2026-08-26T08:57:59.646Z",
+      "action": "generate",
+      "keyId": "25ec6e748ea1382f7917e1778622e607e7f00bfefcb106fab73d441dcd3e9c24",
+      "actor": "plutoxqq (1364123154196336661)",
+      "label": "Unlabelled"
+    }
+  ]
 }
