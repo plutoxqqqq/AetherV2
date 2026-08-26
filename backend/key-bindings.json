@@ -1,6 +1,13 @@
 {
   "version": 2,
-  "bindings": {},
+  "bindings": {
+    "eb1ebdad59c70f81f7fe71f66656a3b1ae6cc41d2bd584c83aa1b5dadaa2e508": {
+      "username": "AetherV2Owner",
+      "userId": "11515370034",
+      "firstUsedAt": "2026-08-26T22:13:15.291Z",
+      "uses": 1
+    }
+  },
   "keys": {
     "25ec6e748ea1382f7917e1778622e607e7f00bfefcb106fab73d441dcd3e9c24": {
       "label": "Unlabelled",
@@ -8,6 +15,14 @@
       "createdAt": "2026-08-26T08:57:59.645Z",
       "createdBy": "plutoxqq (1364123154196336661)",
       "enabled": false,
+      "expiresAt": null
+    },
+    "eb1ebdad59c70f81f7fe71f66656a3b1ae6cc41d2bd584c83aa1b5dadaa2e508": {
+      "label": "Environment key",
+      "source": "environment",
+      "createdAt": null,
+      "createdBy": "AETHER_KEYS",
+      "enabled": true,
       "expiresAt": null
     }
   },
@@ -27,6 +42,14 @@
       "changes": {
         "enabled": false
       }
+    },
+    {
+      "at": "2026-08-26T22:13:15.291Z",
+      "action": "bind",
+      "keyId": "eb1ebdad59c70f81f7fe71f66656a3b1ae6cc41d2bd584c83aa1b5dadaa2e508",
+      "actor": "loader",
+      "username": "AetherV2Owner",
+      "userId": "11515370034"
     }
   ]
 }
