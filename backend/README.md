@@ -119,16 +119,16 @@ All commands are slash commands under /key:
 
 * /key generate — creates a new random key. It returns the raw key and loader once in an ephemeral response. The raw key is not saved and cannot be displayed again.
 * /key list — lists key ID prefixes, labels, status, expiry, binding, and usage count. It never lists raw keys.
-* /key info key_id — shows full details for one key.
-* /key edit key_id — changes the label, expiry, or enabled state. Use none for a label or expiry to clear it.
-* /key unlink key_id — removes the username binding so the key can be claimed by another account.
+* /key info key_id — shows full details for one key. key_id can be the full ID or a unique prefix.
+* /key edit key_id — changes the label, expiry, or enabled state. key_id can be the full ID or a unique prefix. Use none for a label or expiry to clear it.
+* /key unlink key_id — removes the username binding so the key can be claimed by another account. key_id can be the full ID or a unique prefix.
 * /key unlink username — finds and removes a binding by Roblox username. If more than one key matches, use key_id instead.
-* /key revoke key_id — disables a key without deleting its history.
-* /key enable key_id — re-enables a revoked key.
-* /key rotate key_id — disables the old key, creates a replacement, and transfers its current binding.
+* /key revoke key_id — disables a key without deleting its history. key_id can be the full ID or a unique prefix.
+* /key enable key_id — re-enables a revoked key. key_id can be the full ID or a unique prefix.
+* /key rotate key_id — disables the old key, creates a replacement, and transfers its current binding. key_id can be the full ID or a unique prefix.
 * /key audit — shows recent generation, binding, edit, unlink, revoke, enable, and rotation events.
 
-The raw key appears only in an ephemeral Discord reply. Treat it like a password and send it privately to the intended person.
+The raw key appears only in an ephemeral Discord reply. Treat it like a password and send it privately to the intended person. Management commands accept a unique key-ID prefix, so you do not need to copy the full 64-character hash from the registry.
 
 ### Key lifecycle
 
@@ -137,7 +137,7 @@ A normal workflow is:
 1. Run /key generate label:CustomerName.
 2. Copy the raw key and loader from the private ephemeral reply.
 3. Send that loader only to the intended person.
-4. Use /key list to copy the full key ID.
+4. Use /key list to copy a key ID prefix, or use the full ID returned by /key generate.
 5. The first run binds the key to that Roblox username/UserId.
 6. Use /key info to inspect it later.
 7. Use /key unlink if you want the same key to be claimed by someone else.
