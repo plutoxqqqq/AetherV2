@@ -346,8 +346,6 @@ const generatedText = (result, title = 'Generated key') => {
   ].join('\n');
 };
 
-const actorName = interaction =>
-  interaction.user.username + ' (' + interaction.user.id + ')';
 
 const keyIdFrom = interaction =>
   interaction.options.getString('key_id', false);
