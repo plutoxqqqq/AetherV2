@@ -113,12 +113,18 @@ https://discord.com/oauth2/authorize?client_id=APPLICATION_ID&scope=bot%20applic
 
 Replace APPLICATION_ID with the Discord application ID.
 
+### Mini dashboard
+
+Run `/key panel` to open a private, owner-only dashboard. It shows the total, active, inactive, and bound counts, with four simple actions: generate a key, view all keys, open the audit log, or refresh.
+
+The **View all keys** screen is paginated so it stays uncluttered. Every page shows the key ID prefix, status, Roblox username/UserId when bound, usage count, and expiry. Use the key selector to open one key, then edit, unlink, enable/disable, or rotate it. Raw keys are never shown in the list or dashboard. The same view is also available directly with `/key list`.
+
 ### Commands
 
 All commands are slash commands under /key:
 
 * /key generate — creates a new random key. It returns the raw key and loader once in an ephemeral response. The raw key is not saved and cannot be displayed again.
-* /key list — lists key ID prefixes, labels, status, expiry, binding, and usage count. It never lists raw keys.
+* /key list — opens the paginated key list. It includes every active, disabled, and expired key with its ID prefix, label, status, expiry, Roblox username/UserId binding, and usage count. It never lists raw keys.
 * /key info key_id — shows full details for one key. key_id can be the full ID or a unique prefix.
 * /key edit key_id — changes the label, expiry, or enabled state. key_id can be the full ID or a unique prefix. Use none for a label or expiry to clear it.
 * /key unlink key_id — removes the username binding so the key can be claimed by another account. key_id can be the full ID or a unique prefix.
@@ -134,10 +140,10 @@ The raw key appears only in an ephemeral Discord reply. Treat it like a password
 
 A normal workflow is:
 
-1. Run /key generate label:CustomerName.
+1. Run /key panel and choose Generate key, or run /key generate label:CustomerName.
 2. Copy the raw key and loader from the private ephemeral reply.
 3. Send that loader only to the intended person.
-4. Use /key list to copy a key ID prefix, or use the full ID returned by /key generate.
+4. Use View all keys in the dashboard or /key list to find a key and open its management actions.
 5. The first run binds the key to that Roblox username/UserId.
 6. Use /key info to inspect it later.
 7. Use /key unlink if you want the same key to be claimed by someone else.
