@@ -519,8 +519,8 @@ const handleAuditButton = async interaction => {
   const parts = interaction.customId.split(':');
   const ownerId = parts[2];
   return updateComponent(interaction, parts[3] === 'home'
-    ? await dashboardView(ownerId)
-    : await auditView(ownerId));
+    ? dashboardView(ownerId)
+    : auditView(ownerId));
 };
 
 const handleKeySelect = async interaction => {
