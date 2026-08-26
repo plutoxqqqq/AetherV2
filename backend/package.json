@@ -2,6 +2,16 @@
   "name": "aetherv2-config-review",
   "version": "1.0.0",
   "private": true,
-  "scripts": {"start": "node server.js", "test": "node --test server.test.js"},
-  "engines": {"node": ">=20"}
+  "scripts": {
+    "start": "node server.js",
+    "start:source": "node private-source.js",
+    "start:bot": "node discord-bot.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "discord.js": "^14.16.3"
+  }
 }
