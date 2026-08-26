@@ -6,7 +6,7 @@
     "start": "node server.js",
     "start:source": "node private-source.js",
     "start:bot": "node discord-bot.js",
-    "test": "node --test server.test.js"
+    "test": "node --test"
   },
   "engines": {
     "node": ">=20"
