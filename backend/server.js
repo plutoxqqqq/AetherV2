@@ -40,36 +40,6 @@ async function getGithubFile(file, required=true) {
   if (!response.ok) { if (!required && response.status===404) return null; throw Error(`Could not load configs/${file} from GitHub (${response.status})`); }
   const value=await response.json(); return {...value,decoded:Buffer.from(value.content.replace(/\n/g,''),'base64').toString()};
 }
-
-const safeSourcePath = value => {
-  if (!nonEmptyString(value,300) || value.startsWith('/') || value.includes('\\') || value.split('/').some(segment => !segment || segment === '.' || segment === '..')) {
-    const error=Error('Invalid source path'); error.status=400; throw error;
-  }
-  return value;
-};
-const sourceApiFor = (file, ref) => `https://api.github.com/repos/${process.env.GITHUB_REPO}/contents/${file}?ref=${encodeURIComponent(ref)}`;
-async function getGithubSourceFile(file, ref) {
-  const {headers}=github();
-  const response=await fetch(sourceApiFor(file, ref),{headers});
-  if (!response.ok) throw Error(`Could not load source file ${file} from GitHub (${response.status})`);
-  const value=await response.json();
-  if (value.type !== 'file' || typeof value.content !== 'string') throw Error('GitHub returned an invalid source file');
-  return Buffer.from(value.content.replace(/\\n/g,''),'base64').toString();
-}
-async function getGithubCommit(ref) {
-  const {headers}=github();
-  const response=await fetch(`https://api.github.com/repos/${process.env.GITHUB_REPO}/commits/${encodeURIComponent(ref)}`,{headers});
-  if (!response.ok) throw Error(`Could not resolve source ref ${ref} (${response.status})`);
-  const value=await response.json();
-  if (typeof value.sha !== 'string') throw Error('GitHub returned an invalid commit');
-  return value.sha;
-}
-async function getGithubTree(ref) {
-  const {headers}=github();
-  const response=await fetch(`https://api.github.com/repos/${process.env.GITHUB_REPO}/git/trees/${encodeURIComponent(ref)}?recursive=1`,{headers});
-  if (!response.ok) throw Error(`Could not load source tree (${response.status})`);
-  return await response.text();
-}
 async function putGithubFile(file, content, sha, message) {
   const {branch,headers}=github(); const response=await fetch(apiFor(file),{method:'PUT',headers:{...headers,'content-type':'application/json'},body:JSON.stringify({message,branch,content:Buffer.from(content).toString('base64'),...(sha&&{sha})})});
   if (!response.ok) throw Error(`GitHub write failed for configs/${file} (${response.status}): ${await response.text()}`);
@@ -117,25 +87,6 @@ async function removePublished(file) {
 const server = http.createServer(async (req,res) => { try {
   if (req.method==='OPTIONS') return json(res,204,{success:true});
   const url=new URL(req.url,'http://localhost');
-  if (req.method==='GET'&&url.pathname==='/source') {
-    const file=safeSourcePath(url.searchParams.get('path'));
-    const ref=nonEmptyString(url.searchParams.get('ref'),200)?url.searchParams.get('ref'):'main';
-    const content=await getGithubSourceFile(file,ref);
-    res.writeHead(200,{'content-type':'text/plain; charset=utf-8','cache-control':'no-store','access-control-allow-origin':'*'});
-    return res.end(content);
-  }
-  if (req.method==='GET'&&url.pathname==='/commit') {
-    const ref=nonEmptyString(url.searchParams.get('ref'),200)?url.searchParams.get('ref'):'main';
-    const commit=await getGithubCommit(ref);
-    res.writeHead(200,{'content-type':'text/plain; charset=utf-8','cache-control':'no-store','access-control-allow-origin':'*'});
-    return res.end(commit);
-  }
-  if (req.method==='GET'&&url.pathname==='/tree') {
-    const ref=nonEmptyString(url.searchParams.get('ref'),200)?url.searchParams.get('ref'):'main';
-    const tree=await getGithubTree(ref);
-    res.writeHead(200,{'content-type':'application/json; charset=utf-8','cache-control':'no-store','access-control-allow-origin':'*'});
-    return res.end(tree);
-  }
   if (req.method==='POST'&&url.pathname==='/submissions') {
     const value=await body(req);
     if (!validSubmission(value)) return json(res,400,{success:false,error:'Missing or invalid config details'});
