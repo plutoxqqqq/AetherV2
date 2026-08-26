@@ -24,7 +24,7 @@ const validRef = value =>
 
 const validPath = value =>
   typeof value === 'string' && value.length > 0 && value.length <= 300 &&
-  !value.startsWith('/') && !value.includes('\\') &&
+  !value.startsWith('/') && !value.includes('\\') && !value.includes('?') && !value.includes('#') &&
   value.split('/').every(segment => segment && segment !== '.' && segment !== '..');
 
 const json = (res, status, value) => {
