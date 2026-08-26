@@ -2096,8 +2096,88 @@ run(function()
 	end)
 end, 20)
 
-for _, v in {'AntiRagdoll', 'TriggerBot', 'SilentAim', 'AutoRejoin', 'Rejoin', 'Disabler', 'Timer', 'ServerHop', 'MouseTP', 'MurderMystery', 'Invisible'} do
+for _, v in {'AntiRagdoll', 'TriggerBot', 'SilentAim', 'AutoRejoin', 'Rejoin', 'Disabler', 'Timer', 'ServerHop', 'NoFallDamage', 'MurderMystery', 'Invisible'} do
 	vape:Remove(v)
+end
+
+-- MouseTP is universal, but its BedWars choice is installed only after the live BedWars
+-- controllers and inventory helpers are ready. Other games keep the shorter Legit/TP list.
+do
+	local mouseTPBridge = vape.Libraries.MouseTPBridge
+	if mouseTPBridge and type(mouseTPBridge.SetBedWars) == 'function' then
+		mouseTPBridge:SetBedWars(function(position)
+			if not entitylib.isAlive then return false, 'Character missing.' end
+			local pearl = getItem('telepearl')
+			local meta = bedwars.ProjectileMeta and bedwars.ProjectileMeta.telepearl
+			if not pearl or not pearl.tool or not meta then return false, 'No Telepearl is available.' end
+
+			local root = entitylib.character.RootPart
+			local target = position
+			local aim = prediction.SolveTrajectory(
+				root.Position,
+				meta.launchVelocity,
+				meta.gravitationalAcceleration,
+				target,
+				Vector3.zero,
+				workspace.Gravity,
+				0,
+				0
+			)
+			if not aim then return false, 'The selected position is outside Telepearl range.' end
+
+			local remote
+			local remoteOK = pcall(function() remote = bedwars.Client:Get(remotes.FireProjectile).instance end)
+			if not remoteOK or not remote or type(remote.InvokeServer) ~= 'function' then
+				return false, 'The BedWars projectile remote is unavailable.'
+			end
+
+			local old = store.hand
+			local slot = getHotbar(pearl.tool)
+			switchItem(pearl.tool, 0.1)
+			if slot then hotbarSwitch(slot) end
+			task.wait(0.03)
+
+			local direction = CFrame.lookAt(root.Position, aim).LookVector * meta.launchVelocity
+			local id = httpService:GenerateGUID(true)
+			local draw = {drawDurationSeconds = 1, shotId = httpService:GenerateGUID(false)}
+			local success, result = pcall(function()
+				bedwars.ProjectileController:createLocalProjectile(
+					meta,
+					'telepearl',
+					'telepearl',
+					root.Position,
+					id,
+					direction,
+					draw
+				)
+				return remote:InvokeServer(
+					pearl.tool,
+					'telepearl',
+					'telepearl',
+					root.Position,
+					root.Position,
+					direction,
+					id,
+					draw,
+					workspace:GetServerTimeNow() - 0.045
+				)
+			end)
+
+			if old and old.tool then
+				task.delay(0.12, function()
+					if old.tool.Parent then
+						switchItem(old.tool)
+						local oldSlot = getHotbar(old.tool)
+						if oldSlot then hotbarSwitch(oldSlot) end
+					end
+				end)
+			end
+			return success and result ~= false, success and 'Telepearl launch was rejected.' or tostring(result)
+		end)
+		vape:Clean(function()
+			if vape.Libraries.MouseTPBridge == mouseTPBridge then mouseTPBridge:SetBedWars(nil) end
+		end)
+	end
 end
 
 local AntiFallDirection
@@ -9108,230 +9188,6 @@ run(function()
 end)
 
 run(function()
-    local MouseTP
-    local Movement
-    local Mode
-
-    local rayParams = RaycastParams.new()
-    rayParams.RespectCanCollide = true
-    rayParams.FilterType = Enum.RaycastFilterType.Include
-
-    local function solveTelepearlShot(localPosition, targetPosition, meta)
-        local speed = meta.launchVelocity
-        local gravity = meta.gravitationalAcceleration or workspace.Gravity
-        if not speed or speed <= 0 or gravity <= 0 then return nil end
-
-        rayParams.FilterDescendantsInstances = {workspace:WaitForChild('Map', 9e9)}
-        local ground = workspace:Raycast(targetPosition + Vector3.new(0, 3, 0), Vector3.new(0, -1000, 0), rayParams)
-        if ground then
-            targetPosition = ground.Position
-        end
-
-        local function velocities(origin)
-            local delta = targetPosition - origin
-            local flat = Vector3.new(delta.X, 0, delta.Z)
-            local distance = flat.Magnitude
-            if distance < 0.01 then return {} end
-
-            local speed2 = speed * speed
-            local discriminant = speed2 * speed2 - gravity * (gravity * distance * distance + 2 * delta.Y * speed2)
-            if discriminant < 0 then return {} end
-
-            local root = math.sqrt(discriminant)
-            local result = {}
-            for _, numerator in {speed2 - root, speed2 + root} do
-                local tangent = numerator / (gravity * distance)
-                local horizontalSpeed = speed / math.sqrt(1 + tangent * tangent)
-                table.insert(result, flat.Unit * horizontalSpeed + Vector3.new(0, horizontalSpeed * tangent, 0))
-            end
-            return result
-        end
-
-        local best, bestMiss, bestTime, bestAccurate
-        for arcIndex, initialVelocity in velocities(localPosition) do
-            local shootPosition = localPosition
-            local velocity = initialVelocity
-            -- Account for the launch socket offset, then solve again from the position the
-            -- server actually uses as the projectile origin.
-            for _ = 1, 2 do
-                shootPosition = (CFrame.lookAt(localPosition, localPosition + velocity) * CFrame.new(Vector3.new(-bedwars.BowConstantsTable.RelX, -bedwars.BowConstantsTable.RelY, -bedwars.BowConstantsTable.RelZ))).Position
-                local refined = velocities(shootPosition)
-                if #refined == 0 then break end
-                velocity = refined[arcIndex]
-            end
-
-            local last = shootPosition
-            local landing
-            local landingTime
-            for step = 1, 960 do
-                local time = step / 120
-                local nextPosition = shootPosition + velocity * time - Vector3.new(0, gravity * time * time * 0.5, 0)
-                local hit = workspace:Raycast(last, nextPosition - last, rayParams)
-                if hit then
-                    landing = hit.Position
-                    landingTime = time
-                    break
-                end
-                last = nextPosition
-            end
-
-            if landing then
-                local miss = (landing - targetPosition).Magnitude
-                local accurate = miss <= 3
-                local score = landingTime + miss / speed
-                local bestScore = bestTime and bestTime + bestMiss / speed
-                local better = not best or (accurate and not bestAccurate)
-                if accurate == bestAccurate then
-                    -- Once both arcs land close enough to teleport to the selected spot,
-                    -- prefer the lower, faster arc. Otherwise accuracy remains the priority.
-                    better = accurate and score < bestScore or not accurate and (miss < bestMiss or miss == bestMiss and landingTime < bestTime)
-                end
-                if better then
-                    bestMiss, bestTime, bestAccurate = miss, landingTime, accurate
-                    best = {direction = velocity, shootPosition = shootPosition}
-                end
-            end
-        end
-        return best
-    end
-
-    local MouseTPs = {
-	Items = function(position)
-		local item = getItem('telepearl') or getItem('fireball')
-		local localPosition = entitylib.character.RootPart.Position
-		if item then
-			if item.itemType == 'telepearl' then
-				local meta = bedwars.ProjectileMeta.telepearl
-				local shot = solveTelepearlShot(localPosition, position, meta)
-				if not shot then return false end
-
-				switchItem(item.tool)
-				bedwars.Client:Get(remotes.FireProjectile):CallServerAsync(
-					item.tool,
-					'telepearl',
-					'telepearl',
-					shot.shootPosition,
-					localPosition,
-					shot.direction,
-					httpService:GenerateGUID(true),
-					{
-						drawDurationSeconds = 1,
-						shotId = httpService:GenerateGUID(false),
-					},
-					workspace:GetServerTimeNow() - 0.045
-				)
-				:andThen(function(result)
-					if result then
-						bedwars.SoundManager:playSound('rbxassetid://6866223756')
-					end
-				end)
-				return true
-			elseif item.itemType == 'fireball' and (localPosition - Vector3.new(position.X, localPosition.Y, position.Z)).Magnitude <= 200 then
-				local root = entitylib.character.RootPart
-				local targetPosition = position + Vector3.new(0, entitylib.character.HipHeight or 2, 0)
-				local ray = workspace:Raycast(localPosition, Vector3.new(0, -1000, 0), rayParams)
-				if ray then
-					localPosition = ray.Position + Vector3.new(0, entitylib.character.HipHeight or 2, 0)
-					root.Velocity = Vector3.zero
-					root.CFrame = CFrame.new(localPosition)
-
-					MouseTP:Clean(vapeEvents.EntityDamageEvent.Event:Connect(function(damageTable)
-						if damageTable.entityInstance == lplr.Character and damageTable.fromEntity == lplr.Character and (not damageTable.knockbackMultiplier or not damageTable.knockbackMultiplier.disabled) then
-							local knockbackBoost = bedwars.KnockbackUtil.calculateKnockbackVelocity(Vector3.one, 1, {
-								vertical = 0,
-								horizontal = (damageTable.knockbackMultiplier and damageTable.knockbackMultiplier.horizontal or 1)
-							}).Magnitude * 1.1
-
-							if knockbackBoost >= 38 then
-								repeat
-									task.wait()
-								until (root.Position - targetPosition).Magnitude <= 1
-							end
-						end
-					end))
-
-					local shootPosition = (CFrame.new(localPosition, targetPosition) * CFrame.new(Vector3.new(-bedwars.BowConstantsTable.RelX, -bedwars.BowConstantsTable.RelY, -bedwars.BowConstantsTable.RelZ))).Position
-					switchItem(item.tool)
-					bedwars.Client:Get(remotes.FireProjectile):CallServerAsync(
-						item.tool,
-						'fireball',
-						'fireball',
-						shootPosition,
-						localPosition,
-						Vector3.new(0, -68, 0),
-						httpService:GenerateGUID(true),
-						{
-							drawDurationSeconds = 1,
-							shotId = httpService:GenerateGUID(false),
-						},
-						workspace:GetServerTimeNow() - 0.045
-					)
-					:andThen(function(result)
-						if result then
-							bedwars.SoundManager:playSound('rbxassetid://7192289445')
-						end
-					end)
-					task.wait(2.5)
-					return true
-				end
-			end
-		end
-		return false
-	end,
-	Kits = function() end
-    }
-
-    MouseTP = vape.Categories.Blatant:CreateModule({
-	Name = 'MouseTP',
-	Function = function(callback)
-		if callback then
-			local position = nil
-			if Mode.Value == 'Mouse' then
-				rayParams.FilterDescendantsInstances = { workspace:WaitForChild('Map', 9e9) }
-				local ray = cloneref(lplr:GetMouse()).UnitRay
-				ray = workspace:Raycast(ray.Origin, ray.Direction * 10000, rayParams)
-				position = ray and ray.Position
-			elseif Mode.Value == 'Player' then
-				local ent = entitylib.EntityMouse({
-					Range = math.huge,
-					Part = 'RootPart',
-					Players = true,
-				})
-				position = ent and ent.RootPart.Position
-			end
-
-			if position then
-				if Movement.Value == 'All' then
-					if not MouseTPs.Kits(position) and not MouseTPs.Items(position) then
-						notif('MouseTP', 'Couldn\'t find an item or a kit to teleport with', 5)
-					end
-				elseif not MouseTPs[Movement.Value](position) then
-					notif('MouseTP', `Couldn\'t find {Movement.Value:lower()} to teleport with`, 5)
-				end
-			else
-				notif('MouseTP', 'No position found.', 5)
-			end
-			if MouseTP.Enabled then
-				MouseTP:Toggle()
-			end
-		end
-	end,
-        Tooltip = 'Teleports to a selected position'
-    })
-
-    Mode = MouseTP:CreateDropdown({
-	Name = 'Mode',
-	List = {'Mouse', 'Player'},
-	Tooltip = 'Where you\'re going to teleport to',
-    })
-    Movement = MouseTP:CreateDropdown({
-	Name = 'Movement',
-	List = {'All', 'Kits', 'Items'},
-	Tooltip = 'All - Uses Kits & Items to teleport',
-    })
-end)
-
-run(function()
     local old
 
     vape.Categories.Blatant:CreateModule({
@@ -12942,7 +12798,7 @@ run(function()
 end)
 
 run(function()
-    local AutoEnchant, Repair, Preferred, Priority, MaxRolls, Reserve, Rate
+    local AutoEnchant, Repair, Desired, MaxRolls, Reserve, Rate
     local enchantGeneration = 0
     local enchantNames = {}
     local function displayName(key, meta)
@@ -13008,8 +12864,8 @@ run(function()
         return enchant and displayName(enchant, (bedwars.EnchantMeta or {})[enchant]) or ''
     end
     local function wanted(name)
-        for _, selected in Preferred.ListEnabled do if selected == name then return true end end
-        return false
+		local normalize = function(value) return tostring(value or ''):lower():gsub('[%s_%-]+', '') end
+		return Desired and normalize(Desired.Value) == normalize(name)
     end
     local autoEnchantCategory = vape.Categories.Inventory or vape.Categories.Utility or vape.Categories.World
     if not autoEnchantCategory then error('AutoEnchant: no compatible category is available') end
@@ -13048,9 +12904,8 @@ run(function()
         end,
         Tooltip = 'Rolls the nearby team enchant table until a selected enchant is obtained'
     })
+    Desired = AutoEnchant:CreateDropdown({Name = 'Desired enchant', List = enchantNames, Default = enchantNames[1], Tooltip = 'Stops rolling as soon as this enchant is obtained.'})
     Repair = AutoEnchant:CreateToggle({Name = 'Repair enchant table', Default = true})
-    Preferred = AutoEnchant:CreateTextList({Name = 'Preferred enchant', Default = enchantNames, Tooltip = 'Enabled entries are acceptable targets; generated live from EnchantMeta'})
-    Priority = AutoEnchant:CreateDropdown({Name = 'Priority order', List = enchantNames, Tooltip = 'Highest-priority acceptable enchant'})
     MaxRolls = AutoEnchant:CreateSlider({Name = 'Maximum rolls', Min = 1, Max = 50, Default = 10})
     Reserve = AutoEnchant:CreateSlider({Name = 'Resource reserve', Min = 0, Max = 32, Default = 0, Suffix = ' diamonds'})
     Rate = AutoEnchant:CreateSlider({Name = 'Request interval', Min = 0.25, Max = 2, Default = 0.6, Decimal = 100, Suffix = 's'})
@@ -13068,7 +12923,7 @@ run(function()
 
 	local AutoEnchant, Repair, Desired, MaximumRolls, Reserve, Interval
 	local generation = 0
-	local fallbackNames = {'Critical Strike', 'Fire', 'Life Steal', 'Shield Gen', 'Static', 'Updraft', 'Wind'}
+	local enchantNames = {}
 
 	local function normalise(value)
 		return tostring(value or ''):lower():gsub('[%s_%-]+', '')
@@ -13077,6 +12932,16 @@ run(function()
 	local function displayName(key, meta)
 		return tostring((type(meta) == 'table' and (meta.displayName or meta.name)) or key):gsub('_', ' ')
 	end
+
+	if type(bedwars.EnchantMeta) == 'table' then
+		for key, meta in pairs(bedwars.EnchantMeta) do
+			table.insert(enchantNames, displayName(key, meta))
+		end
+	end
+	if #enchantNames == 0 then
+		enchantNames = {'Critical Strike', 'Fire', 'Life Steal', 'Shield Gen', 'Static', 'Updraft', 'Wind'}
+	end
+	table.sort(enchantNames)
 
 	local function diamonds()
 		local item = getItem('diamond')
@@ -13093,11 +12958,7 @@ run(function()
 	end
 
 	local function hasDesired(value)
-		local selected = Desired and Desired.ListEnabled or {}
-		for _, name in pairs(selected) do
-			if normalise(name) == normalise(value) then return true end
-		end
-		return false
+		return Desired and normalise(Desired.Value) == normalise(value)
 	end
 
 	local function findTable()
@@ -13172,8 +13033,8 @@ run(function()
 			end)
 		end
 	})
+	Desired = AutoEnchant:CreateDropdown({Name = 'Desired enchant', List = enchantNames, Default = enchantNames[1], Tooltip = 'Stops rolling as soon as this enchant is obtained.'})
 	Repair = AutoEnchant:CreateToggle({Name = 'Repair enchant table', Default = true})
-	Desired = AutoEnchant:CreateTextList({Name = 'Desired enchants', Default = fallbackNames, Tooltip = 'Stops rolling when the current enchant is in this list.'})
 	MaximumRolls = AutoEnchant:CreateSlider({Name = 'Maximum rolls', Min = 1, Max = 50, Default = 10})
 	Reserve = AutoEnchant:CreateSlider({Name = 'Diamond reserve', Min = 0, Max = 32, Default = 0, Suffix = ' diamonds'})
 	Interval = AutoEnchant:CreateSlider({Name = 'Request interval', Min = 0.25, Max = 2, Default = 0.6, Decimal = 100, Suffix = 's'})
@@ -39109,7 +38970,9 @@ run(function()
 		Name = 'Landing text color',
 		DefaultHue = 0,
 		DefaultSat = 0.001,
-		DefaultValue = 1
+		DefaultValue = 1,
+		Darker = true,
+		Visible = function() return ShowTarget and ShowTarget.Enabled end
 	})
 	SafeLand = DaveyAim:CreateToggle({
 		Name = 'Safe land',

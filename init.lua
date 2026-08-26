@@ -1,7 +1,5 @@
 --!nocheck
 local license = ... or {}
-local globalenv = (getgenv and getgenv()) or _G
-license.Whitelist = globalenv.whitelist or license.Whitelist
 
 -- A cached Lua file used to be compiled once to validate it and then compiled again moments later
 -- to execute it.  The GUI and game chunks are large, so that duplicate parser/codegen work was a
@@ -32,6 +30,34 @@ end
 local delfile = delfile or function(file)
 	writefile(file, '')
 end
+
+-- BEGIN PRIVATE OWNER LOCK
+-- Keep this bootstrap check independent from libraries/ownerlock.lua: it rejects an unapproved
+-- account before any remote Aether code or interface is loaded. Remove this marked block together
+-- with libraries/ownerlock.lua and the matching main.lua blocks to make the project public again.
+repeat task.wait() until game:IsLoaded()
+local bootstrapPlayers = cloneref(game:GetService('Players'))
+repeat task.wait() until bootstrapPlayers.LocalPlayer
+local bootstrapPlayer = bootstrapPlayers.LocalPlayer
+local bootstrapOwners = {
+	[10892298546] = 'plutoxqqqqq',
+	[11192223658] = 'plutoxqqqqqq',
+	[11507362139] = 'plutoxqqqqqqq',
+	[11515370034] = 'aetherv2owner'
+}
+local bootstrapName = bootstrapOwners[bootstrapPlayer.UserId]
+if not bootstrapName or string.lower(bootstrapPlayer.Name) ~= bootstrapName then
+	table.clear(compileCache)
+	shared.AetherCompileCache = nil
+	pcall(function()
+		bootstrapPlayer:Kick('AetherV2 is a private owner-only build. This account is not authorized.')
+	end)
+	error('[AetherV2] Private owner check failed', 0)
+end
+table.clear(bootstrapOwners)
+bootstrapOwners = nil
+bootstrapName = nil
+-- END PRIVATE OWNER LOCK
 
 local function isLoadingScreenDisabled()
 	return isfile('aetherv2/profiles/disableloading.txt') and readfile('aetherv2/profiles/disableloading.txt') == 'true'

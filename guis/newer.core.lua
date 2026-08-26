@@ -25,7 +25,7 @@
 	 - Theme presets    : one-click accent swatches; with "Recolour modules with
 	                      theme" on they also retint module colours (Killaura target
 	                      boxes, ESP, tracers, particles, ...).
-	 - Watermark / Keybind HUD overlays, favourites polish, notifications.
+	 - Watermark / Keybind HUD overlays and notifications.
 
 	Removed in v6: the Aether Neo overhaul engine and the Theme / Interface /
 	Windows settings-clutter panes (their machinery falls back to sane defaults).
@@ -107,8 +107,7 @@ local uipallet = {
 }
 local vapecolors = {
 	Icon = Color3.fromRGB(122, 122, 122),
-	IconHover = Color3.fromRGB(209, 209, 209),
-	Favorite = Color3.fromRGB(236, 129, 44)
+	IconHover = Color3.fromRGB(209, 209, 209)
 }
 -- Every panel that addBlur() frosts is registered here so the Theme editor can
 -- retune glass intensity in real time. Weak keys let destroyed panels collect.
@@ -796,7 +795,7 @@ local function createMobileButton(buttonapi, position)
 	button.AnchorPoint = Vector2.new(0.5, 0.5)
 	button.BackgroundColor3 = buttonapi.Enabled and Color3.new(0, 0.7, 0) or Color3.new()
 	button.BackgroundTransparency = 0.5
-	button.Text = buttonapi.Name
+	button.Text = mainapi.GetModuleDisplayName and mainapi:GetModuleDisplayName(buttonapi) or buttonapi.Name
 	button.TextColor3 = Color3.new(1, 1, 1)
 	button.TextScaled = true
 	button.Font = Enum.Font.Gotham
@@ -941,6 +940,128 @@ end
 
 ensureDataFolders()
 
+-- Module nicknames are a GUI preference, not module identity. Keeping them in their
+-- own global file means configs continue to load, save, upload and download with the
+-- immutable registration name used by mainapi.Modules.
+local moduleNamesPath = profileFolder..'/module-names.json'
+mainapi.ModuleNicknames = isfile(moduleNamesPath) and loadJson(moduleNamesPath) or {}
+if type(mainapi.ModuleNicknames) ~= 'table' then mainapi.ModuleNicknames = {} end
+for name, nickname in mainapi.ModuleNicknames do
+	if type(name) ~= 'string' or type(nickname) ~= 'string' or nickname:gsub('^%s*(.-)%s*$', '%1') == '' then
+		mainapi.ModuleNicknames[name] = nil
+	end
+end
+mainapi.ModuleSearchRefreshers = {}
+
+function mainapi:GetModuleDisplayName(module)
+	local defaultName = type(module) == 'table' and module.Name or tostring(module or '')
+	return self.ModuleNicknames[defaultName] or defaultName
+end
+
+function mainapi:ModuleMatchesSearch(module, query)
+	query = tostring(query or ''):lower()
+	local defaultName = tostring(module.Name or ''):lower()
+	local displayName = self:GetModuleDisplayName(module):lower()
+	local compact = query:gsub('%s+', '')
+	return defaultName:find(query, 1, true) ~= nil
+		or displayName:find(query, 1, true) ~= nil
+		or defaultName:gsub('%s+', ''):find(compact, 1, true) ~= nil
+		or displayName:gsub('%s+', ''):find(compact, 1, true) ~= nil
+end
+
+function mainapi:RefreshModuleSearches()
+	for _, refresh in self.ModuleSearchRefreshers do pcall(refresh) end
+end
+
+function mainapi:SaveModuleNicknames()
+	ensureDataFolders()
+	pcall(writefile, moduleNamesPath, httpService:JSONEncode(self.ModuleNicknames))
+end
+
+function mainapi:SetModuleNickname(module, nickname, deferSave)
+	local defaultName = type(module) == 'table' and module.Name or tostring(module or '')
+	nickname = type(nickname) == 'string' and nickname:gsub('^%s*(.-)%s*$', '%1') or ''
+	self.ModuleNicknames[defaultName] = nickname ~= '' and nickname ~= defaultName and nickname or nil
+	if type(module) == 'table' and module.SetDisplayName then
+		module:SetDisplayName(self:GetModuleDisplayName(module))
+	end
+	if not deferSave then self:SaveModuleNicknames() end
+	self:RefreshModuleSearches()
+	if self.Loaded and self.UpdateTextGUI then pcall(self.UpdateTextGUI, self) end
+end
+
+function mainapi:ResetModuleNicknames()
+	table.clear(self.ModuleNicknames)
+	for _, collection in {self.Modules, self.Legit and self.Legit.Modules, self.Kits and self.Kits.Modules} do
+		for _, module in collection or {} do
+			if module.SetDisplayName then module:SetDisplayName(module.Name) end
+		end
+	end
+	self:SaveModuleNicknames()
+	self:RefreshModuleSearches()
+	if self.Loaded and self.UpdateTextGUI then pcall(self.UpdateTextGUI, self) end
+end
+
+-- The title itself is the only rename target. A normal single click retains the
+-- module toggle behaviour; the second click cancels that delayed toggle and opens
+-- an inline editor. Clicking elsewhere on the module row is handled by the row.
+function mainapi:BindModuleTitle(module, title, onSingleClick, onRightClick)
+	local hovered, lastClick, clickToken, editing = false, 0, 0, false
+	title.MouseEnter:Connect(function() hovered = true end)
+	title.MouseLeave:Connect(function() hovered = false end)
+
+	local function editName()
+		if editing then return end
+		editing = true
+		local editor = Instance.new('TextBox')
+		editor.Name = 'ModuleNameEditor'
+		editor.Size = UDim2.fromOffset(math.max(title.AbsoluteSize.X, 120), math.max(title.AbsoluteSize.Y - 6, 24))
+		editor.Position = UDim2.fromOffset(0, math.floor((title.AbsoluteSize.Y - editor.Size.Y.Offset) / 2))
+		editor.BackgroundColor3 = color.Light(uipallet.Main, 0.05)
+		editor.BorderSizePixel = 0
+		editor.ClearTextOnFocus = false
+		editor.Text = self:GetModuleDisplayName(module)
+		editor.TextColor3 = uipallet.Text
+		editor.TextSize = title.TextSize
+		editor.FontFace = title.FontFace
+		editor.TextXAlignment = Enum.TextXAlignment.Left
+		editor.ZIndex = title.ZIndex + 3
+		editor.Parent = title
+		addCorner(editor, UDim.new(0, 4))
+		title.TextTransparency = 1
+		editor.FocusLost:Connect(function(enterPressed)
+			if enterPressed then self:SetModuleNickname(module, editor.Text) end
+			title.TextTransparency = 0
+			editing = false
+			editor:Destroy()
+		end)
+		task.defer(function()
+			editor:CaptureFocus()
+			editor.CursorPosition = #editor.Text + 1
+		end)
+	end
+
+	title.MouseButton1Click:Connect(function()
+		if editing then return end
+		local now = tick()
+		clickToken += 1
+		local token = clickToken
+		if now - lastClick <= 0.35 then
+			lastClick = 0
+			editName()
+			return
+		end
+		lastClick = now
+		task.delay(0.36, function()
+			if clickToken == token and not editing and onSingleClick then onSingleClick() end
+		end)
+	end)
+	title.MouseButton2Click:Connect(function()
+		if not editing and onRightClick then onRightClick() end
+	end)
+	return function() return hovered or editing end
+end
+
 local defaultConfigs = {}
 
 local function installBundledConfig(name, force)
@@ -1080,7 +1201,7 @@ end
 	four places a profile is written to:
 
 	  * configs/<profile><place>.json - modules, their settings and binds, Legit, Kits,
-	    the favourites order, and the config's own accent and menu key.
+	    module layout, and the config's own accent and menu key.
 	  * profiles/<profile><place>.txt - a mirror of exactly the same data, which Load
 	    falls back to when the config is missing. Deleting the config alone therefore
 	    restored the whole profile from here on the very next injection, which is what
@@ -1531,7 +1652,7 @@ components = {
 		addGlass(button)
 		button.BorderSizePixel = 0
 		button.AutoButtonColor = false
-		button.Visible = optionsettings.Visible == nil or optionsettings.Visible
+		button.Visible = optionsettings.Visible == nil or type(optionsettings.Visible) == 'function' or optionsettings.Visible
 		button.Text = ''
 		button.Parent = children
 		addTooltip(button, optionsettings.Tooltip)
@@ -1567,7 +1688,7 @@ components = {
 		button.MouseButton1Click:Connect(optionsettings.Function)
 
 		-- Expose the button and its label so callers can give feedback (eg. flashing
-		-- "Copied!" on the Export to JSON button). Existing callers ignore the return.
+		-- temporary status text on action buttons). Existing callers ignore the return.
 		return {Object = button, Label = label, Name = optionsettings.Name}
 	end,
 	ColorSlider = function(optionsettings, children, api)
@@ -1680,7 +1801,7 @@ components = {
 		addGlass(slider)
 		slider.BorderSizePixel = 0
 		slider.AutoButtonColor = false
-		slider.Visible = optionsettings.Visible == nil or optionsettings.Visible
+		slider.Visible = optionsettings.Visible == nil or type(optionsettings.Visible) == 'function' or optionsettings.Visible
 		slider.Text = ''
 		slider.Parent = children
 		addTooltip(slider, optionsettings.Tooltip)
@@ -1996,7 +2117,7 @@ components = {
 	Dropdown = function(optionsettings, children, api)
 		local optionapi = {
 			Type = 'Dropdown',
-			Value = optionsettings.List[1] or 'None',
+			Value = table.find(optionsettings.List, optionsettings.Default) and optionsettings.Default or optionsettings.List[1] or 'None',
 			Index = 0
 		}
 		
@@ -2007,7 +2128,7 @@ components = {
 		addGlass(dropdown)
 		dropdown.BorderSizePixel = 0
 		dropdown.AutoButtonColor = false
-		dropdown.Visible = optionsettings.Visible == nil or optionsettings.Visible
+		dropdown.Visible = optionsettings.Visible == nil or type(optionsettings.Visible) == 'function' or optionsettings.Visible
 		dropdown.Text = ''
 		dropdown.Parent = children
 		addTooltip(dropdown, optionsettings.Tooltip or optionsettings.Name)
@@ -2216,7 +2337,7 @@ components = {
 		addGlass(slider)
 		slider.BorderSizePixel = 0
 		slider.AutoButtonColor = false
-		slider.Visible = optionsettings.Visible == nil or optionsettings.Visible
+		slider.Visible = optionsettings.Visible == nil or type(optionsettings.Visible) == 'function' or optionsettings.Visible
 		slider.Text = ''
 		slider.Parent = children
 		addTooltip(slider, optionsettings.Tooltip)
@@ -2396,7 +2517,7 @@ components = {
 		addGlass(textlist)
 		textlist.BorderSizePixel = 0
 		textlist.AutoButtonColor = false
-		textlist.Visible = optionsettings.Visible == nil or optionsettings.Visible
+		textlist.Visible = optionsettings.Visible == nil or type(optionsettings.Visible) == 'function' or optionsettings.Visible
 		textlist.Text = ''
 		textlist.Parent = children
 		addTooltip(textlist, optionsettings.Tooltip)
@@ -2627,7 +2748,7 @@ components = {
 		targetbutton.Position = optionsettings.Position
 		targetbutton.BackgroundColor3 = color.Light(uipallet.Main, 0.05)
 		targetbutton.AutoButtonColor = false
-		targetbutton.Visible = optionsettings.Visible == nil or optionsettings.Visible
+		targetbutton.Visible = optionsettings.Visible == nil or type(optionsettings.Visible) == 'function' or optionsettings.Visible
 		targetbutton.Text = ''
 		targetbutton.Parent = children
 		addCorner(targetbutton)
@@ -2713,7 +2834,7 @@ components = {
 		addGlass(textbox)
 		textbox.BorderSizePixel = 0
 		textbox.AutoButtonColor = false
-		textbox.Visible = optionsettings.Visible == nil or optionsettings.Visible
+		textbox.Visible = optionsettings.Visible == nil or type(optionsettings.Visible) == 'function' or optionsettings.Visible
 		textbox.Text = ''
 		textbox.Parent = children
 		addTooltip(textbox, optionsettings.Tooltip)
@@ -2799,7 +2920,7 @@ components = {
 		addGlass(textlist)
 		textlist.BorderSizePixel = 0
 		textlist.AutoButtonColor = false
-		textlist.Visible = optionsettings.Visible == nil or optionsettings.Visible
+		textlist.Visible = optionsettings.Visible == nil or type(optionsettings.Visible) == 'function' or optionsettings.Visible
 		textlist.Text = ''
 		textlist.Parent = children
 		addTooltip(textlist, optionsettings.Tooltip)
@@ -3150,7 +3271,7 @@ components = {
 		addGlass(toggle)
 		toggle.BorderSizePixel = 0
 		toggle.AutoButtonColor = false
-		toggle.Visible = optionsettings.Visible == nil or optionsettings.Visible
+		toggle.Visible = optionsettings.Visible == nil or type(optionsettings.Visible) == 'function' or optionsettings.Visible
 		toggle.Text = '          '..optionsettings.Name
 		toggle.TextXAlignment = Enum.TextXAlignment.Left
 		toggle.TextColor3 = color.Dark(uipallet.Text, 0.16)
@@ -3253,7 +3374,7 @@ components = {
 		addGlass(slider)
 		slider.BorderSizePixel = 0
 		slider.AutoButtonColor = false
-		slider.Visible = optionsettings.Visible == nil or optionsettings.Visible
+		slider.Visible = optionsettings.Visible == nil or type(optionsettings.Visible) == 'function' or optionsettings.Visible
 		slider.Text = ''
 		slider.Parent = children
 		addTooltip(slider, optionsettings.Tooltip)
@@ -3563,8 +3684,7 @@ end
 
 addMaid(mainapi)
 
--- Sorts every module within its category alphabetically, but keeps favourited
--- modules pinned to the top of their category (also alphabetical amongst themselves).
+-- Sort every module within its category by its immutable registration name.
 function mainapi:SortModules()
 	local sorting = {}
 	for _, v in self.Modules do
@@ -3573,13 +3693,7 @@ function mainapi:SortModules()
 	end
 
 	for _, sort in sorting do
-		table.sort(sort, function(a, b)
-			local fava, favb = self.Modules[a].Favourited, self.Modules[b].Favourited
-			if (fava and true) ~= (favb and true) then
-				return fava and true or false
-			end
-			return a < b
-		end)
+		table.sort(sort)
 		for i, v in sort do
 			local module = self.Modules[v]
 			module.Index = i
@@ -3991,37 +4105,6 @@ button.MouseButton1Click:Connect(clicked)
 		button.Parent = bar
 		addCorner(button, UDim.new(1, 0))
 		addTooltip(button, 'Open overlays menu')
-		local favoritesbutton = Instance.new('TextButton')
-		favoritesbutton.Name = 'Favorites'
-		favoritesbutton.Size = UDim2.fromOffset(16, 17)
-		favoritesbutton.Position = UDim2.new(1, -59, 0, 11)
-		favoritesbutton.BackgroundTransparency = 1
-		favoritesbutton.AutoButtonColor = false
-		favoritesbutton.Text = '★'
-		favoritesbutton.TextSize = 17
-		favoritesbutton.TextColor3 = vapecolors.Icon
-		favoritesbutton.FontFace = Font.fromEnum(Enum.Font.GothamBold)
-		favoritesbutton.Parent = bar
-		addCorner(favoritesbutton, UDim.new(1, 0))
-		addTooltip(favoritesbutton, 'Favorites')
-		local function paintFavorites()
-			local favorites = mainapi.Categories.Favorites
-			favoritesbutton.TextColor3 = (favorites and favorites.Standalone) and vapecolors.Favorite or vapecolors.Icon
-		end
-		mainapi.PaintFavorites = paintFavorites
-		favoritesbutton.MouseButton1Click:Connect(function()
-			local favorites = mainapi.Categories.Favorites
-			if not favorites then return end
-			favorites.Standalone = not favorites.Standalone
-			favorites.Object.Visible = favorites.Standalone
-			paintFavorites()
-			if mainapi.QueueSave then mainapi:QueueSave() end
-		end)
-		favoritesbutton.MouseEnter:Connect(function()
-			local favorites = mainapi.Categories.Favorites
-			favoritesbutton.TextColor3 = (favorites and favorites.Standalone) and Color3.fromRGB(255, 160, 84) or vapecolors.IconHover
-		end)
-		favoritesbutton.MouseLeave:Connect(paintFavorites)
 		local homebutton = Instance.new('TextButton')
 		homebutton.Name = 'AetherV2Home'
 		homebutton.Size, homebutton.Position = UDim2.fromOffset(42, 22), UDim2.fromOffset(8, 8)
@@ -4907,7 +4990,7 @@ end
 
 	Powers the new expandable module settings: ease-in-out open/close,
 	collapsible sub-categories, and the smooth "scroll a module into view +
-	flash it" behaviour shared by the search bar and the favourites system.
+	flash it" behaviour used by the search bar.
 	Kept at module scope (just above CreateCategory) so CreateModule can close
 	over it without threading extra state through every component.
 ]]
@@ -5087,7 +5170,7 @@ function mainapi:CreateCategory(categorysettings)
 	title.Size = UDim2.new(1, -(categorysettings.Size.X.Offset > 18 and 40 or 33), 0, 41)
 	title.Position = UDim2.fromOffset(math.abs(title.Size.X.Offset), 0)
 	title.BackgroundTransparency = 1
-	title.Text = categorysettings.Name == 'Favorites' and '★ Favorites' or categorysettings.Name
+	title.Text = categorysettings.Name
 	title.TextXAlignment = Enum.TextXAlignment.Left
 	title.TextColor3 = uipallet.Text
 	title.TextSize = 13
@@ -5138,44 +5221,17 @@ function mainapi:CreateCategory(categorysettings)
 	windowlist.HorizontalAlignment = Enum.HorizontalAlignment.Center
 	windowlist.Parent = children
 
-	function categoryapi:MirrorModule(module)
-		local row = module.Object:Clone()
-		row.Name = module.Name
-		row.LayoutOrder = (module.FavoriteIndex or 0) * 2
-		row.Parent = children
-		local bind = row:FindFirstChild('Bind', true)
-		if bind then bind:Destroy() end
-		local star = row:FindFirstChild('Favorite', true) or row:FindFirstChild('Favourite', true)
-		if star then star:Destroy() end
-		row.MouseButton1Click:Connect(function()
-			module:Toggle()
-		end)
-		task.spawn(function()
-			repeat
-				row.TextColor3 = module.Object.TextColor3
-				row.BackgroundColor3 = module.Object.BackgroundColor3
-				row.LayoutOrder = (module.FavoriteIndex or 0) * 2
-				task.wait()
-			until not row.Parent
-		end)
-		row.Destroying:Connect(function()
-			if module.FavoriteRow == row then module.FavoriteRow = nil end
-		end)
-		return row
-	end
-
 	function categoryapi:CreateModule(modulesettings)
 		mainapi:Remove(modulesettings.Name, true)
 		local moduleapi = {
 			Enabled = false,
-			Favorited = false,
-			Favourited = false,
 			Options = {},
 			Bind = {},
 			Tags = {},
 			Index = getTableSize(mainapi.Modules),
 			ExtraText = modulesettings.ExtraText,
 			Name = modulesettings.Name,
+			DisplayName = mainapi:GetModuleDisplayName(modulesettings.Name),
 			Category = categorysettings.Name
 		}
 
@@ -5185,7 +5241,7 @@ function mainapi:CreateCategory(categorysettings)
 		-- open while the collapse animation plays out (Visible only flips off once
 		-- the ease-in-out finishes).
 		local settingsOpen = false
-		-- Points the shared favourites/search scroll engine at this module's
+		-- Points the shared search scroll engine at this module's
 		-- category so ScrollToModule can open + centre it.
 		moduleapi.CategoryAPI = categoryapi
 		local modulebutton = Instance.new('TextButton')
@@ -5195,12 +5251,25 @@ function mainapi:CreateCategory(categorysettings)
 		addGlass(modulebutton)
 		modulebutton.BorderSizePixel = 0
 		modulebutton.AutoButtonColor = false
-		modulebutton.Text = '            '..modulesettings.Name
+		modulebutton.Text = ''
 		modulebutton.TextXAlignment = Enum.TextXAlignment.Left
 		modulebutton.TextColor3 = color.Dark(uipallet.Text, 0.16)
 		modulebutton.TextSize = 14
 		modulebutton.FontFace = uipallet.Font
 		modulebutton.Parent = children
+		local moduletitle = Instance.new('TextButton')
+		moduletitle.Name = 'Title'
+		moduletitle.Size = UDim2.fromOffset(130, 40)
+		moduletitle.Position = UDim2.fromOffset(13, 0)
+		moduletitle.BackgroundTransparency = 1
+		moduletitle.AutoButtonColor = false
+		moduletitle.Text = moduleapi.DisplayName
+		moduletitle.TextTruncate = Enum.TextTruncate.AtEnd
+		moduletitle.TextXAlignment = Enum.TextXAlignment.Left
+		moduletitle.TextColor3 = modulebutton.TextColor3
+		moduletitle.TextSize = modulebutton.TextSize
+		moduletitle.FontFace = modulebutton.FontFace
+		moduletitle.Parent = modulebutton
 		-- v6 redesign: a left accent bar that lights up in the theme colour when the
 		-- module is on. The row itself stays a flat dark surface (a subtle raised
 		-- tint) instead of the old full-accent highlight, so on/off reads as a clean
@@ -5285,193 +5354,6 @@ function mainapi:CreateCategory(categorysettings)
 		bind.Visible = false
 		bind.Text = ''
 		addCorner(bind, UDim.new(0, 4))
-		-- Favourite visuals: one gold accent shared by the star chip, the
-		-- border trim and the pulse ring.
-		local favGold = Color3.fromRGB(255, 200, 60)
-		local favstroke = Instance.new('UIStroke')
-		favstroke.Name = 'FavouriteBorder'
-		favstroke.Color = favGold
-		favstroke.Thickness = 1.6
-		favstroke.Transparency = 1
-		favstroke.LineJoinMode = Enum.LineJoinMode.Round
-		favstroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-		favstroke.Enabled = false
-		favstroke.Parent = modulebutton
-		-- Vertical sheen so the border reads as gold trim rather than a hard box.
-		local favsheen = Instance.new('UIGradient')
-		favsheen.Rotation = 90
-		favsheen.Color = ColorSequence.new(favGold, Color3.fromRGB(214, 148, 34))
-		favsheen.Parent = favstroke
-		local favourite = Instance.new('TextButton')
-		favourite.Name = 'Favorite'
-		favourite.Size = UDim2.fromOffset(18, 21)
-		-- Anchor to the row's vertical centre so the star chip sits dead-centre in
-		-- the 40px row regardless of row height, instead of a hand-tuned offset.
-		favourite.Position = UDim2.new(1, -60, 0.5, 0)
-		favourite.AnchorPoint = Vector2.new(1, 0.5)
-		favourite.TextYAlignment = Enum.TextYAlignment.Center
-		favourite.TextXAlignment = Enum.TextXAlignment.Center
-		favourite.BackgroundTransparency = 1
-		favourite.BorderSizePixel = 0
-		favourite.AutoButtonColor = false
-		favourite.Visible = false
-		favourite.Text = ''
-		favourite.Parent = modulebutton
-		addTooltip(favourite, 'Add module to favorites')
-		-- Draw the star ourselves instead of depending on the old CatV6 bitmap.  Apart
-		-- from avoiding an asset download, a text glyph scales cleanly with the UI.
-		local favouriteicon = Instance.new('TextLabel')
-		favouriteicon.Name = 'Icon'
-		favouriteicon.Size = UDim2.fromOffset(16, 15)
-		favouriteicon.AnchorPoint = Vector2.new(0.5, 0.5)
-		favouriteicon.Position = UDim2.fromScale(0.5, 0.5)
-		favouriteicon.BackgroundTransparency = 1
-		favouriteicon.Text = '★'
-		favouriteicon.TextSize = 15
-		favouriteicon.TextColor3 = vapecolors.Icon
-		favouriteicon.FontFace = Font.fromEnum(Enum.Font.GothamBold)
-		favouriteicon.Parent = favourite
-		local favscale = Instance.new('UIScale')
-		favscale.Parent = favourite
-		-- instant skips the colour tween; used on bulk paths (config loads)
-		-- where animating every module at once would stutter.
-		local function updateFavouriteVisual(instant)
-			local starcolor = moduleapi.Favorited and vapecolors.Favorite or ((hovered or settingsOpen) and vapecolors.IconHover or vapecolors.Icon)
-			favourite.Visible = moduleapi.Favorited or hovered or settingsOpen
-			favouriteicon.TextColor3 = starcolor
-			favstroke.Enabled = moduleapi.Favorited
-			favstroke.Transparency = moduleapi.Favorited and 0.1 or 1
-		end
-		moduleapi.UpdateFavouriteVisual = updateFavouriteVisual
-
-		-- All the one-shot flourishes for a state change, kept out of SetFavourite
-		-- so the state path stays readable. Only ever runs on user-driven toggles
-		-- (silent = false); bulk config loads skip it entirely.
-		local function playFavouriteBurst(state)
-			-- Border trim fades with the state instead of snapping.
-			if state then
-				favstroke.Enabled = true
-				favstroke.Transparency = 1
-				tweenService:Create(favstroke, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-					Transparency = 0.1
-				}):Play()
-			else
-				local fade = tweenService:Create(favstroke, TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-					Transparency = 1
-				})
-				fade.Completed:Once(function()
-					if not moduleapi.Favourited then
-						favstroke.Enabled = false
-					end
-				end)
-				fade:Play()
-			end
-			-- Star pop in both directions: shrink-in when favouriting,
-			-- overshoot-out when unfavouriting.
-			favscale.Scale = state and 0.6 or 1.2
-			tweenService:Create(favscale, TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
-				Scale = 1
-			}):Play()
-			-- Ring pulse on BOTH transitions: gold as it swells outward when
-			-- favouriting, a cool silver as it settles back into the alphabetical
-			-- list when unfavouriting. Same swelling-ring motion either way so the
-			-- move draws the eye to the module's new home.
-			local oldpulse = modulebutton:FindFirstChild('FavouritePulse')
-			if oldpulse then
-				oldpulse:Destroy()
-			end
-			local pulse = Instance.new('UIStroke')
-			pulse.Name = 'FavouritePulse'
-			pulse.Color = state and favGold or Color3.fromRGB(170, 178, 194)
-			pulse.Thickness = 1
-			pulse.Transparency = 0.25
-			pulse.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-			pulse.Parent = modulebutton
-			tweenService:Create(pulse, TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-				Transparency = 1,
-				Thickness = state and 7 or 5
-			}):Play()
-			task.delay(0.55, function()
-				pulse:Destroy()
-			end)
-		end
-
-		-- Moves the category so the module's new home is on screen after a
-		-- favourite/unfavourite: favouriting pins it to the very top so we scroll
-		-- there, unfavouriting drops it back to its alphabetical slot so we centre
-		-- on that. Deferred a frame so SortModules' new LayoutOrders have laid out.
-		local function scrollToFavouriteHome(state)
-			task.defer(function()
-				local frame = modulebutton.Parent
-				if not frame or not frame:IsA('ScrollingFrame') then return end
-				if categoryapi.Expanded == false then
-					categoryapi:Expand()
-				end
-				if state then
-					if uipallet.Tween.Time <= 0 then
-						frame.CanvasPosition = Vector2.new(0, 0)
-					else
-						tweenService:Create(frame, settingsTweenInfo(), {
-							CanvasPosition = Vector2.new(0, 0)
-						}):Play()
-					end
-				else
-					-- Centre on the alphabetical slot; the ring pulse is the arrival
-					-- cue so skip the extra flash.
-					mainapi:ScrollToModule(moduleapi, {Flash = false})
-				end
-			end)
-			task.defer(mainapi.RefreshContextualOptions, mainapi)
-		end
-
-		function moduleapi:SetFavourite(state, silent)
-			local order = typeof(state) == 'number' and state or nil
-			state = state and true or false
-			-- Early-out when nothing changes: config loads call SetFavourite on
-			-- every module, and re-sorting all categories for each unchanged
-			-- module made profile switching stutter badly.
-			if self.Favorited == state then
-				updateFavouriteVisual(true)
-				return
-			end
-			self.Favourited = state
-			self.Favorited = state
-			self.FavoriteIndex = state and (order or ((mainapi.FavoriteCount or 0) + 1)) or nil
-			if self.FavoriteIndex then mainapi.FavoriteCount = math.max(mainapi.FavoriteCount or 0, self.FavoriteIndex) end
-			updateFavouriteVisual(silent)
-			mainapi:SortModules()
-			local favorites = mainapi.Categories.Favorites
-			if favorites then
-				if state and not self.FavoriteRow then
-					self.FavoriteRow = favorites:MirrorModule(self)
-				elseif not state and self.FavoriteRow then
-					self.FavoriteRow:Destroy()
-					self.FavoriteRow = nil
-				end
-			end
-			if not silent then
-				playFavouriteBurst(state)
-				scrollToFavouriteHome(state)
-			end
-		end
-		moduleapi.SetFavorite = moduleapi.SetFavourite
-		favourite.MouseEnter:Connect(function()
-			-- tweenstwo so this doesn't cancel the star colour tween, which is
-			-- keyed on the same object in the primary tween table.
-			tween:Tween(favourite, uipallet.Tween, {BackgroundTransparency = 0.8}, tween.tweenstwo)
-			tweenService:Create(favscale, TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-				Scale = 1.15
-			}):Play()
-		end)
-		favourite.MouseLeave:Connect(function()
-			tween:Tween(favourite, uipallet.Tween, {BackgroundTransparency = 0.92}, tween.tweenstwo)
-			tweenService:Create(favscale, TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-				Scale = 1
-			}):Play()
-		end)
-		favourite.MouseButton1Click:Connect(function()
-			moduleapi:SetFavourite(not moduleapi.Favourited)
-		end)
 		local bindicon = Instance.new('ImageLabel')
 		bindicon.Name = 'Icon'
 		bindicon.Size = UDim2.fromOffset(12, 12)
@@ -5562,6 +5444,15 @@ function mainapi:CreateCategory(categorysettings)
 		modulesettings.Function = modulesettings.Function or function() end
 		addMaid(moduleapi)
 
+		function moduleapi:SetDisplayName(displayName)
+			self.DisplayName = tostring(displayName or self.Name)
+			local shown = mainapi.NoModuleSpacing and mainapi.NoModuleSpacing.Enabled and self.DisplayName:gsub(' ', '') or self.DisplayName
+			moduletitle.Text = shown
+			moduletitle.Size = UDim2.fromOffset(math.min(getfontsize(shown, moduletitle.TextSize, moduletitle.FontFace).X + 4, 130), 40)
+			if self.Bind.Button then self.Bind.Button.Text = shown end
+		end
+		moduleapi:SetDisplayName(moduleapi.DisplayName)
+
 		function moduleapi:SetBind(tab, mouse)
 			if tab.Mobile then
 				createMobileButton(moduleapi, Vector2.new(tab.X, tab.Y))
@@ -5651,6 +5542,7 @@ function mainapi:CreateCategory(categorysettings)
 				modulebutton.BackgroundColor3 = bgColor
 				modulebutton.TextColor3 = txtColor
 			end
+			moduletitle.TextColor3 = txtColor
 		end
 		-- UpdateGUI runs when the accent changes; exposing the row painter means
 		-- the v6 accent bar refreshes immediately instead of waiting for hover.
@@ -6091,7 +5983,6 @@ function mainapi:CreateCategory(categorysettings)
 				animatePanel(false)
 			end
 			updateModuleButtonVisual()
-			updateFavouriteVisual()
 			bind.Visible = #moduleapi.Bind > 0 or hovered or settingsOpen
 		end
 		function moduleapi:ToggleSettings()
@@ -6134,22 +6025,27 @@ function mainapi:CreateCategory(categorysettings)
 		dotsbutton.MouseButton2Click:Connect(function()
 			moduleapi:ToggleSettings()
 		end)
+		local titleActive = mainapi:BindModuleTitle(moduleapi, moduletitle, function()
+			moduleapi:Toggle()
+		end, function()
+			moduleapi:ToggleSettings()
+		end)
 		modulebutton.MouseEnter:Connect(function()
 			hovered = true
 			updateModuleButtonVisual()
-			updateFavouriteVisual()
 			bind.Visible = #moduleapi.Bind > 0 or hovered or settingsOpen
 		end)
 		modulebutton.MouseLeave:Connect(function()
 			hovered = false
 			updateModuleButtonVisual()
-			updateFavouriteVisual()
 			bind.Visible = #moduleapi.Bind > 0 or hovered or settingsOpen
 		end)
 		modulebutton.MouseButton1Click:Connect(function()
+			if titleActive() then return end
 			moduleapi:Toggle()
 		end)
 		modulebutton.MouseButton2Click:Connect(function()
+			if titleActive() then return end
 			moduleapi:ToggleSettings()
 		end)
 		if inputService.TouchEnabled then
@@ -7986,8 +7882,9 @@ function mainapi:CreateOnline()
 	function api:Close() window.Visible = false end
 	close.MouseButton1Click:Connect(function() api:Close() end)
 	task.spawn(function()
-		local player = game:GetService('Players').LocalPlayer
-		local ok, image = pcall(player.GetUserThumbnailAsync, player, player.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size100x100)
+		local players = cloneref(game:GetService('Players'))
+		local player = players.LocalPlayer
+		local ok, image = pcall(players.GetUserThumbnailAsync, players, player.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size100x100)
 		if ok and avatar.Parent then avatar.Image = image end
 		while window.Parent do
 			if window.Visible then
@@ -8135,7 +8032,7 @@ function mainapi:CreateSearch()
 		self.Legit.Window.Visible = true
 		self.Legit.Window.Position = UDim2.new(0.5, -350, 0.5, -194)
 	end)
-	search:GetPropertyChangedSignal('Text'):Connect(function()
+	local function refreshSearch()
 		clearbutton.Visible = search.Text ~= ''
 		for _, v in children:GetChildren() do
 			if v:IsA('TextButton') then
@@ -8148,12 +8045,14 @@ function mainapi:CreateSearch()
 		end
 
 		local matches = 0
-		for i, v in self.Modules do
+		for _, v in self.Modules do
 			-- Plain find: the query is user text, not a Lua pattern (typing
 			-- characters like '(' or '%' used to error here).
-			if i:lower():find(search.Text:lower(), 1, true) then
+			if self:ModuleMatchesSearch(v, search.Text) then
 				matches += 1
 				local button = v.Object:Clone()
+				local clonedTitle = button:FindFirstChild('Title')
+				if clonedTitle then clonedTitle.Active = false end
 				button.Bind:Destroy()
 				button.MouseButton1Click:Connect(function()
 					v:Toggle()
@@ -8176,6 +8075,12 @@ function mainapi:CreateSearch()
 						for _, v2 in {'Text', 'TextColor3', 'BackgroundColor3'} do
 							button[v2] = v.Object[v2]
 						end
+						local buttonTitle, sourceTitle = button:FindFirstChild('Title'), v.Object:FindFirstChild('Title')
+						if buttonTitle and sourceTitle then
+							buttonTitle.Text = sourceTitle.Text
+							buttonTitle.TextColor3 = sourceTitle.TextColor3
+							buttonTitle.Size = sourceTitle.Size
+						end
 						button.UIGradient.Color = v.Object.UIGradient.Color
 						button.UIGradient.Enabled = v.Object.UIGradient.Enabled
 						button.Dots.Dots.ImageColor3 = v.Object.Dots.Dots.ImageColor3
@@ -8185,7 +8090,9 @@ function mainapi:CreateSearch()
 			end
 		end
 		noresults.Visible = matches == 0
-	end)
+	end
+	search:GetPropertyChangedSignal('Text'):Connect(refreshSearch)
+	table.insert(self.ModuleSearchRefreshers, refreshSearch)
 	windowlist:GetPropertyChangedSignal('AbsoluteContentSize'):Connect(function()
 		if self.ThreadFix then
 			setthreadidentity(8)
@@ -8306,13 +8213,11 @@ function mainapi:CreateLegit()
 				break
 			end
 		end
-		for i, v in legitapi.Modules do
-			-- Plain find (and truncate gsub to its first return): the query is
-			-- user text, not a Lua pattern, and gsub's replacement count used to
-			-- leak into find's init argument.
-			v.Object.Visible = (FocusedCategory == 'All' or v.ApiCategory == FocusedCategory) and (i == '' or i:lower():gsub(' ', ''):find((searchvalue.Text:lower():gsub(' ', '')), 1, true) and true) or false
+		for _, v in legitapi.Modules do
+			v.Object.Visible = (FocusedCategory == 'All' or v.ApiCategory == FocusedCategory) and mainapi:ModuleMatchesSearch(v, searchvalue.Text)
 		end
 	end
+	table.insert(mainapi.ModuleSearchRefreshers, updateCheck)
 
 	function legitapi:CreateCategory(categoryname)
 		local category = {
@@ -8372,6 +8277,7 @@ function mainapi:CreateLegit()
 			ApiCategory = modulesettings.Category or 'Game',
 			Options = {},
 			Name = modulesettings.Name,
+			DisplayName = mainapi:GetModuleDisplayName(modulesettings.Name),
 			Legit = true
 		}
 
@@ -8383,12 +8289,14 @@ function mainapi:CreateLegit()
 		module.Parent = children
 		addTooltip(module, modulesettings.Tooltip)
 		addCorner(module)
-		local title = Instance.new('TextLabel')
+		local title = Instance.new('TextButton')
 		title.Name = 'Title'
-		title.Size = UDim2.new(1, -16, 0, 20)
+		title.Size = UDim2.fromOffset(130, 20)
 		title.Position = UDim2.fromOffset(16, 81)
 		title.BackgroundTransparency = 1
-		title.Text = modulesettings.Name
+		title.AutoButtonColor = false
+		title.Text = moduleapi.DisplayName
+		title.TextTruncate = Enum.TextTruncate.AtEnd
 		title.TextXAlignment = Enum.TextXAlignment.Left
 		title.TextColor3 = color.Dark(uipallet.Text, 0.31)
 		title.TextSize = 13
@@ -8490,6 +8398,14 @@ function mainapi:CreateLegit()
 		modulesettings.Function = modulesettings.Function or function() end
 		addMaid(moduleapi)
 
+		function moduleapi:SetDisplayName(displayName)
+			self.DisplayName = tostring(displayName or self.Name)
+			title.Text = self.DisplayName
+			title.Size = UDim2.fromOffset(math.min(getfontsize(self.DisplayName, title.TextSize, title.FontFace).X + 4, 130), 20)
+			settingstitle.Text = self.DisplayName
+		end
+		moduleapi:SetDisplayName(moduleapi.DisplayName)
+
 		function moduleapi:Toggle()
 			moduleapi.Generation += 1
 			local generation = moduleapi.Generation
@@ -8547,7 +8463,7 @@ function mainapi:CreateLegit()
 			task.wait(0.2)
 			shadow.Visible = false
 		end)
-		dotsbutton.MouseButton1Click:Connect(function()
+		local function openSettings()
 			shadow.Visible = true
 			tween:Tween(shadow, uipallet.Tween, {
 				BackgroundTransparency = 0.5
@@ -8555,6 +8471,9 @@ function mainapi:CreateLegit()
 			tween:Tween(settingspane, uipallet.Tween, {
 				Position = UDim2.new(1, -220, 0, 0)
 			})
+		end
+		dotsbutton.MouseButton1Click:Connect(function()
+			openSettings()
 		end)
 		dotsbutton.MouseEnter:Connect(function()
 			dots.ImageColor3 = uipallet.Text
@@ -8562,6 +8481,9 @@ function mainapi:CreateLegit()
 		dotsbutton.MouseLeave:Connect(function()
 			dots.ImageColor3 = color.Light(uipallet.Main, 0.37)
 		end)
+		local titleActive = mainapi:BindModuleTitle(moduleapi, title, function()
+			moduleapi:Toggle()
+		end, openSettings)
 		module.MouseEnter:Connect(function()
 			if not moduleapi.Enabled then
 				module.BackgroundColor3 = color.Light(uipallet.Main, 0.05)
@@ -8573,16 +8495,12 @@ function mainapi:CreateLegit()
 			end
 		end)
 		module.MouseButton1Click:Connect(function()
+			if titleActive() then return end
 			moduleapi:Toggle()
 		end)
 		module.MouseButton2Click:Connect(function()
-			shadow.Visible = true
-			tween:Tween(shadow, uipallet.Tween, {
-				BackgroundTransparency = 0.5
-			})
-			tween:Tween(settingspane, uipallet.Tween, {
-				Position = UDim2.new(1, -220, 0, 0)
-			})
+			if titleActive() then return end
+			openSettings()
 		end)
 		shadow.MouseButton1Click:Connect(function()
 			tween:Tween(shadow, uipallet.Tween, {
@@ -8914,6 +8832,30 @@ function mainapi:Load(skipgui, profile)
 		savedata.Modules = savedata.Modules or {}
 		savedata.Legit = savedata.Legit or {}
 
+		local mouseTP = savedata.Modules.MouseTP
+		if mouseTP and type(mouseTP.Options) == 'table' then
+			local oldTarget = mouseTP.Options.Mode and mouseTP.Options.Mode.Value
+			if table.find({'Mouse', 'Player', 'Waypoint'}, oldTarget) then
+				mouseTP.Options.Target = mouseTP.Options.Target or {Value = oldTarget}
+				mouseTP.Options.Mode = {Value = 'TP'}
+			end
+			mouseTP.Options.Movement = nil
+			mouseTP.Options.Length = nil
+			mouseTP.Options.Delay = nil
+		end
+
+		local autoEnchant = savedata.Modules.AutoEnchant
+		if autoEnchant and type(autoEnchant.Options) == 'table' and not autoEnchant.Options['Desired enchant'] then
+			local priority = autoEnchant.Options['Priority order']
+			local previous = autoEnchant.Options['Desired enchants'] or autoEnchant.Options['Preferred enchant']
+			local desired = priority and priority.Value
+				or previous and ((previous.ListEnabled and previous.ListEnabled[1]) or (previous.List and previous.List[1]))
+			if desired then autoEnchant.Options['Desired enchant'] = {Value = desired} end
+			autoEnchant.Options['Priority order'] = nil
+			autoEnchant.Options['Desired enchants'] = nil
+			autoEnchant.Options['Preferred enchant'] = nil
+		end
+
 		for i, v in savedata.Categories do
 			local object = self.Categories[i]
 			if not object then continue end
@@ -8932,7 +8874,6 @@ function mainapi:Load(skipgui, profile)
 			if v.Standalone and object.Standalone ~= nil then
 				object.Standalone = true
 				object.Object.Visible = true
-				if self.PaintFavorites then self.PaintFavorites() end
 			end
 			if v.List and (#object.List > 0 or #v.List > 0) then
 				object.List = v.List or {}
@@ -8952,7 +8893,7 @@ function mainapi:Load(skipgui, profile)
 			local v = savedata.Modules[i]
 			if not v then
 				if object.Enabled then
-					if skipgui and self.ToggleNotifications.Enabled then self:CreateNotification('Module Toggled', i.."<font color='#FFFFFF'> has been </font><font color='#FF5A5A'>Disabled</font><font color='#FFFFFF'>!</font>", 0.75) end
+					if skipgui and self.ToggleNotifications.Enabled then self:CreateNotification('Module Toggled', self:GetModuleDisplayName(object).."<font color='#FFFFFF'> has been </font><font color='#FF5A5A'>Disabled</font><font color='#FFFFFF'>!</font>", 0.75) end
 					object:Toggle(true)
 				end
 				continue
@@ -8962,15 +8903,12 @@ function mainapi:Load(skipgui, profile)
 			end
 			if (v.Enabled or false) ~= object.Enabled then
 				if skipgui then
-					if self.ToggleNotifications.Enabled then self:CreateNotification('Module Toggled', i.."<font color='#FFFFFF'> has been </font>"..(v.Enabled and "<font color='#5AFF5A'>Enabled</font>" or "<font color='#FF5A5A'>Disabled</font>").."<font color='#FFFFFF'>!</font>", 0.75) end
+					if self.ToggleNotifications.Enabled then self:CreateNotification('Module Toggled', self:GetModuleDisplayName(object).."<font color='#FFFFFF'> has been </font>"..(v.Enabled and "<font color='#5AFF5A'>Enabled</font>" or "<font color='#FF5A5A'>Disabled</font>").."<font color='#FFFFFF'>!</font>", 0.75) end
 				end
 				object:Toggle(true)
 			end
 			object:SetBind(v.Bind or {})
 			object.Object.Bind.Visible = #(v.Bind or {}) > 0
-			if object.SetFavourite then
-				object:SetFavourite(v.Favorited or v.Favourited, true)
-			end
 		end
 		-- Snapshot the table first: a game module can still be registering itself on another
 		-- thread while this runs (the loader stops waiting on one that stalls), and adding to
@@ -9175,8 +9113,6 @@ function mainapi:Save(newprofile)
 	for i, v in self.Modules do
 		savedata.Modules[i] = {
 			Enabled = v.Enabled,
-			Favorited = v.Favorited and (v.FavoriteIndex or 1) or (v.Favourited and 1 or nil),
-			Favourited = v.Favorited or v.Favourited,
 			Bind = v.Bind.Button and {Mobile = true, X = v.Bind.Button.Position.X.Offset, Y = v.Bind.Button.Position.Y.Offset} or v.Bind,
 			Options = mainapi:SaveOptions(v, true)
 		}
@@ -9516,16 +9452,6 @@ mainapi:CreateCategory({
 	Size = UDim2.fromOffset(15, 14)
 })
 
--- Favorites category uses the reference GUI's direct MirrorModule implementation.
-mainapi:CreateCategory({
-	Name = 'Favorites',
-	-- The title itself carries a code-native star; no missing bitmap dependency.
-	Icon = '',
-	Size = UDim2.fromOffset(0, 0),
-	Position = UDim2.fromOffset(850, 460),
-	NoButton = true
-})
-mainapi.Categories.Favorites.Standalone = false
 mainapi.Categories.Main:CreateDivider('misc')
 
 --[[
@@ -9603,8 +9529,8 @@ local profiles = mainapi:CreateCategoryList({
 local importNameBox
 local importJsonBox = profiles:CreateTextBox({
 	Name = 'Import JSON',
-	Placeholder = 'Paste exported JSON here',
-	Tooltip = 'Paste a JSON export, then click Import JSON to create a new config'
+	Placeholder = 'Paste config JSON here',
+	Tooltip = 'Paste config JSON, then click Import JSON to create a new config'
 })
 importNameBox = profiles:CreateTextBox({
 	Name = 'Import Name',
@@ -9771,85 +9697,13 @@ local function reloadAether()
 end
 mainapi.ReloadAether = reloadAether
 
-general:CreateButton({
-	Name = 'Reset current profile',
+profiles:CreateButton({
+	Name = 'Reset current config',
 	Function = function()
 		configapi.ResetProfile()
 		reloadAether()
 	end,
-	Tooltip = 'Wipes everything saved for this config and reloads on defaults'
-})
--- Metadata for JSON exports. The Export to JSON button below refuses to copy until
--- credits, at least one tag and a description have all been supplied, so shared
--- configs always carry attribution and context.
-local exportCredits = general:CreateTextBox({
-	Name = 'Export Credits',
-	Placeholder = 'Your username',
-	Default = (function()
-		local suc, res = pcall(function()
-			return cloneref(game:GetService('Players')).LocalPlayer.Name
-		end)
-		return suc and res or ''
-	end)(),
-	Tooltip = 'Who made this config. Added to the JSON export as "credits"'
-})
-local exportTags = general:CreateTextBox({
-	Name = 'Export Tags',
-	Placeholder = 'pvp, rage, legit',
-	Tooltip = 'Comma-separated tags for the export. At least one is required'
-})
-local exportDescription = general:CreateTextBox({
-	Name = 'Export Description',
-	Placeholder = 'Short description',
-	Tooltip = 'A short description added to the JSON export as "description"'
-})
-local exportButton
-exportButton = general:CreateButton({
-	Name = 'Export to JSON',
-	Function = function()
-		-- Split the tags box on commas, trimming blanks so "pvp, , rage," becomes
-		-- {"pvp", "rage"}.
-		local tags = {}
-		for tag in tostring(exportTags.Value):gmatch('[^,]+') do
-			tag = tag:gsub('^%s+', ''):gsub('%s+$', '')
-			if tag ~= '' then table.insert(tags, tag) end
-		end
-		local credits = tostring(exportCredits.Value):gsub('^%s+', ''):gsub('%s+$', '')
-		local description = tostring(exportDescription.Value):gsub('^%s+', ''):gsub('%s+$', '')
-		-- Ask for everything before copying: bail with a clear notification rather
-		-- than exporting an anonymous, unlabelled config.
-		if credits == '' or #tags == 0 or description == '' then
-			mainapi:CreateNotification('AetherV2', 'Fill in credits, at least one tag and a description before exporting.', 6, 'alert')
-			return
-		end
-
-		local tab = {}
-		if isfile(getConfigPath(mainapi.Profile)) then
-			tab.config = readfile(getConfigPath(mainapi.Profile))
-		end
-		if isfile('aetherv2/profiles/'..game.GameId..'.gui.txt') then
-			tab.gui = readfile('aetherv2/profiles/'..game.GameId..'.gui.txt')
-		end
-		tab.game = tostring(mainapi.Place or 'universal'.. game.PlaceId)
-		tab.credits = credits
-		tab.tags = tags
-		tab.description = description
-		setclipboard(httpService:JSONEncode(tab))
-
-		-- Subtle "copied" confirmation: briefly swap the button label to "Copied!"
-		-- then restore it, so there is clear feedback without a disruptive popup.
-		if exportButton and exportButton.Label then
-			local label = exportButton.Label
-			local original = label.Text
-			label.Text = 'Copied!'
-			task.delay(1.25, function()
-				if label and label.Text == 'Copied!' then
-					label.Text = original
-				end
-			end)
-		end
-	end,
-	Tooltip = 'Copies your config to the clipboard as JSON, including credits, tags and a description'
+	Tooltip = 'Clears the current config and reloads its defaults'
 })
 general:CreateButton({
 	Name = 'Self destruct',
@@ -9875,6 +9729,14 @@ general:CreateButton({
 ]]
 
 local modules = mainapi.Categories.Main:CreateSettingsPane({Name = 'Modules'})
+modules:CreateButton({
+	Name = 'Reset Module Names',
+	Function = function()
+		mainapi:ResetModuleNicknames()
+		mainapi:CreateNotification('AetherV2', 'Module names reset.', 4, 'info')
+	end,
+	Tooltip = 'Clears every visual module nickname and restores default names'
+})
 modules:CreateToggle({
 	Name = 'Teams by server',
 	Tooltip = 'Ignore players on your team designated by the server',
@@ -9914,12 +9776,12 @@ guipane:CreateToggle({
 	Default = true,
 	Tooltip = "Displays a message indicating your GUI upon injecting\nI.E. 'Press RSHIFT to open GUI'"
 })
-guipane:CreateToggle({
+mainapi.NoModuleSpacing = guipane:CreateToggle({
 	Name = 'No module spacing',
 	Tooltip = 'Removes module\'s text spacing',
 	Function = function(callback)
 		for _, v in mainapi.Modules do
-			v.Object.Text = '            '..(callback and v.Name:gsub(' ', '') or v.Name)
+			if v.SetDisplayName then v:SetDisplayName(mainapi:GetModuleDisplayName(v)) end
 		end
 	end
 })
@@ -10055,7 +9917,6 @@ guipane:CreateButton({
 			WorldCategory = 8,
 			InventoryCategory = 9,
 			MinigamesCategory = 10,
-			FavoritesCategory = 10,
 			FriendsCategory = 10,
 			ProfilesCategory = 11
 		}
@@ -10808,7 +10669,7 @@ function mainapi:UpdateTextGUI(afterload)
 				holdertext.Position = UDim2.fromOffset(right and 3 or 6, 2)
 				holdertext.BackgroundTransparency = 1
 				holdertext.BorderSizePixel = 0
-				holdertext.Text = ({i:gsub(' ', '')})[1]..(v.ExtraText and " <font color='#A8A8A8'>"..v.ExtraText()..'</font>' or '')
+				holdertext.Text = ({mainapi:GetModuleDisplayName(v):gsub(' ', '')})[1]..(v.ExtraText and " <font color='#A8A8A8'>"..v.ExtraText()..'</font>' or '')
 				holdertext.TextSize = 15
 				holdertext.FontFace = textguifont.Value
 				holdertext.RichText = true
@@ -11049,7 +10910,7 @@ local function keybindStart(inputObj)
 			if checkKeybinds(mainapi.HeldKeybinds, v.Bind, inputObj.KeyCode.Name) then
 				toggled = true
 				if mainapi.ToggleNotifications.Enabled then
-					mainapi:CreateNotification('Module Toggled', i.."<font color='#FFFFFF'> has been </font>"..(not v.Enabled and "<font color='#5AFF5A'>Enabled</font>" or "<font color='#FF5A5A'>Disabled</font>").."<font color='#FFFFFF'>!</font>", 0.75)
+					mainapi:CreateNotification('Module Toggled', mainapi:GetModuleDisplayName(v).."<font color='#FFFFFF'> has been </font>"..(not v.Enabled and "<font color='#5AFF5A'>Enabled</font>" or "<font color='#FF5A5A'>Disabled</font>").."<font color='#FFFFFF'>!</font>", 0.75)
 				end
 				v:Toggle(true)
 			end
@@ -11973,8 +11834,13 @@ end
 		local matches = {}
 		local function collect(source, fallbackCategory)
 			for name, m in source do
-				if query == '' or name:lower():find(query, 1, true) then
-					table.insert(matches, {Module = m, Name = name, Category = m.Category or m.ApiCategory or fallbackCategory})
+				if query == '' or mainapi:ModuleMatchesSearch(m, query) then
+					table.insert(matches, {
+						Module = m,
+						Name = name,
+						DisplayName = mainapi:GetModuleDisplayName(m),
+						Category = m.Category or m.ApiCategory or fallbackCategory
+					})
 				end
 			end
 		end
@@ -11983,17 +11849,17 @@ end
 		collect(mainapi.Legit and mainapi.Legit.Modules or {}, 'Legit')
 		for _, action in mainapi:GetCommandActions() do
 			if query == '' or action.Name:lower():find(query, 1, true) then
-				table.insert(matches, {Module = action, Name = action.Name, Category = action.Category})
+				table.insert(matches, {Module = action, Name = action.Name, DisplayName = action.Name, Category = action.Category})
 			end
 		end
-		table.sort(matches, function(a, b) return a.Name < b.Name end)
+		table.sort(matches, function(a, b) return a.DisplayName:lower() < b.DisplayName:lower() end)
 		firstMatch = matches[1] and matches[1].Module or nil
 		-- Every match is listed. The old build stopped at eighty, which with an empty query cut
 		-- the list off well before the end of the menu.
 		for i, match in matches do
 			local m = match.Module
 			local row = Instance.new('TextButton')
-			row.Name = m.Name
+			row.Name = match.DisplayName
 			row.Size = UDim2.new(1, 0, 0, 30)
 			row.BackgroundColor3 = Color3.new(1, 1, 1)
 			row.BackgroundTransparency = 1
@@ -12015,7 +11881,7 @@ end
 			nm.Size = UDim2.new(1, -130, 1, 0)
 			nm.Position = UDim2.fromOffset(30, 0)
 			nm.BackgroundTransparency = 1
-			nm.Text = m.Name
+			nm.Text = match.DisplayName
 			nm.TextXAlignment = Enum.TextXAlignment.Left
 			nm.TextColor3 = color.Dark(uipallet.Text, 0.1)
 			nm.TextSize = 13
@@ -12068,6 +11934,9 @@ end
 			raiseZ(spotResults, 41)
 		end
 	end
+	table.insert(mainapi.ModuleSearchRefreshers, function()
+		if spotOpen then refreshSpot(spotSearch.Text) end
+	end)
 
 	local function openSpot()
 		if spotOpen then return end
