@@ -127,7 +127,7 @@ const loader = (origin, session) => [
   `    SourceEndpoint = endpoint,`,
   `    SourceToken = session`,
   `})`
-].join('\\n');
+].join('\n');
 
 const server = http.createServer(async (req, res) => {
   try {
