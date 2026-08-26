@@ -30,6 +30,18 @@ const problem = (message, status = 400) => Object.assign(new Error(message), {st
 const isObject = value => value && typeof value === 'object' && !Array.isArray(value);
 const validRawKey = value => typeof value === 'string' && value.length >= 16 && value.length <= 256;
 const validKeyId = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
+
+const resolveIdInData = (data, value) => {
+  const candidate = String(value || '').trim().toLowerCase();
+  if (!/^[a-f0-9]{8,64}$/.test(candidate)) throw problem('Invalid key ID');
+  if (candidate.length === 64) return candidate;
+  const matches = Array.from(new Set([...Object.keys(data.keys), ...configuredKeyIds]))
+    .filter(id => id.startsWith(candidate));
+  if (matches.length === 0) throw problem('Key ID was not found', 404);
+  if (matches.length > 1) throw problem('Key ID prefix is ambiguous; use more characters', 409);
+  return matches[0];
+};
+
 const emptyRegistry = () => ({version: 2, keys: {}, bindings: {}, audit: []});
 
 const normalizeRegistry = input => {
@@ -130,9 +142,9 @@ const findRecord = (data, id) => {
 };
 
 const ensureMutableRecord = (data, id) => {
-  if (!validKeyId(id)) throw problem('Invalid key ID');
-  if (!data.keys[id] && configuredKeyIds.has(id)) data.keys[id] = environmentRecord();
-  const record = data.keys[id];
+  const selectedId = resolveIdInData(data, id);
+  if (!data.keys[selectedId] && configuredKeyIds.has(selectedId)) data.keys[selectedId] = environmentRecord();
+  const record = data.keys[selectedId];
   if (!record) throw problem('Key ID was not found', 404);
   return record;
 };
@@ -217,7 +229,8 @@ const editKey = ({id, label, expiresAt, enabled, actor} = {}) => withRegistryLoc
     throw problem('Provide a label, expiry, or enabled value to edit');
   }
   const current = await readRegistry();
-  const record = ensureMutableRecord(current.data, id);
+  const selectedId = resolveIdInData(current.data, id);
+  const record = ensureMutableRecord(current.data, selectedId);
   const changes = {};
 
   if (label !== undefined) {
@@ -234,9 +247,9 @@ const editKey = ({id, label, expiresAt, enabled, actor} = {}) => withRegistryLoc
     changes.enabled = enabled;
   }
 
-  addAudit(current.data, 'edit', id, actor, {changes});
+  addAudit(current.data, 'edit', selectedId, actor, {changes});
   await writeRegistry(current.data, current.sha, 'Edit AetherV2 key');
-  return {keyId: id, record, binding: current.data.bindings[id] || null};
+  return {keyId: selectedId, record, binding: current.data.bindings[selectedId] || null};
 });
 
 const unlinkKey = ({id, username, userId, actor} = {}) => withRegistryLock(async () => {
@@ -253,7 +266,7 @@ const unlinkKey = ({id, username, userId, actor} = {}) => withRegistryLock(async
     selectedId = matches[0][0];
   }
 
-  if (!validKeyId(selectedId)) throw problem('Invalid key ID');
+  selectedId = resolveIdInData(current.data, selectedId);
   const existing = current.data.bindings[selectedId];
   if (!existing) throw problem('This key is not currently bound', 404);
 
@@ -271,8 +284,9 @@ const enableKey = ({id, actor} = {}) => editKey({id, enabled: true, actor});
 
 const rotateKey = ({id, actor} = {}) => withRegistryLock(async () => {
   const current = await readRegistry();
-  const oldRecord = ensureMutableRecord(current.data, id);
-  const oldBinding = current.data.bindings[id] || null;
+  const selectedId = resolveIdInData(current.data, id);
+  const oldRecord = ensureMutableRecord(current.data, selectedId);
+  const oldBinding = current.data.bindings[selectedId] || null;
   const rawKey = crypto.randomBytes(32).toString('hex');
   const newId = keyId(rawKey);
   const now = new Date().toISOString();
@@ -286,17 +300,17 @@ const rotateKey = ({id, actor} = {}) => withRegistryLock(async () => {
     createdBy: String(actor || 'unknown').slice(0, 100),
     enabled: true,
     expiresAt: oldRecord.expiresAt || null,
-    rotatedFrom: id
+    rotatedFrom: selectedId
   };
   if (oldBinding) current.data.bindings[newId] = {...oldBinding, transferredAt: now};
 
-  addAudit(current.data, 'rotate', id, actor, {
+  addAudit(current.data, 'rotate', selectedId, actor, {
     replacementKeyId: newId,
     transferredUsername: oldBinding && oldBinding.username
   });
   await writeRegistry(current.data, current.sha, 'Rotate AetherV2 key');
   return {
-    oldKeyId: id,
+    oldKeyId: selectedId,
     key: rawKey,
     keyId: newId,
     record: current.data.keys[newId],
@@ -323,19 +337,19 @@ const listKeys = async () => {
 };
 
 const getKeyInfo = async id => {
-  if (!validKeyId(id)) throw problem('Invalid key ID');
   const current = await readRegistry();
-  const record = findRecord(current.data, id);
+  const selectedId = resolveIdInData(current.data, id);
+  const record = findRecord(current.data, selectedId);
   if (!record) throw problem('Key ID was not found', 404);
   return {
-    keyId: id,
+    keyId: selectedId,
     label: record.label || 'Unlabelled',
     source: record.source || 'unknown',
     status: keyStatus(record),
     createdAt: record.createdAt || null,
     expiresAt: record.expiresAt || null,
-    uses: current.data.bindings[id] && current.data.bindings[id].uses || 0,
-    binding: current.data.bindings[id] || null,
+    uses: current.data.bindings[selectedId] && current.data.bindings[selectedId].uses || 0,
+    binding: current.data.bindings[selectedId] || null,
     record
   };
 };
