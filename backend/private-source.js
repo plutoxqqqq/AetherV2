@@ -87,7 +87,7 @@ const loader = origin => [
   `    Closet = false,`,
   `    SourceEndpoint = endpoint`,
   `})`
-].join('\\n');
+].join('\n');
 const server = http.createServer(async (req, res) => {
   try {
     if (req.method === 'OPTIONS') return res.writeHead(204).end();
