@@ -81,6 +81,13 @@ const commitSha = async ref => {
 const tree = async ref =>
   (await github(`git/trees/${encodeURIComponent(ref)}?recursive=1`)).text();
 
+const loader = origin => [
+  `local endpoint = ${JSON.stringify(origin)}`,
+  `loadstring(game:HttpGet(endpoint..'/source?path=init.lua&ref=main', true), 'init.lua')({`,
+  `    Closet = false,`,
+  `    SourceEndpoint = endpoint`,
+  `})`
+].join('\\n');
 const server = http.createServer(async (req, res) => {
   try {
     if (req.method === 'OPTIONS') return res.writeHead(204).end();
@@ -89,6 +96,12 @@ const server = http.createServer(async (req, res) => {
     const ref = url.searchParams.get('ref') || BRANCH;
 
     if (!validRef(ref)) return json(res, 400, {success: false, error: 'Invalid ref'});
+
+    if (req.method === 'GET' && url.pathname === '/loader') {
+      const protocol = req.headers['x-forwarded-proto'] || 'https';
+      const origin = process.env.PUBLIC_ORIGIN || `${protocol}://${req.headers.host}`;
+      return text(res, 200, loader(origin));
+    }
 
     if (req.method === 'GET' && url.pathname === '/health') {
       return json(res, 200, {success: true, service: 'aetherv2-private-source'});
