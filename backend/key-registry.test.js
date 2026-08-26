@@ -40,6 +40,7 @@ test('dynamic key lifecycle never stores the raw key', async () => {
   assert.equal(created.key.length, 64);
   assert.equal(stored.includes(created.key), false);
   assert.equal((await registry.resolveKey(created.key)).keyId, created.keyId);
+  assert.equal((await registry.getKeyInfo(created.keyId.slice(0, 12))).keyId, created.keyId);
 
   const first = await registry.bindKey(created.keyId, {
     username: 'Alpha_User',
