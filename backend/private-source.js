@@ -9,7 +9,8 @@ const TOKEN = process.env.GITHUB_TOKEN || '';
 const KEY_SOURCE = process.env.AETHER_KEYS || process.env.AETHER_KEY || '';
 const KEYS = KEY_SOURCE.split(',').map(value => value.trim()).filter(Boolean);
 const REGISTRY_FILE = process.env.AETHER_REGISTRY_FILE || 'backend/key-bindings.json';
-const SESSION_MINUTES = Math.max(5, Math.min(1440, Number(process.env.AETHER_SESSION_MINUTES || 120)));
+const configuredMinutes = Number(process.env.AETHER_SESSION_MINUTES || 120);
+const SESSION_MINUTES = Number.isFinite(configuredMinutes) ? Math.max(5, Math.min(1440, configuredMinutes)) : 120;
 const SESSION_TTL = SESSION_MINUTES * 60 * 1000;
 const sessions = new Map();
 let registryQueue = Promise.resolve();
@@ -48,7 +49,7 @@ const validKey = value => {
 
 const identity = (username, userId) => {
   if (typeof username !== 'string' || !/^[A-Za-z0-9_]{3,20}$/.test(username)) return null;
-  if (typeof userId !== 'string' || !/^\\d{1,20}$/.test(userId)) return null;
+  if (typeof userId !== 'string' || !/^\d{1,20}$/.test(userId)) return null;
   return {username, userId};
 };
 
@@ -115,7 +116,7 @@ const writeRegistry = async (data, sha) => {
   const body = {
     message: 'Record AetherV2 key binding',
     branch: BRANCH,
-    content: Buffer.from(JSON.stringify(data, null, 2) + '\\n').toString('base64'),
+    content: Buffer.from(JSON.stringify(data, null, 2) + '\n').toString('base64'),
     ...(sha && {sha})
   };
   const response = await githubRequest(`contents/${REGISTRY_FILE}`, {
