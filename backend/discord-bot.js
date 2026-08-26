@@ -149,8 +149,9 @@ const respond = async (interaction, payload) => {
 
 const reply = (interaction, content) => respond(interaction, {content});
 
-const updateComponent = async (interaction, payload) => {
+const updateComponent = async (interaction, payloadPromise) => {
   if (!interaction.deferred && !interaction.replied) await interaction.deferUpdate();
+  const payload = await payloadPromise;
   return interaction.editReply({...payload, allowedMentions: {parse: []}});
 };
 
@@ -497,10 +498,10 @@ const handlePanelButton = async interaction => {
   const action = parts[3];
 
   if (action === 'generate') return interaction.showModal(createKeyModal(ownerId));
-  if (action === 'list') return updateComponent(interaction, await keyListView(ownerId, 0));
-  if (action === 'audit') return updateComponent(interaction, await auditView(ownerId));
-  if (action === 'refresh') return updateComponent(interaction, await dashboardView(ownerId));
-  return updateComponent(interaction, await dashboardView(ownerId));
+  if (action === 'list') return updateComponent(interaction, keyListView(ownerId, 0));
+  if (action === 'audit') return updateComponent(interaction, auditView(ownerId));
+  if (action === 'refresh') return updateComponent(interaction, dashboardView(ownerId));
+  return updateComponent(interaction, dashboardView(ownerId));
 };
 
 const handleListButton = async interaction => {
@@ -509,10 +510,10 @@ const handleListButton = async interaction => {
   const page = Number(parts[3]) || 0;
   const action = parts[4];
 
-  if (action === 'home') return updateComponent(interaction, await dashboardView(ownerId));
-  if (action === 'prev') return updateComponent(interaction, await keyListView(ownerId, page - 1));
-  if (action === 'next') return updateComponent(interaction, await keyListView(ownerId, page + 1));
-  return updateComponent(interaction, await keyListView(ownerId, page));
+  if (action === 'home') return updateComponent(interaction, dashboardView(ownerId));
+  if (action === 'prev') return updateComponent(interaction, keyListView(ownerId, page - 1));
+  if (action === 'next') return updateComponent(interaction, keyListView(ownerId, page + 1));
+  return updateComponent(interaction, keyListView(ownerId, page));
 };
 
 const handleAuditButton = async interaction => {
@@ -527,7 +528,7 @@ const handleKeySelect = async interaction => {
   const parts = interaction.customId.split(':');
   const ownerId = parts[2];
   const page = Number(parts[3]) || 0;
-  return updateComponent(interaction, await keyDetailView(ownerId, interaction.values[0], page));
+  return updateComponent(interaction, keyDetailView(ownerId, interaction.values[0], page));
 };
 
 const handleDetailButton = async interaction => {
@@ -538,25 +539,30 @@ const handleDetailButton = async interaction => {
   const page = Number(parts[5]) || 0;
   const actor = actorName(interaction);
 
-  if (action === 'back') return updateComponent(interaction, await keyListView(ownerId, page));
-  const info = await registry.getKeyInfo(keyPrefix);
+  if (action === 'back') return updateComponent(interaction, keyListView(ownerId, page));
+  if (action === 'edit') {
+    const info = await registry.getKeyInfo(keyPrefix);
+    return interaction.showModal(editKeyModal(ownerId, keyPrefix, info));
+  }
 
-  if (action === 'edit') return interaction.showModal(editKeyModal(ownerId, keyPrefix, info));
-  if (action === 'unlink') {
-    await registry.unlinkKey({id: keyPrefix, actor});
-    return updateComponent(interaction, await keyDetailView(ownerId, keyPrefix, page));
-  }
-  if (action === 'toggle') {
-    if (info.status === 'active') await registry.revokeKey({id: keyPrefix, actor});
-    else await registry.enableKey({id: keyPrefix, actor});
-    return updateComponent(interaction, await keyDetailView(ownerId, keyPrefix, page));
-  }
   if (action === 'rotate') {
-    const result = await registry.rotateKey({id: keyPrefix, actor});
     await interaction.deferReply({ephemeral: true});
+    const result = await registry.rotateKey({id: keyPrefix, actor});
     return reply(interaction, generatedText(result, 'Rotated key ' + result.oldKeyId + '. The old key is disabled'));
   }
-  return updateComponent(interaction, await keyDetailView(ownerId, keyPrefix, page));
+
+  await interaction.deferUpdate();
+  if (action === 'unlink') {
+    await registry.unlinkKey({id: keyPrefix, actor});
+  } else if (action === 'toggle') {
+    const info = await registry.getKeyInfo(keyPrefix);
+    if (info.status === 'active') await registry.revokeKey({id: keyPrefix, actor});
+    else await registry.enableKey({id: keyPrefix, actor});
+  }
+  return interaction.editReply({
+    ...(await keyDetailView(ownerId, keyPrefix, page)),
+    allowedMentions: {parse: []}
+  });
 };
 
 const handleModalSubmit = async interaction => {
