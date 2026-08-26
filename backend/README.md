@@ -25,24 +25,35 @@ npm start
 
 ## 3. Private Aether source proxy
 
-The same service can proxy private Aether source files while keeping the GitHub token on the server. It exposes:
+`private-source.js` is a minimal source proxy for the owner-only loader. It keeps the GitHub token on the server and exposes:
 
-* `GET /source?path=init.lua&ref=main` to return a repository file.
-* `GET /commit?ref=main` to return the commit SHA.
-* `GET /tree?ref=<sha>` to return the recursive Git tree used by the updater.
+* `GET /loader` — generates the public first-stage Lua loader.
+* `GET /source?path=init.lua&ref=main` — returns a repository file.
+* `GET /commit?ref=main` — returns the commit SHA.
+* `GET /tree?ref=<sha>` — returns the recursive Git tree used by the updater.
+* `GET /health` — confirms that the service is online.
 
-The proxy is intentionally only a source-at-rest protection layer. Once an authorized executor receives Lua source, that client can inspect or copy it. The existing owner lock still performs the runtime account check, but no client-side Lua system can make copied code impossible to modify.
+This is source-at-rest protection, not impossible copying protection. Once an executor receives Lua source, that client can inspect or copy it. The existing owner lock still performs the runtime account check, but no client-side Lua system can make copied code impossible to modify.
 
-After deployment, set the executor environment before running the loader:
+## 4. Deploy the free source proxy
+
+Render's free web-service tier can run this Node service at no charge, although free services can sleep when idle. Create a web service from the private repository with:
+
+1. Root directory: `backend`
+2. Build command: leave blank
+3. Start command: `node private-source.js`
+4. Environment variables: `GITHUB_TOKEN`, `GITHUB_REPO=plutoxqqqq/AetherV2`, and `GITHUB_BRANCH=main`
+5. Optional `PUBLIC_ORIGIN`: the assigned HTTPS Render URL
+
+No persistent disk is needed for the source proxy. After deployment, test `/health`, then run:
 
 ```lua
-getgenv().AetherV2SourceEndpoint = 'https://YOUR-BACKEND-HOST'
-loadstring(game:HttpGet('https://YOUR-PUBLIC-LOADER-URL/loadstring', true))()
+loadstring(game:HttpGet('https://YOUR-RENDER-HOST/loader', true))()
 ```
 
-If the loader itself is not hosted separately, keep a one-line copy of the loader in a private admin location and replace `YOUR-PUBLIC-LOADER-URL` with that public bootstrap URL. The private repository cannot host its own first-stage loader after visibility is changed.
+The generated loader automatically points back to the proxy. Do not expose `GITHUB_TOKEN` in Lua, logs, or a committed file.
 
-## 4. Deploy
+## 5. Deploy the config-review backend
 
 1. Create a new service from this repository and set its root/working directory to `backend`.
 2. Use `npm start` as the start command; no build command is needed.
@@ -53,7 +64,7 @@ If the loader itself is not hosted separately, keep a one-line copy of the loade
 
 Accepted submissions create/update `configs/<slug>.json`, then update `configs/presets.json`. GitHub therefore records auditable commits. Protect `main` appropriately; if direct writes are prohibited, set `GITHUB_BRANCH` to a publishing branch and merge its commits through a pull request.
 
-## 5. Connect Aether clients
+## 6. Connect Aether clients
 
 Create this local executor file (the directory exists after Aether first starts):
 
@@ -65,7 +76,7 @@ Its only content is the HTTPS origin, with no trailing route, for example `https
 
 Only the maintainer should create `aetherv2/profiles/configadminkey.txt`, containing the exact `ADMIN_KEY`. Do **not** share a config folder containing this file. Regular uploaders need no secret. They receive a random per-submission receipt token, stored locally in `configsubmissions.json`, which can reveal only that submission's decision.
 
-## 6. API contract and operations
+## 7. API contract and operations
 
 * `POST /submissions` validates metadata and config data and returns `{id, token, status}`. The server returns HTTP 409 when the config data is identical to any prior submission.
 * `GET /submissions?status=pending` requires `Authorization: Bearer <ADMIN_KEY>` and powers the review queue.
