@@ -1,8 +1,6 @@
 'use strict';
 
 const http = require('node:http');
-const crypto = require('node:crypto');
-
 const PORT = Number(process.env.PORT || 3000);
 const REPOSITORY = process.env.GITHUB_REPO || 'plutoxqqqq/AetherV2';
 const BRANCH = process.env.GITHUB_BRANCH || 'main';
