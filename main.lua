@@ -92,22 +92,26 @@ local function urlEncode(value)
 	end)
 end
 local sourceEndpoint
+local sourceToken
 if type(license) == 'table' then
 	sourceEndpoint = normalizeSourceEndpoint(license.SourceEndpoint)
+	sourceToken = type(license.SourceToken) == 'string' and license.SourceToken or nil
 end
 if not sourceEndpoint and getgenv then
 	pcall(function()
 		sourceEndpoint = normalizeSourceEndpoint(getgenv().AetherV2SourceEndpoint)
+		sourceToken = sourceToken or getgenv().AetherV2SourceToken
 	end)
 end
 if not sourceEndpoint then
 	sourceEndpoint = normalizeSourceEndpoint(shared.AetherV2SourceEndpoint)
+	sourceToken = sourceToken or shared.AetherV2SourceToken
 end
 local function privateSourceUrl(path, ref)
 	if not sourceEndpoint then return nil end
-	return sourceEndpoint..'/source?path='..urlEncode(path:gsub('^aetherv2/', ''))..'&ref='..urlEncode(ref or readfile('aetherv2/profiles/commit.txt'))
+	local sessionSuffix = sourceToken and ('&session='..urlEncode(sourceToken)) or ''
+	return sourceEndpoint..'/source?path='..urlEncode(path:gsub('^aetherv2/', ''))..'&ref='..urlEncode(ref or readfile('aetherv2/profiles/commit.txt'))..sessionSuffix
 end
-
 -- init.lua owns the loading UI.  main.lua only reports progress to that shared screen.
 
 local closeLoadingScreen
@@ -415,7 +419,8 @@ local function finishLoading()
 				else
 					local config = _scriptconfig
 					if config.SourceEndpoint then
-						loadstring(game:HttpGet(config.SourceEndpoint..'/source?path=init.lua&ref=main', true), 'init.lua')(config)
+						local session = config.SourceToken and '&session='..config.SourceToken or ''
+						loadstring(game:HttpGet(config.SourceEndpoint..'/source?path=init.lua&ref=main'..session, true), 'init.lua')(config)
 					else
 						loadstring(game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/main/init.lua', true), 'init.lua')(config)
 					end

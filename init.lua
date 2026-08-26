@@ -35,21 +35,26 @@ local function urlEncode(value)
 	end)
 end
 local sourceEndpoint
+local sourceToken
 if type(license) == 'table' then
 	sourceEndpoint = normalizeSourceEndpoint(license.SourceEndpoint)
+	sourceToken = type(license.SourceToken) == 'string' and license.SourceToken or nil
 end
 if not sourceEndpoint and getgenv then
 	pcall(function()
 		sourceEndpoint = normalizeSourceEndpoint(getgenv().AetherV2SourceEndpoint)
+		sourceToken = sourceToken or getgenv().AetherV2SourceToken
 	end)
 end
 if not sourceEndpoint then
 	sourceEndpoint = normalizeSourceEndpoint(shared.AetherV2SourceEndpoint)
+	sourceToken = sourceToken or shared.AetherV2SourceToken
 end
 local function privateSourceUrl(route, path, ref)
 	if not sourceEndpoint then return nil end
-	local query = '?ref='..urlEncode(ref or 'main')
-	if path then query = '?path='..urlEncode(path:gsub('^aetherv2/', ''))..'&ref='..urlEncode(ref or 'main') end
+	local sessionSuffix = sourceToken and ('&session='..urlEncode(sourceToken)) or ''
+	local query = '?ref='..urlEncode(ref or 'main')..sessionSuffix
+	if path then query = '?path='..urlEncode(path:gsub('^aetherv2/', ''))..'&ref='..urlEncode(ref or 'main')..sessionSuffix end
 	return sourceEndpoint..'/'..route..query
 end
 local isfile = isfile or function(file)
