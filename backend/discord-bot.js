@@ -377,18 +377,17 @@ const createKeyModal = userId => {
     );
 };
 
-const editKeyModal = (userId, keyPrefix, info) => {
+const editKeyModal = (userId, keyPrefix) => {
   const label = new TextInputBuilder()
     .setCustomId('label')
     .setLabel('Label')
-    .setValue(info.label === 'Unlabelled' ? '' : String(info.label).slice(0, 80))
+    .setPlaceholder('Leave blank to keep, or type none to clear')
     .setStyle(TextInputStyle.Short)
     .setRequired(false)
     .setMaxLength(80);
   const expiry = new TextInputBuilder()
     .setCustomId('expires_at')
     .setLabel('Expiry')
-    .setValue(info.expiresAt ? String(info.expiresAt).slice(0, 64) : '')
     .setPlaceholder('Leave blank to keep, or type none to clear')
     .setStyle(TextInputStyle.Short)
     .setRequired(false)
@@ -540,10 +539,7 @@ const handleDetailButton = async interaction => {
   const actor = actorName(interaction);
 
   if (action === 'back') return updateComponent(interaction, keyListView(ownerId, page));
-  if (action === 'edit') {
-    const info = await registry.getKeyInfo(keyPrefix);
-    return interaction.showModal(editKeyModal(ownerId, keyPrefix, info));
-  }
+  if (action === 'edit') return interaction.showModal(editKeyModal(ownerId, keyPrefix));
 
   if (action === 'rotate') {
     await interaction.deferReply({ephemeral: true});
@@ -588,8 +584,8 @@ const handleModalSubmit = async interaction => {
     const expiresAt = interaction.fields.getTextInputValue('expires_at').trim();
     const result = await registry.editKey({
       id: keyPrefix,
-      label: label || undefined,
-      expiresAt: expiresAt || undefined,
+      label: label.toLowerCase() === 'none' ? '' : (label || undefined),
+      expiresAt: expiresAt.toLowerCase() === 'none' ? '' : (expiresAt || undefined),
       actor
     });
     return reply(interaction, [
