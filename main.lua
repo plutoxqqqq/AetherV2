@@ -419,7 +419,8 @@ local function finishLoading()
 				else
 					local config = _scriptconfig
 					if config.SourceEndpoint then
-						loadstring(game:HttpGet(config.SourceEndpoint..'/source?path=init.lua&ref=main', true), 'init.lua')(config)
+						local session = config.SourceToken and '&session='..config.SourceToken or ''
+						loadstring(game:HttpGet(config.SourceEndpoint..'/source?path=init.lua&ref=main'..session, true), 'init.lua')(config)
 					else
 						loadstring(game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/main/init.lua', true), 'init.lua')(config)
 					end
