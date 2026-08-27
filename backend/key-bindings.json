@@ -5,8 +5,8 @@
       "username": "AetherV2Owner",
       "userId": "11515370034",
       "firstUsedAt": "2026-08-26T22:13:15.291Z",
-      "uses": 3,
-      "lastUsedAt": "2026-08-27T08:11:08.380Z"
+      "uses": 4,
+      "lastUsedAt": "2026-08-27T08:31:43.473Z"
     }
   },
   "keys": {
@@ -135,6 +135,16 @@
       "username": "AetherV2Owner",
       "userId": "11515370034",
       "uses": 3
+    },
+    {
+      "at": "2026-08-27T08:31:43.474Z",
+      "action": "use",
+      "keyId": "eb1ebdad59c70f81f7fe71f66656a3b1ae6cc41d2bd584c83aa1b5dadaa2e508",
+      "actor": "loader",
+      "operationId": "3ddba27a-6d52-4f03-9dd1-d07a86d901c4",
+      "username": "AetherV2Owner",
+      "userId": "11515370034",
+      "uses": 4
     }
   ]
 }
