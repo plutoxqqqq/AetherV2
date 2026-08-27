@@ -303,15 +303,36 @@ local function createMobileButton(buttonapi, position)
 	buttonapi.Bind = {Button = button}
 end
 
+local function encodeRemoteSource(value)
+	return tostring(value):gsub('([^%w%-%._~])', function(character)
+		return string.format('%%%02X', string.byte(character))
+	end)
+end
+
+local function remoteSourceUrl(path)
+	local endpoint = type(license) == 'table' and license.SourceEndpoint
+	if type(endpoint) == 'string' and endpoint ~= '' then
+		endpoint = endpoint:gsub('/+$', '')
+		local token = type(license.SourceToken) == 'string' and license.SourceToken or nil
+		if not token or token == '' then error('Private source session is missing its session token', 0) end
+		local ref = isfile('aetherv2/profiles/commit.txt') and readfile('aetherv2/profiles/commit.txt'):gsub('%s+', '') or ''
+		ref = ref ~= '' and ref or (type(license.SourceRef) == 'string' and license.SourceRef or '')
+		if ref == '' then error('Private source ref is missing', 0) end
+		return endpoint..'/source?path='..encodeRemoteSource(path:gsub('^aetherv2/', ''))..
+			'&ref='..encodeRemoteSource(ref)..'&session='..encodeRemoteSource(token)
+	end
+	local commit = isfile('aetherv2/profiles/commit.txt') and readfile('aetherv2/profiles/commit.txt'):gsub('%s+', '') or 'main'
+	return 'https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..commit..'/'..
+		select(1, path:gsub('aetherv2/', ''))
+end
+
 local function downloadFile(path, func)
 	if not isfile(path) then
 		createDownloader(path)
 		local suc, res = pcall(function()
-			return game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..readfile('aetherv2/profiles/commit.txt')..'/'..select(1, path:gsub('aetherv2/', '')), true)
+			return game:HttpGet(remoteSourceUrl(path), true)
 		end)
-		if not suc or res == '404: Not Found' then
-			error(res)
-		end
+		if not suc or res == '404: Not Found' then error(res) end
 		if path:find('.lua') then
 			res = '--This watermark is used to delete the file if its cached, remove it to make the file persist after vape updates.\n'..res
 		end
@@ -4055,7 +4076,7 @@ topbar:CreateDropdown({
 			if shared.VapeDeveloper then
 				loadstring(readfile('aetherv2/main.lua'), 'main')(license)
 			else
-				loadstring(game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..readfile('aetherv2/profiles/commit.txt')..'/main.lua', true), 'main')(license)
+				loadstring(game:HttpGet(remoteSourceUrl('aetherv2/main.lua'), true), 'main')(license)
 			end
 		end
 	end,
@@ -4140,7 +4161,7 @@ topbar:CreateButton({
 		if shared.VapeDeveloper then
 			loadstring(readfile('aetherv2/main.lua'), 'main')(license)
 		else
-			loadstring(game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..readfile('aetherv2/profiles/commit.txt')..'/main.lua', true), 'main')(license)
+			loadstring(game:HttpGet(remoteSourceUrl('aetherv2/main.lua'), true), 'main')(license)
 		end
 	end,
 	Tooltip = 'Wipes everything saved for this config and reloads on defaults'
@@ -4212,7 +4233,7 @@ topbar:CreateButton({
 		if shared.VapeDeveloper then
 			loadstring(readfile('aetherv2/main.lua'), 'main')(license)
 		else
-			loadstring(game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..readfile('aetherv2/profiles/commit.txt')..'/main.lua', true), 'main')(license)
+			loadstring(game:HttpGet(remoteSourceUrl('aetherv2/main.lua'), true), 'main')(license)
 		end
 	end,
 	Tooltip = 'Reloads vape for debugging purposes'
