@@ -136,6 +136,7 @@ local store = {
 	},
 	selfProjectiles = {},
 	inventories = {},
+	kitReady = false,
 	matchState = 0,
 	queueType = 'bedwars_test',
 	tools = {},
@@ -149,6 +150,38 @@ local store = {
 	})
 }
 getgenv().store = store
+
+-- Publish stable experience metadata before the BedWars controllers finish loading. Home can
+-- therefore identify the game immediately, while GetKit becomes authoritative as soon as the
+-- Redux store or replicated player attributes are available.
+local function activeBedwarsKit()
+	local values = {
+		store.equippedKit,
+		lplr:GetAttribute('PlayingAsKit'),
+		lplr:GetAttribute('PlayingAsKits'),
+		lplr:GetAttribute('SelectedKit'),
+		lplr:GetAttribute('Kit')
+	}
+	local ready = store.kitReady == true
+	if bedwars.Store and type(bedwars.Store.getState) == 'function' then
+		local ok, state = pcall(bedwars.Store.getState, bedwars.Store)
+		if ok and type(state) == 'table' then
+			ready = ready or type(state.Bedwars) == 'table'
+			local bedwarsState = type(state.Bedwars) == 'table' and state.Bedwars or {}
+			local kitState = type(state.Kit) == 'table' and state.Kit or {}
+			table.insert(values, 1, bedwarsState.kit or kitState.kit or kitState.equippedKit)
+		end
+	end
+	for _, value in values do
+		if value ~= nil and tostring(value) ~= '' and tostring(value):lower() ~= 'none' then
+			return tostring(value), true
+		end
+	end
+	return nil, ready
+end
+if type(vape.SetGameInfo) == 'function' then
+	vape:SetGameInfo({Name = 'BedWars', GetKit = activeBedwarsKit})
+end
 
 local Reach = {}
 local HitBoxes = {}
@@ -316,6 +349,92 @@ local function getProjectiles(enabled, useSophia, useWhim)
 		end
 	end
 	return projectiles
+end
+
+local function projectileAcceleration(gravity)
+	if typeof(gravity) == 'Vector3' then return gravity end
+	gravity = math.abs(tonumber(gravity) or workspace.Gravity)
+	return Vector3.new(0, -gravity, 0)
+end
+
+local function targetProjectileMotion(ent, targetPosition, stationary, raycastParams)
+	if stationary then return Vector3.zero, Vector3.zero end
+	local root, humanoid = ent and ent.RootPart, ent and ent.Humanoid
+	if not root or not root.Parent then return end
+	local velocity = root.AssemblyLinearVelocity
+	local grounded = humanoid and humanoid.FloorMaterial ~= Enum.Material.Air
+	if not grounded and typeof(targetPosition) == 'Vector3' then
+		local distance = math.max((tonumber(ent.HipHeight) or 3) + 0.75, 1)
+		local ok, floor = pcall(workspace.Raycast, workspace, targetPosition, Vector3.new(0, -distance, 0), raycastParams)
+		grounded = ok and floor ~= nil and floor.Normal.Y > 0.15 and velocity.Y <= 0.1
+	end
+	if grounded then
+		return Vector3.new(velocity.X, 0, velocity.Z), Vector3.zero
+	end
+
+	local gravity = workspace.Gravity
+	local character = ent.Character
+	local balloons = character and character:GetAttribute('InflatedBalloons')
+	if type(balloons) == 'number' and balloons > 0 then
+		gravity = workspace.Gravity * (1 - (balloons >= 4 and 1.2 or balloons >= 3 and 1 or 0.975))
+	end
+	if root:FindFirstChild('rbxassetid://8200754399') then gravity = 6 end
+	if ent.Player and ent.Player:GetAttribute('IsOwlTarget') then
+		for _, owl in collectionService:GetTagged('Owl') do
+			if owl:GetAttribute('Target') == ent.Player.UserId and owl:GetAttribute('Status') == 2 then
+				gravity = 0
+				break
+			end
+		end
+	end
+	return velocity, Vector3.new(0, -gravity, 0)
+end
+
+-- Shared by every BedWars projectile aim module. The solver and transmitted velocity always use
+-- the same world-space origin; callers may change the model speed for ping compensation, but the
+-- returned vector is normalized back to the real launch speed used by the remote.
+local function solveBedwarsProjectile(origin, speed, gravity, ent, targetPosition, options)
+	options = type(options) == 'table' and options or {}
+	if typeof(origin) ~= 'Vector3' or typeof(targetPosition) ~= 'Vector3' then return end
+	speed = tonumber(speed)
+	if not speed or speed <= 0 then return end
+	local modelSpeed = speed * math.max(tonumber(options.PredictionScale) or 1, 0.05)
+	local targetVelocity, targetAcceleration = targetProjectileMotion(
+		ent,
+		targetPosition,
+		options.Stationary == true,
+		options.RaycastParams
+	)
+	if not targetVelocity then return end
+	local solution = prediction.SolveIntercept(
+		origin,
+		modelSpeed,
+		projectileAcceleration(gravity),
+		targetPosition,
+		targetVelocity,
+		targetAcceleration,
+		0.001,
+		math.max(tonumber(options.Lifetime) or 3, 0.001)
+	)
+	if not solution or solution.InitialVelocity.Magnitude <= 1e-3 then return end
+	return {
+		AimPosition = origin + solution.InitialVelocity,
+		Velocity = solution.InitialVelocity.Unit * speed,
+		FlightTime = solution.FlightTime,
+		ImpactPosition = solution.ImpactPosition
+	}
+end
+
+local function projectileLaunchOrigin(baseOrigin, aimVelocity)
+	if typeof(baseOrigin) ~= 'Vector3' or typeof(aimVelocity) ~= 'Vector3' or aimVelocity.Magnitude <= 1e-3 then return baseOrigin end
+	local constants = bedwars.BowConstantsTable
+	if type(constants) ~= 'table' then return baseOrigin end
+	local offset = Vector3.new(
+		-(tonumber(constants.RelX) or 0),
+		-(tonumber(constants.RelY) or 0),
+		-(tonumber(constants.RelZ) or 0)
+	)
+	return (CFrame.lookAt(baseOrigin, baseOrigin + aimVelocity) * CFrame.new(offset)).Position
 end
 
 local function getRoactRender(func)
@@ -1792,7 +1911,13 @@ run(function()
 	local function updateStore(new, old)
 		if new.Bedwars ~= old.Bedwars then
 			local state = type(new.Bedwars) == 'table' and new.Bedwars or {}
+			local previousKit = store.equippedKit
+			local previousReady = store.kitReady
+			store.kitReady = type(new.Bedwars) == 'table'
 			store.equippedKit = state.kit and state.kit ~= 'none' and state.kit or ''
+			if (previousKit ~= store.equippedKit or previousReady ~= store.kitReady) and type(vape.RefreshGameInfo) == 'function' then
+				vape:RefreshGameInfo()
+			end
 		end
 
 		if new.Game ~= old.Game then
@@ -1853,6 +1978,7 @@ run(function()
 
 	local storeChanged = bedwars.Store.changed:connect(updateStore)
 	updateStore(bedwars.Store:getState(), {})
+	if type(vape.RefreshGameInfo) == 'function' then vape:RefreshGameInfo() end
 
 	for _, event in {'MatchEndEvent', 'EntityDeathEvent', 'BedwarsBedBreak', 'BalloonPopped', 'AngelProgress', 'GrapplingHookFunctions'} do
 		if not vape.Connections then return end
@@ -6606,29 +6732,57 @@ run(function()
     local GroundTime
     local PlayerCheck
     local groundedSince = 0
+	local trackedCharacter
+	local recovered = false
+
+	local function validCharacter()
+		local character = entitylib.character
+		if not entitylib.isAlive or not character or not character.Character or not character.Character.Parent then return end
+		local humanoid, root = character.Humanoid, character.RootPart
+		if not humanoid or humanoid.Health <= 0 or not root or not root.Parent then return end
+		return character, humanoid, root
+	end
+
+	local function playerNearby(origin)
+		local list = type(entitylib.List) == 'table' and entitylib.List or {}
+		for _, ent in list do
+			local root = ent and ent.RootPart
+			local player = ent and ent.Player
+			if player and player ~= lplr and player.Parent == playersService and root and root.Parent
+				and (not ent.Health or ent.Health > 0) and (root.Position - origin).Magnitude <= 50 then
+				return true
+			end
+		end
+		return false
+	end
 
     RecoveryTP = vape.Categories.Blatant:CreateModule({
         Name = 'RecoveryTP',
         Function = function(callback)
-            if not callback then groundedSince = 0 return end
+			groundedSince, trackedCharacter, recovered = 0, nil, false
+			if not callback then return end
+			RecoveryTP:Clean(lplr.CharacterAdded:Connect(function(character)
+				trackedCharacter, groundedSince, recovered = character, 0, false
+			end))
             RecoveryTP:Clean(runService.PostSimulation:Connect(function()
-                if not RecoveryTP.Enabled or not entitylib.isAlive then groundedSince = 0 return end
-                local humanoid, root = entitylib.character.Humanoid, entitylib.character.RootPart
-                if humanoid.Health >= HealthThreshold.Value or not isnetworkowner(root) then groundedSince = 0 return end
-                if PlayerCheck.Enabled and not entitylib.EntityPosition({
-                    Range = 50,
-                    Part = 'RootPart',
-                    Players = true
-                }) then
-                    groundedSince = 0
-                    return
-                end
-                if humanoid.FloorMaterial == Enum.Material.Air then groundedSince = 0 return end
+				if not RecoveryTP.Enabled then return end
+				local character, humanoid, root = validCharacter()
+				if not character then groundedSince, recovered = 0, false return end
+				if trackedCharacter ~= character.Character then
+					trackedCharacter, groundedSince, recovered = character.Character, 0, false
+				end
+				if humanoid.Health >= HealthThreshold.Value then groundedSince, recovered = 0, false return end
+				if recovered then return end
+				local ownsRoot = false
+				pcall(function() ownsRoot = isnetworkowner(root) end)
+				if not ownsRoot then groundedSince = 0 return end
+				if PlayerCheck.Enabled and not playerNearby(root.Position) then groundedSince = 0 return end
+				if humanoid.FloorMaterial == Enum.Material.Air then groundedSince = 0 return end
                 local now = tick()
                 if groundedSince == 0 then groundedSince = now return end
-                if now - groundedSince < GroundTime.Value then return end
-                groundedSince = 0
-                root.CFrame = CFrame.new(root.Position.X, TeleportHeight.Value, root.Position.Z) * root.CFrame.Rotation
+				if now - groundedSince < GroundTime.Value then return end
+				groundedSince, recovered = 0, true
+				root.CFrame = CFrame.new(root.Position.X, TeleportHeight.Value, root.Position.Z) * root.CFrame.Rotation
                 root.AssemblyLinearVelocity = Vector3.zero
                 humanoid:ChangeState(Enum.HumanoidStateType.Freefall)
             end))
@@ -9375,81 +9529,66 @@ run(function()
 	local rayCheck = RaycastParams.new()
 	rayCheck.FilterType = Enum.RaycastFilterType.Include
 	rayCheck.FilterDescendantsInstances = {workspace:FindFirstChild('Map')}
-	local old
+	local launchHook
 
 	local ProjectileAimbot = vape.Categories.Blatant:CreateModule({
 		Name = 'ProjectileAimbot',
 		Function = function(callback)
 			if callback then
-				old = bedwars.ProjectileController.calculateImportantLaunchValues
-				bedwars.ProjectileController.calculateImportantLaunchValues = function(...)
-					local self, projmeta, worldmeta, origin, shootpos = ...
+				if vape.Modules.SilentAim and vape.Modules.SilentAim.Enabled then vape.Modules.SilentAim:Toggle() end
+				launchHook = bedwars.ProjectileLaunchHook:Add('ProjectileAimbot', 12, function(nextLaunch, ...)
+					local launch = nextLaunch(...)
+					local projmeta, worldmeta = select(2, ...), select(3, ...)
+					if type(launch) ~= 'table' or typeof(launch.positionFrom) ~= 'Vector3'
+						or typeof(launch.initialVelocity) ~= 'Vector3' or not projmeta then return launch end
+					local projectileType = tostring(projmeta.projectile or '')
+					if projectileType == '' or ((not OtherProjectiles.Enabled) and not projectileType:find('arrow')) then return launch end
+					local blacklistName = (projectileType == 'glue_trap' or projectileType == 'glue_projectile') and 'gloop' or projectileType
+					if table.find(Blacklist.ListEnabled or {}, blacklistName) then return launch end
+
+					local origin = launch.positionFrom
 					local plr = entitylib.EntityMouse({
 						Part = 'RootPart',
 						Range = FOV.Value,
 						Players = Targets.Players.Enabled,
 						NPCs = Targets.NPCs.Enabled,
 						Wallcheck = Targets.Walls.Enabled,
-						Origin = entitylib.isAlive and (shootpos or entitylib.character.RootPart.Position) or Vector3.zero,
+						Origin = origin,
 						Sort = sortmethods[Sort.Value]
 					})
 					if plr then
-						local pos = shootpos or self:getLaunchPosition(origin)
-						if not pos then
-							return old(...)
-						end
-
-						if (not OtherProjectiles.Enabled) and not projmeta.projectile:find('arrow') then
-							return old(...)
-						end
-
-						if table.find(Blacklist.ListEnabled or {}, ((projmeta.projectile == 'glue_trap' or projmeta.projectile == 'glue_projectile') and 'gloop' or projmeta.projectile)) then
-							return old(...)
-						end
-
-						local meta = projmeta:getProjectileMeta()
+						local targetPart = plr[TargetPart.Value]
+						if not targetPart or not targetPart.Parent then return launch end
+						local ok, meta = pcall(projmeta.getProjectileMeta, projmeta)
+						meta = ok and meta or bedwars.ProjectileMeta[projectileType]
+						if type(meta) ~= 'table' then return launch end
 						local lifetime = (worldmeta and meta.predictionLifetimeSec or meta.lifetimeSec or 3)
-						local gravity = (meta.gravitationalAcceleration or 196.2) * projmeta.gravityMultiplier
-						local projSpeed = (meta.launchVelocity or 100)
-						local offsetpos = pos + (projmeta.projectile == 'owl_projectile' and Vector3.zero or projmeta.fromPositionOffset)
-						local balloons = plr.Character:GetAttribute('InflatedBalloons')
-						local playerGravity = workspace.Gravity
-
-						if balloons and balloons > 0 then
-							playerGravity = (workspace.Gravity * (1 - ((balloons >= 4 and 1.2 or balloons >= 3 and 1 or 0.975))))
-						end
-
-						if plr.Character.PrimaryPart:FindFirstChild('rbxassetid://8200754399') then
-							playerGravity = 6
-						end
-
-						if plr.Player and plr.Player:GetAttribute('IsOwlTarget') then
-							for _, owl in collectionService:GetTagged('Owl') do
-								if owl:GetAttribute('Target') == plr.Player.UserId and owl:GetAttribute('Status') == 2 then
-									playerGravity = 0
-								end
-							end
-						end
-
-						local newlook = CFrame.new(offsetpos, plr[TargetPart.Value].Position) * CFrame.new(projmeta.projectile == 'owl_projectile' and Vector3.zero or Vector3.new(bedwars.BowConstantsTable.RelX, bedwars.BowConstantsTable.RelY, bedwars.BowConstantsTable.RelZ))
-						local predictionScale = maxAccuracyScale
-						local calc = prediction.SolveTrajectory(newlook.p, projSpeed * predictionScale, gravity, plr[TargetPart.Value].Position, projmeta.projectile == 'telepearl' and Vector3.zero or plr[TargetPart.Value].Velocity, playerGravity, plr.HipHeight, plr.Jumping and 42.6 or nil, rayCheck, plr.Humanoid.FloorMaterial == Enum.Material.Air or math.abs(plr.RootPart.Velocity.Y) > 0.01, plr.RootPart.Position, plr.RootPart, nil, true)
-						if calc then
+						local gravity = launch.gravitationalAcceleration or ((meta.gravitationalAcceleration or 196.2) * (projmeta.gravityMultiplier or 1))
+						local fullSpeed = tonumber(meta.launchVelocity) or launch.initialVelocity.Magnitude
+						local speed = (AutoCharge.Enabled or not Aim.Enabled) and fullSpeed or launch.initialVelocity.Magnitude
+						local solution = solveBedwarsProjectile(origin, speed, gravity, plr, targetPart.Position, {
+							Lifetime = lifetime,
+							PredictionScale = maxAccuracyScale,
+							Stationary = projectileType == 'telepearl',
+							RaycastParams = rayCheck
+						})
+						if solution then
 							targetinfo.Targets[plr] = tick() + 1
-							return {
-								initialVelocity = (CFrame.new(newlook.Position, calc).LookVector * projSpeed) * ((AutoCharge.Enabled or not Aim.Enabled) and 1 or projmeta.velocityMultiplier),
-								positionFrom = offsetpos,
-								deltaT = lifetime,
-								gravitationalAcceleration = gravity,
-								drawDurationSeconds = AutoCharge.Enabled and 5 or projmeta.drawDurationSeconds
-							}
+							launch.initialVelocity = solution.Velocity
+							launch.positionFrom = origin
+							launch.deltaT = lifetime
+							launch.gravitationalAcceleration = gravity
+							if AutoCharge.Enabled then launch.drawDurationSeconds = 5 end
 						end
 					end
-
-					return old(...)
-				end
-			else
-				bedwars.ProjectileController.calculateImportantLaunchValues = old
+					return launch
+				end)
+				ProjectileAimbot:Clean(function()
+					if launchHook then launchHook(); launchHook = nil end
+				end)
+			elseif launchHook then
+				launchHook()
+				launchHook = nil
 			end
 		end,
 		Tooltip = 'Silently adjusts your aim towards the enemy'
@@ -9480,12 +9619,12 @@ run(function()
 			maxAccuracyGeneration += 1
 			local generation = maxAccuracyGeneration
 			if callback then
-				task.spawn(function()
+				MaxAccuracy:Clean(task.spawn(function()
 					repeat
 						maxAccuracyScale = math.clamp(1 - lplr:GetNetworkPing(), 0.1, 1)
 						task.wait(1)
 					until not MaxAccuracy.Enabled or generation ~= maxAccuracyGeneration
-				end)
+				end))
 			else
 				maxAccuracyScale = 1
 			end
@@ -9593,7 +9732,7 @@ run(function()
 
 		local speed = velocity.Magnitude
 		if speed <= 0 then return end
-		local gravity = meta.gravitationalAcceleration or 196.2
+		local gravity = launch.gravitationalAcceleration or meta.gravitationalAcceleration or 196.2
 
 		local plr = entitylib.EntityMouse({
 			Part = 'RootPart',
@@ -9609,20 +9748,17 @@ run(function()
 		local targetpart = plr[TargetPart.Value]
 		local targetpos = getPosition(plr.Character) or targetpart and targetpart.Position
 		if not targetpos then return end
-		local playerGravity = workspace.Gravity
-		local balloons = plr.Character:GetAttribute('InflatedBalloons')
-		if balloons and balloons > 0 then
-			playerGravity = workspace.Gravity * (1 - (balloons >= 4 and 1.2 or balloons >= 3 and 1 or 0.975))
-		end
-
 		local pearl = projType == 'telepearl'
-		local targetVelocity = pearl and Vector3.zero or plr.RootPart.AssemblyLinearVelocity
-		local targetAirborne = not pearl and plr.Humanoid.FloorMaterial == Enum.Material.Air or math.abs(targetVelocity.Y) > 0.01
-		local calc, _, travelTime = prediction.SolveTrajectory(origin, speed * Prediction.Value, gravity, targetpos, targetVelocity, playerGravity, plr.HipHeight, plr.Jumping and 42.6 or nil, rayCheck, targetAirborne, plr.RootPart.Position, plr.RootPart, nil, true)
-		if not calc or not travelTime or travelTime > (meta.lifetimeSec or 3) then return end
+		local solution = solveBedwarsProjectile(origin, speed, gravity, plr, targetpos, {
+			Lifetime = launch.deltaT or meta.lifetimeSec or 3,
+			PredictionScale = Prediction.Value,
+			Stationary = pearl,
+			RaycastParams = rayCheck
+		})
+		if not solution then return end
 
 		targetinfo.Targets[plr] = tick() + 1
-		return CFrame.lookAt(origin, calc).LookVector * speed
+		return solution.Velocity
 	end
 
 	SilentAim = vape.Categories.Combat:CreateModule({
@@ -9712,69 +9848,87 @@ run(function()
 	local UseWhim
 	local rayCheck = RaycastParams.new()
 	rayCheck.FilterType = Enum.RaycastFilterType.Exclude
-	local projectileRemote = {InvokeServer = function() end}
+	local projectileRemote
 	local FireDelays = {}
-	task.spawn(function()
-		projectileRemote = bedwars.Handler:Get('ProjectileFire').Remote.instance
-	end)
+	local generation = 0
+
+	local function getProjectileRemote()
+		if projectileRemote and type(projectileRemote.InvokeServer) == 'function' then return projectileRemote end
+		local ok, remote = pcall(function()
+			local handler = bedwars.Handler:Get('ProjectileFire')
+			return handler and handler.Remote and handler.Remote.instance
+		end)
+		if not ok or not remote then
+			ok, remote = pcall(function() return bedwars.Client:Get(remotes.FireProjectile).instance end)
+		end
+		if ok and remote and type(remote.InvokeServer) == 'function' then projectileRemote = remote end
+		return projectileRemote
+	end
 
 	ProjectileAura = vape.Categories.Blatant:CreateModule({
 		Name = 'ProjectileAura',
 		Function = function(callback)
-			if callback then
-				repeat
-					if (workspace:GetServerTimeNow() - bedwars.SwordController.lastAttack) > 0.3 then
-						local ent = entitylib.EntityPosition({
-							Part = 'RootPart',
-							Range = Range.Value,
-							Players = Targets.Players.Enabled,
-							NPCs = Targets.NPCs.Enabled,
-							Wallcheck = Targets.Walls.Enabled
-						})
-
-						if ent then
-							local pos = entitylib.character.RootPart.Position
-							for _, data in getProjectiles(List.ListEnabled, UseSophia.Enabled, UseWhim.Enabled) do
-								local item, ammo, projectile, itemMeta = unpack(data)
-								if (FireDelays[item.itemType] or 0) < tick() then
-									rayCheck.FilterDescendantsInstances = {lplr.Character, gameCamera}
-									local meta = bedwars.ProjectileMeta[projectile]
-									local projSpeed, gravity = meta.launchVelocity, meta.gravitationalAcceleration or 196.2
-									local calc = prediction.SolveTrajectory(pos, projSpeed, gravity, ent.RootPart.Position, ent.RootPart.Velocity, workspace.Gravity, ent.HipHeight, ent.Jumping and 42.6 or nil, rayCheck, ent.Humanoid.FloorMaterial == Enum.Material.Air or math.abs(ent.RootPart.Velocity.Y) > 0.01, ent.RootPart.Position, ent.RootPart, nil, true)
-									if calc then
-										switchItem(item.tool, 0)
-										store.lastProjectileFire = workspace:GetServerTimeNow()
-										targetinfo.Targets[ent] = tick() + 1
-
-										task.spawn(function()
-											local shootPosition = (CFrame.new(pos, calc) * CFrame.new(Vector3.new(-bedwars.BowConstantsTable.RelX, -bedwars.BowConstantsTable.RelY, -bedwars.BowConstantsTable.RelZ))).Position
-											local aim = prediction.SolveTrajectory(shootPosition, projSpeed, gravity, ent.RootPart.Position, ent.RootPart.Velocity, workspace.Gravity, ent.HipHeight, ent.Jumping and 42.6 or nil, rayCheck, ent.Humanoid.FloorMaterial == Enum.Material.Air or math.abs(ent.RootPart.Velocity.Y) > 0.01, ent.RootPart.Position, ent.RootPart, nil, true) or calc
-											local dir, id = CFrame.lookAt(shootPosition, aim).LookVector, httpService:GenerateGUID(true)
-											bedwars.ProjectileController:createLocalProjectile(meta, ammo, projectile, shootPosition, id, dir * projSpeed, {drawDurationSeconds = 1})
-											local res = projectileRemote:InvokeServer(item.tool, ammo, projectile, shootPosition, pos, dir * projSpeed, id, {drawDurationSeconds = 1, shotId = httpService:GenerateGUID(false)}, workspace:GetServerTimeNow() - 0.045)
+			generation += 1
+			if not callback then return end
+			local token = generation
+			repeat
+				if (workspace:GetServerTimeNow() - bedwars.SwordController.lastAttack) > 0.3 and entitylib.isAlive then
+					local ent = entitylib.EntityPosition({
+						Part = 'RootPart',
+						Range = Range.Value,
+						Players = Targets.Players.Enabled,
+						NPCs = Targets.NPCs.Enabled,
+						Wallcheck = Targets.Walls.Enabled
+					})
+					local remote = ent and getProjectileRemote()
+					if ent and ent.RootPart and remote then
+						local rootPosition = entitylib.character.RootPart.Position
+						for _, data in getProjectiles(List.ListEnabled, UseSophia.Enabled, UseWhim.Enabled) do
+							if token ~= generation or not ProjectileAura.Enabled then break end
+							local item, ammo, projectile, source, meta = unpack(data)
+							local now = workspace:GetServerTimeNow()
+							if item.tool and item.tool.Parent and (FireDelays[item.itemType] or 0) <= now then
+								rayCheck.FilterDescendantsInstances = {lplr.Character, ent.Character, gameCamera}
+								local speed = meta.launchVelocity
+								local first = solveBedwarsProjectile(rootPosition, speed, meta.gravitationalAcceleration, ent, ent.RootPart.Position, {
+									RaycastParams = rayCheck,
+									Lifetime = meta.lifetimeSec or 3
+								})
+								local shootPosition = first and projectileLaunchOrigin(rootPosition, first.Velocity)
+								local solution = shootPosition and solveBedwarsProjectile(shootPosition, speed, meta.gravitationalAcceleration, ent, ent.RootPart.Position, {
+									RaycastParams = rayCheck,
+									Lifetime = meta.lifetimeSec or 3
+								})
+								if solution then
+									switchItem(item.tool, 0)
+									FireDelays[item.itemType] = now + (source.fireDelaySec or 0) + FireRate:GetRandomValue()
+									task.spawn(function()
+										if token ~= generation or not ProjectileAura.Enabled or not item.tool.Parent then return end
+										local velocity = solution.Velocity
+										local id = httpService:GenerateGUID(true)
+										local draw = {drawDurationSeconds = 1, shotId = httpService:GenerateGUID(false)}
+										pcall(bedwars.ProjectileController.createLocalProjectile, bedwars.ProjectileController, meta, ammo, projectile, shootPosition, id, velocity, draw)
+										local ok, result = pcall(remote.InvokeServer, remote, item.tool, ammo, projectile, shootPosition, rootPosition, velocity, id, draw, workspace:GetServerTimeNow() - 0.045)
+										if token ~= generation or not ProjectileAura.Enabled then return end
+										if ok and result ~= false then
+											store.lastProjectileFire = workspace:GetServerTimeNow()
+											targetinfo.Targets[ent] = tick() + 1
 											prediction.trackShot(ent.RootPart)
-											if not res then
-												FireDelays[item.itemType] = tick()
-											else
-												--pcall(function() res.Parent = replicatedStorage end)
-												local shoot = itemMeta.launchSound
-												shoot = shoot and shoot[math.random(1, #shoot)] or nil
-												if shoot then
-													bedwars.SoundManager:playSound(shoot)
-												end
-											end
-										end)
-
-										FireDelays[item.itemType] = tick() + itemMeta.fireDelaySec
-										task.wait(FireRate:GetRandomValue())
-									end
+											local sounds = source.launchSound
+											local sound = type(sounds) == 'table' and #sounds > 0 and sounds[math.random(1, #sounds)] or nil
+											if sound then pcall(bedwars.SoundManager.playSound, bedwars.SoundManager, sound) end
+										else
+											FireDelays[item.itemType] = workspace:GetServerTimeNow()
+										end
+									end)
+									task.wait(FireRate:GetRandomValue())
 								end
 							end
 						end
 					end
-					task.wait(0.03)
-				until not ProjectileAura.Enabled
-			end
+				end
+				task.wait(0.03)
+			until not ProjectileAura.Enabled or token ~= generation
 		end,
 		Tooltip = 'Shoots people around you'
 	})
@@ -12009,345 +12163,310 @@ run(function()
 end)
 
 run(function()
-    local ProjectileLanding
-    local MarkerColor
-    local launchHook
-    local markers, highlights = {}, {}
-    local rayParams = RaycastParams.new()
-    rayParams.FilterType = Enum.RaycastFilterType.Exclude
+	local ProjectileLanding
+	local MarkerColor
+	local launchHook
+	local aimingInput = false
+	local lastLaunch
+	local states, watchers = {}, {}
+	local aimVisual
+	local rayParams = RaycastParams.new()
+	rayParams.FilterType = Enum.RaycastFilterType.Exclude
+	rayParams.RespectCanCollide = true
 
-    local function clearVisuals()
-        for _, part in markers do part:Destroy() end
-        for _, highlight in highlights do highlight:Destroy() end
-        table.clear(markers)
-        table.clear(highlights)
-    end
+	local function newVisual(name)
+		local marker = Instance.new('Part')
+		marker.Name = name
+		marker.Shape = Enum.PartType.Ball
+		marker.Size = Vector3.new(1.85, 1.85, 1.85)
+		marker.Anchored = true
+		marker.CanCollide = false
+		marker.CanQuery = false
+		marker.CanTouch = false
+		marker.Material = Enum.Material.Neon
+		marker.Transparency = 1
+		marker.Parent = gameCamera
+		return {Marker = marker}
+	end
 
-    -- Only the local player's own fired projectiles should be marked; other players'
-    -- arrows are not "my projectile".
-    local function isProjectile(model)
-        return model:GetAttribute('ProjectileShooter') == lplr.UserId and (model.PrimaryPart or model:IsA('BasePart'))
-    end
+	local function destroyVisual(visual)
+		if not visual then return end
+		if visual.Highlight then visual.Highlight:Destroy() end
+		if visual.Marker then visual.Marker:Destroy() end
+		visual.Highlight = nil
+		visual.Marker = nil
+	end
 
-    local aimingInput = false
+	local function entityForInstance(instance)
+		local model = instance and instance:FindFirstAncestorOfClass('Model')
+		if not model then return end
+		if entitylib.getEntityFromCharacter then
+			local ent = entitylib.getEntityFromCharacter(model)
+			if ent then return ent end
+		end
+		for _, ent in entitylib.List do
+			if ent.Character == model then return ent end
+		end
+	end
 
-    local function setAimingInput(input, state)
-        if input.UserInputType == Enum.UserInputType.MouseButton1
-            or input.UserInputType == Enum.UserInputType.Touch
-            or input.KeyCode == Enum.KeyCode.ButtonR2 then
-            aimingInput = state
-        end
-    end
+	local function updateVisual(visual, result)
+		if not visual or not visual.Marker then return end
+		local color = Color3.fromHSV(MarkerColor.Hue, MarkerColor.Sat, MarkerColor.Value)
+		visual.Marker.Color = color
+		if not result or typeof(result.Position) ~= 'Vector3' then
+			visual.Marker.Transparency = 1
+			if visual.Highlight then visual.Highlight:Destroy(); visual.Highlight = nil end
+			return
+		end
+		visual.Marker.CFrame = CFrame.new(result.Position + Vector3.new(0, 0.55, 0))
+		visual.Marker.Transparency = math.clamp(MarkerColor.Opacity or 0, 0, 1)
+		local ent = entityForInstance(result.Instance)
+		local model = ent and ent.Character
+		if model ~= visual.HighlightModel then
+			if visual.Highlight then visual.Highlight:Destroy() end
+			visual.Highlight, visual.HighlightModel = nil, model
+			if model then
+				local highlight = Instance.new('Highlight')
+				highlight.Name = 'ProjectileLandingHit'
+				highlight.Adornee = model
+				highlight.FillTransparency = 0.55
+				highlight.OutlineTransparency = 0.05
+				highlight.Parent = gameCamera
+				visual.Highlight = highlight
+			end
+		end
+		if visual.Highlight then
+			visual.Highlight.FillColor = color
+			visual.Highlight.OutlineColor = color
+		end
+	end
 
-    local function isAimingProjectile()
-        return aimingInput
-            or inputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1)
-            or inputService:IsGamepadButtonDown(Enum.UserInputType.Gamepad1, Enum.KeyCode.ButtonR2)
-    end
+	local function closestPoint(point, a, b)
+		local segment = b - a
+		local length = segment:Dot(segment)
+		if length <= 1e-6 then return a end
+		return a + segment * math.clamp((point - a):Dot(segment) / length, 0, 1)
+	end
 
-    -- ProjectileLanding should preview the shot only while the local player is actively
-    -- aiming/readying a projectile source. Merely holding a bow/fireball/pearl should
-    -- not create a marker; the preview starts with the same use input that begins the
-    -- game's own aiming flow and disappears when that input is released.
-    local function heldProjectileSource()
-        if not isAimingProjectile() or not entitylib.isAlive or not store.hand or not store.hand.tool then return end
-        local itemMeta = bedwars.ItemMeta[store.hand.tool.Name]
-        local source = itemMeta and itemMeta.projectileSource
-        if not source then return end
-        return source, itemMeta
-    end
+	local function movingEntityCollision(a, b, startTime, endTime)
+		local bestPosition, bestInstance, bestDistance
+		local sampleTime = (startTime + endTime) * 0.5
+		for _, ent in entitylib.List do
+			local root = ent.RootPart
+			if root and root.Parent and (not ent.Health or ent.Health > 0) then
+				local velocity = root.AssemblyLinearVelocity
+				local center = root.Position + velocity * sampleTime
+				local point = closestPoint(center, a, b)
+				local delta = point - center
+				local horizontal = Vector3.new(delta.X, 0, delta.Z).Magnitude
+				if horizontal <= 2.1 and math.abs(delta.Y) <= 3.5 then
+					local distance = (point - a).Magnitude
+					if not bestDistance or distance < bestDistance then
+						bestPosition, bestInstance, bestDistance = point, root, distance
+					end
+				end
+			end
+		end
+		return bestPosition, bestInstance
+	end
 
-    local function projectilePart(projectile)
-        return projectile:IsA('BasePart') and projectile or projectile.PrimaryPart
-    end
+	local function trace(origin, velocity, gravity, lifetime, extraIgnore)
+		if typeof(origin) ~= 'Vector3' or typeof(velocity) ~= 'Vector3' or velocity.Magnitude <= 0.1 then return end
+		local ignored = {lplr.Character, gameCamera}
+		if extraIgnore then table.insert(ignored, extraIgnore) end
+		for _, ent in entitylib.List do
+			if ent.Character then table.insert(ignored, ent.Character) end
+		end
+		rayParams.FilterDescendantsInstances = ignored
+		return prediction.TraceTrajectory(origin, velocity, projectileAcceleration(gravity), rayParams, lifetime, {
+			Radius = 0.45,
+			SegmentLength = 1,
+			MaximumSteps = 600,
+			CollisionTest = movingEntityCollision
+		})
+	end
 
-    -- Approximate radius of a thrown/shot projectile (arrow, snowball, egg). Used to
-    -- inflate the target hitbox so grazing shots still register, matching the server's
-    -- forgiving projectile collision.
-    local PROJECTILE_RADIUS = 0.5
+	local function projectilePart(projectile)
+		return projectile:IsA('BasePart') and projectile or projectile:IsA('Model') and projectile.PrimaryPart or nil
+	end
 
-    local function closestPointOnSegment(point, a, b)
-        local ab = b - a
-        local lenSq = ab:Dot(ab)
-        if lenSq <= 1e-6 then return a end
-        local t = math.clamp((point - a):Dot(ab) / lenSq, 0, 1)
-        return a + ab * t
-    end
+	local function projectileMeta(projectile, part)
+		return bedwars.ProjectileMeta[projectile.Name] or (part and bedwars.ProjectileMeta[part.Name]) or {}
+	end
 
-    -- Precise "will this arc segment hit a player" test. Models each entity as an
-    -- upright capsule (their real hitbox: ~1.6 stud half-width including arms, ~3 stud
-    -- half-height) inflated by the projectile radius, and checks the closest approach of
-    -- the segment to the capsule axis. Far more accurate than hoping a straight raycast
-    -- happens to clip a small character part, and it stays accurate at long range.
-    local function segmentHitsEntity(a, b)
-        local best, bestPos, bestDist
-        for _, ent in entitylib.List do
-            if ent == entitylib.character then continue end
-            local hrp = ent.RootPart
-            if not hrp or not hrp.Parent or (ent.Health and ent.Health <= 0) then continue end
-            local center = hrp.Position
-            local closest = closestPointOnSegment(center, a, b)
-            local delta = closest - center
-            local horizontal = Vector3.new(delta.X, 0, delta.Z).Magnitude
-            local vertical = math.abs(delta.Y)
-            if horizontal <= 1.6 + PROJECTILE_RADIUS and vertical <= 3 + PROJECTILE_RADIUS then
-                local dist = (closest - a).Magnitude
-                if not bestDist or dist < bestDist then
-                    best, bestPos, bestDist = ent, closest, dist
-                end
-            end
-        end
-        return best, bestPos
-    end
+	local function clearWatcher(projectile)
+		local watcher = watchers[projectile]
+		if not watcher then return end
+		watchers[projectile] = nil
+		for _, connection in watcher do connection:Disconnect() end
+	end
 
-    local function traceLanding(origin, velocity, gravity, ignored)
-        local speed = velocity.Magnitude
-        if speed <= 0.1 then return end
-        rayParams.FilterDescendantsInstances = ignored
-        -- Adaptive time-step so every raycast segment is roughly a fixed short length
-        -- (~1.1 studs) regardless of launch speed. The old fixed t = i/40 produced
-        -- ~2.5-stud chords that cut across the parabola and drifted badly at range.
-        local step = math.clamp(1.1 / speed, 1 / 300, 1 / 45)
-        local last = origin
-        local maxTime = 7
-        local iterations = math.min(math.floor(maxTime / step), 650)
-        for i = 1, iterations do
-            local t = i * step
-            local nextPosition = origin + (velocity * t) + Vector3.new(0, -gravity * t * t * 0.5, 0)
-            local travelled = (last - origin).Magnitude
-            -- Skip point-blank hits (own body / bow preview / block underfoot) for the
-            -- first few studs, then start testing precise entity intersections.
-            if travelled > 4 then
-                local ent, entPos = segmentHitsEntity(last, nextPosition)
-                if ent then
-                    return entPos, ent.RootPart
-                end
-            end
-            local result = workspace:Raycast(last, nextPosition - last, rayParams)
-            if result and (result.Position - origin).Magnitude > 4 then
-                return result.Position, result.Instance
-            end
-            last = nextPosition
-        end
-        return last
-    end
+	local function removeProjectile(projectile)
+		local state = states[projectile]
+		if not state then return end
+		states[projectile] = nil
+		if state.Connection then state.Connection:Disconnect() end
+		destroyVisual(state.Visual)
+	end
 
-    local function getAmmo(source)
-        if not source or not source.ammoItemTypes or not store.inventory or not store.inventory.inventory then return end
-        for _, item in store.inventory.inventory.items do
-            if table.find(source.ammoItemTypes, item.itemType) then return item.itemType end
-        end
-    end
+	local function trackProjectile(projectile)
+		if states[projectile] or projectile:GetAttribute('ProjectileShooter') ~= lplr.UserId then return end
+		local part = projectilePart(projectile)
+		if not part then return end
+		clearWatcher(projectile)
+		local meta = projectileMeta(projectile, part)
+		local state = {
+			Part = part,
+			Born = tick(),
+			Lifetime = math.clamp(tonumber(meta.lifetimeSec or meta.lifetime) or 7, 0.1, 10),
+			Gravity = meta.gravitationalAcceleration or workspace.Gravity,
+			Visual = newVisual('ProjectileLandingMarker')
+		}
+		states[projectile] = state
+		state.Connection = projectile.AncestryChanged:Connect(function(_, parent)
+			if not parent then removeProjectile(projectile) end
+		end)
+	end
 
-    -- The game's own launch numbers, captured from calculateImportantLaunchValues.
-    --
-    -- Re-deriving the arc by hand is what made the aiming preview drift: the launch speed of a
-    -- bow is the LIVE draw ratio (the game mutates velocityMultiplier as you pull, which is what
-    -- AutoRelease reads to get a charge percentage), the muzzle is the viewmodel's launch
-    -- position rather than the root part, and the Rel offsets are applied in the game's own
-    -- direction. Guessing any of those puts the marker metres off at range. The game computes
-    -- all of it every frame while you draw, so we just read the answer: this hook sits at the
-    -- outermost priority so what it records is the final result after every other hook.
-    local lastLaunch
-    local function recordLaunch(nextLaunch, ...)
-        local res = nextLaunch(...)
-        if type(res) == 'table' and typeof(res.initialVelocity) == 'Vector3' and typeof(res.positionFrom) == 'Vector3' then
-            lastLaunch = {
-                Position = res.positionFrom,
-                Velocity = res.initialVelocity,
-                Gravity = res.gravitationalAcceleration or workspace.Gravity,
-                Time = tick()
-            }
-        end
-        return res
-    end
+	local function candidateProjectile(projectile)
+		if not (projectile:IsA('BasePart') or projectile:IsA('Model')) then return false end
+		if projectile:GetAttribute('ProjectileShooter') ~= nil or bedwars.ProjectileMeta[projectile.Name] then return true end
+		local name = projectile.Name:lower()
+		return name:find('projectile', 1, true) or name:find('arrow', 1, true)
+			or name:find('snowball', 1, true) or name:find('fireball', 1, true)
+			or name:find('telepearl', 1, true)
+	end
 
-    local function getAimingLanding()
-        local source = heldProjectileSource()
-        if not source then return end
-        local root = entitylib.character and (entitylib.character.RootPart or entitylib.character.HumanoidRootPart)
-        if not root then return end
-        -- Resolve the projectile this weapon fires. Prefer the loaded ammo, fall back
-        -- to a plain arrow for bows and finally the tool itself, all guarded so an
-        -- unexpected ammo type can never throw and silently kill the whole preview
-        -- (that failure is exactly why the aim marker only appeared after firing).
-        local ammo = getAmmo(source) or (store.hand.tool.Name:find('bow') and 'arrow') or store.hand.tool.Name
-        local projectileType
-        pcall(function()
-            projectileType = type(source.projectileType) == 'function' and source.projectileType(ammo) or source.projectileType or ammo
-        end)
-        -- Look up the projectile stats, falling back projectileType -> ammo exactly like
-        -- the game's own fire path (see fireProjectileAt / ProjectileAura). Crucially we
-        -- DON'T bail when ProjectileMeta has no entry: some bows resolve to a key that
-        -- isn't in the table, and hard-returning there is what left the aim preview blank
-        -- while the arc still showed up fine once the arrow was airborne. Keep sensible
-        -- defaults instead so a marker is always drawn for the whole draw.
-        -- Prefer the projectile source's own resolved meta (same object the game uses),
-        -- falling back to the ProjectileMeta table lookups.
-        local baseMeta
-        pcall(function()
-            if type(source.getProjectileMeta) == 'function' then baseMeta = source:getProjectileMeta() end
-        end)
-        local meta = baseMeta or (projectileType and bedwars.ProjectileMeta[projectileType]) or bedwars.ProjectileMeta[ammo]
-        -- Apply the projectile's velocity/gravity multipliers exactly like the game's
-        -- fire path and BowAssist do. Ignoring them left the arc far too flat/fast, so
-        -- the traced landing collapsed onto whatever surface sat under the cursor - which
-        -- is why the preview looked like a static sphere at the crosshair instead of the
-        -- real, gravity-dropped landing spot.
-        local speed = ((meta and meta.launchVelocity) or source.launchVelocity or 100) * (source.velocityMultiplier or 1)
-        local gravity = ((meta and meta.gravitationalAcceleration) or workspace.Gravity) * (source.gravityMultiplier or 1)
-        -- Resolve the same world point the use input is aiming at. The mouse unit ray is
-        -- tied to the player's cursor in third person while still matching the centered
-        -- crosshair in first person, so the pre-shot marker follows the same target the
-        -- projectile will use instead of blindly following the camera's look vector.
-        rayParams.FilterDescendantsInstances = {lplr.Character, gameCamera}
-        local aimRay = lplr:GetMouse().UnitRay
-        local rayResult = workspace:Raycast(aimRay.Origin, aimRay.Direction * 5000, rayParams)
-        local aimPoint = rayResult and rayResult.Position or (aimRay.Origin + aimRay.Direction * 5000)
-        -- Two things this used to get wrong: it launched from the ROOT PART rather than the
-        -- muzzle the game fires from, and it aimed the arc from the root while starting it at an
-        -- offset position, so the traced line ran parallel to - not along - the real shot and the
-        -- error grew with distance. Ask the controller for its own launch position, then aim from
-        -- THAT point at the cursor.
-        local rootPos = root.Position
-        local origin = rootPos
-        pcall(function()
-            local launch = bedwars.ProjectileController:getLaunchPosition(gameCamera.CFrame)
-            if typeof(launch) == 'Vector3' then
-                origin = launch
-            elseif typeof(launch) == 'CFrame' then
-                origin = launch.Position
-            end
-        end)
-        if origin == rootPos then
-            origin = gameCamera.CFrame.Position
-        end
-        pcall(function()
-            if typeof(source.fromPositionOffset) == 'Vector3' then
-                origin += source.fromPositionOffset
-            end
-        end)
-        local direction = aimPoint - origin
-        direction = direction.Magnitude > 1e-3 and direction.Unit or aimRay.Direction
+	local function watchProjectile(projectile)
+		if not candidateProjectile(projectile) then return end
+		if projectile:GetAttribute('ProjectileShooter') ~= nil then
+			trackProjectile(projectile)
+			return
+		end
+		if states[projectile] or watchers[projectile] then return end
+		local watcher = {}
+		watcher.Attribute = projectile:GetAttributeChangedSignal('ProjectileShooter'):Connect(function()
+			trackProjectile(projectile)
+		end)
+		watcher.Ancestry = projectile.AncestryChanged:Connect(function(_, parent)
+			if not parent then clearWatcher(projectile) end
+		end)
+		watchers[projectile] = watcher
+	end
 
-        -- Speed and gravity are worth taking from the game's own last launch calculation - a
-        -- bow's speed is the live draw ratio and re-deriving it is what made the arc wrong - but
-        -- the DIRECTION never is. The snapshot was previously used whole, for up to a third of a
-        -- second, so while the mouse was actually moving the marker stayed on the arc the game
-        -- last calculated instead of the one being aimed. That lag is the drift. The heading and
-        -- the muzzle are always taken fresh; only the scalars come from the snapshot.
-        if lastLaunch and (tick() - lastLaunch.Time) < 0.35 and lastLaunch.Velocity.Magnitude > 0.1 then
-            speed = lastLaunch.Velocity.Magnitude
-            gravity = lastLaunch.Gravity
-        end
+	local function setAiming(input, value)
+		if input.UserInputType == Enum.UserInputType.MouseButton1
+			or input.UserInputType == Enum.UserInputType.Touch
+			or input.KeyCode == Enum.KeyCode.ButtonR2 then
+			aimingInput = value
+		end
+	end
 
-        return traceLanding(origin, direction * speed, gravity, {lplr.Character, gameCamera})
-    end
+	local function recordLaunch(nextLaunch, ...)
+		local result = nextLaunch(...)
+		if type(result) == 'table' and typeof(result.positionFrom) == 'Vector3'
+			and typeof(result.initialVelocity) == 'Vector3' then
+			lastLaunch = {
+				Origin = result.positionFrom,
+				Velocity = result.initialVelocity,
+				Gravity = result.gravitationalAcceleration or workspace.Gravity,
+				Lifetime = tonumber(result.lifetimeSec) or 7,
+				Time = tick()
+			}
+		end
+		return result
+	end
 
-    local function getLanding(projectile)
-        local part = projectilePart(projectile)
-        if not part then return end
-        local meta = bedwars.ProjectileMeta[projectile.Name] or bedwars.ProjectileMeta[part.Name]
-        local gravity = meta and meta.gravitationalAcceleration or workspace.Gravity
-        return traceLanding(part.Position, part.AssemblyLinearVelocity, gravity, {projectile, lplr.Character, gameCamera})
-    end
+	local function fallbackLaunch()
+		if not entitylib.isAlive or not store.hand or not store.hand.tool then return end
+		local itemMeta = bedwars.ItemMeta[store.hand.tool.Name]
+		local source = itemMeta and itemMeta.projectileSource
+		if not source then return end
+		local ammo
+		local inventory = store.inventory and store.inventory.inventory
+		for _, item in inventory and inventory.items or {} do
+			if table.find(source.ammoItemTypes or {}, item.itemType) then ammo = item.itemType; break end
+		end
+		local projectileType = ammo
+		if type(source.projectileType) == 'function' then
+			local ok, value = pcall(source.projectileType, ammo)
+			if ok then projectileType = value end
+		end
+		local meta = bedwars.ProjectileMeta[projectileType] or {}
+		local speed = (tonumber(meta.launchVelocity or source.launchVelocity) or 100) * (tonumber(source.velocityMultiplier) or 1)
+		local origin = gameCamera.CFrame.Position
+		pcall(function()
+			local value = bedwars.ProjectileController:getLaunchPosition(gameCamera.CFrame)
+			if typeof(value) == 'Vector3' then origin = value elseif typeof(value) == 'CFrame' then origin = value.Position end
+		end)
+		local mouseRay = lplr:GetMouse().UnitRay
+		return origin, mouseRay.Direction.Unit * speed,
+			(tonumber(meta.gravitationalAcceleration) or workspace.Gravity) * (tonumber(source.gravityMultiplier) or 1),
+			tonumber(meta.lifetimeSec) or 7
+	end
 
-    local function addMarker(position)
-        local marker = Instance.new('Part')
-        marker.Name = 'ProjectileLandingMarker'
-        marker.Shape = Enum.PartType.Ball
-        marker.Size = Vector3.new(1.85, 1.85, 1.85)
-        marker.CFrame = CFrame.new(position + Vector3.new(0, 0.9, 0))
-        marker.Anchored = true
-        marker.CanCollide = false
-        marker.CanQuery = false
-        marker.CanTouch = false
-        marker.Material = Enum.Material.Neon
-        marker.Color = Color3.fromHSV(MarkerColor.Hue, MarkerColor.Sat, MarkerColor.Value)
-        marker.Transparency = math.clamp(MarkerColor.Opacity or 0, 0, 1)
-        marker.Parent = gameCamera
-        table.insert(markers, marker)
-    end
+	local function update()
+		for projectile, state in states do
+			local part = state.Part
+			local remaining = state.Lifetime - (tick() - state.Born)
+			if remaining <= 0 or not projectile.Parent or not part.Parent then
+				removeProjectile(projectile)
+			else
+				updateVisual(state.Visual, trace(part.Position, part.AssemblyLinearVelocity, state.Gravity, remaining, projectile))
+			end
+		end
 
-    local function getEntityFromModel(model)
-        if not model then return end
-        if entitylib.getEntityFromCharacter then
-            local ent = entitylib.getEntityFromCharacter(model)
-            if ent then return ent end
-        end
-        for _, ent in entitylib.List do
-            if ent.Character == model then return ent end
-        end
-    end
+		local result
+		if aimingInput then
+			if lastLaunch and tick() - lastLaunch.Time <= 0.25 then
+				result = trace(lastLaunch.Origin, lastLaunch.Velocity, lastLaunch.Gravity, lastLaunch.Lifetime)
+			else
+				local origin, velocity, gravity, lifetime = fallbackLaunch()
+				if origin then result = trace(origin, velocity, gravity, lifetime) end
+			end
+		end
+		updateVisual(aimVisual, result)
+	end
 
-    local function addEntityHighlight(hit)
-        local model = hit and hit:FindFirstAncestorOfClass('Model')
-        local ent = getEntityFromModel(model)
-        if not ent or highlights[model] then return end
-        local highlight = Instance.new('Highlight')
-        highlight.Name = 'ProjectileLandingHit'
-        highlight.Adornee = model
-        highlight.FillColor = Color3.fromHSV(MarkerColor.Hue, MarkerColor.Sat, MarkerColor.Value)
-        highlight.OutlineColor = highlight.FillColor
-        highlight.FillTransparency = 0.55
-        highlight.OutlineTransparency = 0.05
-        highlight.Parent = gameCamera
-        highlights[model] = highlight
-    end
+	local function clear()
+		for projectile in states do removeProjectile(projectile) end
+		for projectile in watchers do clearWatcher(projectile) end
+		destroyVisual(aimVisual)
+		aimVisual = nil
+		lastLaunch = nil
+		aimingInput = false
+	end
 
-    local function updateLandings()
-        clearVisuals()
-        local aimPosition, aimHit = getAimingLanding()
-        if aimPosition then
-            addMarker(aimPosition)
-            addEntityHighlight(aimHit)
-        end
-        for _, projectile in workspace:GetChildren() do
-            if isProjectile(projectile) then
-                local position, hit = getLanding(projectile)
-                if position then
-                    addMarker(position)
-                    addEntityHighlight(hit)
-                end
-            end
-        end
-    end
-
-    ProjectileLanding = vape.Categories.Render:CreateModule({
-        Name = 'ProjectileLanding',
-        Function = function(callback)
-            if callback then
-                aimingInput = false
-                lastLaunch = nil
-                -- Priority 1 = outermost hook, so this observes the final launch values after
-                -- ProjectileAimbot/BowAssist have had their say instead of the raw ones.
-                if bedwars.ProjectileLaunchHook then
-                    launchHook = bedwars.ProjectileLaunchHook:Add('ProjectileLanding', 1, recordLaunch)
-                end
-                ProjectileLanding:Clean(function()
-                    if launchHook then
-                        launchHook()
-                        launchHook = nil
-                    end
-                end)
-                ProjectileLanding:Clean(inputService.InputBegan:Connect(function(input, gameProcessed)
-                    if not gameProcessed then setAimingInput(input, true) end
-                end))
-                ProjectileLanding:Clean(inputService.InputEnded:Connect(function(input)
-                    setAimingInput(input, false)
-                end))
-                ProjectileLanding:Clean(runService.RenderStepped:Connect(updateLandings))
-            else
-                aimingInput = false
-                lastLaunch = nil
-                clearVisuals()
-            end
-        end,
-        Tooltip = 'Shows exact projectile landings and the held projectile\'s aiming point, then highlights entities that will be hit'
-    })
-    MarkerColor = ProjectileLanding:CreateColorSlider({Name = 'Marker Color', DefaultOpacity = 0})
+	ProjectileLanding = vape.Categories.Render:CreateModule({
+		Name = 'ProjectileLanding',
+		Function = function(enabled)
+			if not enabled then clear(); return end
+			aimVisual = newVisual('ProjectileLandingAimMarker')
+			if bedwars.ProjectileLaunchHook then
+				launchHook = bedwars.ProjectileLaunchHook:Add('ProjectileLanding', 1, recordLaunch)
+				ProjectileLanding:Clean(function()
+					if launchHook then launchHook(); launchHook = nil end
+				end)
+			end
+			ProjectileLanding:Clean(workspace.ChildAdded:Connect(watchProjectile))
+			ProjectileLanding:Clean(inputService.InputBegan:Connect(function(input, processed)
+				if not processed then setAiming(input, true) end
+			end))
+			ProjectileLanding:Clean(inputService.InputEnded:Connect(function(input) setAiming(input, false) end))
+			for _, child in workspace:GetChildren() do watchProjectile(child) end
+			local elapsed = 0
+			ProjectileLanding:Clean(runService.Heartbeat:Connect(function(dt)
+				elapsed += dt
+				if elapsed < 0.05 then return end
+				elapsed = 0
+				update()
+			end))
+			ProjectileLanding:Clean(clear)
+		end,
+		Tooltip = 'Predicts held and local projectile landings with bounded deterministic trajectory simulation'
+	})
+	MarkerColor = ProjectileLanding:CreateColorSlider({Name = 'Marker Color', DefaultOpacity = 0})
 end)
-
 run(function()
     local BulletTracers
     local Material
@@ -12798,123 +12917,6 @@ run(function()
 end)
 
 run(function()
-    local AutoEnchant, Repair, Desired, MaxRolls, Reserve, Rate
-    local enchantGeneration = 0
-    local enchantNames = {}
-    local function displayName(key, meta)
-        return tostring((type(meta) == 'table' and (meta.displayName or meta.name)) or key):gsub('_', ' ')
-    end
-    -- Enchant metadata is absent in some queues.  The old direct iteration threw before
-    -- CreateModule was reached, which made AutoEnchant disappear from the menu entirely.
-    local enchantMeta = type(bedwars.EnchantMeta) == 'table' and bedwars.EnchantMeta or {}
-    for key, meta in pairs(enchantMeta) do table.insert(enchantNames, displayName(key, meta)) end
-    if #enchantNames == 0 then
-        enchantNames = {'Critical Strike', 'Fire', 'Life Steal', 'Shield Gen', 'Static', 'Updraft', 'Wind'}
-    end
-    table.sort(enchantNames)
-    local function amount(itemType)
-        local total = 0
-        local success, inventory = pcall(bedwars.getInventory, lplr)
-        inventory = success and type(inventory) == 'table' and inventory or {}
-        for _, item in pairs(inventory.items or {}) do
-            if item.itemType == itemType then total += item.amount or 1 end
-        end
-        return total
-    end
-    local function nearestTable()
-        if not entitylib.isAlive then return end
-        local nearest, distance
-        for _, tableModel in pairs(store.enchant or {}) do
-            if typeof(tableModel) == 'Instance' and tableModel.Parent then
-                local ok, position = pcall(function()
-                    return tableModel:IsA('Model') and tableModel:GetPivot().Position or tableModel.Position
-                end)
-                if ok and typeof(position) == 'Vector3' then
-                    local magnitude = (entitylib.character.RootPart.Position - position).Magnitude
-                    if not distance or magnitude < distance then nearest, distance = tableModel, magnitude end
-                end
-            end
-        end
-        return nearest, distance
-    end
-    local function invoke(controllerMethods, remotes, ...)
-		local args = table.pack(...)
-        local controller = bedwars.EnchantTableController or bedwars.EnchantController
-        for _, method in controllerMethods do
-            if controller and type(controller[method]) == 'function' then
-				local ok, result = pcall(controller[method], controller, table.unpack(args, 1, args.n))
-				if ok and result ~= false then return true end
-            end
-        end
-        for _, remote in remotes do
-			local ok = pcall(function()
-				local handler = bedwars.Handler and bedwars.Handler:Get(remote)
-				if not handler then error('missing remote '..remote) end
-				handler:Fire('CallServerAsync', table.unpack(args, 1, args.n))
-			end)
-            if ok then return true end
-        end
-        return false
-    end
-    local function currentName()
-        local ok, state = pcall(bedwars.Store.getState, bedwars.Store)
-        state = ok and type(state) == 'table' and state or {}
-        local enchant = state.Bedwars and state.Bedwars.enchant or lplr:GetAttribute('Enchant')
-        if type(enchant) == 'table' then enchant = enchant.enchant or enchant.type end
-        return enchant and displayName(enchant, (bedwars.EnchantMeta or {})[enchant]) or ''
-    end
-    local function wanted(name)
-		local normalize = function(value) return tostring(value or ''):lower():gsub('[%s_%-]+', '') end
-		return Desired and normalize(Desired.Value) == normalize(name)
-    end
-    local autoEnchantCategory = vape.Categories.Inventory or vape.Categories.Utility or vape.Categories.World
-    if not autoEnchantCategory then error('AutoEnchant: no compatible category is available') end
-    AutoEnchant = autoEnchantCategory:CreateModule({
-        Name = 'AutoEnchant',
-        Function = function(enabled)
-            enchantGeneration += 1
-            if not enabled then return end
-            local generation = enchantGeneration
-            task.spawn(function()
-                local rolls = 0
-                repeat
-                    local tableModel, distance = nearestTable()
-                    if not tableModel or not distance or distance > 18 or not entitylib.isAlive then task.wait(0.25); continue end
-                    local tagOK, broken = pcall(collectionService.HasTag, collectionService, tableModel, 'broken-enchant-table')
-                    broken = tagOK and broken or false
-                    if broken then
-                        if not Repair.Enabled or amount('diamond') < math.max(8, Reserve.Value + 8) then break end
-                        if not invoke({'repairEnchantTable', 'repair'}, {'RepairEnchantTable', 'RepairEnchantTableRemote'}, tableModel) then break end
-                        task.wait(math.max(Rate.Value, 0.25)); continue
-                    end
-                    if wanted(currentName()) or rolls >= MaxRolls.Value then break end
-                    local before = currentName()
-                    local stateOK, state = pcall(bedwars.Store.getState, bedwars.Store)
-                    state = stateOK and type(state) == 'table' and state or {}
-                    local cost = ((state.Bedwars or {}).enchantCost or (state.Game or {}).enchantCost or 2)
-                    if amount('diamond') - cost < Reserve.Value then break end
-                    if not invoke({'purchaseEnchant', 'rollEnchant'}, {'PurchaseEnchant', 'RequestEnchant'}, tableModel) then break end
-                    rolls += 1
-                    local deadline = tick() + 4
-                    repeat task.wait(0.05) until not AutoEnchant.Enabled or enchantGeneration ~= generation or not entitylib.isAlive or currentName() ~= before or tick() >= deadline
-                    if not AutoEnchant.Enabled or enchantGeneration ~= generation or not entitylib.isAlive or tick() >= deadline then break end
-                    task.wait(Rate.Value)
-                until not AutoEnchant.Enabled or enchantGeneration ~= generation
-            end)
-        end,
-        Tooltip = 'Rolls the nearby team enchant table until a selected enchant is obtained'
-    })
-    Desired = AutoEnchant:CreateDropdown({Name = 'Desired enchant', List = enchantNames, Default = enchantNames[1], Tooltip = 'Stops rolling as soon as this enchant is obtained.'})
-    Repair = AutoEnchant:CreateToggle({Name = 'Repair enchant table', Default = true})
-    MaxRolls = AutoEnchant:CreateSlider({Name = 'Maximum rolls', Min = 1, Max = 50, Default = 10})
-    Reserve = AutoEnchant:CreateSlider({Name = 'Resource reserve', Min = 0, Max = 32, Default = 0, Suffix = ' diamonds'})
-    Rate = AutoEnchant:CreateSlider({Name = 'Request interval', Min = 0.25, Max = 2, Default = 0.6, Decimal = 100, Suffix = 's'})
-end)
-
--- AutoEnchant V3: direct, self-contained registration.  Keep it after the legacy block so a
--- partial legacy registration is removed instead of leaving a hidden/half-built module behind.
-run(function()
-	pcall(function() vape:Remove('AutoEnchant') end)
 	local category = vape.Categories.Inventory or vape.Categories.Utility or vape.Categories.World
 	if not category or type(category.CreateModule) ~= 'function' then
 		warn('[AetherV2] AutoEnchant could not find a module category')
@@ -12954,6 +12956,7 @@ run(function()
 		local value = type(state) == 'table' and state.Bedwars and state.Bedwars.enchant or nil
 		value = value or lplr:GetAttribute('Enchant')
 		if type(value) == 'table' then value = value.enchant or value.type or value.itemType end
+		if value == nil or tostring(value) == '' or tostring(value):lower() == 'none' then return '' end
 		return displayName(value, type(bedwars.EnchantMeta) == 'table' and bedwars.EnchantMeta[value] or nil)
 	end
 
@@ -13004,39 +13007,64 @@ run(function()
 			generation += 1
 			if not enabled then return end
 			local token = generation
-			task.spawn(function()
-				local rolls = 0
+			local worker = task.spawn(function()
+				local rolls, character = 0, lplr.Character
 				while AutoEnchant.Enabled and token == generation do
+					if lplr.Character ~= character then
+						character, rolls = lplr.Character, 0
+					end
 					local tableModel, distance = findTable()
 					if not tableModel or not distance or distance > 18 then
 						task.wait(0.25)
 						continue
 					end
-					if hasDesired(currentEnchant()) or rolls >= MaximumRolls.Value then break end
+					if hasDesired(currentEnchant()) then
+						rolls = 0
+						task.wait(0.25)
+						continue
+					end
+					if rolls >= MaximumRolls.Value then
+						notif('AutoEnchant', 'Maximum rolls reached without the selected enchant.', 5, 'warning')
+						task.defer(function() if AutoEnchant.Enabled and token == generation then AutoEnchant:Toggle() end end)
+						break
+					end
 					local broken = false
 					pcall(function() broken = collectionService:HasTag(tableModel, 'broken-enchant-table') end)
 					if broken then
-						if not Repair.Enabled or diamonds() < Reserve.Value + 8 then break end
-						if not request({'repairEnchantTable', 'repair'}, {'RepairEnchantTable', 'RepairEnchantTableRemote'}, tableModel) then break end
+						if not Repair.Enabled or diamonds() < Reserve.Value + 8 then task.wait(0.25); continue end
+						if not request({'repairEnchantTable', 'repair'}, {'RepairEnchantTable', 'RepairEnchantTableRemote'}, tableModel) then
+							task.wait(1)
+							continue
+						end
 						task.wait(math.max(Interval.Value, 0.25))
 						continue
 					end
-					if diamonds() < Reserve.Value + 2 then break end
+					local state
+					pcall(function() state = bedwars.Store:getState() end)
+					local bedwarsState = type(state) == 'table' and type(state.Bedwars) == 'table' and state.Bedwars or {}
+					local gameState = type(state) == 'table' and type(state.Game) == 'table' and state.Game or {}
+					local cost = tonumber(bedwarsState.enchantCost or gameState.enchantCost) or 2
+					if diamonds() - cost < Reserve.Value then task.wait(0.25); continue end
 					local before = currentEnchant()
-					if not request({'purchaseEnchant', 'rollEnchant'}, {'PurchaseEnchant', 'RequestEnchant'}, tableModel) then break end
+					if not request({'purchaseEnchant', 'rollEnchant'}, {'PurchaseEnchant', 'RequestEnchant'}, tableModel) then
+						task.wait(1)
+						continue
+					end
 					rolls += 1
 					local deadline = tick() + 4
-					repeat task.wait(0.05) until not AutoEnchant.Enabled or token ~= generation or currentEnchant() ~= before or tick() >= deadline
-					if tick() >= deadline then break end
-					task.wait(Interval.Value)
+					repeat task.wait() until not AutoEnchant.Enabled or token ~= generation or lplr.Character ~= character or currentEnchant() ~= before or tick() >= deadline
+					if AutoEnchant.Enabled and token == generation and lplr.Character == character then
+						task.wait(Interval.Value)
+					end
 				end
 			end)
+			AutoEnchant:Clean(worker)
 		end
 	})
 	Desired = AutoEnchant:CreateDropdown({Name = 'Desired enchant', List = enchantNames, Default = enchantNames[1], Tooltip = 'Stops rolling as soon as this enchant is obtained.'})
 	Repair = AutoEnchant:CreateToggle({Name = 'Repair enchant table', Default = true})
 	MaximumRolls = AutoEnchant:CreateSlider({Name = 'Maximum rolls', Min = 1, Max = 50, Default = 10})
-	Reserve = AutoEnchant:CreateSlider({Name = 'Diamond reserve', Min = 0, Max = 32, Default = 0, Suffix = ' diamonds'})
+	Reserve = AutoEnchant:CreateSlider({Name = 'Resource reserve', Min = 0, Max = 32, Default = 0, Suffix = ' diamonds'})
 	Interval = AutoEnchant:CreateSlider({Name = 'Request interval', Min = 0.25, Max = 2, Default = 0.6, Decimal = 100, Suffix = 's'})
 end)
 
@@ -14982,23 +15010,11 @@ run(function()
 		if not target then return gameCamera.CFrame.LookVector * speed end
 		rayCheck.FilterDescendantsInstances = {lplr.Character, target.Character, gameCamera}
 		local gravity = projectileMeta.gravitationalAcceleration or 196.2
-		local aim = prediction.SolveTrajectory(
-			origin,
-			speed,
-			gravity,
-			target.RootPart.Position,
-			target.RootPart.AssemblyLinearVelocity,
-			workspace.Gravity,
-			target.HipHeight,
-			target.Jumping and 42.6 or nil,
-			rayCheck,
-			target.Humanoid.FloorMaterial == Enum.Material.Air or math.abs(target.RootPart.AssemblyLinearVelocity.Y) > 0.01,
-			target.RootPart.Position,
-			target.RootPart,
-			nil,
-			true
-		)
-		return aim and CFrame.lookAt(origin, aim).LookVector * speed or nil
+		local solution = solveBedwarsProjectile(origin, speed, gravity, target, target.RootPart.Position, {
+			RaycastParams = rayCheck,
+			Lifetime = projectileMeta.lifetimeSec or 3
+		})
+		return solution and solution.Velocity or nil
 	end
 
 	local function fireOne(data, target, token)
@@ -15015,11 +15031,7 @@ run(function()
 		local rootPosition = root.Position
 		local velocity = getDirection(rootPosition, target, projectileMeta)
 		if not velocity then return false end
-		local shootPosition = (CFrame.lookAt(rootPosition, rootPosition + velocity) * CFrame.new(
-			-bedwars.BowConstantsTable.RelX,
-			-bedwars.BowConstantsTable.RelY,
-			-bedwars.BowConstantsTable.RelZ
-		)).Position
+		local shootPosition = projectileLaunchOrigin(rootPosition, velocity)
 		-- Re-solve from the actual launch offset so close targets do not receive a visibly
 		-- different local trajectory from the server request.
 		velocity = getDirection(shootPosition, target, projectileMeta) or velocity
@@ -15077,7 +15089,7 @@ run(function()
 			end
 			projectileRemote = remote
 			local lastSwing = bedwars.SwordController.lastSwing or 0
-			task.spawn(function()
+			AutoShoot:Clean(task.spawn(function()
 				while AutoShoot.Enabled and token == generation do
 					local swing = bedwars.SwordController.lastSwing or 0
 					if swing > lastSwing and tick() - swing <= 0.25 then
@@ -15088,7 +15100,7 @@ run(function()
 					end
 					task.wait(0.03)
 				end
-			end)
+			end))
 		end,
 		Tooltip = 'Fires compatible projectiles once after each manual sword swing'
 	})
@@ -24469,6 +24481,8 @@ run(function()
     local dangerCharacter
     local beforeDeathDepositing = false
     local chestDepositBusy = false
+	local dangerConnections = {}
+	local evaluateDanger
 
     -- Keep the stash inside the local character's simulation radius. Parking drops at a fixed
     -- Y=100000 eventually hands their network ownership back to the server; after that, changing
@@ -24652,24 +24666,101 @@ run(function()
         return math.clamp((health / maximum) * 100, 0, 100)
     end
 
+	local function queueEmergencyDrop(item, token, bankPosition, bankCharacter)
+		local name, tool = item and (item.itemType or (item.tool and item.tool.Name)), item and item.tool
+		if not name or not tool or pendingDrops[tool] or (dropCooldowns[name] or 0) >= os.clock() then return false end
+		pendingDrops[tool] = true
+		local amount = item.amount
+		-- Do not task.cancel a coroutine blocked inside the remote call: the server may already
+		-- have dropped the stack. The generation check owns the late reply and immediately
+		-- reclaims it after a disable/respawn instead of abandoning it in the world.
+		task.spawn(function()
+			local ok, drop = pcall(function()
+				local handler = bedwars.Handler and bedwars.Handler:Get('DropItem')
+				if not handler then error('DropItem remote unavailable') end
+				return handler:Fire('CallServer', {item = tool, amount = amount})
+			end)
+			pendingDrops[tool] = nil
+			if not ok or not drop or not drop.Parent then
+				dropCooldowns[name] = os.clock() + 1
+				return
+			end
+			if not table.find(droppedItems, drop) then
+				table.insert(droppedItems, drop)
+				drop:ClearAllChildren()
+				drop.AncestryChanged:Once(function() untrackDrop(drop) end)
+			end
+			if typeof(bankPosition) == 'Vector3' and drop.Parent then
+				pcall(function()
+					drop.Velocity = Vector3.zero
+					drop.CFrame = CFrame.new(bankPosition + Vector3.new(0, BANK_HEIGHT, 0))
+				end)
+			end
+			if not AutoBank.Enabled or AutoBank.Generation ~= token or lplr.Character ~= bankCharacter then reclaim(drop) end
+		end)
+		return true
+	end
+
     local function bankBeforeDeath()
         if beforeDeathDepositing or not AutoBank.Enabled or not BeforeDeath.Enabled then return end
         beforeDeathDepositing = true
-        task.spawn(function()
-            -- The personal folder is the authoritative destination.  Still require the player
-            -- to be at an accessible personal chest so this follows the same access contract as
-            -- normal Chest mode and never turns a missing chest into a remote spam loop.
-            local waitUntil = tick() + 1
-            while chestDepositBusy and tick() < waitUntil and AutoBank.Enabled and BeforeDeath.Enabled do
-                task.wait()
-            end
-            local folder = entitylib.isAlive and ownPersonalFolder() or nil
-            if folder and atPersonalChest() and AutoBank.Enabled and BeforeDeath.Enabled then
-                depositToChest(folder, BeforeDeathWhitelist.ListEnabled)
-            end
-            beforeDeathDepositing = false
-        end)
+		local token = AutoBank.Generation
+		local bankCharacter = lplr.Character
+		local character = entitylib.character
+		local root = character and character.RootPart
+		local bankPosition = root and root.Position
+		local deposited = false
+		if Mode.Value == 'Chest' and not chestDepositBusy then
+			local folder = entitylib.isAlive and ownPersonalFolder() or nil
+			if folder and atPersonalChest() then
+				deposited = depositToChest(folder, BeforeDeathWhitelist.ListEnabled)
+			end
+		end
+		-- A lethal hit does not leave time to walk to a chest. If the legit chest path is not
+		-- available, immediately use the module's existing drop-and-hold bank for the selected
+		-- stacks. Every request is guarded by the current module generation so late replies cannot
+		-- re-apply state after a toggle or respawn.
+		if not deposited then
+			local inventory = store.inventory and store.inventory.inventory
+			for _, item in type(inventory) == 'table' and inventory.items or {} do
+				local name = item.itemType or (item.tool and item.tool.Name)
+				if name and table.find(BeforeDeathWhitelist.ListEnabled, name) then
+					queueEmergencyDrop(item, token, bankPosition, bankCharacter)
+				end
+			end
+		end
+		beforeDeathDepositing = false
     end
+
+	local function disconnectDangerConnections()
+		for _, connection in dangerConnections do pcall(function() connection:Disconnect() end) end
+		table.clear(dangerConnections)
+	end
+
+	local function bindDangerCharacter(character)
+		disconnectDangerConnections()
+		dangerCharacter, dangerTriggered = character, false
+		if not character then return end
+		evaluateDanger = function()
+			if not AutoBank.Enabled or not BeforeDeath.Enabled or lplr.Character ~= character then return end
+			local percent = currentHealthPercent()
+			if not percent then return end
+			if percent <= HPThreshold.Value then
+				if not dangerTriggered then dangerTriggered = true; bankBeforeDeath() end
+			elseif percent >= math.min(100, HPThreshold.Value + 5) then
+				dangerTriggered = false
+			end
+		end
+		for _, attribute in {'Health', 'MaxHealth'} do
+			table.insert(dangerConnections, character:GetAttributeChangedSignal(attribute):Connect(evaluateDanger))
+		end
+		local humanoid = character:FindFirstChildOfClass('Humanoid')
+		if humanoid then
+			table.insert(dangerConnections, humanoid.HealthChanged:Connect(evaluateDanger))
+			table.insert(dangerConnections, humanoid:GetPropertyChangedSignal('MaxHealth'):Connect(evaluateDanger))
+		end
+		evaluateDanger()
+	end
 
     -- Take matching stacks back out. ChestGetItem transfers one item per call rather than the
     -- Accessory's entire Amount, so issue one request for every item that was counted.
@@ -24757,50 +24848,33 @@ run(function()
 
                 local near = false
                 local base = CFrame.new(1e3, 1e5, 1e3)
-                local rows = Random.new():NextInteger(1, 20000)
-                AutoBank:Clean(runService.PreRender:Connect(function()
-                    local totals = {}
-                    for index, drop in droppedItems do
-                        if drop and drop.Parent and drop.Parent == workspace.ItemDrops then
-                            totals[drop.Name] = (totals[drop.Name] or 0) + (drop:GetAttribute('Amount') or 0)
-                            drop.Velocity = Vector3.zero
-                            if entitylib.isAlive then
-                                drop.CFrame = near and entitylib.character.Head.CFrame
-                                    or base + Vector3.new((index % rows) * 1200, 0, math.floor(index / rows) * 1200)
-                            end
-                        elseif drop and drop.Parent then
-                            untrackDrop(drop)
-                        end
+				local rows = Random.new():NextInteger(1, 20000)
+				local holdAccumulator = 0
+				AutoBank:Clean(runService.Heartbeat:Connect(function(delta)
+					holdAccumulator += delta
+					if holdAccumulator < 0.05 then return end
+					holdAccumulator = 0
+					local totals = {}
+					for index, drop in droppedItems do
+						if drop and drop.Parent then
+							totals[drop.Name] = (totals[drop.Name] or 0) + (drop:GetAttribute('Amount') or 0)
+							drop.Velocity = Vector3.zero
+							if entitylib.isAlive then
+								drop.CFrame = near and entitylib.character.Head.CFrame
+									or base + Vector3.new((index % rows) * 1200, 0, math.floor(index / rows) * 1200)
+							end
+						else
+							untrackDrop(drop)
+						end
                     end
                     for itemType, label in displayEntries do
                         label.Text = tostring(totals[itemType] or 0)
                     end
                 end))
 
-                -- Retained Aether setting: make one chest deposit attempt when
-                -- health crosses the configured threshold, independent of cv's
-                -- normal Skybox storage loop.
-                AutoBank:Clean(runService.Heartbeat:Connect(function()
-                    if not BeforeDeath.Enabled then
-                        dangerTriggered, dangerCharacter = false, nil
-                        return
-                    end
-                    local character = lplr.Character
-                    if character ~= dangerCharacter then
-                        dangerCharacter, dangerTriggered = character, false
-                    end
-                    if not entitylib.isAlive then return end
-                    local percent = currentHealthPercent()
-                    if not percent then return end
-                    if percent <= HPThreshold.Value then
-                        if not dangerTriggered then
-                            dangerTriggered = true
-                            bankBeforeDeath()
-                        end
-                    elseif percent >= math.min(100, HPThreshold.Value + 5) then
-                        dangerTriggered = false
-                    end
-                end))
+				AutoBank:Clean(disconnectDangerConnections)
+				AutoBank:Clean(lplr.CharacterAdded:Connect(bindDangerCharacter))
+				bindDangerCharacter(lplr.Character)
 
                 repeat
                     local hotbar = lplr.PlayerGui:FindFirstChild('hotbar')
@@ -24812,10 +24886,13 @@ run(function()
 
 					if entitylib.isAlive and not atShop() then
 						near = false
-						for _, item in store.inventory.inventory.items do
+						local inventory = store.inventory and store.inventory.inventory
+						for _, item in type(inventory) == 'table' and inventory.items or {} do
 							local name = item.tool and item.tool.Name or item.itemType
 							if name and item.tool and table.find(Whitelist.ListEnabled, name)
 								and not pendingDrops[item.tool] and (dropCooldowns[name] or 0) < os.clock() then
+								local token = AutoBank.Generation
+								local bankCharacter = lplr.Character
 								pendingDrops[item.tool] = true
 								task.spawn(function()
 									local ok, drop = pcall(function()
@@ -24825,14 +24902,16 @@ run(function()
 										})
 									end)
 									pendingDrops[item.tool] = nil
-									if AutoBank.Enabled and ok and drop and drop.Parent and not table.find(droppedItems, drop) then
+									if not ok or not drop or not drop.Parent then
+										dropCooldowns[name] = os.clock() + 5
+									elseif not AutoBank.Enabled or AutoBank.Generation ~= token or lplr.Character ~= bankCharacter then
+										reclaim(drop)
+									elseif not table.find(droppedItems, drop) then
 										table.insert(droppedItems, drop)
 										drop:ClearAllChildren()
 										drop.AncestryChanged:Once(function()
 											untrackDrop(drop)
 										end)
-									elseif not ok or not drop then
-										dropCooldowns[name] = os.clock() + 5
 									end
 								end)
 							end
@@ -24873,175 +24952,6 @@ run(function()
                 return
             end
 
-            UI = Instance.new('Frame')
-            UI.Size = UDim2.new(1, 0, 0, 32)
-            UI.Position = UDim2.fromOffset(0, -240)
-            UI.BackgroundTransparency = 1
-            UI.Visible = DisplayResources.Enabled
-            UI.Parent = vape.gui
-            AutoBank:Clean(UI)
-            local layout = Instance.new('UIListLayout')
-            layout.FillDirection = Enum.FillDirection.Horizontal
-            layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-            layout.SortOrder = Enum.SortOrder.LayoutOrder
-            layout.Parent = UI
-
-            table.clear(displayEntries)
-            for _, itemType in Whitelist.ListEnabled do
-                addDisplayEntry(itemType)
-            end
-
-            -- Holding physics objects does not need to run on the render thread. Updating at 20Hz
-            -- keeps them in the local simulation bubble without adding work to every rendered
-            -- frame (the old PreRender handler was a major FPS cost with a large stash).
-            local holdAccumulator = 0
-            AutoBank:Clean(runService.Heartbeat:Connect(function(delta)
-                if Mode.Value == 'Skybox' then
-                    holdAccumulator += delta
-                    if holdAccumulator < 0.05 then return end
-                    holdAccumulator = 0
-                    for index, drop in droppedItems do
-                        -- Item drops are tagged, but recent BedWars builds parent them directly
-                        -- to Workspace instead of the legacy ItemDrops folder.
-                        if drop and drop.Parent then
-                            drop.Velocity = Vector3.zero
-                            drop.RotVelocity = Vector3.zero
-                            if releasingDrops[drop] and entitylib.isAlive then
-                                -- Keep this position stable until the server acknowledges every
-                                -- item in the stack. This removes the frame-order race between
-                                -- reclaim() and the skybox holder.
-                                drop.CFrame = entitylib.character.Head.CFrame
-                            else
-                                local root = entitylib.isAlive and entitylib.character.RootPart
-                                if root then
-                                    drop.CFrame = root.CFrame + Vector3.new(
-                                        ((index - 1) % BANK_COLUMNS) * BANK_SPACING,
-                                        BANK_HEIGHT,
-                                        math.floor((index - 1) / BANK_COLUMNS) * BANK_SPACING
-                                    )
-                                end
-                            end
-                        end
-                    end
-                end
-            end))
-
-            -- Monitor on Heartbeat rather than allocating another polling loop. The character
-            -- identity reset makes a respawn eligible immediately; recovery requires a small
-            -- hysteresis margin so flickering around the threshold cannot re-trigger deposits.
-            AutoBank:Clean(runService.Heartbeat:Connect(function()
-                if not BeforeDeath.Enabled then
-                    dangerTriggered, dangerCharacter = false, nil
-                    return
-                end
-                local character = lplr.Character
-                if character ~= dangerCharacter then
-                    dangerCharacter, dangerTriggered = character, false
-                end
-                if not entitylib.isAlive then return end
-                local percent = currentHealthPercent()
-                if not percent then return end
-                if percent <= HPThreshold.Value then
-                    if not dangerTriggered then
-                        dangerTriggered = true
-                        bankBeforeDeath()
-                    end
-                elseif percent >= math.min(100, HPThreshold.Value + 5) then
-                    dangerTriggered = false
-                end
-            end))
-
-            repeat
-                local totals = Mode.Value == 'Chest' and chestTotals(ownPersonalFolder()) or {}
-                if Mode.Value == 'Skybox' then
-                    for index = #droppedItems, 1, -1 do
-                        local drop = droppedItems[index]
-                        if drop and drop.Parent then
-                            totals[drop.Name] = (totals[drop.Name] or 0) + (drop:GetAttribute('Amount') or 1)
-                        else
-                            untrackDrop(drop)
-                        end
-                    end
-                end
-                for itemType, label in displayEntries do
-                    label.Text = formatNumber(totals[itemType] or 0)
-                end
-
-                local hotbar = lplr.PlayerGui:FindFirstChild('hotbar')
-                hotbar = hotbar and hotbar['1']:FindFirstChild('HotbarHealthbarContainer')
-                if hotbar then
-                    UI.Position = UDim2.fromOffset(0, (hotbar.AbsolutePosition.Y + guiService:GetGuiInset().Y) - 60)
-                end
-
-                if Mode.Value == 'Chest' then
-                    local folder = entitylib.isAlive and ownPersonalFolder() or nil
-                    if folder then
-                        -- Withdrawing used to require the player to be in range of a personal
-                        -- chest and a shop at the same time. On bases where those two ranges do
-                        -- not overlap, AutoBuy could never get the resources back without the
-                        -- player shuffling between them. The personal inventory is already the
-                        -- authoritative deposit target, so release it as soon as a shop is in
-                        -- range and only require chest proximity when putting items in.
-                        if Withdraw.Enabled and atShop() then
-                            withdrawFromChest(folder)
-                        elseif atPersonalChest() then
-                            depositToChest(folder)
-                        end
-                    end
-                elseif not entitylib.isAlive or atShop() or atPersonalChest() then
-                    -- Dead, at a shop, or opening a personal chest: hand every stacked item back.
-                    for _, drop in table.clone(droppedItems) do
-                        reclaim(drop)
-                    end
-                else
-                    for _, item in store.inventory.inventory.items do
-                        local name = item.itemType or (item.tool and item.tool.Name)
-                        local tool = item.tool
-                        if name and table.find(Whitelist.ListEnabled, name) and not pendingDrops[tool]
-                            and (dropCooldowns[name] or 0) < os.clock() then
-                            pendingDrops[tool] = true
-                            task.spawn(function()
-                                local drop
-								pcall(function()
-									-- cv's Handler endpoint remains valid when the generated remote
-									-- table is refreshed, so Skybox banking continues to fire.
-									drop = bedwars.Handler:Get('DropItem'):Fire('CallServer', {
-                                        item = tool,
-                                        amount = item.amount
-                                    })
-                                end)
-                                pendingDrops[tool] = nil
-                                if not drop or not drop.Parent or table.find(droppedItems, drop) then
-                                    -- Refused, or handed us something we already hold. Back off
-                                    -- rather than hammering the same stack.
-                                    dropCooldowns[name] = os.clock() + 5
-                                    return
-                                end
-                                table.insert(droppedItems, drop)
-                                -- The pickup prompt and its billboard come with the drop; stripped
-                                -- so nobody can walk into the stash and take it if it is ever seen.
-                                drop:ClearAllChildren()
-                                drop.AncestryChanged:Once(function()
-                                    pendingReclaims[drop] = nil
-                                    untrackDrop(drop)
-                                end)
-
-                                -- A DropItem response can arrive after AutoBank was disabled or
-                                -- after the player reached a shop. Restore that late drop instead
-                                -- of abandoning it at its server-provided position.
-                                if not AutoBank.Enabled or atShop() then
-                                    reclaim(drop)
-                                end
-                            end)
-                        end
-                    end
-                end
-
-                -- Five passes per second are enough for inventory/shop state while avoiding
-                -- continuous remote bursts and UI layout work. Withdrawals are budgeted above
-                -- and naturally continue on the next pass for large chest stacks.
-                task.wait(0.2)
-            until not AutoBank.Enabled
         end,
         Tooltip = 'Stores resources somewhere safe, in your personal chest or held above the map until a shop'
     })
@@ -25090,6 +25000,7 @@ run(function()
             dangerTriggered, dangerCharacter, beforeDeathDepositing = false, nil, false
             if HPThreshold and HPThreshold.Object then HPThreshold.Object.Visible = enabled end
             if BeforeDeathWhitelist and BeforeDeathWhitelist.Object then BeforeDeathWhitelist.Object.Visible = enabled end
+			if enabled and AutoBank.Enabled then bindDangerCharacter(lplr.Character) end
         end,
         Tooltip = 'Banks selected inventory items at your personal chest once when your health becomes dangerous'
     })
@@ -27018,7 +26929,7 @@ run(function()
 end)
 
 run(function()
-    local Breaker, BreakerLegit
+    local Breaker
     local Mode
     local Range
     local Angle
@@ -27372,11 +27283,6 @@ run(function()
         Name = 'Breaker',
         Function = function(callback)
             if callback then
-				-- Keep the normal and constrained breakers independent; they target the same
-				-- server block controller and running both would make every swing look erratic.
-				if BreakerLegit and BreakerLegit.Enabled then
-					BreakerLegit:Toggle()
-				end
                 for _ = 1, 30 do
                     local part = Instance.new('Part')
                     part.Anchored = true
@@ -27570,63 +27476,6 @@ run(function()
         Tooltip = 'Only breaks when tools are held'
     })
 
-	-- This is deliberately a separate module rather than another Breaker mode. It
-	-- shares the game-native break call, but keeps a modest range, verifies sight,
-	-- picks the closest available block and waits between swings so it behaves like
-	-- a normal player. The legacy Breaker Type selector remains for old configs.
-	local LegitRange, LegitDelay, LegitAutoTool, LegitBed, LegitLuckyBlock
-	local function canLegitBreak(block, localPosition)
-		if not block or not block.Parent then return false end
-		if (block.Position - localPosition).Magnitude > LegitRange.Value then return false end
-		if (block:GetAttribute('BedShieldEndTime') or 0) > workspace:GetServerTimeNow() then return false end
-		if not bedwars.BlockController:isBlockBreakable({blockPosition = block.Position / 3}, lplr) then return false end
-		return isVisible(block.Position)
-	end
-	local function chooseLegitBlock(tables, localPosition)
-		local candidates = {}
-		for _, tab in tables do
-			for _, block in tab do
-				if canLegitBreak(block, localPosition) then
-					table.insert(candidates, block)
-				end
-			end
-		end
-		table.sort(candidates, function(a, b)
-			return (a.Position - localPosition).Magnitude < (b.Position - localPosition).Magnitude
-		end)
-		return candidates[1]
-	end
-	BreakerLegit = vape.Categories.Minigames:CreateModule({
-		Name = 'BreakerLegit',
-		Function = function(callback)
-			if not callback then return end
-			if Breaker.Enabled then Breaker:Toggle() end
-			local beds = collection('bed', BreakerLegit)
-			local luckyBlocks = collection('LuckyBlock', BreakerLegit)
-			repeat
-				task.wait(0.12)
-				if entitylib.isAlive then
-					refreshFilter()
-					local localPosition = entitylib.character.RootPart.Position
-					local block = chooseLegitBlock({LegitBed.Enabled and beds or {}, LegitLuckyBlock.Enabled and luckyBlocks or {}}, localPosition)
-					if block then
-						autoTool(block, LegitAutoTool.Enabled)
-						-- Effects and the game's own swing animation are retained here. The
-						-- sight predicate is passed through as a final check immediately before
-						-- the controller sends the break request.
-						bedwars.breakBlock(block, true, true, nil, LegitAutoTool.Enabled, closestMethod, 85, isVisible, {Legit = true})
-						task.wait(LegitDelay.Value)
-					end
-				end
-			until not BreakerLegit.Enabled
-		end,
-		Tooltip = 'Breaks only nearby, visible blocks with natural timing'
-	})
-	LegitRange = BreakerLegit:CreateSlider({Name = 'Break range', Min = 1, Max = 12, Default = 9, Suffix = ' studs', Tooltip = 'Legitimate range limit'})
-	LegitDelay = BreakerLegit:CreateSlider({Name = 'Break delay', Min = 0.1, Max = 0.6, Default = 0.22, Decimal = 100, Suffix = ' seconds', Tooltip = 'Delay between natural break swings'})
-	LegitBed = BreakerLegit:CreateToggle({Name = 'Break Bed', Default = true})
-	LegitLuckyBlock = BreakerLegit:CreateToggle({Name = 'Break Lucky Block', Default = true})
-	LegitAutoTool = BreakerLegit:CreateToggle({Name = 'Auto Tool', Default = true, Tooltip = 'Uses the best compatible held-inventory tool'})
 end)
 
 --[[
@@ -30809,9 +30658,11 @@ end)
 run(function()
 	local NameTagSpoofer
 	local CustomNameBox
-	local nametagConnection = nil
-	local trackedElements = {}
-	local fakeLabels = {}
+	local trackedElements = setmetatable({}, {__mode = 'k'})
+	local trackedUsernames = setmetatable({}, {__mode = 'k'})
+	local hiddenLabels = setmetatable({}, {__mode = 'k'})
+	local watched = setmetatable({}, {__mode = 'k'})
+	local applying = setmetatable({}, {__mode = 'k'})
 
 	local function getCustomName()
 		if CustomNameBox and type(CustomNameBox.Value) == "string" and CustomNameBox.Value ~= "" then
@@ -30820,189 +30671,96 @@ run(function()
 		return "Me"
 	end
 
-	local function trackElement(element)
-		if not element then return end
-		if not element:IsA("TextLabel") then return end
-		if element.Name ~= "PlayerName" and element.Name ~= "EntityName" then return end
-		if trackedElements[element] then
-			pcall(function() element.Text = getCustomName() end)
-			return
+	local function containsLocalName(text)
+		return type(text) == 'string' and (text:find(lplr.Name, 1, true) ~= nil
+			or text:find(lplr.DisplayName, 1, true) ~= nil)
+	end
+
+	local function setText(element, value)
+		if not element.Parent or element.Text == value then return end
+		applying[element] = true
+		element.Text = value
+		applying[element] = nil
+	end
+
+	local applyObject
+	local function watchText(element)
+		if watched[element] then return end
+		watched[element] = true
+		NameTagSpoofer:Clean(element:GetPropertyChangedSignal('Text'):Connect(function()
+			if NameTagSpoofer.Enabled and not applying[element] then applyObject(element) end
+		end))
+	end
+
+	applyObject = function(element)
+		if not element or not element.Parent then return end
+		if element:IsA('TextLabel') and table.find({'PlayerName', 'EntityName', 'DisplayName'}, element.Name) then
+			watchText(element)
+			local original = trackedElements[element]
+			if original then
+				if containsLocalName(element.Text) then original.Text = element.Text end
+				setText(element, getCustomName())
+			elseif containsLocalName(element.Text) then
+				trackedElements[element] = {Text = element.Text}
+				setText(element, getCustomName())
+			end
+		elseif element:IsA('TextBox') and element.Name == 'PlayerUsername' then
+			watchText(element)
+			local original = trackedUsernames[element]
+			if original then
+				if containsLocalName(element.Text) then original.Text = element.Text end
+				setText(element, '@'..getCustomName())
+			elseif containsLocalName(element.Text) then
+				trackedUsernames[element] = {Text = element.Text}
+				setText(element, '@'..getCustomName())
+			end
+		elseif element:IsA('TextLabel') and element.Name == '@'
+			and element.Parent and element.Parent.Name == 'PlayerUsername' then
+			if hiddenLabels[element] == nil then hiddenLabels[element] = element.Visible end
+			element.Visible = false
 		end
-		pcall(function()
-			local t = element.Text
-			if type(t) ~= "string" then return end
-			if t:find(lplr.Name, 1, true) or t:find(lplr.DisplayName, 1, true) then
-				trackedElements[element] = t
-				element.Text = getCustomName()
-			end
-		end)
 	end
 
-	local function handlePlayerUsername(element)
-		if not element or not element:IsA("TextBox") then return end
-		if element.Name ~= "PlayerUsername" then return end
-		if fakeLabels[element] then
-			fakeLabels[element].Text = "@" .. getCustomName()
-			return
+	local function processRoot(root)
+		if not root then return end
+		applyObject(root)
+		for _, descendant in root:GetDescendants() do applyObject(descendant) end
+	end
+
+	local function attachCharacter(character)
+		if not character then return end
+		processRoot(character)
+		NameTagSpoofer:Clean(character.DescendantAdded:Connect(applyObject))
+	end
+
+	local function restore()
+		for element, original in trackedElements do
+			if element.Parent then pcall(setText, element, original.Text) end
 		end
-		pcall(function()
-			local t = element.Text
-			if type(t) ~= "string" then return end
-			if t:find(lplr.Name, 1, true) or t:find(lplr.DisplayName, 1, true) then
-				element.Visible = false
-				element.TextTransparency = 1
-				element.TextStrokeTransparency = 1
-				local fake = Instance.new("TextLabel")
-				fake.Name = "FakeUsername"
-				fake.Size = element.Size
-				fake.Position = element.Position
-				fake.BackgroundTransparency = 1
-				fake.TextColor3 = element.TextColor3
-				fake.TextScaled = element.TextScaled
-				fake.Font = element.Font
-				fake.TextXAlignment = element.TextXAlignment
-				fake.TextYAlignment = element.TextYAlignment
-				fake.Text = "@" .. getCustomName()
-				fake.ZIndex = element.ZIndex + 1
-				fake.Parent = element.Parent
-				fakeLabels[element] = fake
-			end
-		end)
-	end
-
-	local function hideAtLabel(element)
-		if not element then return end
-		if not element:IsA("TextLabel") then return end
-		if element.Name ~= "@" then return end
-		pcall(function()
-			local parent = element.Parent
-			if parent and parent.Name == "PlayerUsername" then
-				element.Visible = false
-			end
-		end)
-	end
-
-	local function processGui(gui)
-		if not gui then return end
-		pcall(function()
-			for _, desc in pairs(gui:GetDescendants()) do
-				trackElement(desc)
-				handlePlayerUsername(desc)
-				hideAtLabel(desc)
-			end
-		end)
+		for element, original in trackedUsernames do
+			if element.Parent then pcall(setText, element, original.Text) end
+		end
+		for element, visible in hiddenLabels do
+			if element.Parent then pcall(function() element.Visible = visible end) end
+		end
+		table.clear(trackedElements)
+		table.clear(trackedUsernames)
+		table.clear(hiddenLabels)
+		table.clear(watched)
+		table.clear(applying)
 	end
 
 	NameTagSpoofer = vape.Categories.Render:CreateModule({
 		Name = 'NameTagSpoofer',
 		Function = function(callback)
 			if callback then
-				NameTagSpoofer:Clean(lplr.PlayerGui.ChildAdded:Connect(function(gui)
-					if gui.Name == "TabListScreenGui" then
-						task.wait(0.3)
-						processGui(gui)
-						NameTagSpoofer:Clean(gui.DescendantAdded:Connect(function(desc)
-							task.wait()
-							trackElement(desc)
-							handlePlayerUsername(desc)
-							hideAtLabel(desc)
-						end))
-					end
-					if gui.Name == "KillFeedGui" then
-						processGui(gui)
-						NameTagSpoofer:Clean(gui.DescendantAdded:Connect(function(desc)
-							task.wait()
-							trackElement(desc)
-						end))
-					end
-				end))
-
-				local killFeed = lplr.PlayerGui:FindFirstChild("KillFeedGui")
-				if killFeed then
-					processGui(killFeed)
-					NameTagSpoofer:Clean(killFeed.DescendantAdded:Connect(function(desc)
-						task.wait()
-						trackElement(desc)
-					end))
-				end
-				local tabList = lplr.PlayerGui:FindFirstChild("TabListScreenGui")
-				if tabList then
-					processGui(tabList)
-					NameTagSpoofer:Clean(tabList.DescendantAdded:Connect(function(desc)
-						task.defer(function() trackElement(desc); handlePlayerUsername(desc); hideAtLabel(desc) end)
-					end))
-				end
-
-				local nextRefresh = 0
-				nametagConnection = runService.Heartbeat:Connect(function()
-					if not NameTagSpoofer.Enabled then return end
-					local now = os.clock()
-					if now < nextRefresh then return end
-					nextRefresh = now + 0.2
-					pcall(function()
-						local customName = getCustomName()
-
-						for element, original in pairs(trackedElements) do
-							if not element or not element.Parent then
-								trackedElements[element] = nil
-							else
-								pcall(function() element.Text = customName end)
-							end
-						end
-
-						for element, fake in pairs(fakeLabels) do
-							if not element or not element.Parent then
-								if fake then fake:Destroy() end
-								fakeLabels[element] = nil
-							else
-								pcall(function() fake.Text = "@" .. customName end)
-							end
-						end
-
-						if lplr.Character then
-							local head = lplr.Character:FindFirstChild("Head")
-							if not head then return end
-							local nametag = head:FindFirstChild("Nametag")
-							if not nametag then return end
-							local dc = nametag:FindFirstChild("DisplayNameContainer")
-							if not dc then return end
-							local dn = dc:FindFirstChild("DisplayName")
-							if not dn or not dn:IsA("TextLabel") then return end
-							pcall(function() dn.Text = customName end)
-						end
-					end)
-				end)
-
+				processRoot(lplr.PlayerGui)
+				attachCharacter(lplr.Character)
+				NameTagSpoofer:Clean(lplr.PlayerGui.DescendantAdded:Connect(applyObject))
+				NameTagSpoofer:Clean(lplr.CharacterAdded:Connect(attachCharacter))
+				NameTagSpoofer:Clean(restore)
 			else
-				if nametagConnection then
-					nametagConnection:Disconnect()
-					nametagConnection = nil
-				end
-				for element, original in pairs(trackedElements) do
-					if element and element.Parent then
-						pcall(function() element.Text = original end)
-					end
-				end
-				table.clear(trackedElements)
-				for element, fake in pairs(fakeLabels) do
-					if fake then pcall(function() fake:Destroy() end) end
-					if element and element.Parent then
-						pcall(function()
-							element.Visible = true
-							element.TextTransparency = 0
-							element.TextStrokeTransparency = 0
-						end)
-					end
-				end
-				table.clear(fakeLabels)
-				local tl = lplr.PlayerGui:FindFirstChild("TabListScreenGui")
-				if tl then
-					for _, desc in pairs(tl:GetDescendants()) do
-						if desc:IsA("TextLabel") and desc.Name == "@" then
-							pcall(function() desc.Visible = true end)
-						end
-					end
-				end
+				restore()
 			end
 		end,
 		Tooltip = 'Customize your name in various places'
@@ -31012,7 +30770,10 @@ run(function()
 		Name = 'Custom Name',
 		Default = 'Me',
 		Placeholder = 'Enter name...',
-		Function = function(value)
+		Function = function()
+			if not NameTagSpoofer.Enabled then return end
+			for element in trackedElements do if element.Parent then setText(element, getCustomName()) end end
+			for element in trackedUsernames do if element.Parent then setText(element, '@'..getCustomName()) end end
 		end
 	})
 end)

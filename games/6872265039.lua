@@ -58,8 +58,8 @@ run(function()
 	local Client = require(replicatedStorage.TS.remotes).default.Client
 	local OldGet, OldBreak = Client.Get
 	local function safeGetProto(func, index)
-		if not func then return nil end
-		local success, proto = pcall(safeGetProto, func, index)
+		if not func or not debug or type(debug.getproto) ~= 'function' then return nil end
+		local success, proto = pcall(debug.getproto, func, index)
 		if success then
 			return proto
 		else
@@ -138,6 +138,37 @@ run(function()
 		table.clear(bedwars)
 	end)
 end)
+
+local function activeLobbyKit()
+	local values = {
+		lplr:GetAttribute('PlayingAsKit'),
+		lplr:GetAttribute('PlayingAsKits'),
+		lplr:GetAttribute('SelectedKit'),
+		lplr:GetAttribute('Kit'),
+		lplr:GetAttribute('kit')
+	}
+	local ready = bedwars.Store ~= nil
+	if bedwars.Store then
+		local ok, state = pcall(bedwars.Store.getState, bedwars.Store)
+		ready = ok and type(state) == 'table'
+		if ready then
+			local kit = state.Kit or state.kit or {}
+			local locker = state.Locker or state.locker or {}
+			local bedwarsState = state.Bedwars or state.BedWars or {}
+			table.insert(values, 1, kit.kit or kit.equippedKit or kit.selectedKit
+				or locker.equippedKit or locker.selectedKit
+				or bedwarsState.kit or bedwarsState.equippedKit)
+		end
+	end
+	for _, value in values do
+		if value ~= nil and value ~= '' and value ~= 'none' then return tostring(value), true end
+	end
+	return nil, ready
+end
+
+if type(vape.SetGameInfo) == 'function' then
+	vape:SetGameInfo({Name = 'BedWars', GetKit = activeLobbyKit})
+end
 
 
 getgenv()._aeroTierReady = true

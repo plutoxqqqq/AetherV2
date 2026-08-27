@@ -324,6 +324,89 @@ local function finiteVector(value)
 		and finiteNumber(value.Z)
 end
 
+-- Deterministically advances a projectile through its exact kinematic curve and tests every
+-- chord against the world.  Callers supply acceleration as a world-space vector so this also
+-- works for projectiles whose gravity is not the Workspace default.  The bounded step count is
+-- important for previews: a stale projectile with a very long lifetime must never turn into an
+-- unbounded render-thread raycast loop.
+function module.TraceTrajectory(origin, initialVelocity, acceleration, raycastParams, lifetime, options)
+	options = type(options) == 'table' and options or {}
+	if not finiteVector(origin) or not finiteVector(initialVelocity) or not finiteVector(acceleration) then return nil end
+	lifetime = tonumber(lifetime) or 5
+	if not finiteNumber(lifetime) or lifetime <= 0 then return nil end
+	lifetime = math.min(lifetime, tonumber(options.MaximumLifetime) or 10)
+
+	local segmentLength = math.max(tonumber(options.SegmentLength) or 1.25, 0.1)
+	local minimumStep = math.max(tonumber(options.MinimumStep) or (1 / 240), 1 / 1000)
+	local maximumStep = math.max(tonumber(options.MaximumStep) or (1 / 30), minimumStep)
+	local maximumSteps = math.max(math.floor(tonumber(options.MaximumSteps) or 720), 1)
+	local radius = math.max(tonumber(options.Radius) or 0, 0)
+	local collisionTest = type(options.CollisionTest) == 'function' and options.CollisionTest or nil
+
+	local function positionAt(time)
+		return origin + initialVelocity * time + acceleration * (0.5 * time * time)
+	end
+
+	local time, previous = 0, origin
+	for _ = 1, maximumSteps do
+		if time >= lifetime then break end
+		local instantaneousSpeed = (initialVelocity + acceleration * time).Magnitude
+		local step = math.clamp(segmentLength / math.max(instantaneousSpeed, 1), minimumStep, maximumStep)
+		local nextTime = math.min(time + step, lifetime)
+		local nextPosition = positionAt(nextTime)
+		local displacement = nextPosition - previous
+		local customPosition, customInstance
+		if collisionTest then
+			local ok, hitPosition, hitInstance = pcall(collisionTest, previous, nextPosition, time, nextTime)
+			if ok and finiteVector(hitPosition) then
+				customPosition, customInstance = hitPosition, hitInstance
+			end
+		end
+
+		local worldResult
+		if displacement.Magnitude > eps then
+			if radius > 0 and workspace.Spherecast then
+				local ok, result = pcall(workspace.Spherecast, workspace, previous, radius, displacement, raycastParams)
+				if ok then worldResult = result end
+			end
+			if not worldResult then
+				local ok, result = pcall(workspace.Raycast, workspace, previous, displacement, raycastParams)
+				if ok then worldResult = result end
+			end
+		end
+
+		if customPosition or worldResult then
+			local worldPosition = worldResult and worldResult.Position
+			local useCustom = customPosition and (not worldPosition
+				or (customPosition - previous).Magnitude <= (worldPosition - previous).Magnitude)
+			local hitPosition = useCustom and customPosition or worldPosition
+			local alpha = displacement.Magnitude > eps
+				and math.clamp((hitPosition - previous).Magnitude / displacement.Magnitude, 0, 1)
+				or 0
+			return {
+				Position = hitPosition,
+				Instance = useCustom and customInstance or worldResult.Instance,
+				Normal = not useCustom and worldResult.Normal or nil,
+				Material = not useCustom and worldResult.Material or nil,
+				Time = time + (nextTime - time) * alpha,
+				Velocity = initialVelocity + acceleration * (time + (nextTime - time) * alpha),
+				RaycastResult = not useCustom and worldResult or nil,
+				Expired = false
+			}
+		end
+
+		time, previous = nextTime, nextPosition
+	end
+
+	return {
+		Position = positionAt(lifetime),
+		Instance = nil,
+		Time = lifetime,
+		Velocity = initialVelocity + acceleration * lifetime,
+		Expired = true
+	}
+end
+
 local function interceptResidual(relativePosition, relativeVelocity, halfRelativeAcceleration, speed, time)
 	local offset = relativePosition + relativeVelocity * time + halfRelativeAcceleration * (time * time)
 	return offset:Dot(offset) - (speed * speed * time * time)

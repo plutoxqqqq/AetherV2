@@ -3100,7 +3100,7 @@ run(function()
     local Step
     local Mode
     local StepHeight
-    local JumpPower
+	local ExtraHeight
     local activeTween
     local busy = false
     local nextStep = 0
@@ -3180,6 +3180,10 @@ run(function()
 	end
     end
 
+	local function jumpVelocity(height)
+		return math.sqrt(2 * workspace.Gravity * math.max(height, 0.1))
+	end
+
     Step = vape.Categories.Blatant:CreateModule({
 	Name = 'Step',
 	Function = function(callback)
@@ -3198,7 +3202,10 @@ run(function()
 				if Mode.Value == 'TP' then
 					character.Character:PivotTo(CFrame.new(target) * rotation)
 					local velocity = root.AssemblyLinearVelocity
-					root.AssemblyLinearVelocity = Vector3.new(velocity.X, math.max(velocity.Y, 0), velocity.Z)
+					-- Pivoting gets the character onto the surface; the derived vertical velocity then
+					-- clears its lip by the requested margin instead of relying on a fixed JumpPower
+					-- that is too small for tall walls and excessive for short ones.
+					root.AssemblyLinearVelocity = Vector3.new(velocity.X, math.max(velocity.Y, jumpVelocity(ExtraHeight.Value)), velocity.Z)
 				elseif Mode.Value == 'Glide' then
 					busy = true
 					activeTween = tweenService:Create(
@@ -3216,7 +3223,7 @@ run(function()
 					humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
 					humanoid.Jump = true
 					local velocity = root.AssemblyLinearVelocity
-					root.AssemblyLinearVelocity = Vector3.new(velocity.X, JumpPower.Value, velocity.Z)
+					root.AssemblyLinearVelocity = Vector3.new(velocity.X, jumpVelocity(height + ExtraHeight.Value), velocity.Z)
 					task.delay(0.25, function() busy = false end)
 				end
 			end))
@@ -3232,23 +3239,25 @@ run(function()
 	List = {'TP', 'Glide', 'Jump'},
 	Default = 'TP',
 	Function = function(value)
-		if JumpPower and JumpPower.Object then JumpPower.Object.Visible = value == 'Jump' end
+		if ExtraHeight and ExtraHeight.Object then ExtraHeight.Object.Visible = value ~= 'Glide' end
 	end,
     })
     StepHeight = Step:CreateSlider({
 	Name = 'Step height',
 	Min = 1,
-	Max = 10,
-	Default = 3,
+	Max = 50,
+	Default = 20,
 	Suffix = function(value) return value == 1 and 'stud' or 'studs' end,
     })
-    JumpPower = Step:CreateSlider({
-	Name = 'JumpPower',
-	Min = 1,
-	Max = 100,
-	Default = 50,
+    ExtraHeight = Step:CreateSlider({
+	Name = 'Extra height',
+	Min = 0,
+	Max = 15,
+	Default = 5,
 	Darker = true,
-	Visible = function() return Mode and Mode.Value == 'Jump' end,
+	Visible = function() return Mode and Mode.Value ~= 'Glide' end,
+	Suffix = function(value) return value == 1 and 'stud' or 'studs' end,
+	Tooltip = 'Additional apex clearance above the detected wall; jump velocity is calculated automatically',
     })
 end)
 
@@ -3380,6 +3389,63 @@ run(function()
 	return result and result.Normal.Y > 0.15 and result.Position.Y or (root.Position.Y - clearance)
     end
 
+	local function planarDistance(a, b)
+		return ((a - b) * Vector3.new(1, 0, 1)).Magnitude
+	end
+
+	local function standingPoint(position, root)
+		local clearance = standClearance()
+		rayCheck.FilterDescendantsInstances = {lplr.Character, gameCamera}
+		pcall(function() rayCheck.CollisionGroup = root.CollisionGroup end)
+		local floor = workspace:Raycast(position + Vector3.new(0, clearance + 3, 0), Vector3.new(0, -(clearance * 2 + 7), 0), rayCheck)
+		if not floor or floor.Normal.Y <= 0.15 then return position end
+		local aboveFloor = position.Y - floor.Position.Y
+		return aboveFloor < clearance * 0.65 and floor.Position + Vector3.new(0, clearance, 0) or position
+	end
+
+	local function directRouteClear(from, destination, root)
+		local flat = (destination - from) * Vector3.new(1, 0, 1)
+		if flat.Magnitude <= 1 then return true end
+		rayCheck.FilterDescendantsInstances = {lplr.Character, gameCamera}
+		pcall(function() rayCheck.CollisionGroup = root.CollisionGroup end)
+		local size = Vector3.new(math.max(root.Size.X * 0.75, 1.35), math.max(root.Size.Y * 0.8, 1.7), math.max(root.Size.Z * 0.75, 1.35))
+		local hit = workspace:Blockcast(CFrame.new(from), size, flat, rayCheck)
+		if not hit or (hit.Position - from).Magnitude >= flat.Magnitude - 1 then return true end
+		-- BedWars places blocks after Roblox bakes its navigation mesh. A direct route may
+		-- therefore meet a wall the pathfinder cannot describe even though the character can
+		-- jump onto it. Accept only walls with a real, nearby top; obstacleJump performs the
+		-- matching physics jump when the character reaches it.
+		if math.abs(hit.Normal.Y) > 0.3 then return false end
+		local topProbe = hit.Position - hit.Normal * 0.75
+		local top = workspace:Raycast(topProbe + Vector3.new(0, 14, 0), Vector3.new(0, -15, 0), rayCheck)
+		local rise = top and top.Normal.Y > 0.15 and top.Position.Y - (from.Y - standClearance())
+		return rise ~= nil and rise > 0 and rise <= 12
+	end
+
+	local function obstacleJump(root, humanoid, direction)
+		if direction.Magnitude <= 0.05 or humanoid.FloorMaterial == Enum.Material.Air then return false end
+		rayCheck.FilterDescendantsInstances = {lplr.Character, gameCamera}
+		pcall(function() rayCheck.CollisionGroup = root.CollisionGroup end)
+		local flat = direction.Unit * Vector3.new(1, 0, 1)
+		if flat.Magnitude <= 0.05 then return false end
+		flat = flat.Unit
+		local wall = workspace:Blockcast(
+			root.CFrame,
+			Vector3.new(math.max(root.Size.X * 0.75, 1.35), math.max(root.Size.Y * 0.8, 1.7), math.max(root.Size.Z * 0.75, 1.35)),
+			flat * 2.5,
+			rayCheck
+		)
+		if not wall or math.abs(wall.Normal.Y) > 0.3 then return false end
+		local topProbe = wall.Position - wall.Normal * 0.75
+		local top = workspace:Raycast(topProbe + Vector3.new(0, 14, 0), Vector3.new(0, -15, 0), rayCheck)
+		local rise = top and top.Normal.Y > 0.15 and top.Position.Y - (root.Position.Y - standClearance()) or 3
+		local velocity = math.sqrt(2 * workspace.Gravity * math.max(rise + 2, 3))
+		humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+		humanoid.Jump = true
+		root.AssemblyLinearVelocity = Vector3.new(root.AssemblyLinearVelocity.X, math.max(root.AssemblyLinearVelocity.Y, velocity), root.AssemblyLinearVelocity.Z)
+		return true
+	end
+
     local function createGapBridge(startPosition, destination, groundY, root)
 	local delta = (destination - startPosition) * Vector3.new(1, 0, 1)
 	local distance = delta.Magnitude
@@ -3483,7 +3549,9 @@ run(function()
 	-- stood still. Temporarily yield control to the navigator and always restore it.
 	local controls
 	pcall(function()
-		controls = require(lplr.PlayerScripts:WaitForChild('PlayerModule')):GetControls()
+		local playerModule = lplr.PlayerScripts:FindFirstChild('PlayerModule')
+		if not playerModule then return end
+		controls = require(playerModule):GetControls()
 		controls:Disable()
 	end)
 	local controlsRestored = false
@@ -3531,7 +3599,9 @@ run(function()
 					{Position = root.Position, Action = Enum.PathWaypointAction.Walk},
 					{Position = destination, Action = Enum.PathWaypointAction.Walk}
 				}
-				if support or not pathCrossesVoid(direct) then waypoints = direct end
+				if (support or not pathCrossesVoid(direct)) and directRouteClear(root.Position, destination, root) then
+					waypoints = direct
+				end
 			end
 			if not waypoints then
 				notif('MouseTP', TravelGaps.Enabled
@@ -3553,37 +3623,49 @@ run(function()
 				end
 				if blockedAt and blockedAt <= index + 1 then repath = true break end
 
-				if waypoint.Action == Enum.PathWaypointAction.Jump then
-					humanoid.Jump = true
-					humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-				end
-				humanoid:MoveTo(waypoint.Position)
-				local distance = (root.Position - waypoint.Position).Magnitude
-				local deadline = tick() + math.max(2.5, distance / math.max(humanoid.WalkSpeed, 1) + 2)
-				local lastProgress, stalledAt, reissueAt = distance, tick(), tick() + 0.5
+				local waypointPosition = standingPoint(waypoint.Position, root)
+				local distance = planarDistance(root.Position, waypointPosition)
+				if distance <= 1.75 and math.abs(root.Position.Y - waypointPosition.Y) <= standClearance() + 1 then continue end
+				local deadline = tick() + math.max(3, distance / math.max(humanoid.WalkSpeed, 1) + 3)
+				local lastProgress, stalledAt, jumpedAt = distance, tick(), 0
 				repeat
 					runService.Heartbeat:Wait()
-					distance = root.Parent and (root.Position - waypoint.Position).Magnitude or math.huge
+					if not root.Parent then distance = math.huge break end
+					local delta = waypointPosition - root.Position
+					local flat = delta * Vector3.new(1, 0, 1)
+					distance = flat.Magnitude
+					if distance > 0.05 then humanoid:Move(flat.Unit, false) end
+					if waypoint.Action == Enum.PathWaypointAction.Jump and humanoid.FloorMaterial ~= Enum.Material.Air then
+						if not obstacleJump(root, humanoid, flat) then
+							humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+							humanoid.Jump = true
+							local velocity = root.AssemblyLinearVelocity
+							root.AssemblyLinearVelocity = Vector3.new(velocity.X, math.max(velocity.Y, math.sqrt(2 * workspace.Gravity * 5)), velocity.Z)
+						end
+					elseif distance > 0.5 then
+						obstacleJump(root, humanoid, flat)
+					end
 					if distance < lastProgress - 0.2 then
 						lastProgress, stalledAt = distance, tick()
 					end
-					if tick() >= reissueAt then
-						humanoid:MoveTo(waypoint.Position)
-						reissueAt = tick() + 0.5
+					if tick() - stalledAt > 1.1 and tick() - jumpedAt > 0.8 then
+						jumpedAt = tick()
+						obstacleJump(root, humanoid, flat)
 					end
-					if tick() - stalledAt > 1.5 then
-						humanoid.Jump = true
-						humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+					if tick() - stalledAt > 2.4 then
 						repath = true
 						break
 					end
-				until distance <= 2.5 or tick() >= deadline or not MouseTP.Enabled or (blockedAt and blockedAt <= index + 1)
-				if distance > 2.5 then repath = true break end
+				until (distance <= 1.75 and math.abs(root.Position.Y - waypointPosition.Y) <= standClearance() + 1)
+					or tick() >= deadline or not MouseTP.Enabled or (blockedAt and blockedAt <= index + 1)
+				humanoid:Move(Vector3.zero, false)
+				if distance > 1.75 then repath = true break end
 			end
 
 			if blocked then blocked:Disconnect() end
 			if pathFolder then pathFolder:Destroy() end
-			if not repath and (root.Position - destination).Magnitude <= 5 then return true end
+			if not repath and planarDistance(root.Position, destination) <= 3
+				and math.abs(root.Position.Y - destination.Y) <= standClearance() + 2 then return true end
 		end
 
 		if MouseTP.Enabled then notif('MouseTP', 'The route stayed blocked after several retries.', 5, 'warning') end

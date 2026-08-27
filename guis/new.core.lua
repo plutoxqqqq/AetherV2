@@ -10,6 +10,8 @@ local mainapi = {
 		Sat = accent.Sat,
 		Value = accent.Value
 	},
+	GameInfo = {},
+	GameInfoChanged = Instance.new('BindableEvent'),
 	HeldKeybinds = {},
 	Keybind = {'RightShift'},
 	Loaded = false,
@@ -163,6 +165,18 @@ end
 
 function mainapi:SetGlassTransparency(value)
 	glass:Apply(value)
+end
+
+function mainapi:SetGameInfo(info)
+	if type(info) ~= 'table' then return end
+	local merged = table.clone(self.GameInfo or {})
+	for key, value in info do merged[key] = value end
+	self.GameInfo = merged
+	if self.GameInfoChanged then self.GameInfoChanged:Fire(merged) end
+end
+
+function mainapi:RefreshGameInfo()
+	if self.GameInfoChanged then self.GameInfoChanged:Fire(self.GameInfo) end
 end
 local vapecolors = {
 	Icon = Color3.fromRGB(122, 122, 122),
@@ -3429,6 +3443,7 @@ function mainapi:BlurCheck()
 end
 
 addMaid(mainapi)
+mainapi:Clean(mainapi.GameInfoChanged)
 
 -- Sorts every module within its category alphabetically.
 function mainapi:SortModules()
@@ -5132,7 +5147,7 @@ function mainapi:CreateCategory(categorysettings)
 			end
 			local token = {}
 			moduleapi.LifecycleToken = token
-			local lifecycleThread = task.spawn(function()
+			local lifecycleThread = coroutine.create(function()
 				local ok, err = xpcall(function()
 					modulesettings.Function(enabled)
 				end, function(message) return tostring(message) end)
@@ -5144,6 +5159,7 @@ function mainapi:CreateCategory(categorysettings)
 				end
 			end)
 			moduleapi.LifecycleThread = lifecycleThread
+			task.spawn(lifecycleThread)
 		end
 
 		for i, v in components do
@@ -7854,6 +7870,62 @@ function mainapi:CreateSearch()
 	end)
 	local searchGeneration = 0
 	local searchResults = {}
+	local selectedResult = 0
+	local function selectResult(index)
+		if #searchResults == 0 then selectedResult = 0 return end
+		selectedResult = ((index - 1) % #searchResults) + 1
+		for resultIndex, result in searchResults do
+			local stroke = result.Button:FindFirstChild('SearchSelection')
+			if not stroke then
+				stroke = Instance.new('UIStroke')
+				stroke.Name = 'SearchSelection'
+				stroke.Thickness = 1
+				stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+				stroke.Parent = result.Button
+			end
+			stroke.Color = Color3.fromHSV(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value)
+			stroke.Transparency = resultIndex == selectedResult and 0.2 or 1
+		end
+		local selected = searchResults[selectedResult]
+		if selected and selected.Button.Parent then
+			local top = selected.Button.AbsolutePosition.Y - children.AbsolutePosition.Y + children.CanvasPosition.Y
+			local bottom = top + selected.Button.AbsoluteSize.Y
+			if top < children.CanvasPosition.Y then
+				children.CanvasPosition = Vector2.new(0, math.max(top, 0))
+			elseif bottom > children.CanvasPosition.Y + children.AbsoluteSize.Y then
+				children.CanvasPosition = Vector2.new(0, math.max(bottom - children.AbsoluteSize.Y, 0))
+			end
+		end
+	end
+	local function locateModule(module)
+		local category = self.Categories[module.Category]
+		if not category or category.Type ~= 'Category' then return end
+		category.Object.Visible = true
+		if not category.Expanded then category:Expand() end
+		if module.Hidden and category.SetEditMode then
+			mainapi.EditGUI = true
+			category:SetEditMode(true)
+		end
+		if module.OptionsChildren then module.OptionsChildren.Visible = true end
+		task.defer(function()
+			local frame = module.Object and module.Object.Parent
+			if not frame or not frame:IsA('ScrollingFrame') or not module.Object.Parent then return end
+			local rowTop = module.Object.AbsolutePosition.Y - frame.AbsolutePosition.Y + frame.CanvasPosition.Y
+			local targetY = rowTop - math.max((frame.AbsoluteSize.Y - module.Object.AbsoluteSize.Y) * 0.5, 0)
+			local maximum = math.max(frame.CanvasSize.Y.Offset - frame.AbsoluteSize.Y, 0)
+			frame.CanvasPosition = Vector2.new(0, math.clamp(targetY, 0, maximum))
+			local highlight = Instance.new('Frame')
+			highlight.Name = 'SearchLocateHighlight'
+			highlight.Size = UDim2.fromScale(1, 1)
+			highlight.BackgroundColor3 = Color3.new(1, 1, 1)
+			highlight.BackgroundTransparency = 0.6
+			highlight.BorderSizePixel = 0
+			highlight.ZIndex = module.Object.ZIndex + 2
+			highlight.Parent = module.Object
+			tween:Tween(highlight, TweenInfo.new(0.5), {BackgroundTransparency = 1})
+			task.delay(0.5, function() if highlight.Parent then highlight:Destroy() end end)
+		end)
+	end
 	local function clearSearchResults()
 		for _, v in children:GetChildren() do
 			if v:IsA('TextButton') then
@@ -7861,6 +7933,7 @@ function mainapi:CreateSearch()
 			end
 		end
 		table.clear(searchResults)
+		selectedResult = 0
 	end
 	local function updateSearch(query, generation)
 		if generation ~= searchGeneration then return end
@@ -7874,8 +7947,9 @@ function mainapi:CreateSearch()
 			-- callback and could take the executor UI down with it.
 			if self:ModuleMatchesSearch(v, query) then
 				local button = v.Object:Clone()
-				local clonedTitle = button:FindFirstChild('Title')
-				if clonedTitle then clonedTitle.Active = false end
+				for _, descendant in button:GetDescendants() do
+					if descendant:IsA('GuiButton') then descendant.Active = false end
+				end
 				local bind = button:FindFirstChild('Bind')
 				if bind then bind:Destroy() end
 				button.MouseButton1Click:Connect(function()
@@ -7883,28 +7957,14 @@ function mainapi:CreateSearch()
 				end)
 
 				button.MouseButton2Click:Connect(function()
-					v.Object.Parent.Parent.Visible = true
-					local frame = v.Object.Parent
-					local highlight = Instance.new('Frame')
-					highlight.Size = UDim2.fromScale(1, 1)
-					highlight.BackgroundColor3 = Color3.new(1, 1, 1)
-					highlight.BackgroundTransparency = 0.6
-					highlight.BorderSizePixel = 0
-					highlight.Parent = v.Object
-					tween:Tween(highlight, TweenInfo.new(0.5), {
-						BackgroundTransparency = 1
-					})
-					task.delay(0.5, highlight.Destroy, highlight)
-
-					-- Index, not LayoutOrder: the layout now leaves a slot between each module
-					-- for its settings panel, so the order is twice the row number.
-					frame.CanvasPosition = Vector2.new(0, ((v.Index or 0) * 40) - (math.min(frame.CanvasSize.Y.Offset, 600) / 2))
+					locateModule(v)
 				end)
 
 				button.Parent = children
-				table.insert(searchResults, {button, v.Object})
+				table.insert(searchResults, {Button = button, Source = v.Object, Module = v})
 			end
 		end
+		selectResult(1)
 	end
 	table.insert(self.ModuleSearchRefreshers, function()
 		searchGeneration += 1
@@ -7920,12 +7980,26 @@ function mainapi:CreateSearch()
 			updateSearch(query, generation)
 		end)
 	end)
+	self:Clean(inputService.InputBegan:Connect(function(input)
+		if not search:IsFocused() then return end
+		if input.KeyCode == Enum.KeyCode.Down then
+			selectResult(selectedResult + 1)
+		elseif input.KeyCode == Enum.KeyCode.Up then
+			selectResult(selectedResult - 1)
+		elseif input.KeyCode == Enum.KeyCode.Return or input.KeyCode == Enum.KeyCode.KeypadEnter then
+			local result = searchResults[selectedResult]
+			if result then result.Module:Toggle() end
+		elseif input.KeyCode == Enum.KeyCode.Escape then
+			search.Text = ''
+			search:ReleaseFocus()
+		end
+	end))
 	-- One throttled synchronizer replaces a render-rate coroutine per result.
 	-- Protected descendant lookups also tolerate modules with a custom row shape.
 	task.spawn(function()
 		while searchbkg.Parent do
 			for _, result in searchResults do
-				local button, source = result[1], result[2]
+				local button, source = result.Button, result.Source
 				if button.Parent and source.Parent then
 					pcall(function()
 						local buttonTitle, sourceTitle = button:FindFirstChild('Title'), source:FindFirstChild('Title')
@@ -8391,7 +8465,7 @@ local function createPanel(config)
 			end
 			local token = {}
 			moduleapi.LifecycleToken = token
-			local lifecycleThread = task.spawn(function()
+			local lifecycleThread = coroutine.create(function()
 				local ok, err = xpcall(function()
 					modulesettings.Function(enabled)
 				end, function(message) return tostring(message) end)
@@ -8403,6 +8477,7 @@ local function createPanel(config)
 				end
 			end)
 			moduleapi.LifecycleThread = lifecycleThread
+			task.spawn(lifecycleThread)
 		end
 
 		-- Legit HUD modules used to also register a mirror toggle in the main
@@ -8629,7 +8704,7 @@ function mainapi:CreateOnline()
 	pcall(function()
 		executorName = identifyexecutor and select(1, identifyexecutor()) or executorName
 	end)
-	row(146, 'Current game', tostring(game.Name):sub(1, 32))
+	local gameRow = row(146, 'Current game', 'Detecting…')
 	local kitRow = row(194, 'Detected kit', 'Checking…')
 	local profileRow = row(242, 'Current profile', tostring(mainapi.Profile))
 	local sessionRow = row(290, 'AetherV2', 'v'..tostring(mainapi.Version)..' • 0m')
@@ -8641,6 +8716,42 @@ function mainapi:CreateOnline()
 	function api:Open() window.Visible = true end
 	function api:Close() window.Visible = false end
 	close.MouseButton1Click:Connect(function() api:Close() end)
+	local function detectedGameName()
+		-- BedWars' universe title is sometimes replaced by an experience/UGC landing title while
+		-- teleporting. The universe and its two primary places are stable identifiers; prefer them
+		-- even before the place module has finished registering its richer runtime metadata.
+		if game.GameId == 2619619496 or table.find({6872265039, 6872274481}, tonumber(mainapi.Place) or game.PlaceId) then
+			return 'BedWars'
+		end
+		local info = mainapi.GameInfo
+		return type(info) == 'table' and type(info.Name) == 'string' and info.Name ~= '' and info.Name
+			or tostring(game.Name)
+	end
+	local function detectedKit(player)
+		if detectedGameName() ~= 'BedWars' then return 'Not applicable' end
+		local info = mainapi.GameInfo
+		if type(info) == 'table' and type(info.GetKit) == 'function' then
+			local ok, kit, ready = pcall(info.GetKit)
+			if ok and kit ~= nil and tostring(kit) ~= '' and tostring(kit):lower() ~= 'none' then
+				return tostring(kit)
+			end
+			if ok and ready == true then return 'No kit equipped' end
+		end
+		for _, attribute in {'PlayingAsKit', 'PlayingAsKits', 'SelectedKit', 'Kit', 'kit'} do
+			local kit = player:GetAttribute(attribute)
+			if kit ~= nil and tostring(kit) ~= '' and tostring(kit):lower() ~= 'none' then return tostring(kit) end
+		end
+		return 'Detecting…'
+	end
+	local function refreshIdentityRows()
+		gameRow.Detail.Text = detectedGameName():sub(1, 32)
+		kitRow.Detail.Text = detectedKit(cloneref(game:GetService('Players')).LocalPlayer):sub(1, 30)
+	end
+	mainapi:Clean(mainapi.GameInfoChanged.Event:Connect(refreshIdentityRows))
+	for _, attribute in {'PlayingAsKit', 'PlayingAsKits', 'SelectedKit', 'Kit', 'kit'} do
+		mainapi:Clean(cloneref(game:GetService('Players')).LocalPlayer:GetAttributeChangedSignal(attribute):Connect(refreshIdentityRows))
+	end
+	refreshIdentityRows()
 	task.spawn(function()
 		local players = cloneref(game:GetService('Players'))
 		local player = players.LocalPlayer
@@ -8648,8 +8759,7 @@ function mainapi:CreateOnline()
 		if ok and avatar.Parent then avatar.Image = image end
 		while window.Parent do
 			if window.Visible then
-				local kit = player:GetAttribute('Kit') or player:GetAttribute('SelectedKit') or player:GetAttribute('kit') or 'Not detected'
-				kitRow.Detail.Text = tostring(kit):sub(1, 30)
+				refreshIdentityRows()
 				profileRow.Detail.Text = tostring(mainapi.Profile)
 				sessionRow.Detail.Text = 'v'..tostring(mainapi.Version)..' • '..math.floor((os.clock() - (mainapi.StartedAt or os.clock())) / 60)..'m'
 			end
@@ -8955,6 +9065,11 @@ function mainapi:Load(skipgui, profile)
 		savedata.Modules = savedata.Modules or {}
 		savedata.Legit = savedata.Legit or {}
 		savedata.Kits = savedata.Kits or {}
+		-- BreakerLegit was retired as a separate module. Ignore old profile state explicitly so
+		-- loading a pre-removal config remains harmless and the next save drops the dead entry.
+		savedata.Modules.BreakerLegit = nil
+		savedata.Legit.BreakerLegit = nil
+		savedata.Kits.BreakerLegit = nil
 		-- Merge retired BedWars module keys without duplicating their GUI entries
 		local function mergeModuleConfig(target, aliases)
 			local merged = savedata.Modules[target]
