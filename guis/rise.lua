@@ -3157,7 +3157,7 @@ scaleslider = mainapi.Categories.Main:CreateSlider({
 })
 mainapi.Categories.Main:CreateDropdown({
 	Name = 'GUI Theme',
-	List = {'rise', 'new', 'newer', 'old'},
+	List = {'rise', 'new', 'old'},
 	Function = function(val, mouse)
 		if mouse then
 			writefile('aetherv2/profiles/gui.txt', val)

@@ -11,7 +11,7 @@ local function currentRef()
 		ref = ref:gsub('%s+', '')
 		if ref ~= '' then return ref end
 	end
-	return 'main'
+	return type(license.SourceRef) == 'string' and license.SourceRef ~= '' and license.SourceRef or 'main'
 end
 
 local function validSource(body)
@@ -25,15 +25,18 @@ local function fetch(ref, path)
 end
 
 local function getCore()
-	local body, lastError = fetch(currentRef(), 'guis/new.core.lua')
-	if body then return body end
-
-	body, lastError = fetch('main', 'guis/new.core.lua')
-	if body then return body end
-
 	if isfile and isfile(CORE_LOCAL) then
 		local readOk, cached = pcall(readfile, CORE_LOCAL)
 		if readOk and validSource(cached) then return cached end
+	end
+
+	local activeRef = currentRef()
+	local body, lastError = fetch(activeRef, 'guis/new.core.lua')
+	if body then return body end
+
+	if activeRef ~= 'main' and not license.SourceEndpoint then
+		body, lastError = fetch('main', 'guis/new.core.lua')
+		if body then return body end
 	end
 
 	body, lastError = fetch(FALLBACK_COMMIT, 'guis/new.lua')

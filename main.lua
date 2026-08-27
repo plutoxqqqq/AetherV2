@@ -93,9 +93,11 @@ local function urlEncode(value)
 end
 local sourceEndpoint
 local sourceToken
+local sourceRef
 if type(license) == 'table' then
 	sourceEndpoint = normalizeSourceEndpoint(license.SourceEndpoint)
 	sourceToken = type(license.SourceToken) == 'string' and license.SourceToken or nil
+	sourceRef = type(license.SourceRef) == 'string' and license.SourceRef or nil
 end
 if not sourceEndpoint and getgenv then
 	pcall(function()
@@ -109,8 +111,10 @@ if not sourceEndpoint then
 end
 local function privateSourceUrl(path, ref)
 	if not sourceEndpoint then return nil end
+	ref = ref or sourceRef
+	if not ref or ref == '' then error('Private source configuration is missing SourceRef', 0) end
 	local sessionSuffix = sourceToken and ('&session='..urlEncode(sourceToken)) or ''
-	return sourceEndpoint..'/source?path='..urlEncode(path:gsub('^aetherv2/', ''))..'&ref='..urlEncode(ref or readfile('aetherv2/profiles/commit.txt'))..sessionSuffix
+	return sourceEndpoint..'/source?path='..urlEncode(path:gsub('^aetherv2/', ''))..'&ref='..urlEncode(ref)..sessionSuffix
 end
 -- init.lua owns the loading UI.  main.lua only reports progress to that shared screen.
 
@@ -123,7 +127,7 @@ local function setLoadingStatus(text, progress)
 end
 
 closeLoadingScreen = function()
-	-- Prefer the screen's own closer so the redesigned (newer) screen can fade
+	-- Prefer the screen's own closer so the active loading screen can fade
 	-- out; the classic screen's closer just destroys, so nothing regresses.
 	if _G.AetherV2CloseLoadingScreen then
 		pcall(_G.AetherV2CloseLoadingScreen)
@@ -419,8 +423,14 @@ local function finishLoading()
 				else
 					local config = _scriptconfig
 					if config.SourceEndpoint then
-						local session = config.SourceToken and '&session='..config.SourceToken or ''
-						loadstring(game:HttpGet(config.SourceEndpoint..'/source?path=init.lua&ref=main'..session, true), 'init.lua')(config)
+						local function encode(value)
+							return tostring(value):gsub('([^%w%-%._~])', function(character)
+								return string.format('%%%02X', string.byte(character))
+							end)
+						end
+						assert(config.SourceRef, 'Private source configuration is missing SourceRef')
+						local session = config.SourceToken and '&session='..encode(config.SourceToken) or ''
+						loadstring(game:HttpGet(config.SourceEndpoint..'/source?path=init.lua&ref='..encode(config.SourceRef)..session, true), 'init.lua')(config)
 					else
 						loadstring(game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/main/init.lua', true), 'init.lua')(config)
 					end
@@ -488,8 +498,12 @@ end
 if not isfile('aetherv2/profiles/gui.txt') then
 	writefile('aetherv2/profiles/gui.txt', 'new')
 end
-local validGuis = {new = true, newer = true, old = true, rise = true}
+local validGuis = {new = true, old = true, rise = true}
 local gui = readfile('aetherv2/profiles/gui.txt'):gsub('%s+', '')
+if gui == 'newer' then
+	gui = 'new'
+	writefile('aetherv2/profiles/gui.txt', gui)
+end
 if not validGuis[gui] then
 	gui = 'new'
 	writefile('aetherv2/profiles/gui.txt', gui)
@@ -506,7 +520,7 @@ for _, folder in {'aetherv2/songs'} do
 	end
 end
 if not isfile('aetherv2/profiles/commit.txt') then
-	writefile('aetherv2/profiles/commit.txt', 'main')
+	writefile('aetherv2/profiles/commit.txt', sourceEndpoint and sourceRef or 'main')
 end
 if not isfile('aetherv2/profiles/disableloading.txt') then
 	writefile('aetherv2/profiles/disableloading.txt', 'false')

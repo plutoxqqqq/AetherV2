@@ -1,11 +1,12 @@
 {
-  "name": "aetherv2-config-review",
-  "version": "1.0.0",
+  "name": "aetherv2-backend",
+  "version": "1.1.0",
   "private": true,
   "scripts": {
     "start": "node server.js",
     "start:source": "node private-source.js",
     "start:bot": "node discord-bot.js",
+    "check": "node --check server.js && node --check key-registry.js && node --check private-source.js && node --check discord-bot.js",
     "test": "node --test"
   },
   "engines": {

@@ -1,2 +1,14 @@
 data.json
 *.tmp
+node_modules/
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.secret
+secrets/
+discord-token.txt
+github-token.txt
+admin-key.txt
+loader-keys.txt

@@ -1,0 +1,14 @@
+.DS_Store
+node_modules/
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.secret
+secrets/
+backend/discord-token.txt
+backend/github-token.txt
+backend/admin-key.txt
+backend/loader-keys.txt
+

@@ -36,9 +36,11 @@ local function urlEncode(value)
 end
 local sourceEndpoint
 local sourceToken
+local sourceRef
 if type(license) == 'table' then
 	sourceEndpoint = normalizeSourceEndpoint(license.SourceEndpoint)
 	sourceToken = type(license.SourceToken) == 'string' and license.SourceToken or nil
+	sourceRef = type(license.SourceRef) == 'string' and license.SourceRef or nil
 end
 if not sourceEndpoint and getgenv then
 	pcall(function()
@@ -52,9 +54,11 @@ if not sourceEndpoint then
 end
 local function privateSourceUrl(route, path, ref)
 	if not sourceEndpoint then return nil end
+	ref = ref or sourceRef
+	if not ref or ref == '' then error('Private source configuration is missing SourceRef', 0) end
 	local sessionSuffix = sourceToken and ('&session='..urlEncode(sourceToken)) or ''
-	local query = '?ref='..urlEncode(ref or 'main')..sessionSuffix
-	if path then query = '?path='..urlEncode(path:gsub('^aetherv2/', ''))..'&ref='..urlEncode(ref or 'main')..sessionSuffix end
+	local query = '?ref='..urlEncode(ref)..sessionSuffix
+	if path then query = '?path='..urlEncode(path:gsub('^aetherv2/', ''))..'&ref='..urlEncode(ref)..sessionSuffix end
 	return sourceEndpoint..'/'..route..query
 end
 local isfile = isfile or function(file)
@@ -115,272 +119,21 @@ local function getLoadingScreenParent()
 end
 
 -- Which GUI the user has selected (defaults to 'new' before the first pick).
--- Loading screens are per-GUI: 'new' and 'newer' each get their own design and
--- 'old' / 'rise' get none.
+-- Profiles that still name the retired Nexus GUI are migrated to new immediately.
 local function selectedGui()
 	local ok, res = pcall(readfile, 'aetherv2/profiles/gui.txt')
 	if ok and type(res) == 'string' then
-		return (res:gsub('%s+', ''))
+		local selected = res:gsub('%s+', '')
+		if selected == 'newer' then
+			selected = 'new'
+			pcall(writefile, 'aetherv2/profiles/gui.txt', selected)
+		end
+		return selected
 	end
 	return 'new'
 end
 
--- Redesigned "Nexus" loading screen - used only when newer.lua is the active
--- GUI. Self-contained: builds its visuals on the shared AetherV2Loading
--- ScreenGui and wires the _G.AetherV2* globals the loader drives during startup.
-local function buildNewerLoadingScreen(screen)
-	local tweenService = game:GetService('TweenService')
-	local primary = Color3.fromRGB(190, 115, 255)
-	local cyan = Color3.fromRGB(226, 186, 255)
-
-	-- Backdrop with a slow diagonal gradient drift.
-	local background = Instance.new('Frame')
-	background.Name = 'Backdrop'
-	background.Size = UDim2.fromScale(1, 1)
-	background.BackgroundColor3 = Color3.fromRGB(9, 11, 17)
-	background.BackgroundTransparency = 1
-	background.BorderSizePixel = 0
-	background.Parent = screen
-	local bgGrad = Instance.new('UIGradient')
-	bgGrad.Rotation = 20
-	bgGrad.Color = ColorSequence.new({
-		ColorSequenceKeypoint.new(0, Color3.fromRGB(9, 12, 20)),
-		ColorSequenceKeypoint.new(0.5, Color3.fromRGB(16, 24, 40)),
-		ColorSequenceKeypoint.new(1, Color3.fromRGB(9, 11, 17))
-	})
-	bgGrad.Parent = background
-	tweenService:Create(bgGrad, TweenInfo.new(6, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), {Rotation = 48}):Play()
-
-	-- Drifting accent motes for a bit of depth.
-	for i = 1, 8 do
-		local mote = Instance.new('Frame')
-		mote.Size = UDim2.fromOffset(4, 4)
-		mote.Position = UDim2.fromScale(math.random(4, 96) / 100, math.random(15, 100) / 100)
-		mote.BackgroundColor3 = i % 2 == 0 and cyan or primary
-		mote.BackgroundTransparency = 0.55
-		mote.BorderSizePixel = 0
-		mote.Parent = background
-		local mc = Instance.new('UICorner')
-		mc.CornerRadius = UDim.new(1, 0)
-		mc.Parent = mote
-		task.spawn(function()
-			while mote.Parent do
-				local dur = 4 + math.random() * 4
-				tweenService:Create(mote, TweenInfo.new(dur, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {
-					Position = UDim2.fromScale(math.random(4, 96) / 100, math.random(8, 92) / 100),
-					BackgroundTransparency = 0.25 + math.random() * 0.5
-				}):Play()
-				task.wait(dur)
-			end
-		end)
-	end
-
-	-- Card.
-	local card = Instance.new('Frame')
-	card.AnchorPoint = Vector2.new(0.5, 0.5)
-	card.Position = UDim2.fromScale(0.5, 0.5)
-	card.Size = UDim2.fromOffset(560, 300)
-	card.BackgroundColor3 = Color3.fromRGB(13, 16, 26)
-	card.BackgroundTransparency = 0.05
-	card.BorderSizePixel = 0
-	card.Parent = background
-	local cardCorner = Instance.new('UICorner')
-	cardCorner.CornerRadius = UDim.new(0, 20)
-	cardCorner.Parent = card
-	local cardStroke = Instance.new('UIStroke')
-	cardStroke.Color = primary
-	cardStroke.Transparency = 0.5
-	cardStroke.Thickness = 1.5
-	cardStroke.Parent = card
-	local cardGrad = Instance.new('UIGradient')
-	cardGrad.Rotation = 90
-	cardGrad.Color = ColorSequence.new(primary, cyan)
-	cardGrad.Parent = cardStroke
-	local cardScale = Instance.new('UIScale')
-	cardScale.Scale = 0.94
-	cardScale.Parent = card
-
-	-- Spinner: a ring whose gradient arc rotates forever.
-	local ring = Instance.new('Frame')
-	ring.AnchorPoint = Vector2.new(0.5, 0)
-	ring.Position = UDim2.new(0.5, 0, 0, 36)
-	ring.Size = UDim2.fromOffset(54, 54)
-	ring.BackgroundTransparency = 1
-	ring.Parent = card
-	local ringCorner = Instance.new('UICorner')
-	ringCorner.CornerRadius = UDim.new(1, 0)
-	ringCorner.Parent = ring
-	local ringStroke = Instance.new('UIStroke')
-	ringStroke.Thickness = 3
-	ringStroke.Color = primary
-	ringStroke.Parent = ring
-	local ringGrad = Instance.new('UIGradient')
-	ringGrad.Color = ColorSequence.new(cyan, primary)
-	ringGrad.Transparency = NumberSequence.new({
-		NumberSequenceKeypoint.new(0, 1),
-		NumberSequenceKeypoint.new(0.5, 0.05),
-		NumberSequenceKeypoint.new(1, 1)
-	})
-	ringGrad.Parent = ringStroke
-	tweenService:Create(ringGrad, TweenInfo.new(1, Enum.EasingStyle.Linear, Enum.EasingDirection.Out, -1), {Rotation = 360}):Play()
-
-	-- Wordmark with a slow highlight sweep.
-	local title = Instance.new('TextLabel')
-	title.AnchorPoint = Vector2.new(0.5, 0)
-	title.Position = UDim2.new(0.5, 0, 0, 104)
-	title.Size = UDim2.fromOffset(420, 40)
-	title.BackgroundTransparency = 1
-	title.Font = Enum.Font.GothamBold
-	title.Text = 'AETHER V2'
-	title.TextSize = 34
-	title.TextColor3 = Color3.fromRGB(240, 244, 255)
-	title.Parent = card
-	local titleGrad = Instance.new('UIGradient')
-	titleGrad.Color = ColorSequence.new({
-		ColorSequenceKeypoint.new(0, Color3.fromRGB(236, 240, 255)),
-		ColorSequenceKeypoint.new(0.5, cyan),
-		ColorSequenceKeypoint.new(1, Color3.fromRGB(236, 240, 255))
-	})
-	titleGrad.Parent = title
-	titleGrad.Offset = Vector2.new(-1, 0)
-	tweenService:Create(titleGrad, TweenInfo.new(2.4, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, false, 0.6), {Offset = Vector2.new(1, 0)}):Play()
-
-	local versionText = 'Unknown'
-	if isfile('aetherv2/version.txt') then
-		local data = readfile('aetherv2/version.txt')
-		versionText = data:match('version%s*=%s*([^\r\n]+)') or versionText
-	end
-	local version = Instance.new('TextLabel')
-	version.AnchorPoint = Vector2.new(0.5, 0)
-	version.Position = UDim2.new(0.5, 0, 0, 148)
-	version.Size = UDim2.fromOffset(300, 18)
-	version.BackgroundTransparency = 1
-	version.Font = Enum.Font.GothamMedium
-	version.Text = 'NEXUS  •  Version '..versionText
-	version.TextSize = 12
-	version.TextColor3 = Color3.fromRGB(150, 160, 190)
-	version.Parent = card
-
-	-- Progress track + gradient fill + shimmer sweep.
-	local track = Instance.new('Frame')
-	track.AnchorPoint = Vector2.new(0.5, 0)
-	track.Position = UDim2.new(0.5, 0, 0, 206)
-	track.Size = UDim2.fromOffset(460, 8)
-	track.BackgroundColor3 = Color3.fromRGB(26, 32, 48)
-	track.BackgroundTransparency = 0.15
-	track.BorderSizePixel = 0
-	track.Parent = card
-	local trackCorner = Instance.new('UICorner')
-	trackCorner.CornerRadius = UDim.new(1, 0)
-	trackCorner.Parent = track
-	local fill = Instance.new('Frame')
-	fill.Size = UDim2.fromScale(0.04, 1)
-	fill.BackgroundColor3 = primary
-	fill.BorderSizePixel = 0
-	fill.Parent = track
-	local fillCorner = Instance.new('UICorner')
-	fillCorner.CornerRadius = UDim.new(1, 0)
-	fillCorner.Parent = fill
-	local fillGrad = Instance.new('UIGradient')
-	fillGrad.Color = ColorSequence.new(primary, cyan)
-	fillGrad.Parent = fill
-	local shimmer = Instance.new('Frame')
-	shimmer.Size = UDim2.fromScale(1, 1)
-	shimmer.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-	shimmer.BackgroundTransparency = 0
-	shimmer.BorderSizePixel = 0
-	shimmer.Parent = fill
-	local shimmerCorner = Instance.new('UICorner')
-	shimmerCorner.CornerRadius = UDim.new(1, 0)
-	shimmerCorner.Parent = shimmer
-	local shimGrad = Instance.new('UIGradient')
-	shimGrad.Transparency = NumberSequence.new({
-		NumberSequenceKeypoint.new(0, 1),
-		NumberSequenceKeypoint.new(0.42, 1),
-		NumberSequenceKeypoint.new(0.5, 0.35),
-		NumberSequenceKeypoint.new(0.58, 1),
-		NumberSequenceKeypoint.new(1, 1)
-	})
-	shimGrad.Offset = Vector2.new(-1, 0)
-	shimGrad.Parent = shimmer
-	tweenService:Create(shimGrad, TweenInfo.new(1.4, Enum.EasingStyle.Linear, Enum.EasingDirection.Out, -1), {Offset = Vector2.new(1, 0)}):Play()
-
-	local status = Instance.new('TextLabel')
-	status.AnchorPoint = Vector2.new(0, 0)
-	status.Position = UDim2.new(0.5, -230, 0, 224)
-	status.Size = UDim2.fromOffset(340, 18)
-	status.BackgroundTransparency = 1
-	status.Font = Enum.Font.Gotham
-	status.Text = 'Starting AetherV2...'
-	status.TextSize = 13
-	status.TextXAlignment = Enum.TextXAlignment.Left
-	status.TextColor3 = Color3.fromRGB(202, 210, 230)
-	status.Parent = card
-	local percent = Instance.new('TextLabel')
-	percent.AnchorPoint = Vector2.new(1, 0)
-	percent.Position = UDim2.new(0.5, 230, 0, 224)
-	percent.Size = UDim2.fromOffset(80, 18)
-	percent.BackgroundTransparency = 1
-	percent.Font = Enum.Font.GothamBold
-	percent.Text = '6%'
-	percent.TextSize = 13
-	percent.TextXAlignment = Enum.TextXAlignment.Right
-	percent.TextColor3 = cyan
-	percent.Parent = card
-	local footer = Instance.new('TextLabel')
-	footer.AnchorPoint = Vector2.new(0.5, 1)
-	footer.Position = UDim2.new(0.5, 0, 1, -16)
-	footer.Size = UDim2.fromOffset(400, 16)
-	footer.BackgroundTransparency = 1
-	footer.Font = Enum.Font.Gotham
-	footer.Text = 'discord.gg/aetherv2'
-	footer.TextSize = 11
-	footer.TextColor3 = Color3.fromRGB(96, 104, 130)
-	footer.Parent = card
-
-	-- Entrance.
-	tweenService:Create(background, TweenInfo.new(0.4, Enum.EasingStyle.Quad), {BackgroundTransparency = 0.05}):Play()
-	tweenService:Create(cardScale, TweenInfo.new(0.5, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Scale = 1}):Play()
-
-	local lastProgress = 0.06
-	local closed = false
-	local function closeScreen()
-		if closed then return end
-		closed = true
-		if not screen or not screen.Parent then
-			if screen then pcall(function() screen:Destroy() end) end
-			return
-		end
-		tweenService:Create(background, TweenInfo.new(0.35, Enum.EasingStyle.Quad), {BackgroundTransparency = 1}):Play()
-		tweenService:Create(cardScale, TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {Scale = 0.92}):Play()
-		task.delay(0.4, function()
-			if screen and screen.Parent then screen:Destroy() end
-		end)
-	end
-
-	_G.AetherV2LoadingScreen = screen
-	_G.AetherV2CloseLoadingScreen = closeScreen
-	_G.AetherV2SetLoadingStatus = function(text, progress)
-		if not screen.Parent then return end
-		lastProgress = math.clamp(progress or lastProgress, lastProgress, 1)
-		if status.Parent and text then status.Text = text end
-		if percent.Parent then percent.Text = math.floor(lastProgress * 100)..'%' end
-		if fill.Parent then
-			tweenService:Create(fill, TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-				Size = UDim2.fromScale(math.clamp(lastProgress, 0.02, 1), 1)
-			}):Play()
-		end
-	end
-end
-
--- Loading screen for the 'new' GUI: fullscreen, transparent and minimal.
---
--- Nothing but the logo in the middle of the screen, a thin bar under it, one line of text, and a
--- light frame of detail around the edges - a vignette that keeps the middle of the screen clear, a
--- hairline top and bottom, and a bracket in each corner. The bar is tweened rather than snapped and
--- carries a slow shimmer, so a long step still visibly moves instead of looking frozen.
---
--- Kept in sync with the copy in the other loader file.
+-- Legacy Nexus loading-screen builder is unreachable after profile migration. It remains
 local function buildNewLoadingScreen(screen)
 	local tweenService = game:GetService('TweenService')
 	local accent = Color3.fromRGB(190, 115, 255)
@@ -586,9 +339,9 @@ end
 
 local function createLoadingScreen()
 	if license.Closet or isLoadingScreenDisabled() then return nil end
-	-- Per-GUI loading screens: only 'new' and 'newer' show one at all.
+	-- Only the current new GUI uses the Aether loading screen.
 	local gui = selectedGui()
-	if gui ~= 'new' and gui ~= 'newer' then return nil end
+	if gui ~= 'new' then return nil end
 	local parent = getLoadingScreenParent()
 	if not parent then return nil end
 	local existing = parent:FindFirstChild('AetherV2Loading')
@@ -601,12 +354,6 @@ local function createLoadingScreen()
 	screen.DisplayOrder = 2147483647
 	screen.Parent = parent
 	screen:ClearAllChildren()
-
-	-- 'newer' keeps its own screen; 'new' uses the minimal fullscreen one.
-	if gui == 'newer' then
-		buildNewerLoadingScreen(screen)
-		return screen
-	end
 
 	return buildNewLoadingScreen(screen)
 end
@@ -813,7 +560,7 @@ end
 
 local function resolveCommit()
 	local channel = selectedReleaseChannel()
-	local branch = channel == 'stable' and 'main' or channel
+	local branch = sourceEndpoint and sourceRef or (channel == 'stable' and 'main' or channel)
 	-- Reinjection in the same client should not repeat three update endpoints. The first injection
 	-- still performs the normal live check; this short in-memory reuse never survives a new client
 	-- session and therefore does not make persistent installs miss updates.
@@ -1007,9 +754,10 @@ if not shared.VapeDeveloper then
 		end
 		prefetchPaths = newFiles
 	elseif oldCommit == '' then
-		-- First run with no answer from GitHub: fall back to main rather than having no ref at all.
+		-- First run with no answer: retain the configured private ref (or the public
+		-- release channel) rather than silently switching a gated client to main.
 		local channel = selectedReleaseChannel()
-		writefile('aetherv2/profiles/commit.txt', commit or (channel == 'stable' and 'main' or channel))
+		writefile('aetherv2/profiles/commit.txt', commit or (sourceEndpoint and sourceRef or (channel == 'stable' and 'main' or channel)))
 	else
 		-- Up to date. The stored list is this commit's file list, so it can drive the prefetch below
 		-- without another request.
@@ -1051,9 +799,7 @@ local deferredFiles = {
 local function neededFiles(files)
 	if not files then return {} end
 	local gui = selectedGui()
-	-- Nexus shares the shipped assets/new bundle. Looking for assets/newer left every
-	-- icon cold and forced the GUI to fetch them serially while constructing the menu.
-	local assetFolder = gui == 'newer' and 'new' or gui
+	local assetFolder = gui
 	local place = tostring(game.PlaceId)
 	if isfile('aetherv2/profiles/forcegame.txt')
 		and readfile('aetherv2/profiles/forcegame.txt') == 'true'

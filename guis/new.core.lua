@@ -65,6 +65,105 @@ local uipallet = {
 	FontSemiBold = Font.fromEnum(Enum.Font.Arial, Enum.FontWeight.SemiBold),
 	Tween = TweenInfo.new(0.16, Enum.EasingStyle.Linear)
 }
+-- The classic GUI remains visually identical at 0%. Higher values progressively
+-- turn its dark cards into a restrained, Apple-inspired glass material: the outer
+-- cards become translucent first, inner rows follow more gently, the edge catches
+-- a little more light, and the existing blur artwork softens instead of turning milky.
+local glass = {
+	Level = 0,
+	Surfaces = setmetatable({}, {__mode = 'k'}),
+	Interiors = setmetatable({}, {__mode = 'k'}),
+	Strokes = setmetatable({}, {__mode = 'k'})
+}
+
+function glass:Register(surface, blur)
+	if not surface then return end
+	local record = self.Surfaces[surface]
+	if not record then
+		record = {
+			BaseTransparency = surface.BackgroundTransparency,
+			Blur = blur,
+			BaseBlurTransparency = blur and blur.ImageTransparency or 0
+		}
+		local sheen = Instance.new('Frame')
+		sheen.Name = 'GlassSheen'
+		sheen.Size = UDim2.fromScale(1, 1)
+		sheen.BackgroundColor3 = Color3.new(1, 1, 1)
+		sheen.BackgroundTransparency = 1
+		sheen.BorderSizePixel = 0
+		sheen.Active = false
+		sheen.ZIndex = math.max(0, surface.ZIndex - 1)
+		sheen.Parent = surface
+		local gradient = Instance.new('UIGradient')
+		gradient.Rotation = 24
+		gradient.Transparency = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 0.15),
+			NumberSequenceKeypoint.new(0.45, 0.75),
+			NumberSequenceKeypoint.new(1, 0.35)
+		})
+		gradient.Parent = sheen
+		local corner = Instance.new('UICorner')
+		corner.CornerRadius = UDim.new(0, 8)
+		corner.Parent = sheen
+		record.Sheen = sheen
+		record.SheenCorner = corner
+		self.Surfaces[surface] = record
+	elseif blur then
+		record.Blur = blur
+		record.BaseBlurTransparency = blur.ImageTransparency
+	end
+	self:ApplySurface(surface, record)
+end
+
+function glass:ApplySurface(surface, record)
+	if not surface.Parent then return end
+	local amount = self.Level
+	surface.BackgroundTransparency = math.clamp(
+		record.BaseTransparency + ((1 - record.BaseTransparency) * amount),
+		0,
+		0.96
+	)
+	if record.Blur and record.Blur.Parent then
+		record.Blur.ImageTransparency = math.clamp(record.BaseBlurTransparency + (amount * 0.18), 0, 0.92)
+	end
+	if record.Sheen and record.Sheen.Parent then
+		record.Sheen.BackgroundTransparency = 1 - (amount * 0.055)
+	end
+	if record.Corner and record.Corner.Parent and record.BaseRadius then
+		record.Corner.CornerRadius = UDim.new(0, record.BaseRadius + math.round(amount * 5))
+		if record.SheenCorner then record.SheenCorner.CornerRadius = record.Corner.CornerRadius end
+	end
+end
+
+function glass:Apply(value)
+	self.Level = math.clamp((tonumber(value) or 0) / 100, 0, 0.8)
+	for surface, record in self.Surfaces do self:ApplySurface(surface, record) end
+	if clickgui then
+		for _, object in clickgui:GetDescendants() do
+			if object:IsA('GuiObject')
+				and not self.Surfaces[object]
+				and object.BackgroundTransparency < 0.98
+				and object.Name ~= 'Fill'
+				and math.abs(object.BackgroundColor3.R - uipallet.Main.R) < 0.08
+				and math.abs(object.BackgroundColor3.G - uipallet.Main.G) < 0.08
+				and math.abs(object.BackgroundColor3.B - uipallet.Main.B) < 0.08 then
+				self.Interiors[object] = self.Interiors[object] or object.BackgroundTransparency
+			end
+		end
+	end
+	for object, base in self.Interiors do
+		if object.Parent then
+			object.BackgroundTransparency = math.clamp(base + ((1 - base) * self.Level * 0.35), 0, 0.94)
+		end
+	end
+	for stroke, base in self.Strokes do
+		if stroke.Parent then stroke.Transparency = math.clamp(base - (self.Level * 0.15), 0.55, 1) end
+	end
+end
+
+function mainapi:SetGlassTransparency(value)
+	glass:Apply(value)
+end
 local vapecolors = {
 	Icon = Color3.fromRGB(122, 122, 122),
 	IconHover = Color3.fromRGB(209, 209, 209)
@@ -240,6 +339,7 @@ local function addBlur(parent, notif)
 	blur.ScaleType = Enum.ScaleType.Slice
 	blur.SliceCenter = Rect.new(52, 31, 261, 502)
 	blur.Parent = parent
+	glass:Register(parent, blur)
 
 	return blur
 end
@@ -250,6 +350,12 @@ local function addCorner(parent, radius)
 	-- the cheapest change that alters the silhouette of every panel at once.
 	corner.CornerRadius = radius or UDim.new(0, 8)
 	corner.Parent = parent
+	local glassRecord = glass.Surfaces[parent]
+	if glassRecord then
+		glassRecord.Corner = corner
+		glassRecord.BaseRadius = corner.CornerRadius.Offset
+		glass:ApplySurface(parent, glassRecord)
+	end
 
 	return corner
 end
@@ -265,6 +371,8 @@ local function addWindowStroke(parent, transparency)
 	stroke.Thickness = 1
 	stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 	stroke.Parent = parent
+	glass.Strokes[stroke] = stroke.Transparency
+	stroke.Transparency = math.clamp(stroke.Transparency - (glass.Level * 0.15), 0.55, 1)
 	return stroke
 end
 
@@ -671,11 +779,11 @@ function mainapi:ResetModuleNicknames()
 	if self.Loaded and self.UpdateTextGUI then pcall(self.UpdateTextGUI, self) end
 end
 
--- The title itself is the only rename target. A normal single click retains the
--- module toggle behaviour; the second click cancels that delayed toggle and opens
--- an inline editor. Clicking elsewhere on the module row is handled by the row.
+-- The title toggles immediately. Waiting to distinguish a double-click made every
+-- module feel laggy, so renaming now uses Alt + right-click while an ordinary
+-- right-click keeps opening the module's settings.
 function mainapi:BindModuleTitle(module, title, onSingleClick, onRightClick)
-	local hovered, lastClick, clickToken, editing = false, 0, 0, false
+	local hovered, editing = false, false
 	title.MouseEnter:Connect(function() hovered = true end)
 	title.MouseLeave:Connect(function() hovered = false end)
 
@@ -712,21 +820,15 @@ function mainapi:BindModuleTitle(module, title, onSingleClick, onRightClick)
 
 	title.MouseButton1Click:Connect(function()
 		if editing then return end
-		local now = tick()
-		clickToken += 1
-		local token = clickToken
-		if now - lastClick <= 0.35 then
-			lastClick = 0
-			editName()
-			return
-		end
-		lastClick = now
-		task.delay(0.36, function()
-			if clickToken == token and not editing and onSingleClick then onSingleClick() end
-		end)
+		if onSingleClick then onSingleClick() end
 	end)
 	title.MouseButton2Click:Connect(function()
-		if not editing and onRightClick then onRightClick() end
+		if editing then return end
+		if inputService:IsKeyDown(Enum.KeyCode.LeftAlt) or inputService:IsKeyDown(Enum.KeyCode.RightAlt) then
+			editName()
+		elseif onRightClick then
+			onRightClick()
+		end
 	end)
 	return function() return hovered or editing end
 end
@@ -3314,9 +3416,9 @@ function mainapi:BlurCheck()
 			if not mobileBlur or not mobileBlur.Parent then
 				mobileBlur = Instance.new('BlurEffect')
 				mobileBlur.Name = 'AetherV2MobileBlur'
-				mobileBlur.Size = 24
 				mobileBlur.Parent = lighting
 			end
+			mobileBlur.Size = 24 + math.round(glass.Level * 12)
 		else
 			if mobileBlur then mobileBlur:Destroy(); mobileBlur = nil end
 		end
@@ -5180,6 +5282,7 @@ function mainapi:CreateCategory(categorysettings)
 			moduleapi:RefreshHiddenState(mainapi.EditGUI == true)
 			if categoryapi.UpdateHidden then categoryapi:UpdateHidden() end
 			mainapi:SortModules()
+			if mainapi.Transparency then mainapi:SetGlassTransparency(mainapi.Transparency.Value) end
 			local parent = moduleapi.Object.Parent
 			local layout = parent:FindFirstChildOfClass('UIListLayout')
 			if parent:IsA('ScrollingFrame') and layout then
@@ -9913,6 +10016,18 @@ mainapi.Blur = guipane:CreateToggle({
 	Default = true,
 	Tooltip = 'Blur the background of the GUI'
 })
+mainapi.Transparency = guipane:CreateSlider({
+	Name = 'Transparency',
+	Min = 0,
+	Max = 80,
+	Default = 0,
+	Suffix = '%',
+	Function = function(value)
+		mainapi:SetGlassTransparency(value)
+		mainapi:BlurCheck()
+	end,
+	Tooltip = 'Adds a subtle liquid-glass material while keeping text and controls readable'
+})
 guipane:CreateToggle({
 	Name = 'GUI bind indicator',
 	Default = true,
@@ -9993,7 +10108,7 @@ scaleslider = guipane:CreateSlider({
 })
 guipane:CreateDropdown({
 	Name = 'GUI Theme',
-	List = inputService.TouchEnabled and {'new', 'newer', 'old'} or {'new', 'newer', 'old', 'rise'},
+	List = inputService.TouchEnabled and {'new', 'old'} or {'new', 'old', 'rise'},
 	Function = function(val, mouse)
 		if mouse then
 			-- Flush the current profile before reloading so the accent colour and
@@ -10005,7 +10120,7 @@ guipane:CreateDropdown({
 			reloadAether()
 		end
 	end,
-	Tooltip = 'new - The newest vape theme to since v4.05\nold - The vape theme pre v4.05\nrise - Rise 6.0'
+	Tooltip = 'new - The current Aether theme\nold - The pre-v4.05 theme\nrise - Rise 6.0'
 })
 mainapi.ToggleMode = guipane:CreateDropdown({
 	Name = 'Keybind mode',
@@ -11357,7 +11472,7 @@ end))
 end)()
 
 -- Spotlight Search: press ` from anywhere to find and toggle a module without
--- opening or arranging category windows. This intentionally mirrors newer.lua.
+-- opening or arranging category windows.
 --
 -- Written as a function that is called immediately rather than a plain `do` block: Luau gives
 -- every function 200 local registers, and locals in a bare block share the registers of the chunk
@@ -11390,7 +11505,7 @@ end)()
 				if mainapi.WelcomeCard then mainapi.WelcomeCard.Visible = true else mainapi:CreateNotification('Help', 'Search modules, right-click a result for details, and use Ctrl + K for actions.', 8, 'info') end
 			end}
 		}
-		for _, guiName in {'new', 'newer', 'old', 'rise'} do
+		for _, guiName in {'new', 'old', 'rise'} do
 			table.insert(actions, {Name = 'Change GUI: '..guiName, Category = 'GUI', Action = function()
 				writefile('aetherv2/profiles/gui.txt', guiName)
 				if mainapi.ReloadAether then mainapi.ReloadAether() end

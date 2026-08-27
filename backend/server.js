@@ -31,8 +31,8 @@ const admin = req => { const got=Buffer.from(req.headers.authorization || ''), e
 const canonical = value => JSON.stringify(value, (_, child) => child && typeof child === 'object' && !Array.isArray(child) ? Object.fromEntries(Object.keys(child).sort().map(key => [key, child[key]])) : child);
 const matchesPublished = config => { const folder=path.resolve(__dirname,'..','configs'); try { return fs.readdirSync(folder).filter(file=>file.endsWith('.json')&&file!=='presets.json').some(file=>{ const wrapper=JSON.parse(fs.readFileSync(path.join(folder,file),'utf8')); const saved=typeof wrapper.config==='string'?JSON.parse(wrapper.config):wrapper.config; return canonical(saved)===canonical(config); }); } catch { return false; } };
 const github = () => {
-  if (!process.env.GITHUB_TOKEN || !process.env.GITHUB_REPO) throw Error('GitHub publishing is not configured');
-  return {branch:process.env.GITHUB_BRANCH || 'main',headers:{authorization:`Bearer ${process.env.GITHUB_TOKEN}`,accept:'application/vnd.github+json','user-agent':'aetherv2-review','x-github-api-version':'2022-11-28'}};
+  if (!process.env.GITHUB_TOKEN || !process.env.GITHUB_REPO || !process.env.GITHUB_BRANCH) throw Error('GitHub publishing requires GITHUB_TOKEN, GITHUB_REPO, and GITHUB_BRANCH');
+  return {branch:process.env.GITHUB_BRANCH,headers:{authorization:`Bearer ${process.env.GITHUB_TOKEN}`,accept:'application/vnd.github+json','user-agent':'aetherv2-review','x-github-api-version':'2022-11-28'}};
 };
 const apiFor = file => `https://api.github.com/repos/${process.env.GITHUB_REPO}/contents/configs/${file}`;
 async function getGithubFile(file, required=true) {

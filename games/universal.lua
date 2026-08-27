@@ -3478,79 +3478,125 @@ run(function()
     end
 
     local function travelLegit(destination)
-	local support
-	if TravelGaps.Enabled and entitylib.isAlive then
-		local root = entitylib.character.RootPart
-		support = createGapBridge(root.Position, destination, currentGroundY(root), root)
+	-- Default PlayerModule controls call Humanoid:Move every frame and silently cancel
+	-- MoveTo on the local character. That made the old path look valid while the player
+	-- stood still. Temporarily yield control to the navigator and always restore it.
+	local controls
+	pcall(function()
+		controls = require(lplr.PlayerScripts:WaitForChild('PlayerModule')):GetControls()
+		controls:Disable()
+	end)
+	local controlsRestored = false
+	local function restoreControls()
+		if controlsRestored then return end
+		controlsRestored = true
+		if controls then pcall(controls.Enable, controls) end
+		if entitylib.isAlive then
+			pcall(function()
+				local character = entitylib.character
+				character.Humanoid:Move(Vector3.zero, false)
+				character.Humanoid:MoveTo(character.RootPart.Position)
+			end)
+		end
 	end
+	MouseTP:Clean(restoreControls)
 
-	local attempts = 0
-	while MouseTP.Enabled and entitylib.isAlive and attempts < 4 do
-		attempts += 1
-		local character = entitylib.character
-		local root, humanoid = character.RootPart, character.Humanoid
-		local path, waypoints = computePath(root.Position, destination)
-		if path and not TravelGaps.Enabled and pathCrossesVoid(waypoints) then
-			-- Pathfinding may prefer a jump across a small void over a slightly longer walk.
-			-- Recompute without jump links first so a real-floor detour wins when one exists.
-			local groundPath, groundWaypoints = computePath(root.Position, destination, false)
-			if groundPath and not pathCrossesVoid(groundWaypoints) then
-				path, waypoints = groundPath, groundWaypoints
-			else
-				path, waypoints = nil, nil
-			end
-		end
-		if not path then
-			if support then
-				notif('MouseTP', 'No valid route was found, even with gap travel.', 5, 'warning')
-			else
-				notif('MouseTP', 'No gapless route was found. Enable Travel over gaps to bridge voids.', 5, 'warning')
-			end
-			return false
+	local function navigate()
+		local support
+		if TravelGaps.Enabled and entitylib.isAlive then
+			local root = entitylib.character.RootPart
+			support = createGapBridge(root.Position, destination, currentGroundY(root), root)
 		end
 
-		local pathFolder = showPath(waypoints)
-		local blockedAt
-		local blocked = path.Blocked:Connect(function(index)
-			blockedAt = index
-		end)
-		local repath = false
+		local attempts = 0
+		while MouseTP.Enabled and entitylib.isAlive and attempts < 6 do
+			attempts += 1
+			local character = entitylib.character
+			local root, humanoid = character.RootPart, character.Humanoid
+			local path, waypoints = computePath(root.Position, destination)
+			if path and not TravelGaps.Enabled and pathCrossesVoid(waypoints) then
+				local groundPath, groundWaypoints = computePath(root.Position, destination, false)
+				if groundPath and not pathCrossesVoid(groundWaypoints) then
+					path, waypoints = groundPath, groundWaypoints
+				else
+					path, waypoints = nil, nil
+				end
+			end
 
-		for index, waypoint in ipairs(waypoints) do
-			if not MouseTP.Enabled or not entitylib.isAlive or entitylib.character ~= character then
-				blocked:Disconnect()
-				if pathFolder then pathFolder:Destroy() end
+			-- Dynamic maps (especially BedWars) are often missing from Roblox's navmesh.
+			-- A clear grounded line is still a valid route, and gap mode's temporary support
+			-- intentionally makes that same direct route walkable.
+			if not path then
+				local direct = {
+					{Position = root.Position, Action = Enum.PathWaypointAction.Walk},
+					{Position = destination, Action = Enum.PathWaypointAction.Walk}
+				}
+				if support or not pathCrossesVoid(direct) then waypoints = direct end
+			end
+			if not waypoints then
+				notif('MouseTP', TravelGaps.Enabled
+					and 'No walkable route was found to that point.'
+					or 'No gapless route was found. Enable Travel over gaps to cross voids.', 5, 'warning')
 				return false
 			end
-			if blockedAt and blockedAt <= index + 1 then
-				repath = true
-				break
+
+			local pathFolder = showPath(waypoints)
+			local blockedAt
+			local blocked = path and path.Blocked:Connect(function(index) blockedAt = index end) or nil
+			local repath = false
+
+			for index, waypoint in ipairs(waypoints) do
+				if not MouseTP.Enabled or not entitylib.isAlive or entitylib.character ~= character then
+					if blocked then blocked:Disconnect() end
+					if pathFolder then pathFolder:Destroy() end
+					return false
+				end
+				if blockedAt and blockedAt <= index + 1 then repath = true break end
+
+				if waypoint.Action == Enum.PathWaypointAction.Jump then
+					humanoid.Jump = true
+					humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+				end
+				humanoid:MoveTo(waypoint.Position)
+				local distance = (root.Position - waypoint.Position).Magnitude
+				local deadline = tick() + math.max(2.5, distance / math.max(humanoid.WalkSpeed, 1) + 2)
+				local lastProgress, stalledAt, reissueAt = distance, tick(), tick() + 0.5
+				repeat
+					runService.Heartbeat:Wait()
+					distance = root.Parent and (root.Position - waypoint.Position).Magnitude or math.huge
+					if distance < lastProgress - 0.2 then
+						lastProgress, stalledAt = distance, tick()
+					end
+					if tick() >= reissueAt then
+						humanoid:MoveTo(waypoint.Position)
+						reissueAt = tick() + 0.5
+					end
+					if tick() - stalledAt > 1.5 then
+						humanoid.Jump = true
+						humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+						repath = true
+						break
+					end
+				until distance <= 2.5 or tick() >= deadline or not MouseTP.Enabled or (blockedAt and blockedAt <= index + 1)
+				if distance > 2.5 then repath = true break end
 			end
 
-			if waypoint.Action == Enum.PathWaypointAction.Jump then
-				humanoid.Jump = true
-				humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-			end
-			humanoid:MoveTo(waypoint.Position)
-			local distance = (root.Position - waypoint.Position).Magnitude
-			local deadline = tick() + math.max(2, distance / math.max(humanoid.WalkSpeed, 1) + 1.5)
-			repeat
-				runService.Heartbeat:Wait()
-				distance = root.Parent and (root.Position - waypoint.Position).Magnitude or math.huge
-			until distance <= 2.5 or tick() >= deadline or not MouseTP.Enabled or (blockedAt and blockedAt <= index + 1)
-			if distance > 2.5 then
-				repath = true
-				break
-			end
+			if blocked then blocked:Disconnect() end
+			if pathFolder then pathFolder:Destroy() end
+			if not repath and (root.Position - destination).Magnitude <= 5 then return true end
 		end
 
-		blocked:Disconnect()
-		if pathFolder then pathFolder:Destroy() end
-		if not repath and (root.Position - destination).Magnitude <= 5 then return true end
+		if MouseTP.Enabled then notif('MouseTP', 'The route stayed blocked after several retries.', 5, 'warning') end
+		return false
 	end
 
-	if MouseTP.Enabled then notif('MouseTP', 'The route became blocked before it could be completed.', 5, 'warning') end
-	return false
+	local ok, result = xpcall(navigate, debug and debug.traceback or tostring)
+	restoreControls()
+	if not ok then
+		notif('MouseTP', 'Legit navigation failed: '..tostring(result):gsub('^.-:%d+:%s*', ''):sub(1, 180), 6, 'warning')
+		return false
+	end
+	return result
     end
 
     MouseTP = vape.Categories.Blatant:CreateModule({
