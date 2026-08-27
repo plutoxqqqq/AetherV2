@@ -3960,6 +3960,9 @@ run(function()
 
         local groundedCandidates = {}
         considerCandidate(groundedCandidates, nil, direct, root, profile, false)
+        if groundedCandidates[1] then
+            return groundedCandidates[1]
+        end
 
         local jumpingPath, jumpingWaypoints = computePath(startPosition, destination, root, profile, true)
         considerCandidate(groundedCandidates, jumpingPath, jumpingWaypoints, root, profile, false)
