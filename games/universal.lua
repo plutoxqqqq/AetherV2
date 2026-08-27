@@ -3351,7 +3351,7 @@ run(function()
     local MAX_STEER_DISTANCE = 4.5
     local ROUTE_CHECK_INTERVAL = 0.12
     local TARGET_UPDATE_INTERVAL = 0.12
-    local WAYPOINT_GROUND_TOLERANCE = 1.35
+    local WAYPOINT_GROUND_TOLERANCE = 1.6
 
     local function isFiniteVector(value)
         return value
@@ -3480,7 +3480,7 @@ run(function()
 
         return {
             clearance = clearance,
-            supportTolerance = math.clamp(clearance * 0.7, 2, 2.75),
+            supportTolerance = math.clamp(clearance * 0.82, 2.75, 3.35),
             apex = apex,
             maxRise = apex + 0.75,
             maxFall = math.clamp(apex + 4, 8, 14),
@@ -3657,7 +3657,9 @@ run(function()
 
         local flat = (to - from) * Vector3.new(1, 0, 1)
         local distance = flat.Magnitude
-        local jumpSegment = isJumpAction(fromAction) or isJumpAction(toAction)
+        local pathMarkedJump = isJumpAction(fromAction) or isJumpAction(toAction)
+        local jumpSegment = pathMarkedJump
+        local jumpAt
 
         if to.Y - from.Y > profile.maxRise + 1.25 then
             return {valid = false, reason = 'vertical rise is too high'}
@@ -3674,22 +3676,21 @@ run(function()
             local hit = workspace:Blockcast(castFrame, profile.castSize, flat, rayCheck)
 
             if hit and castDistance(hit, from) < math.max(distance - 1.05, 0) then
-                if not jumpSegment then
-                    return {valid = false, reason = 'solid wall blocks the segment'}
-                end
-
+                local obstacleDistance = castDistance(hit, from)
                 local rise = topAtWall(hit, from, root, profile)
+
+                -- Pathfinding does not consistently mark short ledges and block stairs as Jump.
+                -- Promote a blocked walk segment to a jump only when the obstacle is actually
+                -- within the character's measured jump height. Taller walls still fail here.
                 if not rise or rise > profile.maxRise + 0.1 then
-                    return {valid = false, reason = 'wall is too high to jump'}
+                    return {
+                        valid = false,
+                        reason = jumpSegment and 'wall is too high to jump' or 'solid wall blocks the segment'
+                    }
                 end
 
-                local lifted = CFrame.new(from + Vector3.new(0, math.min(profile.maxRise * 0.85, rise + 2), 0))
-                    * root.CFrame.Rotation
-                local elevatedHit = workspace:Blockcast(lifted, profile.castSize, flat, rayCheck)
-
-                if elevatedHit and castDistance(elevatedHit, from) < math.max(distance - 1.05, 0) then
-                    return {valid = false, reason = 'jump arc is blocked'}
-                end
+                jumpSegment = true
+                jumpAt = obstacleDistance
             end
         end
 
@@ -3755,7 +3756,9 @@ run(function()
         local hasGap = maximumGap > 0.75
         if distance > 0.1 and (jumpSegment or (hasGap and not allowArtificialGaps)) then
             local arcSteps = math.max(2, math.ceil(distance / 1.5))
-            for step = 0, arcSteps do
+            -- Endpoints are validated separately. Excluding them prevents the takeoff/landing
+            -- floor itself from being mistaken for an obstruction while preserving mid-air checks.
+            for step = 1, arcSteps - 1 do
                 local alpha = step / arcSteps
                 local arcHeight = profile.apex * 4 * alpha * (1 - alpha)
                 local arcPosition = from:Lerp(to, alpha) + Vector3.new(0, arcHeight, 0)
@@ -3777,19 +3780,31 @@ run(function()
             gapEnd = maximumGapEnd,
             startFloorY = startFloorY,
             endFloorY = endFloorY,
-            needsBridge = hasGap and allowArtificialGaps
+            needsBridge = hasGap and allowArtificialGaps,
+            requiresJump = jumpSegment,
+            implicitJump = jumpSegment and not pathMarkedJump,
+            jumpAt = jumpAt
         }
     end
 
-    local function floorForWaypoint(position, root, profile)
+    local function floorForWaypoint(position, root, profile, lowerTolerance)
+        lowerTolerance = lowerTolerance or WAYPOINT_GROUND_TOLERANCE
         local expectedFloorY = position.Y - profile.clearance
         local floor = floorBelow(position, position.Y, root, profile)
-        if not floor or math.abs(floor.Position.Y - expectedFloorY) > WAYPOINT_GROUND_TOLERANCE then
+        local delta = floor and (expectedFloorY - floor.Position.Y)
+
+        if not floor
+            or delta < -WAYPOINT_GROUND_TOLERANCE
+            or delta > lowerTolerance then
             floor = floorAt(position, position.Y, root, profile)
+            delta = floor and (expectedFloorY - floor.Position.Y)
         end
 
+        -- Be tolerant of a nearby lower step, but never accept a floor substantially above
+        -- the waypoint (which would place the character inside solid geometry).
         return floor
-            and math.abs(floor.Position.Y - expectedFloorY) <= WAYPOINT_GROUND_TOLERANCE
+            and delta >= -WAYPOINT_GROUND_TOLERANCE
+            and delta <= lowerTolerance
             and floor
             or nil
     end
@@ -3868,9 +3883,26 @@ run(function()
             return nil
         end
 
-        for _, waypoint in ipairs(waypoints) do
-            if not hasStandingSpace(waypoint.Position, root, profile)
-                or not floorForWaypoint(waypoint.Position, root, profile) then
+        for index, waypoint in ipairs(waypoints) do
+            if not hasStandingSpace(waypoint.Position, root, profile) then
+                return nil
+            end
+
+            local jumpPoint = isJumpAction(waypoint.Action)
+                or (index > 1 and isJumpAction(waypoints[index - 1].Action))
+                or (index < #waypoints and isJumpAction(waypoints[index + 1].Action))
+
+            local tolerance = WAYPOINT_GROUND_TOLERANCE
+            if index > 1 and index < #waypoints then
+                tolerance = math.max(
+                    tolerance,
+                    profile.supportTolerance + (jumpPoint and 0.75 or 0.35)
+                )
+            end
+
+            -- Jump waypoints can legitimately sit on the edge of a ledge/navmesh transition.
+            -- Segment validation below still verifies the actual wall height, gap width and arc.
+            if not floorForWaypoint(waypoint.Position, root, profile, tolerance) and not jumpPoint then
                 return nil
             end
         end
@@ -4491,6 +4523,12 @@ run(function()
             and segment.gapStart
             and travelled >= segment.gapStart - 1.75
             and travelled <= segment.gapStart + 1.25 then
+            issueJump(state, humanoid, root)
+        elseif segment and segment.requiresJump
+            and segment.jumpAt
+            and travelled >= math.max(segment.jumpAt - 2.75, 0)
+            and travelled <= segment.jumpAt + 1.25
+            and humanoid.FloorMaterial ~= Enum.Material.Air then
             issueJump(state, humanoid, root)
         elseif waypoint.Action == Enum.PathWaypointAction.Jump
             and distance <= 4.2
