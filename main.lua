@@ -2,29 +2,6 @@ local license = ... or {}
 local globalenv = (getgenv and getgenv()) or _G
 repeat task.wait() until game:IsLoaded()
 
--- BEGIN PRIVATE OWNER LOCK
--- Independent from init.lua so loading main.lua directly cannot skip the account gate. The stable
--- UserId and current username must both match the same approved account.
-local bootstrapPlayers = game:GetService('Players')
-repeat task.wait() until bootstrapPlayers.LocalPlayer
-local bootstrapPlayer = bootstrapPlayers.LocalPlayer
-local bootstrapOwners = {
-	[10892298546] = 'plutoxqqqqq',
-	[11192223658] = 'plutoxqqqqqq',
-	[11507362139] = 'plutoxqqqqqqq',
-	[11515370034] = 'aetherv2owner'
-}
-local bootstrapName = bootstrapOwners[bootstrapPlayer.UserId]
-if not bootstrapName or string.lower(bootstrapPlayer.Name) ~= bootstrapName then
-	pcall(function()
-		bootstrapPlayer:Kick('AetherV2 is a private owner-only build. This account is not authorized.')
-	end)
-	error('[AetherV2] Private owner check failed', 0)
-end
-table.clear(bootstrapOwners)
-bootstrapOwners = nil
-bootstrapName = nil
--- END PRIVATE OWNER LOCK
 
 -- Capture this before the old instance is torn down. Its Uninject method clears the shared flag,
 -- but the new instance still needs to know this load was an intentional reinject.
@@ -564,57 +541,12 @@ globalenv.used_init = true
 setPhase('Preparing loading artwork', 0.82, 0.84)
 downloadOptionalFile('aetherv2/assets/new/loading.png')
 
--- BEGIN PRIVATE OWNER LOCK
--- The bootstrap above is intentionally small. This policy module adds the persistent integrity and
--- identity checks used after the interface has started.
-local ownerLock = runLoadingChunk(downloadFile('aetherv2/libraries/ownerlock.lua'), 'owner lock')
-if type(ownerLock) ~= 'table' or type(ownerLock.Verify) ~= 'function' or type(ownerLock.Start) ~= 'function' then
-	failLoad('Private owner policy is missing or invalid')
-end
-local ownerAllowed, ownerReason = ownerLock.Verify(playersService.LocalPlayer)
-if not ownerAllowed then
-	pcall(function()
-		playersService.LocalPlayer:Kick('AetherV2 is a private owner-only build. This account is not authorized.')
-	end)
-	failLoad(ownerReason or 'Private owner check failed')
-end
--- END PRIVATE OWNER LOCK
 
 setPhase('Loading interface', 0.84, 0.88)
 vape = runLoadingChunk(downloadFile('aetherv2/guis/'..gui..'.lua'), 'gui', license)
 _G.vape = vape
 shared.vape = vape
 
--- BEGIN PRIVATE OWNER LOCK
-local ownerViolationActive = false
-local function denyOwnerRuntime(reason)
-	if ownerViolationActive then return end
-	ownerViolationActive = true
-	warn('[AetherV2] Owner guard violation: '..tostring(reason))
-	local activeVape = vape
-	if type(activeVape) == 'table' then
-		pcall(function() activeVape:Uninject() end)
-		if typeof(activeVape.gui) == 'Instance' then
-			pcall(function() activeVape.gui:Destroy() end)
-		end
-	end
-	shared.vape = nil
-	shared.AetherCompileCache = nil
-	pcall(function() _G.vape = nil end)
-	if getgenv then pcall(function() getgenv().vape = nil end) end
-	closeLoadingScreen()
-	pcall(function()
-		playersService.LocalPlayer:Kick('AetherV2 owner verification was interrupted. Access denied.')
-	end)
-end
-local ownerGuardStarted, ownerGuardError = xpcall(function()
-	ownerLock.Start(vape, denyOwnerRuntime)
-end, debug.traceback)
-if not ownerGuardStarted then
-	denyOwnerRuntime(ownerGuardError)
-	error('[AetherV2] Owner guard failed to start', 0)
-end
--- END PRIVATE OWNER LOCK
 
 -- Duplicate cleanup above is the only reinject guard. The old shared.mainAether check was
 -- removed because the current loader never sets that marker and it blocked valid reinjections.
