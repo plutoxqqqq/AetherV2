@@ -3480,7 +3480,7 @@ run(function()
 
         return {
             clearance = clearance,
-            supportTolerance = math.clamp(clearance * 0.85, 3.25, 4.5),
+            supportTolerance = math.clamp(clearance * 0.7, 2, 2.75),
             apex = apex,
             maxRise = apex + 0.75,
             maxFall = math.clamp(apex + 4, 8, 14),
