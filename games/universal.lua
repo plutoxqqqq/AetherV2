@@ -3351,6 +3351,7 @@ run(function()
     local MAX_STEER_DISTANCE = 4.5
     local ROUTE_CHECK_INTERVAL = 0.12
     local TARGET_UPDATE_INTERVAL = 0.12
+    local WAYPOINT_GROUND_TOLERANCE = 1.35
 
     local function isFiniteVector(value)
         return value
@@ -3421,6 +3422,44 @@ run(function()
         end
     end
 
+    local function castDown(position, originY, depth, root, extra)
+        local skipped = {}
+        local currentOriginY = originY
+        local remaining = depth
+
+        for _ = 1, 8 do
+            local filters = {}
+            if type(extra) == 'table' then
+                for _, object in extra do
+                    if object then table.insert(filters, object) end
+                end
+            elseif extra then
+                table.insert(filters, extra)
+            end
+            for _, object in skipped do
+                table.insert(filters, object)
+            end
+
+            setRayFilter(root, filters)
+            local result = workspace:Raycast(
+                Vector3.new(position.X, currentOriginY, position.Z),
+                Vector3.new(0, -remaining, 0),
+                rayCheck
+            )
+            if not result then return nil end
+            if result.Normal.Y > 0.15 then return result end
+            if not result.Instance then return nil end
+
+            local nextOriginY = result.Position.Y - 0.05
+            remaining -= math.max(currentOriginY - nextOriginY, 0.05)
+            if remaining <= 0 then return nil end
+            currentOriginY = nextOriginY
+            table.insert(skipped, result.Instance)
+        end
+
+        return nil
+    end
+
     local function getProfile(root, humanoid)
         local gravity = math.max(workspace.Gravity, 1)
         local apex = 7
@@ -3463,33 +3502,17 @@ run(function()
     local function floorAt(position, referenceY, root, profile, extra)
         if not isFiniteVector(position) then return nil end
 
-        setRayFilter(root, extra)
-
         local originY = math.max(position.Y, referenceY or position.Y) + profile.maxRise + 5
         local depth = profile.maxFall + profile.maxRise + profile.clearance + 10
-        local result = workspace:Raycast(
-            Vector3.new(position.X, originY, position.Z),
-            Vector3.new(0, -depth, 0),
-            rayCheck
-        )
-
-        return result and result.Normal.Y > 0.15 and result or nil
+        return castDown(position, originY, depth, root, extra)
     end
 
     local function floorBelow(position, referenceY, root, profile, extra)
         if not isFiniteVector(position) then return nil end
 
-        setRayFilter(root, extra)
-
         local originY = (referenceY or position.Y) + 2
         local depth = math.max(profile.maxFall + profile.clearance + 6, 24)
-        local result = workspace:Raycast(
-            Vector3.new(position.X, originY, position.Z),
-            Vector3.new(0, -depth, 0),
-            rayCheck
-        )
-
-        return result and result.Normal.Y > 0.15 and result or nil
+        return castDown(position, originY, depth, root, extra)
     end
 
     local function hasStandingSpace(position, root, profile, extra)
@@ -3675,6 +3698,15 @@ run(function()
         local startFloorY = startFloor and startFloor.Position.Y or (from.Y - profile.clearance)
         local endFloorY = endFloor and endFloor.Position.Y or (to.Y - profile.clearance)
 
+        if startFloor and endFloor then
+            if endFloorY - startFloorY > profile.maxRise + 0.75 then
+                return {valid = false, reason = 'floor rise is too high'}
+            end
+            if startFloorY - endFloorY > profile.maxFall + 0.75 then
+                return {valid = false, reason = 'drop is too deep'}
+            end
+        end
+
         local steps = math.max(1, math.ceil(distance / 1.5))
         local gapStart
         local maximumGap = 0
@@ -3721,6 +3753,18 @@ run(function()
         end
 
         local hasGap = maximumGap > 0.75
+        if distance > 0.1 and (jumpSegment or (hasGap and not allowArtificialGaps)) then
+            local arcSteps = math.max(2, math.ceil(distance / 1.5))
+            for step = 0, arcSteps do
+                local alpha = step / arcSteps
+                local arcHeight = profile.apex * 4 * alpha * (1 - alpha)
+                local arcPosition = from:Lerp(to, alpha) + Vector3.new(0, arcHeight, 0)
+                if not hasStandingSpace(arcPosition, root, profile) then
+                    return {valid = false, reason = 'jump clearance is blocked'}
+                end
+            end
+        end
+
         if hasGap and maximumGap > profile.maxJumpDistance + 0.5 and not allowArtificialGaps then
             return {valid = false, reason = 'gap is too wide'}
         end
@@ -3735,6 +3779,19 @@ run(function()
             endFloorY = endFloorY,
             needsBridge = hasGap and allowArtificialGaps
         }
+    end
+
+    local function floorForWaypoint(position, root, profile)
+        local expectedFloorY = position.Y - profile.clearance
+        local floor = floorBelow(position, position.Y, root, profile)
+        if not floor or math.abs(floor.Position.Y - expectedFloorY) > WAYPOINT_GROUND_TOLERANCE then
+            floor = floorAt(position, position.Y, root, profile)
+        end
+
+        return floor
+            and math.abs(floor.Position.Y - expectedFloorY) <= WAYPOINT_GROUND_TOLERANCE
+            and floor
+            or nil
     end
 
     local function copyWaypoints(waypoints)
@@ -3805,25 +3862,16 @@ run(function()
     local function validateRoute(waypoints, root, profile, allowArtificialGaps)
         if not waypoints or #waypoints < 2 then return nil end
 
-        local goalFloor = floorAt(waypoints[#waypoints].Position, waypoints[#waypoints].Position.Y, root, profile)
+        local goalFloor = floorForWaypoint(waypoints[#waypoints].Position, root, profile)
         if not goalFloor
-            or goalFloor.Position.Y < waypoints[#waypoints].Position.Y - profile.maxFall
             or not hasStandingSpace(waypoints[#waypoints].Position, root, profile) then
             return nil
         end
 
-        for index, waypoint in ipairs(waypoints) do
-            if not hasStandingSpace(waypoint.Position, root, profile) then
+        for _, waypoint in ipairs(waypoints) do
+            if not hasStandingSpace(waypoint.Position, root, profile)
+                or not floorForWaypoint(waypoint.Position, root, profile) then
                 return nil
-            end
-
-            if index > 1 and index < #waypoints then
-                local floor = floorAt(waypoint.Position, waypoint.Position.Y, root, profile)
-                local jumpPoint = isJumpAction(waypoint.Action)
-                    or isJumpAction(waypoints[index - 1].Action)
-                if not floor and not jumpPoint then
-                    return nil
-                end
             end
         end
 
@@ -3866,7 +3914,7 @@ run(function()
                 AgentRadius = math.clamp(math.max(root.Size.X, root.Size.Z) * 0.5 + 0.2, 1.5, 3),
                 AgentHeight = math.max(root.Size.Y + 2.5, 5),
                 AgentCanJump = canJump,
-                AgentCanClimb = true,
+                AgentCanClimb = false,
                 WaypointSpacing = 3
             })
         end)
@@ -3993,7 +4041,7 @@ run(function()
                 local alpha = step / steps
                 local sample = from:Lerp(to, alpha)
                 local floor = floorBelow(sample, sample.Y, root, profile, folder)
-                if floor and floor.Position.Y < sample.Y - profile.clearance - profile.supportTolerance then
+                if floor and math.abs(floor.Position.Y - (sample.Y - profile.clearance)) > WAYPOINT_GROUND_TOLERANCE then
                     floor = nil
                 end
                 local floorY = floor and floor.Position.Y or (sample.Y - profile.clearance)
@@ -4217,7 +4265,7 @@ run(function()
 
         if state.repaths > 5 then
             state.replanning = false
-            disableSoon('The route stayed blocked after several retries.')
+            disableSoon('The route stayed blocked after several retries.', 5, true)
             return
         end
 
@@ -4267,7 +4315,28 @@ run(function()
         if not state.retargetRequested then return true end
         state.retargetRequested = false
 
-        local destination, targetEntity = selectedPosition()
+        local destination, targetEntity
+        local tracked = state.trackPlayer
+            and not state.forceTargetSelection
+            and Target.Value == 'Player'
+
+        if tracked then
+            targetEntity = state.targetEntity
+            if not targetEntity or not targetEntity.RootPart or not targetEntity.RootPart.Parent then
+                disableSoon('The selected player is no longer available.', 5, true)
+                return false
+            end
+            destination = snapToGround(
+                targetEntity.RootPart.Position,
+                entitylib.character.RootPart,
+                nil,
+                targetEntity.RootPart.Position.Y
+            )
+        else
+            destination, targetEntity = selectedPosition()
+        end
+
+        state.forceTargetSelection = false
         if not destination then
             disableSoon('The selected target is no longer reachable.', 5, true)
             return false
@@ -4291,7 +4360,13 @@ run(function()
 
     local function waypointReached(state, waypoint, finalWaypoint, root, humanoid, flatDistance)
         if flatDistance > ARRIVAL_RADIUS then return false end
-        if waypoint.Action == Enum.PathWaypointAction.Jump then return true end
+        if waypoint.Action == Enum.PathWaypointAction.Jump then
+            return not finalWaypoint
+                or (
+                    math.abs(root.Position.Y - waypoint.Position.Y) <= 1.8
+                    and humanoid.FloorMaterial ~= Enum.Material.Air
+                )
+        end
 
         local verticalDistance = math.abs(root.Position.Y - waypoint.Position.Y)
         if not finalWaypoint and verticalDistance <= 1.8 then
@@ -4482,7 +4557,8 @@ run(function()
             nextJump = 0,
             lastJumpTime = 0,
             nextRouteCheck = 0,
-            nextTargetUpdate = 0
+            nextTargetUpdate = 0,
+            forceTargetSelection = false
         }
 
         navigation = state
@@ -4567,6 +4643,7 @@ run(function()
         Default = 'Mouse',
         Function = function()
             if navigation and MouseTP and MouseTP.Enabled and Mode.Value == 'Legit' then
+                navigation.forceTargetSelection = true
                 navigation.retargetRequested = true
             end
         end
