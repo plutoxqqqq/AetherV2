@@ -7,6 +7,13 @@
       "firstUsedAt": "2026-08-26T22:13:15.291Z",
       "uses": 5,
       "lastUsedAt": "2026-08-27T08:40:17.790Z"
+    },
+    "953628cea6afafd1d8d3a770abad0a845a8ea1c1ada642302e3b65daf8875cb0": {
+      "username": "masbganteng1",
+      "userId": "11562946715",
+      "firstUsedAt": "2026-08-27T10:31:54.743Z",
+      "lastUsedAt": "2026-08-27T10:31:54.743Z",
+      "uses": 1
     }
   },
   "keys": {
@@ -235,6 +242,16 @@
       "actor": "plutoxqq (1364123154196336661)",
       "operationId": "a66a4bf5-bde3-4c7c-8ff2-056c395827dc",
       "label": "Unlabelled"
+    },
+    {
+      "at": "2026-08-27T10:31:54.743Z",
+      "action": "bind",
+      "keyId": "953628cea6afafd1d8d3a770abad0a845a8ea1c1ada642302e3b65daf8875cb0",
+      "actor": "loader",
+      "operationId": "e14d77a4-940a-45fe-8717-21243968bfd1",
+      "username": "masbganteng1",
+      "userId": "11562946715",
+      "uses": 1
     }
   ]
 }
