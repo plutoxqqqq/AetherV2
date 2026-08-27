@@ -18,8 +18,24 @@ local function validSource(body)
 	return type(body) == 'string' and #body > 32 and body ~= '404: Not Found'
 end
 
+local function encodeSourceValue(value)
+	return tostring(value):gsub('([^%w%-%._~])', function(character)
+		return string.format('%%%02X', string.byte(character))
+	end)
+end
+
 local function fetch(ref, path)
-	local url = 'https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..ref..'/'..path
+	local endpoint = type(license) == 'table' and license.SourceEndpoint
+	local url
+	if type(endpoint) == 'string' and endpoint ~= '' then
+		local token = type(license.SourceToken) == 'string' and license.SourceToken or nil
+		if not token or token == '' then error('Private source session is missing its session token', 0) end
+		endpoint = endpoint:gsub('/+$', '')
+		url = endpoint..'/source?path='..encodeSourceValue(path)..
+			'&ref='..encodeSourceValue(ref)..'&session='..encodeSourceValue(token)
+	else
+		url = 'https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..ref..'/'..path
+	end
 	local ok, body = pcall(game.HttpGet, game, url, true)
 	return ok and validSource(body) and body or nil, body
 end
@@ -39,8 +55,10 @@ local function getCore()
 		if body then return body end
 	end
 
-	body, lastError = fetch(FALLBACK_COMMIT, 'guis/new.lua')
-	if body then return body end
+	if not license.SourceEndpoint then
+		body, lastError = fetch(FALLBACK_COMMIT, 'guis/new.lua')
+		if body then return body end
+	end
 	error('AetherV2 GUI: failed to load new.core.lua: '..tostring(lastError), 0)
 end
 
