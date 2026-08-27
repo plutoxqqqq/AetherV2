@@ -26,6 +26,16 @@ bootstrapOwners = nil
 bootstrapName = nil
 -- END PRIVATE OWNER LOCK
 
+-- Capture this before the old instance is torn down. Its Uninject method clears the shared flag,
+-- but the new instance still needs to know this load was an intentional reinject.
+local reinjectRequested = shared.vapereload == true
+
+-- mainAether was a legacy duplicate-loader marker. The current loader owns duplicate cleanup through
+-- shared.vape, and leaving the old marker behind made a reinject enter the obsolete "outdated" path.
+pcall(function()
+	shared.mainAether = nil
+end)
+
 -- If an AetherV2 instance is already injected, fully destroy it before loading
 -- this one. Running the loadstring again is a valid "reinject" - it must tear
 -- the old GUI down first, or two instances fight over input/GUI and the new one
@@ -48,10 +58,25 @@ if shared.vape then
 	end
 end
 
+if reinjectRequested then
+	shared.vapereload = true
+end
+
 local vape
 local compile = loadstring
 local compileCache = type(shared.AetherCompileCache) == 'table' and shared.AetherCompileCache or {}
 local watermark = '--This watermark is used to delete the file if its cached, remove it to make the file persist after vape updates.\n'
+local function isGameModulePath(path)
+	return type(path) == 'string' and path:match('games/%d+%.lua$') ~= nil
+end
+local function cachedSourceUsable(path, body)
+	if type(body) ~= 'string' then return false end
+	if not isGameModulePath(path) then return true end
+	if body:sub(1, #watermark) == watermark then
+		body = body:sub(#watermark + 1)
+	end
+	return body:match('%S') ~= nil
+end
 local function compileKey(source)
 	return source:sub(1, #watermark) == watermark and source:sub(#watermark + 1) or source
 end
@@ -221,6 +246,9 @@ local function payloadProblem(path, body)
 	if path:sub(-4) == '.lua' and not loadstring(body, path) then
 		return 'the downloaded file did not compile'
 	end
+	if isGameModulePath(path) and not cachedSourceUsable(path, body) then
+		return 'empty game module response'
+	end
 	return nil
 end
 
@@ -253,10 +281,13 @@ local function downloadFile(path, func)
 	-- Heal a broken cache before trusting it. Without this, one interrupted write means the script
 	-- never loads again on that machine, however many times it is re-injected.
 	local exists = isfile(path)
-	if exists and path:sub(-4) == '.lua' and not loadstring(readfile(path), path) then
-		warn('[AetherV2] Cached '..path..' is unusable, downloading it again')
-		delfile(path)
-		exists = false
+	if exists and path:sub(-4) == '.lua' then
+		local cached = readfile(path)
+		if not loadstring(cached, path) or not cachedSourceUsable(path, cached) then
+			warn('[AetherV2] Cached '..path..' is unusable, downloading it again')
+			delfile(path)
+			exists = false
+		end
 	end
 	if not exists then
 		setPhaseProgress('Downloading '..path, 0.15)
@@ -585,12 +616,8 @@ if not ownerGuardStarted then
 end
 -- END PRIVATE OWNER LOCK
 
-if shared.mainAether then
-	closeLoadingScreen()
-	redirect()
-	playersService.LocalPlayer:Kick('Your script is outdated, Get new one at discord.gg/aetherv2')
-	return
-end
+-- Duplicate cleanup above is the only reinject guard. The old shared.mainAether check was
+-- removed because the current loader never sets that marker and it blocked valid reinjections.
 
 if not shared.VapeIndependent then
 	setPhase('Loading universal modules', 0.88, 0.93)
@@ -600,11 +627,13 @@ if not shared.VapeIndependent then
 
 	setPhase('Loading game modules', 0.93, 0.97)
 	local modulePlace = tostring(game.PlaceId)
+	local forceRequested = false
 	if isfile('aetherv2/profiles/forcegame.txt')
 		and readfile('aetherv2/profiles/forcegame.txt') == 'true'
 		and isfile('aetherv2/profiles/forcegameid.txt') then
 		local forced = readfile('aetherv2/profiles/forcegameid.txt'):match('^%s*(%d+)%s*$')
 		modulePlace = forced or modulePlace
+		forceRequested = forced ~= nil
 	end
 	-- Force-loading is a one-shot debugging action. Consume it before running the chunk so even a
 	-- broken or stalled game module cannot leave the user permanently pinned to the wrong game.
@@ -628,6 +657,8 @@ if not shared.VapeIndependent then
 		-- Optional and watched: a game module that stalls (waiting on something the game has not
 		-- replicated yet) must never cost you the menu.
 		runWatchedChunk(placeSource, modulePlace, 'Loading module for this game', 15, true, license)
+	elseif forceRequested then
+		table.insert(loadingWarnings, 'Forced game module '..modulePlace..' could not be downloaded')
 	end
 	finishLoading()
 else
