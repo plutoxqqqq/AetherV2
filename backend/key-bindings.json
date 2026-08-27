@@ -21,6 +21,13 @@
       "firstUsedAt": "2026-08-27T11:03:37.209Z",
       "lastUsedAt": "2026-08-27T11:03:37.209Z",
       "uses": 1
+    },
+    "f140d9f07c87ca2d8598029ccd056e299da9933880cd72f8364f353c39857fbe": {
+      "username": "Aimingagainstyou",
+      "userId": "11575425712",
+      "firstUsedAt": "2026-08-27T13:01:44.985Z",
+      "lastUsedAt": "2026-08-27T13:01:44.985Z",
+      "uses": 1
     }
   },
   "keys": {
@@ -278,6 +285,16 @@
       "operationId": "4c624b6b-fba6-43af-a065-7d4578f1a76d",
       "username": "soohyuk_99",
       "userId": "10415227243",
+      "uses": 1
+    },
+    {
+      "at": "2026-08-27T13:01:44.985Z",
+      "action": "bind",
+      "keyId": "f140d9f07c87ca2d8598029ccd056e299da9933880cd72f8364f353c39857fbe",
+      "actor": "loader",
+      "operationId": "0dc4529c-1c71-4a9a-a212-ae36b80dbf63",
+      "username": "Aimingagainstyou",
+      "userId": "11575425712",
       "uses": 1
     }
   ]
