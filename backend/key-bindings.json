@@ -1,11 +1,12 @@
 {
-  "version": 2,
+  "version": 3,
   "bindings": {
     "eb1ebdad59c70f81f7fe71f66656a3b1ae6cc41d2bd584c83aa1b5dadaa2e508": {
       "username": "AetherV2Owner",
       "userId": "11515370034",
       "firstUsedAt": "2026-08-26T22:13:15.291Z",
-      "uses": 1
+      "uses": 2,
+      "lastUsedAt": "2026-08-27T07:38:11.992Z"
     }
   },
   "keys": {
@@ -50,6 +51,16 @@
       "actor": "loader",
       "username": "AetherV2Owner",
       "userId": "11515370034"
+    },
+    {
+      "at": "2026-08-27T07:38:11.993Z",
+      "action": "use",
+      "keyId": "eb1ebdad59c70f81f7fe71f66656a3b1ae6cc41d2bd584c83aa1b5dadaa2e508",
+      "actor": "loader",
+      "operationId": "74102f92-8af5-416b-ad2f-1a4256b01a96",
+      "username": "AetherV2Owner",
+      "userId": "11515370034",
+      "uses": 2
     }
   ]
 }
