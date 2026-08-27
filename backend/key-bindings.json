@@ -26,8 +26,8 @@
       "username": "Aimingagainstyou",
       "userId": "11575425712",
       "firstUsedAt": "2026-08-27T13:01:44.985Z",
-      "lastUsedAt": "2026-08-27T13:16:47.359Z",
-      "uses": 4
+      "lastUsedAt": "2026-08-27T13:29:37.114Z",
+      "uses": 5
     }
   },
   "keys": {
@@ -326,6 +326,16 @@
       "username": "Aimingagainstyou",
       "userId": "11575425712",
       "uses": 4
+    },
+    {
+      "at": "2026-08-27T13:29:37.114Z",
+      "action": "use",
+      "keyId": "f140d9f07c87ca2d8598029ccd056e299da9933880cd72f8364f353c39857fbe",
+      "actor": "loader",
+      "operationId": "2140b750-c39b-4a7d-9046-e29afae3a832",
+      "username": "Aimingagainstyou",
+      "userId": "11575425712",
+      "uses": 5
     }
   ]
 }
