@@ -173,11 +173,27 @@ const sessionLoader = (origin, session) => [
 ].join('\n');
 
 const encodePath = file => file.split('/').map(encodeURIComponent).join('/');
+// GitHub's Contents API stops returning usable base64 content for files larger than 1 MiB.
+// BedWars' match module is currently just over that limit, so fall back to the Git blob endpoint,
+// which supports the full file size. The contents response includes the blob SHA we need.
+const decodeBase64 = value => Buffer.from(value.replace(/\s/g, ''), 'base64').toString('utf8');
 const sourceFile = async (file, ref) => {
   const response = await github('contents/' + encodePath(file) + '?ref=' + encodeURIComponent(ref));
   const value = await response.json();
-  if (!value || value.type !== 'file' || typeof value.content !== 'string') throw problem('GitHub returned an invalid source file', 502);
-  return Buffer.from(value.content.replace(/\n/g, ''), 'base64').toString('utf8');
+  if (!value || value.type !== 'file') throw problem('GitHub returned an invalid source file', 502);
+
+  const hasContents = value.encoding === 'base64' && typeof value.content === 'string' &&
+    !(value.size > 0 && value.content.trim() === '');
+  if (hasContents) return decodeBase64(value.content);
+
+  if (typeof value.sha !== 'string' || !/^[a-f0-9]{40}$/i.test(value.sha)) {
+    throw problem('GitHub returned an unusable large source file', 502);
+  }
+  const blob = await (await github('git/blobs/' + encodeURIComponent(value.sha))).json();
+  if (!blob || blob.encoding !== 'base64' || typeof blob.content !== 'string') {
+    throw problem('GitHub returned an unusable source blob', 502);
+  }
+  return decodeBase64(blob.content);
 };
 
 const commitSha = async ref => {

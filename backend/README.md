@@ -84,7 +84,7 @@ For a combined deployment, use `node private-source.js`, an HTTPS origin matchin
 
 ## Discord key commands
 
-All responses are ephemeral and owner-only:
+All key-management responses are ephemeral and restricted to configured Discord managers:
 
 - `/key panel` — dashboard with totals, key list, audit log, and refresh.
 - `/key generate` — creates a key and shows the raw key/loader once in copy-button code blocks.

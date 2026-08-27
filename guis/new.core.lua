@@ -619,11 +619,39 @@ local function createMobileButton(buttonapi, position)
 	buttonapi.Bind = {Button = button}
 end
 
+local function encodeRemoteSource(value)
+	return tostring(value):gsub('([^%w%-%._~])', function(character)
+		return string.format('%%%02X', string.byte(character))
+	end)
+end
+
+-- Private-source sessions cannot use public raw GitHub URLs. Keep all GUI-side lazy loads and
+-- reinjections on the same authenticated source route as the initial loader.
+local function remoteSourceUrl(path)
+	local endpoint = type(license) == 'table' and license.SourceEndpoint
+	if type(endpoint) == 'string' and endpoint ~= '' then
+		endpoint = endpoint:gsub('/+$', '')
+		local token = type(license.SourceToken) == 'string' and license.SourceToken or nil
+		if not token or token == '' then
+			error('Private source session is missing its session token', 0)
+		end
+		local ref = isfile('aetherv2/profiles/commit.txt') and readfile('aetherv2/profiles/commit.txt'):gsub('%s+', '') or ''
+		ref = ref ~= '' and ref or (type(license.SourceRef) == 'string' and license.SourceRef or '')
+		if ref == '' then error('Private source ref is missing', 0) end
+		return endpoint..'/source?path='..encodeRemoteSource(path:gsub('^aetherv2/', ''))..
+			'&ref='..encodeRemoteSource(ref)..'&session='..encodeRemoteSource(token)
+	end
+
+	local commit = isfile('aetherv2/profiles/commit.txt') and readfile('aetherv2/profiles/commit.txt'):gsub('%s+', '') or 'main'
+	return 'https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..commit..'/'..
+		select(1, path:gsub('aetherv2/', ''))
+end
+
 local function downloadFile(path, func)
 	if not isfile(path) then
 		createDownloader(path)
 		local suc, res = pcall(function()
-			return game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..readfile('aetherv2/profiles/commit.txt')..'/'..select(1, path:gsub('aetherv2/', '')), true)
+			return game:HttpGet(remoteSourceUrl(path), true)
 		end)
 		if not suc or res == '404: Not Found' then
 			error(res)
@@ -9792,16 +9820,24 @@ mainapi:Clean(friends.ColorUpdate)
 --[[
 	Configs
 ]]
+local reloadInProgress = false
 local function reloadAether()
+	if reloadInProgress then
+		mainapi:CreateNotification('AetherV2', 'A reinject is already in progress.', 4, 'warning')
+		return
+	end
+	reloadInProgress = true
 	task.spawn(function()
 		shared.vapereload = true
-		local ok, err = pcall(function()
-			if shared.VapeDeveloper then
-				loadstring(readfile('aetherv2/main.lua'), 'main')(license)
-			else
-				loadstring(game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..readfile('aetherv2/profiles/commit.txt')..'/main.lua', true), 'main')(license)
-			end
-		end)
+		local ok, err = xpcall(function()
+			local source = shared.VapeDeveloper
+				and readfile('aetherv2/main.lua')
+				or game:HttpGet(remoteSourceUrl('aetherv2/main.lua'), true)
+			local chunk, compileError = loadstring(source, 'main')
+			if not chunk then error('main.lua failed to compile: '..tostring(compileError), 0) end
+			chunk(license)
+		end, debug and debug.traceback or tostring)
+		reloadInProgress = false
 		if not ok then warn('[AetherV2] reload failed:', err) end
 	end)
 end

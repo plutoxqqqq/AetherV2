@@ -68,6 +68,48 @@ test('commit SHAs are approved only for the session that resolved them', () => {
   assert.equal(proxy.sessionAllowsRef(second, 'release/security'), true);
 });
 
+test('large source files fall back to Git blobs when Contents API omits content', async () => {
+  const originalFetch = global.fetch;
+  const blobSha = 'b'.repeat(40);
+  const calls = [];
+  global.fetch = async url => {
+    const requestUrl = String(url);
+    calls.push(requestUrl);
+    if (requestUrl.includes('/contents/games/6872274481.lua?ref=release%2Fsecurity')) {
+      return {
+        status: 200,
+        ok: true,
+        json: async () => ({
+          type: 'file',
+          size: 1049949,
+          sha: blobSha,
+          encoding: 'none',
+          content: ''
+        })
+      };
+    }
+    if (requestUrl.includes('/git/blobs/' + blobSha)) {
+      return {
+        status: 200,
+        ok: true,
+        json: async () => ({
+          encoding: 'base64',
+          content: Buffer.from('return "large"\n').toString('base64')
+        })
+      };
+    }
+    return {status: 404, ok: false, json: async () => ({message: 'unexpected request'})};
+  };
+
+  try {
+    assert.equal(await proxy.sourceFile('games/6872274481.lua', 'release/security'), 'return "large"\n');
+    assert.equal(calls.length, 2);
+    assert.ok(calls[1].includes('/git/blobs/' + blobSha));
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
 test('GitHub failures are surfaced without serving stale source', async () => {
   await assert.rejects(proxy.sourceFile('init.lua', 'release/security'), error => error.status === 502);
 });
