@@ -3372,7 +3372,16 @@ run(function()
         local filter = {}
         if lplr.Character then table.insert(filter, lplr.Character) end
         if gameCamera then table.insert(filter, gameCamera) end
-        if extra then table.insert(filter, extra) end
+        for _, entity in entitylib.List do
+            if entity.Character then table.insert(filter, entity.Character) end
+        end
+        if type(extra) == 'table' then
+            for _, object in extra do
+                if object then table.insert(filter, object) end
+            end
+        elseif extra then
+            table.insert(filter, extra)
+        end
         rayCheck.FilterDescendantsInstances = filter
         if root then
             pcall(function()
@@ -3401,6 +3410,7 @@ run(function()
 
         return {
             clearance = clearance,
+            supportTolerance = math.clamp(clearance + 1, 4, 6),
             apex = apex,
             maxRise = apex + 0.75,
             maxFall = math.clamp((apex * 2) + 6, 12, 22),
@@ -3583,7 +3593,7 @@ run(function()
 
             local floor = floorAt(sample, math.max(from.Y, to.Y), root, profile)
             local supported = floor
-                and floor.Position.Y >= expectedFloorY - profile.maxFall
+                and floor.Position.Y >= expectedFloorY - profile.supportTolerance
 
             if not supported then
                 if not gapStart then
@@ -3907,10 +3917,6 @@ run(function()
         support.CanTouch = false
         support.Transparency = 1
         support.Size = state.profile.supportSize
-
-        pcall(function()
-            support.CollisionGroup = root.CollisionGroup
-        end)
 
         support.Parent = workspace
         state.support = support
