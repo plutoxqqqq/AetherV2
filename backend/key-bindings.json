@@ -14,6 +14,13 @@
       "firstUsedAt": "2026-08-27T10:31:54.743Z",
       "lastUsedAt": "2026-08-27T10:31:54.743Z",
       "uses": 1
+    },
+    "ab6d96654d692db4310a994b400a60d6a514f8621274b8f24293122a5cc9be1a": {
+      "username": "soohyuk_99",
+      "userId": "10415227243",
+      "firstUsedAt": "2026-08-27T11:03:37.209Z",
+      "lastUsedAt": "2026-08-27T11:03:37.209Z",
+      "uses": 1
     }
   },
   "keys": {
@@ -262,6 +269,16 @@
       "username": "AetherV2Owner",
       "userId": "11515370034",
       "uses": 6
+    },
+    {
+      "at": "2026-08-27T11:03:37.210Z",
+      "action": "bind",
+      "keyId": "ab6d96654d692db4310a994b400a60d6a514f8621274b8f24293122a5cc9be1a",
+      "actor": "loader",
+      "operationId": "4c624b6b-fba6-43af-a065-7d4578f1a76d",
+      "username": "soohyuk_99",
+      "userId": "10415227243",
+      "uses": 1
     }
   ]
 }
