@@ -2308,11 +2308,13 @@ run(function()
         if not state then return end
         infiniteFlyState = nil
 
-        local finalCFrame
+        local finalCFrame = state.OriginalCFrame
         if state.Visual and state.Visual.Root and state.Visual.Root.Parent then
-            finalCFrame = state.Visual.Root.CFrame
+            local read, cloneCFrame = pcall(function()
+                return state.Visual.Root.CFrame
+            end)
+            if read and cloneCFrame then finalCFrame = cloneCFrame end
         end
-        finalCFrame = finalCFrame or state.OriginalCFrame
 
         if state.Visual then
             pcall(state.Visual.Destroy, state.Visual)
@@ -2322,10 +2324,11 @@ run(function()
         local liveCharacter = lplr.Character
         local liveRoot = findCharacterRoot(liveCharacter)
         local liveHumanoid = liveCharacter and liveCharacter:FindFirstChildOfClass('Humanoid')
-        if gameCamera.CameraSubject == state.CloneHumanoid or gameCamera.CameraSubject == state.OriginalSubject then
-            gameCamera.CameraSubject = liveHumanoid or state.OriginalSubject
-        else
-            gameCamera.CameraSubject = liveHumanoid or state.OriginalSubject
+        local camera = workspace.CurrentCamera or gameCamera
+        if camera then
+            pcall(function()
+                camera.CameraSubject = liveHumanoid or state.OriginalSubject
+            end)
         end
 
         if liveRoot and finalCFrame then
@@ -2335,15 +2338,30 @@ run(function()
                 liveRoot.AssemblyAngularVelocity = Vector3.zero
             end)
             if liveHumanoid then
-                pcall(liveHumanoid.ChangeState, liveHumanoid, Enum.HumanoidStateType.Landed)
+                local humanoidState = Enum.HumanoidStateType.Freefall
+                local grounded = false
+                pcall(function()
+                    local params = RaycastParams.new()
+                    params.FilterType = Enum.RaycastFilterType.Exclude
+                    params.FilterDescendantsInstances = {liveCharacter}
+                    grounded = workspace:Raycast(
+                        finalCFrame.Position + Vector3.new(0, 2, 0),
+                        Vector3.new(0, -8, 0),
+                        params
+                    ) ~= nil
+                end)
+                if grounded then humanoidState = Enum.HumanoidStateType.Landed end
+                pcall(liveHumanoid.ChangeState, liveHumanoid, humanoidState)
             end
         end
     end
 
-    local function stopInfiniteFly()
+    -- The module callback handles normal toggles; this hook covers uninject and any
+    -- framework-level cleanup path that bypasses module callbacks.
+    vape:Clean(function()
         infiniteFlyGeneration += 1
         cleanupInfiniteFly()
-    end
+    end)
 
     InfiniteFly = vape.Categories.Blatant:CreateModule({
         Name = 'InfiniteFly',
@@ -2391,6 +2409,13 @@ run(function()
 
                 state.Visual:Connect(sourceHumanoid.Died, function()
                     if InfiniteFly.Enabled and infiniteFlyState == state then
+                        task.defer(function()
+                            if InfiniteFly.Enabled then InfiniteFly:Toggle() end
+                        end)
+                    end
+                end)
+                state.Visual:Connect(lplr.CharacterRemoving, function(removing)
+                    if removing == character and InfiniteFly.Enabled and infiniteFlyState == state then
                         task.defer(function()
                             if InfiniteFly.Enabled then InfiniteFly:Toggle() end
                         end)
