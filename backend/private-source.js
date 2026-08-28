@@ -211,7 +211,7 @@ const versionHistory = async (ref = BRANCH, requestedLimit = 11) => {
   if (!Array.isArray(value)) throw problem('GitHub returned an invalid version history', 502);
 
   const versions = [];
-  for (const commit of value) {
+  for (const commit of value.slice(0, limit)) {
     const sha = commit && typeof commit.sha === 'string' ? commit.sha : '';
     if (!/^[a-f0-9]{40,64}$/i.test(sha)) continue;
     let version = 'unavailable';
