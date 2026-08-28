@@ -19,4 +19,19 @@ try {
   process.env.GITHUB_BRANCH = sourceBranch;
 }
 
-module.exports = require('./private-source-server');
+const service = require('./private-source-server');
+
+if (require.main === module) {
+  const port = Number(process.env.PORT || 3000);
+  service.server.listen(port, () => console.log('AetherV2 private-source proxy listening on ' + port));
+  if (process.env.DISCORD_TOKEN) {
+    try {
+      const bot = require('./discord-bot');
+      bot.startDiscordBot().catch(error => console.error('[AetherV2] Discord bot failed:', error.message || error));
+    } catch (error) {
+      console.error('[AetherV2] Discord bot could not start:', error.message || error);
+    }
+  }
+}
+
+module.exports = service;
