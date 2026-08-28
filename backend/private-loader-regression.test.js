@@ -5,47 +5,45 @@ const path = require('node:path');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const initSource = fs.readFileSync(path.join(__dirname, '..', 'init.lua'), 'utf8');
-const proxyWrapper = fs.readFileSync(path.join(__dirname, 'private-source.js'), 'utf8');
-const bedwarsRuntime = fs.readFileSync(path.join(__dirname, '..', 'libraries', 'bedwars', 'runtime.lua'), 'utf8');
+const root = path.join(__dirname, '..');
+const read = file => fs.readFileSync(path.join(root, file), 'utf8');
+const initSource = read('init.lua');
+const mainSource = read('main.lua');
 
-test('private bootstrap never calls the AetherV2 GitHub repository directly', () => {
-  assert.equal(initSource.includes('raw.githubusercontent.com/plutoxqqqq/AetherV2'), false);
-  assert.equal(initSource.includes('api.github.com/repos/plutoxqqqq/AetherV2'), false);
-  assert.equal(initSource.includes('github.com/plutoxqqqq/AetherV2'), false);
-  assert.match(initSource, /Private source endpoint is missing/);
+const aliases = [
+  ['games/8444591321.lua', '6872274481'],
+  ['games/8560631822.lua', '6872274481'],
+  ['games/13246639586.lua', '8768229691'],
+  ['games/8542259458.lua', '8768229691'],
+  ['games/8542275097.lua', '8768229691'],
+  ['games/8592115909.lua', '8768229691'],
+  ['games/8951451142.lua', '8768229691'],
+  ['games/123804558118054.lua', '5938036553'],
+  ['games/131465939650733.lua', '5938036553'],
+  ['games/135564683255158.lua', '155615604'],
+  ['games/80041634734121.lua', '77790193039862']
+];
+
+test('restored init owns the loading screen and asset prefetch', () => {
+  assert.match(initSource, /local function createLoadingScreen\(\)/);
+  assert.match(initSource, /prefetch\(prefetchPaths\)/);
+  assert.match(initSource, /aetherv2\/assets\/new\/loading\.png/);
+  assert.match(initSource, /return mainChunk\(license\)/);
 });
 
-test('exact PlaceId game source is manifest-driven and staged before main', () => {
-  assert.match(initSource, /local modulePlace = tostring\(game\.PlaceId\)/);
-  assert.match(initSource, /local gameRepoPath = 'games\/'\.\.modulePlace\.\.'\.lua'/);
-  assert.match(initSource, /local gameExists = manifest\[gameRepoPath\] ~= nil/);
-  assert.match(initSource, /if gameExists then table\.insert\(required, gameRepoPath\) end/);
-  assert.match(initSource, /Could not stage /);
-  assert.match(initSource, /writefile\('aetherv2\/profiles\/commit\.txt', commit\)/);
+test('main still dispatches the exact PlaceId after universal', () => {
+  assert.match(mainSource, /games\/universal\.lua/);
+  assert.match(mainSource, /local modulePlace = tostring\(game\.PlaceId\)/);
+  assert.match(mainSource, /'aetherv2\/games\/'\.\.modulePlace\.\.'\.lua'/);
 });
 
-test('BedWars startup stages large dependencies before the watched game chunk', () => {
-  assert.match(initSource, /profiles\/packages\.json/);
-  assert.match(initSource, /libraries\/bedwars\/runtime\.lua/);
-  assert.match(initSource, /AetherBedwarsRuntimeReady/);
-  assert.match(initSource, /AetherBedwarsFallbackReady/);
-  assert.match(initSource, /120, false, license/);
-  assert.match(initSource, /BedWars game file ran but its runtime did not initialize/);
-});
-
-test('BedWars compatibility runtime isolates dependency failures', () => {
-  assert.match(bedwarsRuntime, /local function assign\(name, resolver\)/);
-  assert.match(bedwarsRuntime, /RuntimeErrors/);
-  assert.match(bedwarsRuntime, /assign\('Client'/);
-  assert.match(bedwarsRuntime, /assign\('Store'/);
-  assert.match(bedwarsRuntime, /assign\('ItemMeta'/);
-  assert.match(bedwarsRuntime, /bedwars\.Handler/);
-});
-
-test('source wrapper prevents registry-read amplification during startup bursts', () => {
-  assert.match(proxyWrapper, /activeStatusCache/);
-  assert.match(proxyWrapper, /AETHER_KEY_STATUS_CACHE_MS/);
-  assert.match(proxyWrapper, /activeStatusCache\.clear\(\)/);
-  assert.match(proxyWrapper, /AETHER_RATE_LIMIT = '600'/);
+test('all child-place forwarders use the authenticated private source path', () => {
+  for (const [file, target] of aliases) {
+    const source = read(file);
+    assert.match(source, new RegExp('targetPlace = ' + target));
+    assert.match(source, /shared\.AetherV2FetchSource/);
+    assert.match(source, /return chunk\(license\)/);
+    assert.equal(source.includes('raw.githubusercontent.com/plutoxqqqq/AetherV2'), false, file);
+    assert.equal(source.includes('api.github.com/repos/plutoxqqqq/AetherV2'), false, file);
+  }
 });
