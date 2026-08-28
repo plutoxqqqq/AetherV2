@@ -17,4 +17,13 @@ try {
   process.env.GITHUB_BRANCH = sourceBranch;
 }
 
-module.exports = require('./discord-bot-server');
+const bot = require('./discord-bot-server');
+
+if (require.main === module) {
+  bot.startDiscordBot().catch(error => {
+    console.error('[AetherV2] Discord bot failed:', error.message || error);
+    process.exitCode = 1;
+  });
+}
+
+module.exports = bot;
