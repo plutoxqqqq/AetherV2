@@ -8914,7 +8914,6 @@ function mainapi:CreateChangelogs()
 					'  •  '..(pinned ~= '' and 'Pinned previous version' or (available and 'Update available' or 'Up to date'))
 			end
 		end)
-		end)
 	end
 	api.Window = window; self.Changelogs = api; return api
 end
