@@ -16,6 +16,9 @@ local isfile = isfile
 local function downloadFile(path, func)
 	if not isfile(path) then
 		local suc, res = pcall(function()
+			if type(shared.AetherV2FetchSource) == 'function' then
+				return shared.AetherV2FetchSource(path)
+			end
 			return game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/' .. readfile('aetherv2/profiles/commit.txt') .. '/' .. select(1, path:gsub('aetherv2/', '')), true)
 		end)
 		if not suc or res == '404: Not Found' then
