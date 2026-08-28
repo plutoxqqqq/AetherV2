@@ -418,7 +418,11 @@ local function runWatchedChunk(source, chunkName, label, timeout, optional, ...)
 
 	if not ok then
 		if optional then
-			table.insert(loadingWarnings, tostring(result))
+			local message = chunkName..' failed: '..tostring(result)
+			table.insert(loadingWarnings, message)
+			pcall(function()
+				vape:CreateNotification('AetherV2', message:sub(1, 180), 12, 'alert')
+			end)
 			return nil
 		end
 		failLoad(result)
@@ -603,11 +607,27 @@ if not shared.VapeIndependent then
 		-- Retrying it would add seconds and two pointless requests to every unsupported game.
 		local body = fetchFile(placePath, 1)
 		if body then
-			writefile(placePath, '--This watermark is used to delete the file if its cached, remove it to make the file persist after vape updates.\n'..body)
+			writefile(placePath, watermark..body)
 			placeSource = readfile(placePath)
 		end
 	end
 	if placeSource then
+		-- A supported game may provide an exact-place preload gate. It is only considered after the
+		-- exact games/<PlaceId>.lua file was found, so unsupported games still load Universal only.
+		-- The repository file list tells us whether the companion file exists without probing random
+		-- game paths. If present, it is required to finish before the mutating game chunk executes.
+		local preloadPath = 'aetherv2/games/'..modulePlace..'.preload.lua'
+		local preloadKnown = isfile(preloadPath)
+		if not preloadKnown and isfile('aetherv2/profiles/files.txt') then
+			local fileList = readfile('aetherv2/profiles/files.txt')
+			preloadKnown = type(fileList) == 'string'
+				and fileList:find(' games/'..modulePlace..'.preload.lua', 1, true) ~= nil
+		end
+		if preloadKnown then
+			local preloadSource = downloadFile(preloadPath)
+			runWatchedChunk(preloadSource, modulePlace..'.preload', 'Waiting for game runtime', 65, false, license)
+		end
+
 		-- Optional and watched: a game module that stalls (waiting on something the game has not
 		-- replicated yet) must never cost you the menu.
 		runWatchedChunk(placeSource, modulePlace, 'Loading module for this game', 75, true, license)
