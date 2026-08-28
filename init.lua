@@ -83,6 +83,7 @@ for _, folder in {
 	'aetherv2/assets',
 	'aetherv2/assets/new',
 	'aetherv2/libraries',
+	'aetherv2/libraries/bedwars',
 	'aetherv2/guis',
 	'aetherv2/configs',
 	'aetherv2/songs',
@@ -123,7 +124,7 @@ local function getJson(route, ref, attempts)
 end
 
 local function validCommit(value)
-	return type(value) == 'string' and value:match('^%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x$') ~= nil
+	return type(value) == 'string' and #value == 40 and value:match('^%x+$') ~= nil
 end
 
 local function resolveLiveCommit()
@@ -183,11 +184,60 @@ end
 shared.AetherSourceManifest = manifest
 traceStage('manifest', tostring(#manifestLines)..' files')
 
+local function replaceExactlyOnce(body, needle, replacement, label)
+	local first, last = body:find(needle, 1, true)
+	if not first then return nil, label..' marker was not found' end
+	if body:find(needle, last + 1, true) then return nil, label..' marker was not unique' end
+	return body:sub(1, first - 1)..replacement..body:sub(last + 1)
+end
+
+local function hardenBedwarsSource(path, body)
+	if path ~= 'games/6872274481.lua' then return body end
+
+	-- The direct match file historically wrapped its whole controller discovery table in run(). One
+	-- renamed BedWars dependency could therefore abort the entire table assignment, get reduced to a
+	-- warning, and leave Universal as the only visible module set. Seed a small independently-resolved
+	-- compatibility runtime first, record every swallowed startup error, and mark the full runtime only
+	-- when the normal controller bootstrap actually reaches its publish point.
+	local replacement = [[local bedwars = {}
+shared.AetherBedwarsRuntimeReady = false
+shared.AetherBedwarsFallbackReady = false
+shared.AetherBedwarsStartupErrors = {}
+pcall(function()
+	local runtimeSource = downloadFile('aetherv2/libraries/bedwars/runtime.lua')
+	local runtimeChunk = loadstring(runtimeSource, 'aetherv2/libraries/bedwars/runtime.lua')
+	local Runtime = runtimeChunk and runtimeChunk()
+	local fallback = Runtime and Runtime.new and Runtime.new()
+	if type(fallback) == 'table' then
+		bedwars = fallback
+		getgenv().bedwars = bedwars
+		shared.AetherBedwarsFallbackReady = fallback.Client ~= nil and fallback.Store ~= nil and fallback.ItemMeta ~= nil
+	end
+end)
+]]
+	local problem
+	body, problem = replaceExactlyOnce(body, 'local bedwars = {}\n', replacement, 'BedWars runtime seed')
+	if not body then return nil, problem end
+
+	local warning = "\twarn('[AetherV2] Skipped a BedWars module during startup: '..tostring(lastError))"
+	local warningReplacement = "\tshared.AetherBedwarsStartupErrors = shared.AetherBedwarsStartupErrors or {}\n\ttable.insert(shared.AetherBedwarsStartupErrors, tostring(lastError))\n"..warning
+	body, problem = replaceExactlyOnce(body, warning, warningReplacement, 'BedWars startup error recorder')
+	if not body then return nil, problem end
+
+	local published = '\tgetgenv().bedwars = bedwars\n'
+	local publishReplacement = published.."\tshared.AetherBedwarsRuntimeReady = true\n\tshared.AetherBedwarsBootstrapMode = 'full'\n"
+	body, problem = replaceExactlyOnce(body, published, publishReplacement, 'BedWars runtime publish')
+	if not body then return nil, problem end
+	return body
+end
+
 local function sourceBody(path, attempts)
 	if not manifest[path] then return nil, 'not present in authenticated manifest' end
 	local body, problem = getText('source', path, commit, attempts or 3)
 	if not body then return nil, problem end
 	if #body < 8 then return nil, 'empty source response' end
+	body, problem = hardenBedwarsSource(path, body)
+	if not body then return nil, problem end
 	if path:sub(-4) == '.lua' then
 		local chunk, compileError = loadstring(body, path)
 		if not chunk then return nil, 'compile failed: '..tostring(compileError) end
@@ -245,6 +295,14 @@ local required = {
 }
 if gameExists then table.insert(required, gameRepoPath) end
 
+local bedwarsMatch = gameRepoPath == 'games/6872274481.lua' and gameExists
+if bedwarsMatch then
+	-- These are consumed while the 1 MB match module is bootstrapping. packages.json alone is over
+	-- 4 MB; fetching it lazily inside the watched game thread was a major source of late timeouts.
+	if manifest['profiles/packages.json'] then table.insert(required, 'profiles/packages.json') end
+	if manifest['libraries/bedwars/runtime.lua'] then table.insert(required, 'libraries/bedwars/runtime.lua') end
+end
+
 local gui = isfile('aetherv2/profiles/gui.txt') and readfile('aetherv2/profiles/gui.txt'):gsub('%s+', '') or 'new'
 if gui == 'newer' then gui = 'new' end
 if gui ~= 'new' and gui ~= 'old' and gui ~= 'rise' then gui = 'new' end
@@ -259,6 +317,17 @@ for _, path in ipairs(required) do
 	if not body then failLoad('Could not stage '..path..' - '..tostring(problem)) end
 	staged[path] = body
 	traceStage('staged', path..' ('..#body..' bytes)')
+end
+
+-- A manifest-known exact game is not optional. The previous 75-second optional watcher made a
+-- legitimate supported game indistinguishable from an unsupported one if startup took too long or
+-- threw. With every large dependency staged above, give the exact module a bounded but firm window.
+if gameExists and staged['main.lua'] then
+	local oldCall = "runWatchedChunk(placeSource, modulePlace, 'Loading module for this game', 75, true, license)"
+	local newCall = "runWatchedChunk(placeSource, modulePlace, 'Loading module for this game', 120, false, license)"
+	local hardenedMain, problem = replaceExactlyOnce(staged['main.lua'], oldCall, newCall, 'exact game watcher')
+	if not hardenedMain then failLoad(problem) end
+	staged['main.lua'] = hardenedMain
 end
 
 if oldCommit ~= '' and oldCommit ~= commit then
@@ -297,4 +366,28 @@ license.Commit = commit
 local mainChunk, mainError = loadstring(staged['main.lua'], 'main.lua')
 if not mainChunk then failLoad('main.lua did not compile - '..tostring(mainError)) end
 traceStage('main', 'starting')
-return mainChunk(license)
+local result = mainChunk(license)
+
+if bedwarsMatch then
+	local deadline = os.clock() + 8
+	repeat task.wait(0.1) until shared.AetherBedwarsRuntimeReady == true or shared.AetherBedwarsFallbackReady == true or os.clock() >= deadline
+	if shared.AetherBedwarsRuntimeReady == true then
+		traceStage('bedwars runtime', 'full')
+	elseif shared.AetherBedwarsFallbackReady == true then
+		shared.AetherBedwarsBootstrapMode = 'compatibility'
+		local first = type(shared.AetherBedwarsStartupErrors) == 'table' and shared.AetherBedwarsStartupErrors[1] or nil
+		traceStage('bedwars runtime', 'compatibility'..(first and (' | '..first) or ''))
+		pcall(function()
+			StarterGui:SetCore('SendNotification', {
+				Title = 'AetherV2 BedWars compatibility mode',
+				Text = first and ('A BedWars dependency changed: '..tostring(first):sub(1, 120)) or 'Using the isolated BedWars compatibility runtime',
+				Duration = 10
+			})
+		end)
+	else
+		local first = type(shared.AetherBedwarsStartupErrors) == 'table' and shared.AetherBedwarsStartupErrors[1] or nil
+		failLoad('BedWars game file ran but its runtime did not initialize'..(first and (' - '..tostring(first)) or ''))
+	end
+end
+
+return result
