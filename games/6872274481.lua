@@ -23643,7 +23643,11 @@ run(function()
                 end
                 table.clear(pendingDrops)
                 table.clear(pendingReclaims)
-         
+            end
+        end
+    })
+end)
+
 run(function()
     local NoBob
     local oldPlayAnimation
