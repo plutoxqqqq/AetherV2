@@ -17068,6 +17068,7 @@ local breakmethods = ctx.breakmethods or {}
 local frictionTable = ctx.frictionTable or {}
 local updateVelocity = ctx.updateVelocity or function() end
 local getItem = assert(ctx.getItem, 'missing getItem')
+local switchItem = ctx.switchItem
 local getWool = ctx.getWool
 local getBestArmor = ctx.getBestArmor
 local getPlacedBlock = assert(ctx.getPlacedBlock, 'missing getPlacedBlock')
@@ -17571,11 +17572,46 @@ function Jade:ObserveActivation(before, ability, timeout, cancelled)
     return false, 'cast-not-confirmed', nil
 end
 
-function Jade:RequestActivation(hammer, ability, targetPosition, cancelled)
+function Jade:RequestActivation(hammer, ability, targetPosition, cancelled, options)
     local root, _, humanoid = rootOfLocal()
     if not root then return false, 'no-character' end
     local before = activationSignals(root, humanoid, ability)
     local request = {Sent = false, Paths = {}}
+
+    -- Some live BedWars builds expose Jade through AbilityController rather than the
+    -- tool input path. Prefer the real controller when the caller requests it, then
+    -- use the existing compatibility paths below only if that request fails.
+    local preferredController = type(options) == 'table' and options.PreferAbilityController == true
+    if preferredController then
+        local controller, source = liveAbilityController()
+        if controller and type(controller.useAbility) == 'function' then
+            local data = {origin = root.Position, target = targetPosition}
+            local token = type(newproxy) == 'function' and newproxy(true) or nil
+            local attempts = token and {
+                {ability, token, data},
+                {ability, data},
+                {ability}
+            } or {
+                {ability, data},
+                {ability}
+            }
+            for _, args in ipairs(attempts) do
+                local ok, result = pcall(function()
+                    return controller.useAbility(controller, table.unpack(args))
+                end)
+                table.insert(request.Paths, {
+                    Path = 'AbilityController.preferred',
+                    OK = ok,
+                    Result = result,
+                    Source = source
+                })
+                if ok and result ~= false then
+                    request.Sent = true
+                    break
+                end
+            end
+        end
+    end
 
     local controllers = {bedwars.JadeHammerController, bedwars.HammerController, bedwars.ToolController, bedwars.ViewmodelController}
     for _, controller in ipairs(controllers) do
@@ -19109,6 +19145,11 @@ local function register(categoryName, name, definition)
         return existing, false
     end
     local category = vape.Categories and vape.Categories[categoryName]
+    if not category and categoryName == 'Kits' then
+        category = vape.Categories and (vape.Categories.Kits or vape.Categories.Minigames)
+    elseif not category and categoryName == 'Exploits' then
+        category = vape.Categories and (vape.Categories.Exploits or vape.Categories.Exploit)
+    end
     assert(category and type(category.CreateModule) == 'function', 'missing Aether category '..categoryName)
     definition.Name = name
     local module = category:CreateModule(definition)
@@ -19326,6 +19367,328 @@ NoFallDamageV2, noFallCreated = register('Blatant', 'NoFallDamageV2', {
         NoFallDamageV2:Clean(connection)
     end
 })
+
+--------------------------------------------------------------------------------
+-- InfiniteSigrid
+-- This module was removed even though its name did not identify it as an exploit.
+-- Keep it in the Kits window and use the live Elk controller when available.
+--------------------------------------------------------------------------------
+local InfiniteSigrid
+local sigridGeneration = 0
+
+InfiniteSigrid = (function()
+    local module, created = register('Kits', 'InfiniteSigrid', {
+        Tooltip = 'Keeps the Elk mount active while the Elk Master kit is equipped.',
+        Function = function(callback)
+            sigridGeneration += 1
+            local generation = sigridGeneration
+            if not callback then return end
+
+            task.spawn(function()
+                local mount
+                while module.Enabled and generation == sigridGeneration do
+                    if not mount then
+                        safe('sigrid.resolve', function()
+                            if bedwars.Client and type(bedwars.Client.Get) == 'function' then
+                                mount = bedwars.Client:Get('ElkKitMounted')
+                            end
+                        end)
+                    end
+
+                    local kit = tostring(equippedKit() or ''):lower()
+                    if mount and entitylib.isAlive and matchRunning() and kit == 'elk_master'
+                        and type(mount.SendToServer) == 'function' then
+                        safe('sigrid.mount', mount.SendToServer, mount)
+                    end
+                    task.wait(0.1)
+                end
+            end)
+        end
+    })
+    if created then return module end
+    return module
+end)()
+
+--------------------------------------------------------------------------------
+-- JadeHammerExploit
+-- The old reference teleport path is intentionally not reused. This module uses
+-- Aether's shared Jade adapter for inventory, cooldown, ability resolution and
+-- cleanup, while the targeted launch/steering state lives here.
+--------------------------------------------------------------------------------
+local JadeHammerExploit
+local jadeGeneration = 0
+local jadeState
+
+local function jadeTargetRoot(target)
+    if not target then return nil end
+    local root = target.RootPart
+    local character = target.Character
+    if (not root or not root.Parent) and character then
+        root = character.PrimaryPart or character:FindFirstChild('HumanoidRootPart')
+    end
+    return root and root.Parent and root or nil
+end
+
+local function validJadeTarget(target, origin, range)
+    local root = jadeTargetRoot(target)
+    if not root or target.Player == lplr or target.Targetable == false then return nil end
+    local humanoid = target.Humanoid
+        or (target.Character and target.Character:FindFirstChildOfClass('Humanoid'))
+    if humanoid and humanoid.Health <= 0 then return nil end
+    if origin and (root.Position - origin).Magnitude > range then return nil end
+    return root
+end
+
+local function findJadeTarget(range, includeEntities)
+    local root = rootOfLocal()
+    if not root then return nil end
+
+    local function query(players, npcs)
+        local ok, target = pcall(entitylib.EntityPosition, {
+            Origin = root.Position,
+            Range = range,
+            Part = 'RootPart',
+            Players = players,
+            NPCs = npcs
+        })
+        if not ok or not target then return nil end
+        local targetRoot = validJadeTarget(target, root.Position, range)
+        return targetRoot and target or nil, targetRoot
+    end
+
+    -- Query players first so an NPC cannot displace a valid player target.
+    local target, targetRoot = query(true, false)
+    if target then return target, targetRoot end
+    if includeEntities then
+        return query(false, true)
+    end
+end
+
+local function jadeCleanup(restorePosition)
+    local state = jadeState
+    if not state then return end
+    jadeState = nil
+
+    if state.Connection then
+        pcall(state.Connection.Disconnect, state.Connection)
+        state.Connection = nil
+    end
+    if state.Lease then
+        pcall(state.Lease.Release, state.Lease)
+        state.Lease = nil
+    end
+
+    local root = rootOfLocal()
+    if root and root.Parent then
+        if restorePosition and state.OriginalCFrame then
+            pcall(function() root.CFrame = state.OriginalCFrame end)
+        end
+        pcall(function()
+            root.AssemblyLinearVelocity = Vector3.zero
+            root.AssemblyAngularVelocity = Vector3.zero
+        end)
+    end
+
+    if state.OriginalTool and state.OriginalTool.Parent and type(switchItem) == 'function' then
+        safe('jade.restore-tool', switchItem, state.OriginalTool, 0.05)
+    end
+end
+
+local function finishJadeSmash(state, restorePosition)
+    if jadeState ~= state then return end
+    jadeCleanup(restorePosition)
+end
+
+local function beginJadeSmash(generation, target, targetRoot, hammer, ability)
+    if jadeState or generation ~= jadeGeneration or not JadeHammerExploit.Enabled then return end
+
+    local root, _, humanoid = rootOfLocal()
+    local jade = Runtime.Jade
+    if not root or not humanoid or humanoid.Health <= 0 or not jade then return end
+    if not targetRoot or not targetRoot.Parent then return end
+    if not isnetworkowner(root) then return end
+
+    local movement = Runtime.Movement
+    if not movement or type(movement.Acquire) ~= 'function' then return end
+
+    local state = {
+        OriginalCFrame = root.CFrame,
+        OriginalTool = store.hand and store.hand.tool,
+        Target = target,
+        Hammer = hammer,
+        Ability = ability,
+        StartedAt = tick(),
+        CooldownSeen = false,
+        AirborneSeen = true
+    }
+    jadeState = state
+
+    local priority = movement.Priorities and movement.Priorities.Ability or 40
+    local acquired, lease = pcall(
+        movement.Acquire,
+        movement,
+        'JadeHammerExploit',
+        priority,
+        3,
+        function() finishJadeSmash(state, true) end,
+        true
+    )
+    if not acquired or not lease then
+        jadeState = nil
+        return
+    end
+    state.Lease = lease
+
+    local function cancelled()
+        return jadeState ~= state
+            or generation ~= jadeGeneration
+            or not JadeHammerExploit.Enabled
+            or not entitylib.isAlive
+    end
+
+    local ok, confirmed, reason = xpcall(function()
+        root = rootOfLocal()
+        if not root or cancelled() then return false, 'cancelled' end
+
+        -- Rebuild the old teleport behaviour around the live root and preserve rotation.
+        root.CFrame = CFrame.new(root.Position + Vector3.new(0, 150, 0)) * root.CFrame.Rotation
+
+        local equipped, equipReason = jade:Equip(hammer, 0.8, cancelled)
+        if not equipped then return false, equipReason or 'hammer-not-equipped' end
+
+        local cast, castReason = jade:RequestActivation(
+            hammer,
+            ability,
+            targetRoot.Position,
+            cancelled,
+            {PreferAbilityController = true}
+        )
+        if not cast then return false, castReason or 'jade-activation-not-confirmed' end
+        state.ActivatedAt = tick()
+        return true
+    end, debug and debug.traceback or tostring)
+
+    if not ok or not confirmed then
+        Ports.Diagnostics.JadeHammerExploit = {At = tick(), Error = ok and tostring(reason) or tostring(confirmed)}
+        finishJadeSmash(state, true)
+        return
+    end
+
+    if cancelled() then
+        finishJadeSmash(state, true)
+        return
+    end
+
+    state.Connection = runService.Heartbeat:Connect(function()
+        if cancelled() then
+            finishJadeSmash(state, true)
+            return
+        end
+
+        local liveRoot, _, liveHumanoid = rootOfLocal()
+        local liveTargetRoot = jadeTargetRoot(state.Target)
+        if not liveRoot or not liveHumanoid or liveHumanoid.Health <= 0 or not liveTargetRoot then
+            finishJadeSmash(state, false)
+            return
+        end
+
+        local elapsed = tick() - (state.ActivatedAt or state.StartedAt)
+        if elapsed > 2.6 then
+            finishJadeSmash(state, false)
+            return
+        end
+
+        if liveHumanoid.FloorMaterial ~= Enum.Material.Air and elapsed > 0.3 then
+            finishJadeSmash(state, false)
+            return
+        end
+
+        local readiness = jade:GetCooldownState(ability)
+        if readiness == 'BLOCKED' then state.CooldownSeen = true end
+        if state.CooldownSeen and readiness == 'READY' and elapsed > 0.3 then
+            finishJadeSmash(state, false)
+            return
+        end
+
+        local offset = liveTargetRoot.Position - liveRoot.Position
+        local horizontal = Vector3.new(offset.X, 0, offset.Z)
+        if horizontal.Magnitude > 0 then
+            horizontal = horizontal.Unit
+            local horizontalSpeed = 23.3
+            liveRoot.AssemblyLinearVelocity = Vector3.new(
+                horizontal.X * horizontalSpeed,
+                liveRoot.AssemblyLinearVelocity.Y,
+                horizontal.Z * horizontalSpeed
+            )
+        end
+    end)
+    JadeHammerExploit:Clean(state.Connection)
+end
+
+JadeHammerExploit = (function()
+    local module, created = register('Exploits', 'JadeHammerExploit', {
+        Tooltip = 'Launches with Jade and steers the descent toward the closest valid target.',
+        Function = function(callback)
+            jadeGeneration += 1
+            local generation = jadeGeneration
+            jadeCleanup(not callback)
+            if not callback then return end
+
+            task.spawn(function()
+                while JadeHammerExploit.Enabled and generation == jadeGeneration do
+                    if not jadeState and entitylib.isAlive and matchRunning() then
+                        local root = rootOfLocal()
+                        local jade = Runtime.Jade
+                        local hammer, hammerInfo = jade and jade:GetBestHammer()
+                        if root and jade and hammer and hammerInfo then
+                            local ability, abilityInfo = jade:ResolveAbility(hammer)
+                            local readiness = ability and jade:GetCooldownState(ability)
+                            local cooldownOK = readiness == 'READY'
+                            if readiness == 'UNKNOWN' then
+                                local controller = abilityController()
+                                if controller and type(controller.canUseAbility) == 'function' then
+                                    local checked, ready = pcall(
+                                        controller.canUseAbility,
+                                        controller,
+                                        ability,
+                                        {disableBlockedAbilityAlert = true}
+                                    )
+                                    cooldownOK = checked and ready == true
+                                end
+                            end
+                            if ability and cooldownOK then
+                                local target, targetRoot = findJadeTarget(JadeHammerExploitRange.Value, JadeHammerExploitEntities.Enabled)
+                                if target and targetRoot then
+                                    task.spawn(beginJadeSmash, generation, target, targetRoot, hammer, ability)
+                                end
+                            end
+                        end
+                    end
+                    task.wait(0.08)
+                end
+            end)
+        end
+    })
+    if created then
+        JadeHammerExploitRange = module:CreateSlider({
+            Name = 'Target Range',
+            Min = 1,
+            Max = 20,
+            Default = 20,
+            Suffix = ' studs'
+        })
+        JadeHammerExploitEntities = module:CreateToggle({
+            Name = 'Target Entities',
+            Default = false
+        })
+    end
+    return module
+end)()
+
+-- Compatibility exports for older JIK callers without registering a duplicate UI module.
+Ports.Modules.JadeInstaKill = JadeHammerExploit
+Runtime.JadeHammerExploit = JadeHammerExploit
+Runtime.JadeInstaKill = JadeHammerExploit
 
 return Ports
 
