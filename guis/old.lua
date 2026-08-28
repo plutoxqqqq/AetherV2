@@ -3808,6 +3808,11 @@ mainapi:CreateCategory({
 	WindowSize = 164
 })
 mainapi:CreateCategory({
+	Name = 'Exploits',
+	Icon = getcustomasset('aetherv2/assets/old/blatanticon.png'),
+	WindowSize = 164
+})
+mainapi:CreateCategory({
 	Name = 'Render',
 	Icon = getcustomasset('aetherv2/assets/old/rendericon.png'),
 	WindowSize = 196
@@ -4182,14 +4187,15 @@ topbar:CreateButton({
 			GUICategory = 1,
 			CombatCategory = 2,
 			BlatantCategory = 3,
-			RenderCategory = 4,
-			LegitCategory = 5,
-			UtilityCategory = 6,
-			WorldCategory = 7,
-			InventoryCategory = 8,
-			MinigamesCategory = 9,
-			FriendsCategory = 10,
-			ProfilesCategory = 11
+			ExploitsCategory = 4,
+			RenderCategory = 5,
+			LegitCategory = 6,
+			UtilityCategory = 7,
+			WorldCategory = 8,
+			InventoryCategory = 9,
+			MinigamesCategory = 10,
+			FriendsCategory = 11,
+			ProfilesCategory = 12
 		}
 		local categories = {}
 		for _, v in mainapi.Categories do
