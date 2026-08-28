@@ -2359,7 +2359,7 @@ local function activateJadeTool(item)
 	switchItem(item.tool, 0.1)
 	-- The input edge is ignored while the old hotbar item is still equipped.
 	-- Wait briefly for the inventory store and character tool to agree before
-	-- pressing the hammer, otherwise LongJump/JadeInstaKill can look enabled
+	-- pressing the hammer, otherwise LongJump's Jade adapter can look enabled
 	-- while the Jade controller never sees its activation.
 	local equipDeadline = tick() + 0.6
 	repeat
