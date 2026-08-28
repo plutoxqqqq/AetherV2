@@ -7,6 +7,7 @@ const assert = require('node:assert/strict');
 
 const initSource = fs.readFileSync(path.join(__dirname, '..', 'init.lua'), 'utf8');
 const proxyWrapper = fs.readFileSync(path.join(__dirname, 'private-source.js'), 'utf8');
+const bedwarsRuntime = fs.readFileSync(path.join(__dirname, '..', 'libraries', 'bedwars', 'runtime.lua'), 'utf8');
 
 test('private bootstrap never calls the AetherV2 GitHub repository directly', () => {
   assert.equal(initSource.includes('raw.githubusercontent.com/plutoxqqqq/AetherV2'), false);
@@ -22,6 +23,24 @@ test('exact PlaceId game source is manifest-driven and staged before main', () =
   assert.match(initSource, /if gameExists then table\.insert\(required, gameRepoPath\) end/);
   assert.match(initSource, /Could not stage /);
   assert.match(initSource, /writefile\('aetherv2\/profiles\/commit\.txt', commit\)/);
+});
+
+test('BedWars startup stages large dependencies before the watched game chunk', () => {
+  assert.match(initSource, /profiles\/packages\.json/);
+  assert.match(initSource, /libraries\/bedwars\/runtime\.lua/);
+  assert.match(initSource, /AetherBedwarsRuntimeReady/);
+  assert.match(initSource, /AetherBedwarsFallbackReady/);
+  assert.match(initSource, /120, false, license/);
+  assert.match(initSource, /BedWars game file ran but its runtime did not initialize/);
+});
+
+test('BedWars compatibility runtime isolates dependency failures', () => {
+  assert.match(bedwarsRuntime, /local function assign\(name, resolver\)/);
+  assert.match(bedwarsRuntime, /RuntimeErrors/);
+  assert.match(bedwarsRuntime, /assign\('Client'/);
+  assert.match(bedwarsRuntime, /assign\('Store'/);
+  assert.match(bedwarsRuntime, /assign\('ItemMeta'/);
+  assert.match(bedwarsRuntime, /bedwars\.Handler/);
 });
 
 test('source wrapper prevents registry-read amplification during startup bursts', () => {
