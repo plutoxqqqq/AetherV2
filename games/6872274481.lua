@@ -19371,6 +19371,374 @@ NoFallDamageV2, noFallCreated = register('Blatant', 'NoFallDamageV2', {
     end
 })
 
+
+--------------------------------------------------------------------------------
+-- Restored Exploits modules
+-- These were removed from the branch even though their module names did not say
+-- "Exploit". They use the same port registration and cleanup boundaries as the
+-- Jade module below.
+
+local BalloonDisabler, BalloonAutoDisable
+local balloonControllerState
+local balloonAutoConnection
+
+local function stopBalloonAutoDisable()
+    if balloonAutoConnection then
+        pcall(balloonAutoConnection.Disconnect, balloonAutoConnection)
+        balloonAutoConnection = nil
+    end
+end
+
+local function restoreBalloonController()
+    local state = balloonControllerState
+    balloonControllerState = nil
+    if not state or not state.Controller then return end
+    pcall(function()
+        if state.Controller.hookBalloon == state.Hook then
+            state.Controller.hookBalloon = state.HookOriginal
+        end
+        if state.Controller.enableBalloonPhysics == state.Physics then
+            state.Controller.enableBalloonPhysics = state.PhysicsOriginal
+        end
+        if state.Controller.deflateBalloon == state.Deflate then
+            state.Controller.deflateBalloon = state.DeflateOriginal
+        end
+    end)
+end
+
+BalloonDisabler = (function()
+    local module, created = register('Exploits', 'BalloonDisabler', {
+        Tooltip = 'Disables the local balloon anticheat controller while a balloon is equipped.',
+        Function = function(callback)
+            restoreBalloonController()
+            if not callback then return end
+
+            local controller = bedwars.BalloonController
+            local item = safe('balloon.inventory', getItem, 'balloon')
+            if not item then
+                notify('BalloonDisabler: no balloon is available.', 5, 'alert')
+                return
+            end
+            if not controller or type(controller.hookBalloon) ~= 'function' then
+                notify('BalloonDisabler: balloon controller is unavailable.', 5, 'warning')
+                return
+            end
+
+            local state = {
+                Controller = controller,
+                HookOriginal = controller.hookBalloon,
+                PhysicsOriginal = controller.enableBalloonPhysics,
+                DeflateOriginal = controller.deflateBalloon
+            }
+            balloonControllerState = state
+
+            state.Hook = function(self, player, attachment, balloon)
+                if tostring(player) ~= lplr.Name then
+                    if state.HookOriginal then
+                        return state.HookOriginal(self, player, attachment, balloon)
+                    end
+                    return
+                end
+
+                safe('balloon.hide', function()
+                    if not balloon then return end
+                    local visual = balloon:FindFirstChild('Balloon') or balloon:WaitForChild('Balloon', 1)
+                    if visual then
+                        visual.CFrame = CFrame.new(0, -1995, 0)
+                        visual:ClearAllChildren()
+                    end
+                end)
+                restoreBalloonController()
+                task.delay(0.5, function()
+                    if module.Enabled then
+                        notify('BalloonDisabler: local balloon controller disabled.', 5)
+                    end
+                end)
+            end
+            state.Physics = function() end
+            state.Deflate = function() end
+
+            local installed, errorMessage = pcall(function()
+                if type(controller.inflateBalloon) == 'function' then
+                    controller:inflateBalloon()
+                end
+                controller.enableBalloonPhysics = state.Physics
+                controller.deflateBalloon = state.Deflate
+                controller.hookBalloon = state.Hook
+            end)
+            if not installed then
+                restoreBalloonController()
+                notify('BalloonDisabler: controller setup failed.', 5, 'warning')
+                Ports.Diagnostics.BalloonDisabler = {At = tick(), Error = tostring(errorMessage)}
+            end
+        end
+    })
+    if created then
+        BalloonAutoDisable = module:CreateToggle({
+            Name = 'AutoDisable',
+            Default = false,
+            Function = function(enabled)
+                stopBalloonAutoDisable()
+                if not enabled then return end
+                local inventories = ctx.replicatedStorage and ctx.replicatedStorage:FindFirstChild('Inventories')
+                if not inventories then
+                    notify('BalloonDisabler: inventory controller is unavailable.', 5, 'warning')
+                    return
+                end
+                local connected, connection = pcall(inventories.DescendantAdded.Connect, inventories.DescendantAdded, function(object)
+                    if object.Parent and object.Parent.Name == lplr.Name and object.Name == 'balloon' then
+                        task.spawn(function()
+                            repeat task.wait() until getItem('balloon') or not BalloonAutoDisable.Enabled
+                            if BalloonAutoDisable.Enabled and not module.Enabled then
+                                module:Toggle()
+                            end
+                        end)
+                    end
+                end)
+                if connected then
+                    balloonAutoConnection = connection
+                    BalloonAutoDisable:Clean(connection)
+                end
+            end
+        })
+        module:Clean(function()
+            stopBalloonAutoDisable()
+            restoreBalloonController()
+        end)
+    end
+    return module
+end)()
+
+local MultiAction, MultiActionActions, MultiActionContexts
+local multiActionHooks, multiActionCalls, multiActionLast = {}, {}, {}
+local multiActionControllers = {}
+local multiActionActionNames = {'Hotbar switching', 'Melee attacking', 'Block placement'}
+local multiActionContextNames = {'Projectile charging', 'Consuming', 'Ability aiming'}
+
+local function multiActionSelected(option, name)
+    return option and table.find(option.ListEnabled, name) ~= nil
+end
+
+local function refreshMultiActionControllers()
+    local result, seen = {}, {}
+    local function add(name, controller)
+        if type(controller) == 'table' and not seen[controller] then
+            seen[controller] = true
+            table.insert(result, {Name = tostring(name):lower(), Value = controller})
+        end
+    end
+    if bedwars.Knit and bedwars.Knit.Controllers then
+        for name, controller in pairs(bedwars.Knit.Controllers) do add(name, controller) end
+    end
+    for name, controller in pairs(bedwars) do
+        if type(name) == 'string' and name:find('Controller') then add(name, controller) end
+    end
+    add('blockplacer', store.blockPlacer)
+    local placement = bedwars.BlockPlacementController
+    add('blockplacementcontroller', placement)
+    add('blockplacementplacer', placement and placement.blockPlacer)
+    multiActionControllers = result
+end
+
+local multiActionPatterns = {
+    ['Projectile charging'] = {'charg', 'draw', 'projectile'},
+    Consuming = {'consum', 'eat', 'drink'},
+    ['Ability aiming'] = {'aim', 'targeting'}
+}
+
+local function multiActionContextMatches(controllerName, key, context)
+    local lower = tostring(key):lower()
+    for _, pattern in ipairs(multiActionPatterns[context] or {}) do
+        if lower:find(pattern, 1, true) then
+            if context ~= 'Projectile charging'
+                or controllerName:find('projectile')
+                or controllerName:find('bow')
+                or controllerName:find('crossbow')
+                or lower:find('projectile')
+                or lower:find('charg')
+                or lower:find('draw') then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+local function multiActionValueActive(value, key)
+    if type(value) == 'boolean' then return value end
+    if type(value) == 'table' or typeof(value) == 'Instance' then return value ~= nil end
+    return type(value) == 'number'
+        and tostring(key):lower():find('consum', 1, true)
+        and value > 0
+        and tick() - value < 30
+end
+
+local function collectMultiActionBypasses(action)
+    local bypasses, found = {}, {}
+    for _, entry in ipairs(multiActionControllers) do
+        for key, value in pairs(entry.Value) do
+            if type(key) == 'string' then
+                for _, context in ipairs(multiActionContextNames) do
+                    if multiActionSelected(MultiActionContexts, context)
+                        and multiActionContextMatches(entry.Name, key, context)
+                        and multiActionValueActive(value, key) then
+                        found[entry.Value] = found[entry.Value] or {}
+                        table.insert(found[entry.Value], {Key = key, Value = value})
+                        break
+                    end
+                end
+            end
+        end
+    end
+
+    for controller, contextStates in pairs(found) do
+        if action ~= 'Hotbar switching' then
+            for _, state in ipairs(contextStates) do
+                table.insert(bypasses, {
+                    Object = controller,
+                    Key = state.Key,
+                    Value = state.Value,
+                    Temporary = type(state.Value) == 'boolean' and false or nil
+                })
+            end
+        end
+        for key, value in pairs(controller) do
+            local lower = type(key) == 'string' and key:lower() or ''
+            if type(value) == 'boolean' and value
+                and (lower == 'busy' or lower == 'locked' or lower == 'actionblocked' or lower == 'isbusy') then
+                table.insert(bypasses, {Object = controller, Key = key, Value = value, Temporary = false})
+            end
+        end
+    end
+    return bypasses
+end
+
+local function restoreMultiActionHooks()
+    for _, hook in ipairs(multiActionHooks) do
+        if hook.Object and hook.Object[hook.Key] == hook.Wrapper then
+            hook.Object[hook.Key] = hook.Original
+        end
+    end
+    table.clear(multiActionHooks)
+    table.clear(multiActionCalls)
+    table.clear(multiActionLast)
+end
+
+local function multiActionWithBypass(action, original, ...)
+    if not MultiAction.Enabled
+        or not multiActionSelected(MultiActionActions, action)
+        or multiActionCalls[action] then
+        return original(...)
+    end
+    local currentTime = os.clock()
+    if currentTime - (multiActionLast[action] or 0) < 1 / 240 then
+        return original(...)
+    end
+    multiActionLast[action], multiActionCalls[action] = currentTime, true
+
+    local states = collectMultiActionBypasses(action)
+    for _, state in ipairs(states) do
+        if state.Object[state.Key] == state.Value then
+            state.Object[state.Key] = state.Temporary
+        end
+    end
+
+    local results = table.pack(pcall(original, ...))
+    for index = #states, 1, -1 do
+        local state = states[index]
+        if state.Object[state.Key] == state.Temporary then
+            state.Object[state.Key] = state.Value
+        end
+    end
+    multiActionCalls[action] = nil
+    if not results[1] then error(results[2], 0) end
+    return table.unpack(results, 2, results.n)
+end
+
+local function hookMultiAction(object, key, action, predicate)
+    if type(object) ~= 'table' or type(object[key]) ~= 'function' then return end
+    for _, existing in ipairs(multiActionHooks) do
+        if existing.Object == object and existing.Key == key then return end
+    end
+    local original = object[key]
+    local wrapper
+    wrapper = function(...)
+        if predicate and not predicate(...) then return original(...) end
+        return multiActionWithBypass(action, original, ...)
+    end
+    table.insert(multiActionHooks, {Object = object, Key = key, Original = original, Wrapper = wrapper})
+    object[key] = wrapper
+end
+
+local function installMultiActionHooks()
+    refreshMultiActionControllers()
+    local sword = bedwars.SwordController
+    hookMultiAction(sword, 'swingSwordAtMouse', 'Melee attacking')
+    hookMultiAction(sword, 'swingSwordInRegion', 'Melee attacking')
+    hookMultiAction(sword, 'attackEntity', 'Melee attacking')
+
+    local placement = bedwars.BlockPlacementController
+    hookMultiAction(placement, 'placeBlock', 'Block placement')
+    hookMultiAction(placement and placement.blockPlacer, 'placeBlock', 'Block placement')
+    hookMultiAction(store.blockPlacer, 'placeBlock', 'Block placement')
+
+    local storeController = bedwars.Store
+    hookMultiAction(storeController, 'dispatch', 'Hotbar switching', function(_, action)
+        return type(action) == 'table' and action.type == 'InventorySelectHotbarSlot'
+    end)
+end
+
+MultiAction = (function()
+    local module, created = register('Exploits', 'MultiAction', {
+        Tooltip = 'Separates compatible local action locks without changing progress, speed, cooldowns, inputs, or remotes.',
+        Function = function(enabled)
+            restoreMultiActionHooks()
+            if not enabled then return end
+            safe('multiaction.install', installMultiActionHooks)
+
+            local nextRefresh = 0
+            module:Clean(runService.Heartbeat:Connect(function()
+                if tick() >= nextRefresh then
+                    nextRefresh = tick() + 1
+                    safe('multiaction.refresh', installMultiActionHooks)
+                end
+            end))
+            module:Clean(lplr.CharacterAdded:Connect(function()
+                task.defer(function()
+                    if module.Enabled then safe('multiaction.character', installMultiActionHooks) end
+                end)
+            end))
+        end
+    })
+    if created then
+        MultiActionActions = module:CreateTextList({
+            Name = 'Allowed actions',
+            Default = multiActionActionNames,
+            Tooltip = 'Enable only Hotbar switching, Melee attacking, or Block placement.'
+        })
+        MultiActionContexts = module:CreateTextList({
+            Name = 'Active contexts',
+            Default = multiActionContextNames,
+            Tooltip = 'Enable Projectile charging, Consuming, or Ability aiming.'
+        })
+        module:Clean(function()
+            restoreMultiActionHooks()
+        end)
+    end
+    return module
+end)()
+
+if type(shared.AetherMultiActionCleanup) == 'function' then
+    pcall(shared.AetherMultiActionCleanup)
+end
+shared.AetherMultiActionCleanup = restoreMultiActionHooks
+vape:Clean(function()
+    restoreMultiActionHooks()
+    if shared.AetherMultiActionCleanup == restoreMultiActionHooks then
+        shared.AetherMultiActionCleanup = nil
+    end
+end)
+
 --------------------------------------------------------------------------------
 -- InfiniteSigrid
 -- This module was removed even though its name did not identify it as an exploit.
