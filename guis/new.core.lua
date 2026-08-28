@@ -699,7 +699,7 @@ local function remoteHistoryUrl(limit)
 	return 'https://api.github.com/repos/plutoxqqqq/AetherV2/commits?sha=main&per_page='..tostring(requested)
 end
 
-local function downloadFile(path, func)local function downloadFile(path, func)
+local function downloadFile(path, func)
 	if not isfile(path) then
 		createDownloader(path)
 		local suc, res = pcall(function()
