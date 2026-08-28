@@ -6,7 +6,7 @@
     "start": "node server.js",
     "start:source": "node private-source.js",
     "start:bot": "node discord-bot.js",
-    "check": "node --check server.js && node --check key-registry.js && node --check private-source.js && node --check private-source-server.js && node --check discord-bot.js && node --check discord-bot-server.js",
+    "check": "node --check server.js && node --check key-registry.js && node --check private-source.js && node --check discord-bot.js",
     "test": "node --test"
   },
   "engines": {
