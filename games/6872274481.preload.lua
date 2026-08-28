@@ -31,7 +31,15 @@ repeat
 		assert(knitSource, 'Knit is unavailable')
 		local Knit = require(knitSource).KnitClient
 		assert(Knit and Knit.Controllers, 'Knit controllers are unavailable')
-		for _, controller in {'BlockBreakController', 'ProjectileController', 'SwordController'} do
+		-- These are read directly while the BedWars table is constructed, before its fallback
+		-- metatable can help. Do not let the main module start until all of them exist.
+		for _, controller in {
+			'BlockBreakController',
+			'DamageIndicatorController',
+			'NametagController',
+			'ProjectileController',
+			'SwordController'
+		} do
 			assert(Knit.Controllers[controller], controller..' is unavailable')
 		end
 
