@@ -24,8 +24,9 @@ test.beforeEach(() => {
   registry.isKeyIdActive = async () => true;
 });
 
-test('session loader uses the configured branch instead of ref=main', () => {
+test('session loader resets cross-session commit cache and uses the configured branch', () => {
   const source = proxy.sessionLoader('https://source.example.test', 'b'.repeat(64));
+  assert.match(source, /shared\.AetherResolvedCommit = nil/);
   assert.match(source, /ref=release%2Fsecurity/);
   assert.match(source, /SourceRef = "release\/security"/);
   assert.doesNotMatch(source, /ref=main/);
