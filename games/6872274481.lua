@@ -17068,7 +17068,6 @@ local breakmethods = ctx.breakmethods or {}
 local frictionTable = ctx.frictionTable or {}
 local updateVelocity = ctx.updateVelocity or function() end
 local getItem = assert(ctx.getItem, 'missing getItem')
-local switchItem = ctx.switchItem
 local getWool = ctx.getWool
 local getBestArmor = ctx.getBestArmor
 local getPlacedBlock = assert(ctx.getPlacedBlock, 'missing getPlacedBlock')
@@ -17502,8 +17501,10 @@ function Jade:GetState(ability)
     local controller, source, authoritative = liveAbilityController()
     if controller and type(controller.canUseAbility) == 'function' then
         local ok, ready = pcall(controller.canUseAbility, controller, ability, {disableBlockedAbilityAlert = true})
-        if ok and authoritative then
-            return ready and 'READY' or 'BLOCKED', {Source = source, Authoritative = true}
+        if ok and ready == false then
+            return 'BLOCKED', {Source = source, Authoritative = authoritative, Reported = ready}
+        elseif ok and authoritative then
+            return 'READY', {Source = source, Authoritative = true, Reported = ready}
         elseif ok then
             return 'UNKNOWN', {Source = source, Authoritative = false, Reported = ready}
         end
@@ -17613,18 +17614,20 @@ function Jade:RequestActivation(hammer, ability, targetPosition, cancelled, opti
         end
     end
 
-    local controllers = {bedwars.JadeHammerController, bedwars.HammerController, bedwars.ToolController, bedwars.ViewmodelController}
-    for _, controller in ipairs(controllers) do
-        if controller then
-            for _, method in ipairs({'useTool', 'activateTool', 'activate', 'useItem'}) do
-                if type(controller[method]) == 'function' then
-                    local ok, result = pcall(controller[method], controller, hammer.tool, targetPosition)
-                    table.insert(request.Paths, {Path = method, OK = ok, Result = result})
-                    if ok and result ~= false then request.Sent = true; break end
+    if not request.Sent then
+        local controllers = {bedwars.JadeHammerController, bedwars.HammerController, bedwars.ToolController, bedwars.ViewmodelController}
+        for _, controller in ipairs(controllers) do
+            if controller then
+                for _, method in ipairs({'useTool', 'activateTool', 'activate', 'useItem'}) do
+                    if type(controller[method]) == 'function' then
+                        local ok, result = pcall(controller[method], controller, hammer.tool, targetPosition)
+                        table.insert(request.Paths, {Path = method, OK = ok, Result = result})
+                        if ok and result ~= false then request.Sent = true; break end
+                    end
                 end
             end
+            if request.Sent then break end
         end
-        if request.Sent then break end
     end
 
     if not request.Sent and hammer.tool and type(hammer.tool.Activate) == 'function' then
