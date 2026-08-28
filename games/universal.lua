@@ -1923,6 +1923,16 @@ run(function()
 		or ((character.Humanoid and character.Humanoid.HipHeight or 2) + (character.RootPart.Size.Y * 0.5))
     end
 
+    local function groundBelow(root)
+	-- A real floor anywhere below the player takes precedence over the fake platform.
+	-- The platform itself is excluded from this raycast by the active filter.
+	return workspace:Raycast(
+		root.Position + Vector3.new(0, 0.75, 0),
+		Vector3.new(0, -10000, 0),
+		rayCheck
+	)
+    end
+
     AirWalk = vape.Categories.Blatant:CreateModule({
 	Name = 'AirWalk',
 	Function = function(callback)
@@ -1946,11 +1956,7 @@ run(function()
 				local standHeight = clearance(character)
 				rayCheck.FilterDescendantsInstances = {lplr.Character, gameCamera, platform}
 				pcall(function() rayCheck.CollisionGroup = root.CollisionGroup end)
-				local ground = workspace:Raycast(
-					root.Position + Vector3.new(0, 0.75, 0),
-					Vector3.new(0, -(standHeight + 2.25), 0),
-					rayCheck
-				)
+				local ground = groundBelow(root)
 
 				if ground and ground.Normal.Y > 0.15 then
 					lastGroundY = ground.Position.Y
@@ -1986,12 +1992,10 @@ run(function()
 		trackedCharacter = character.Character
 		lastGroundY = nil
 	end
-	if character.Humanoid.FloorMaterial == Enum.Material.Air then return end
 	local root = character.RootPart
-	local standHeight = clearance(character)
 	rayCheck.FilterDescendantsInstances = {lplr.Character, gameCamera, platform}
 	pcall(function() rayCheck.CollisionGroup = root.CollisionGroup end)
-	local ground = workspace:Raycast(root.Position + Vector3.new(0, 0.75, 0), Vector3.new(0, -(standHeight + 2.25), 0), rayCheck)
+	local ground = groundBelow(root)
 	if ground and ground.Normal.Y > 0.15 then lastGroundY = ground.Position.Y end
     end))
 
