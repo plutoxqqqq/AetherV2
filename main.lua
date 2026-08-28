@@ -254,6 +254,17 @@ local function fetchFile(path, attempts)
 	return nil, problem
 end
 
+-- Keep every lazy module/library fetch on the authenticated source route selected by init.lua.
+-- Game files run after main.lua and use this shared closure instead of trying public raw GitHub,
+-- which cannot read this private repository.
+shared.AetherV2FetchSource = function(path, attempts)
+	local body, problem = fetchFile(path, attempts)
+	if not body then
+		error('Could not download '..tostring(path)..' - '..tostring(problem), 0)
+	end
+	return body
+end
+
 local function downloadFile(path, func)
 	-- Heal a broken cache before trusting it. Without this, one interrupted write means the script
 	-- never loads again on that machine, however many times it is re-injected.
@@ -362,6 +373,7 @@ local function runWatchedChunk(source, chunkName, label, timeout, optional, ...)
 
 	local args = table.pack(...)
 	local finished, ok, result = false, true, nil
+	local timedOut = false
 	task.spawn(function()
 		-- Same thread fix the GUI applies to its own spawned threads, so a chunk that now runs off
 		-- the main thread keeps the identity it needs for protected calls.
@@ -372,6 +384,19 @@ local function runWatchedChunk(source, chunkName, label, timeout, optional, ...)
 			return chunk(table.unpack(args, 1, args.n))
 		end, debug.traceback)
 		finished = true
+		if timedOut then
+			if ok then
+				-- The menu was allowed to open while this chunk continued. Re-apply saved settings only
+				-- now that all of its modules have genuinely been registered.
+				applyLateModules(chunkName)
+			else
+				local message = chunkName..' failed after the loading timeout: '..tostring(result)
+				table.insert(loadingWarnings, message)
+				pcall(function()
+					vape:CreateNotification('AetherV2', message, 12, 'alert')
+				end)
+			end
+		end
 		if not ok then
 			warn('[AetherV2] '..chunkName..' failed: '..tostring(result))
 		end
@@ -381,8 +406,8 @@ local function runWatchedChunk(source, chunkName, label, timeout, optional, ...)
 	while not finished do
 		local elapsed = os.clock() - started
 		if elapsed > timeout then
+			timedOut = true
 			table.insert(loadingWarnings, chunkName..' is still loading after '..math.floor(elapsed)..' seconds - the menu was opened without it')
-			applyLateModules(chunkName)
 			return nil
 		end
 		if elapsed > 1.5 then
@@ -585,7 +610,7 @@ if not shared.VapeIndependent then
 	if placeSource then
 		-- Optional and watched: a game module that stalls (waiting on something the game has not
 		-- replicated yet) must never cost you the menu.
-		runWatchedChunk(placeSource, modulePlace, 'Loading module for this game', 15, true, license)
+		runWatchedChunk(placeSource, modulePlace, 'Loading module for this game', 75, true, license)
 	elseif forceRequested then
 		table.insert(loadingWarnings, 'Forced game module '..modulePlace..' could not be downloaded')
 	end
