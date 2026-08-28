@@ -9782,6 +9782,11 @@ mainapi:CreateCategory({
 	Size = UDim2.fromOffset(14, 14)
 })
 mainapi:CreateCategory({
+	Name = 'Exploits',
+	Icon = getcustomasset('aetherv2/assets/new/blatanticon.png'),
+	Size = UDim2.fromOffset(14, 14)
+})
+mainapi:CreateCategory({
 	Name = 'Render',
 	Icon = getcustomasset('aetherv2/assets/new/rendericon.png'),
 	Size = UDim2.fromOffset(15, 14)
@@ -10417,7 +10422,8 @@ guipane:CreateButton({
 			GUICategory = 1,
 			CombatCategory = 2,
 			BlatantCategory = 3,
-			RenderCategory = 4,
+			ExploitsCategory = 4,
+			RenderCategory = 5,
 			LegitCategory = 6,
 			UtilityCategory = 7,
 			WorldCategory = 8,
