@@ -787,16 +787,138 @@ local deferredFiles = {
 	['libraries/vm.lua'] = true
 }
 
+-- Queue/match subplaces without dedicated files use the canonical module for their experience.
+-- Keep this in sync with main.lua's runtime fallback.
+local experienceModules = {
+	[2619619496] = '6872274481' -- BedWars
+}
+
 local function neededFiles(files)
 	if not files then return {} end
 	local gui = selectedGui()
 	local assetFolder = gui
 	local place = tostring(game.PlaceId)
+	local forced
 	if isfile('aetherv2/profiles/forcegame.txt')
 		and readfile('aetherv2/profiles/forcegame.txt') == 'true'
 		and isfile('aetherv2/profiles/forcegameid.txt') then
-		local forced = readfile('aetherv2/profiles/forcegameid.txt'):match('^%s*(%d+)%s*$')
+		forced = readfile('aetherv2/profiles/forcegameid.txt'):match('^%s*(%d+)%s*
+	for path in files do
+		local include = false
+		-- assets/ is tested FIRST and by prefix, not by extension: the artwork folders hold the odd
+		-- .json (a font descriptor) as well as images, and letting the extension rule see those first
+		-- pulled another GUI's files down.
+		if path:sub(1, 7) == 'assets/' then
+			-- Only the selected GUI's artwork, plus the loading logo which is always shown.
+			include = path:sub(1, 8 + #assetFolder) == 'assets/'..assetFolder..'/'
+				or path == 'assets/new/loading.png'
+				or gui == 'old' and (path == 'assets/new/guivape.png' or path == 'assets/new/guiv4.png')
+		elseif path:sub(-4) == '.lua' or path:sub(-5) == '.json' or path:sub(-4) == '.txt' then
+			-- Only this game's module, never the other twenty-odd.
+			if path:sub(1, 6) == 'games/' then
+				include = path == 'games/universal.lua' or path == 'games/'..place..'.lua'
+			elseif path:sub(1, 5) == 'guis/' then
+				include = path == 'guis/'..gui..'.lua' or path == 'guis/'..gui..'.core.lua'
+			elseif path:sub(1, 6) == 'tools/' or path:sub(1, 1) == '.' then
+				include = false
+			elseif path == 'init.lua' then
+				-- Loaded straight from GitHub by the user's loadstring; a disk copy is never read.
+				include = false
+			else
+				include = true
+			end
+		end
+		if include and not deferredFiles[path] then
+			local target = 'aetherv2/'..path
+			if not isfile(target) then
+				table.insert(wanted, target)
+			end
+		end
+	end
+	return wanted
+end
+
+local function prefetch(files)
+	local queue = neededFiles(files)
+	local total = #queue
+	if total == 0 then return end
+
+	local index, done, active = 0, 0, 0
+	local workers = math.min(8, total)
+	active = workers
+	for _ = 1, workers do
+		task.spawn(function()
+			while true do
+				index += 1
+				local path = queue[index]
+				if not path then break end
+				local body = fetchFile(path, nil, 2)
+				if body then
+					pcall(storeFile, path, body)
+				end
+				done += 1
+				_G.AetherV2SetLoadingStatus('Downloading files ('..done..'/'..total..')', 0.22 + (0.4 * (done / total)))
+			end
+			active -= 1
+		end)
+	end
+
+	-- Bounded: a worker that somehow never returns must not hold the load open.
+	local deadline = os.clock() + 90
+	repeat task.wait(0.05) until active <= 0 or os.clock() > deadline
+end
+
+_G.AetherV2SetLoadingStatus('Checking version', 0.18)
+downloadFile('aetherv2/version.txt')
+
+-- version.txt is only back on disk now, so this is the first point the version that
+-- arrived can be read. main.lua turns the pair into the update notification.
+if type(shared.updated) == 'table' then
+	shared.updated.To = installedVersion()
+end
+
+local versionData = readfile("aetherv2/version.txt")
+local maintenance = versionData:match("maintenance%s*=%s*([^\r\n]+)")
+
+if maintenance and maintenance:match("^%s*true%s*$") then
+	table.clear(compileCache)
+	shared.AetherCompileCache = nil
+	local StarterGui = game:GetService("StarterGui")
+
+	pcall(function()
+		StarterGui:SetCore("SendNotification", {
+			Title = "AetherV2 Unavaliable",
+			Text = "AetherV2 is currently under maintenance\nDiscord link copied to clipboard",
+			Duration = 8
+		})
+	end)
+
+	if setclipboard then
+		setclipboard("https://discord.gg/aYu5c9v9zv")
+	end
+
+	return
+end
+
+-- Only worth doing once we know the script is actually going to run.
+prefetch(prefetchPaths)
+
+_G.AetherV2SetLoadingStatus('Preparing loading artwork...', 0.70)
+pcall(downloadFile, 'aetherv2/assets/new/loading.png')
+
+_G.AetherV2SetLoadingStatus('Loading main script', 0.82)
+local mainChunk = cachedLoadstring(downloadFile('aetherv2/main.lua'), 'main')
+if not mainChunk then
+	-- The cache heal above should have caught this, so if it still will not compile the copy on
+	-- GitHub is genuinely broken - say so instead of erroring on a nil call with the screen up.
+	failLoad('main.lua did not compile')
+end
+return mainChunk(license)
+)
 		place = forced or place
+	end
+	if not forced and not files['games/'..place..'.lua'] then
+		place = experienceModules[game.GameId] or place
 	end
 	local wanted = {}
 	for path in files do
