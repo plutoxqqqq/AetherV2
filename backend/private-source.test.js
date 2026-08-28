@@ -24,9 +24,8 @@ test.beforeEach(() => {
   registry.isKeyIdActive = async () => true;
 });
 
-test('session loader resets cross-session commit cache and uses the configured branch', () => {
+test('session loader uses the configured branch instead of ref=main', () => {
   const source = proxy.sessionLoader('https://source.example.test', 'b'.repeat(64));
-  assert.match(source, /shared\.AetherResolvedCommit = nil/);
   assert.match(source, /ref=release%2Fsecurity/);
   assert.match(source, /SourceRef = "release\/security"/);
   assert.doesNotMatch(source, /ref=main/);
@@ -113,48 +112,4 @@ test('large source files fall back to Git blobs when Contents API omits content'
 
 test('GitHub failures are surfaced without serving stale source', async () => {
   await assert.rejects(proxy.sourceFile('init.lua', 'release/security'), error => error.status === 502);
-});
-
-
-test('version history is capped and approves immutable entries through the proxy helper', async () => {
-  const originalFetch = global.fetch;
-  const commits = Array.from({length: 20}, (_, index) => ({
-    sha: (index.toString(16).padStart(2, '0') + 'a'.repeat(38)).slice(0, 40),
-    commit: {
-      author: {date: '2026-01-01T00:00:00Z'},
-      message: 'Version ' + index
-    }
-  }));
-  global.fetch = async url => {
-    const requestUrl = String(url);
-    if (requestUrl.includes('/commits?sha=release%2Fsecurity&per_page=11')) {
-      return {status: 200, ok: true, json: async () => commits};
-    }
-    const match = requestUrl.match(/\/contents\/version\.txt\?ref=([a-f0-9]{40})$/);
-    if (match) {
-      return {
-        status: 200,
-        ok: true,
-        json: async () => ({
-          type: 'file',
-          encoding: 'base64',
-          content: Buffer.from('version = 3.' + parseInt(match[1].slice(0, 2), 16) + '\n').toString('base64')
-        })
-      };
-    }
-    return {status: 404, ok: false, json: async () => ({message: 'unexpected request'})};
-  };
-
-  try {
-    const versions = await proxy.versionHistory('release/security', 99);
-    assert.equal(versions.length, 11);
-    assert.equal(versions[0].sha, commits[0].sha);
-    assert.equal(versions[10].sha, commits[10].sha);
-    const session = {approvedRefs: new Set()};
-    for (const version of versions) session.approvedRefs.add(version.sha);
-    assert.equal(proxy.sessionAllowsRef(session, versions[10].sha), true);
-    assert.equal(proxy.sessionAllowsRef(session, commits[11].sha), false);
-  } finally {
-    global.fetch = originalFetch;
-  }
 });

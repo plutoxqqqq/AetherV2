@@ -3,7 +3,10 @@
 const crypto = require('node:crypto');
 
 const REPOSITORY = process.env.GITHUB_REPO || '';
-const BRANCH = process.env.GITHUB_BRANCH || '';
+// Registry mutations are data, not source deployments. Keep them on a dedicated branch so normal
+// loader authorization cannot create a commit on the Render deployment branch and restart the
+// in-memory source session mid-load.
+const BRANCH = process.env.AETHER_REGISTRY_BRANCH || 'aether-key-registry';
 const TOKEN = process.env.GITHUB_TOKEN || '';
 const REGISTRY_FILE = process.env.AETHER_REGISTRY_FILE || 'backend/key-bindings.json';
 const REGISTRY_VERSION = 3;
@@ -24,7 +27,7 @@ if (!TOKEN) throw new Error('GITHUB_TOKEN is required');
 if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(REPOSITORY)) {
   throw new Error('GITHUB_REPO must be configured as owner/repository');
 }
-if (!BRANCH || BRANCH.length > 200) throw new Error('GITHUB_BRANCH is required');
+if (!BRANCH || BRANCH.length > 200) throw new Error('AETHER_REGISTRY_BRANCH is invalid');
 
 const headers = {
   authorization: 'Bearer ' + TOKEN,

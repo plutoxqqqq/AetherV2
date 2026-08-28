@@ -2,17 +2,6 @@ local license = ... or {}
 local globalenv = (getgenv and getgenv()) or _G
 repeat task.wait() until game:IsLoaded()
 
-
--- Capture this before the old instance is torn down. Its Uninject method clears the shared flag,
--- but the new instance still needs to know this load was an intentional reinject.
-local reinjectRequested = shared.vapereload == true
-
--- mainAether was a legacy duplicate-loader marker. The current loader owns duplicate cleanup through
--- shared.vape, and leaving the old marker behind made a reinject enter the obsolete "outdated" path.
-pcall(function()
-	shared.mainAether = nil
-end)
-
 -- If an AetherV2 instance is already injected, fully destroy it before loading
 -- this one. Running the loadstring again is a valid "reinject" - it must tear
 -- the old GUI down first, or two instances fight over input/GUI and the new one
@@ -35,25 +24,10 @@ if shared.vape then
 	end
 end
 
-if reinjectRequested then
-	shared.vapereload = true
-end
-
 local vape
 local compile = loadstring
 local compileCache = type(shared.AetherCompileCache) == 'table' and shared.AetherCompileCache or {}
 local watermark = '--This watermark is used to delete the file if its cached, remove it to make the file persist after vape updates.\n'
-local function isGameModulePath(path)
-	return type(path) == 'string' and path:match('games/%d+%.lua$') ~= nil
-end
-local function cachedSourceUsable(path, body)
-	if type(body) ~= 'string' then return false end
-	if not isGameModulePath(path) then return true end
-	if body:sub(1, #watermark) == watermark then
-		body = body:sub(#watermark + 1)
-	end
-	return body:match('%S') ~= nil
-end
 local function compileKey(source)
 	return source:sub(1, #watermark) == watermark and source:sub(#watermark + 1) or source
 end
@@ -223,9 +197,6 @@ local function payloadProblem(path, body)
 	if path:sub(-4) == '.lua' and not loadstring(body, path) then
 		return 'the downloaded file did not compile'
 	end
-	if isGameModulePath(path) and not cachedSourceUsable(path, body) then
-		return 'empty game module response'
-	end
 	return nil
 end
 
@@ -254,28 +225,14 @@ local function fetchFile(path, attempts)
 	return nil, problem
 end
 
--- Keep every lazy module/library fetch on the authenticated source route selected by init.lua.
--- Game files run after main.lua and use this shared closure instead of trying public raw GitHub,
--- which cannot read this private repository.
-shared.AetherV2FetchSource = function(path, attempts)
-	local body, problem = fetchFile(path, attempts)
-	if not body then
-		error('Could not download '..tostring(path)..' - '..tostring(problem), 0)
-	end
-	return body
-end
-
 local function downloadFile(path, func)
 	-- Heal a broken cache before trusting it. Without this, one interrupted write means the script
 	-- never loads again on that machine, however many times it is re-injected.
 	local exists = isfile(path)
-	if exists and path:sub(-4) == '.lua' then
-		local cached = readfile(path)
-		if not loadstring(cached, path) or not cachedSourceUsable(path, cached) then
-			warn('[AetherV2] Cached '..path..' is unusable, downloading it again')
-			delfile(path)
-			exists = false
-		end
+	if exists and path:sub(-4) == '.lua' and not loadstring(readfile(path), path) then
+		warn('[AetherV2] Cached '..path..' is unusable, downloading it again')
+		delfile(path)
+		exists = false
 	end
 	if not exists then
 		setPhaseProgress('Downloading '..path, 0.15)
@@ -302,7 +259,6 @@ local function downloadOptionalFile(path)
 	writefile(path, res)
 	return true
 end
-
 
 local loadingWarnings = {}
 
@@ -354,12 +310,8 @@ end
 
 -- Run a loading chunk on its own thread, watching it rather than waiting on it.
 --
--- This is the other half of the "stuck at 88%" fix. Game modules run during the load, and a module
--- that waits on something the game never provides used to take the whole load down with it: no
--- menu, no error, just a percentage that never moved. Now the loader watches instead of blocking -
--- the status text counts the seconds, so it is visibly alive - and if a chunk outstays its welcome
--- we build the menu without it. The chunk is not killed; if it does finish later, its modules are
--- added and their saved settings re-applied.
+-- Game modules can wait on runtime state that is not present yet. Watch them instead of blocking the
+-- whole menu forever; if a chunk finishes later, apply its modules after the interface is already up.
 local function runWatchedChunk(source, chunkName, label, timeout, optional, ...)
 	local chunk = loadstring(source, chunkName)
 	if not chunk then
@@ -373,10 +325,7 @@ local function runWatchedChunk(source, chunkName, label, timeout, optional, ...)
 
 	local args = table.pack(...)
 	local finished, ok, result = false, true, nil
-	local timedOut = false
 	task.spawn(function()
-		-- Same thread fix the GUI applies to its own spawned threads, so a chunk that now runs off
-		-- the main thread keeps the identity it needs for protected calls.
 		if vape and vape.ThreadFix then
 			setthreadidentity(8)
 		end
@@ -384,19 +333,6 @@ local function runWatchedChunk(source, chunkName, label, timeout, optional, ...)
 			return chunk(table.unpack(args, 1, args.n))
 		end, debug.traceback)
 		finished = true
-		if timedOut then
-			if ok then
-				-- The menu was allowed to open while this chunk continued. Re-apply saved settings only
-				-- now that all of its modules have genuinely been registered.
-				applyLateModules(chunkName)
-			else
-				local message = chunkName..' failed after the loading timeout: '..tostring(result)
-				table.insert(loadingWarnings, message)
-				pcall(function()
-					vape:CreateNotification('AetherV2', message, 12, 'alert')
-				end)
-			end
-		end
 		if not ok then
 			warn('[AetherV2] '..chunkName..' failed: '..tostring(result))
 		end
@@ -406,8 +342,8 @@ local function runWatchedChunk(source, chunkName, label, timeout, optional, ...)
 	while not finished do
 		local elapsed = os.clock() - started
 		if elapsed > timeout then
-			timedOut = true
 			table.insert(loadingWarnings, chunkName..' is still loading after '..math.floor(elapsed)..' seconds - the menu was opened without it')
+			applyLateModules(chunkName)
 			return nil
 		end
 		if elapsed > 1.5 then
@@ -432,8 +368,6 @@ local function finishLoading()
 	local loaded, loadError = xpcall(function()
 		vape:Load()
 	end, debug.traceback)
-	-- Source strings can be hundreds of kilobytes. They are only useful during startup validation;
-	-- release both keys and compiled closures as soon as all startup chunks have run.
 	table.clear(compileCache)
 	shared.AetherCompileCache = nil
 	if not loaded then
@@ -491,13 +425,6 @@ local function finishLoading()
 			end
 			vape:CreateNotification('Finished Loading', (vape.VapeButton and 'Press the button in the top right' or 'Press '..table.concat(vape.Keybind, ' + '):upper())..' to open GUI', 5)
 		end
-		-- Update notice.
-		--
-		-- This used to read "Script has updated from <40 hex chars> to <40 hex chars>",
-		-- which named two commits nobody can tell apart and fired for every commit the
-		-- repository received - including ones that changed nothing this install has.
-		-- init.lua now only leaves shared.updated behind when files on THIS machine were
-		-- actually replaced, and hands over the version either side of it.
 		local update = shared.updated
 		shared.updated = nil
 		if type(update) == 'table' then
@@ -523,8 +450,6 @@ local function finishLoading()
 	end
 
 	setLoadingStatus('Finished loading', 1)
-	-- The old two-second victory pause made an already-ready menu feel slow. Let the loading
-	-- screen's own closer perform its fade immediately after the final status is rendered.
 	task.defer(closeLoadingScreen)
 end
 
@@ -545,8 +470,6 @@ end
 if not isfolder('aetherv2/assets/'..gui) then
 	makefolder('aetherv2/assets/'..gui)
 end
--- Songs live here for MP3Player. Created from main as well as init, so loading the script directly
--- (without init) still leaves somewhere to put music.
 for _, folder in {'aetherv2/songs'} do
 	if not isfolder(folder) then
 		makefolder(folder)
@@ -558,39 +481,38 @@ end
 if not isfile('aetherv2/profiles/disableloading.txt') then
 	writefile('aetherv2/profiles/disableloading.txt', 'false')
 end
+if not isfile('aetherv2/profiles/releasechannel.txt') then
+	writefile('aetherv2/profiles/releasechannel.txt', 'stable')
+end
 
 globalenv.used_init = true
 setPhase('Preparing loading artwork', 0.82, 0.84)
 downloadOptionalFile('aetherv2/assets/new/loading.png')
-
 
 setPhase('Loading interface', 0.84, 0.88)
 vape = runLoadingChunk(downloadFile('aetherv2/guis/'..gui..'.lua'), 'gui', license)
 _G.vape = vape
 shared.vape = vape
 
-
--- Duplicate cleanup above is the only reinject guard. The old shared.mainAether check was
--- removed because the current loader never sets that marker and it blocked valid reinjections.
+if shared.mainAether then
+	closeLoadingScreen()
+	redirect()
+	playersService.LocalPlayer:Kick('Your script is outdated, Get new one at discord.gg/aetherv2')
+	return
+end
 
 if not shared.VapeIndependent then
 	setPhase('Loading universal modules', 0.88, 0.93)
-	-- Watched rather than waited on, and generous: universal is where every game-independent module
-	-- is registered, so it is worth a long leash - but not an unlimited one.
 	runWatchedChunk(downloadFile('aetherv2/games/universal.lua'), 'universal', 'Loading universal modules', 30, false, license)
 
 	setPhase('Loading game modules', 0.93, 0.97)
 	local modulePlace = tostring(game.PlaceId)
-	local forceRequested = false
 	if isfile('aetherv2/profiles/forcegame.txt')
 		and readfile('aetherv2/profiles/forcegame.txt') == 'true'
 		and isfile('aetherv2/profiles/forcegameid.txt') then
 		local forced = readfile('aetherv2/profiles/forcegameid.txt'):match('^%s*(%d+)%s*$')
 		modulePlace = forced or modulePlace
-		forceRequested = forced ~= nil
 	end
-	-- Force-loading is a one-shot debugging action. Consume it before running the chunk so even a
-	-- broken or stalled game module cannot leave the user permanently pinned to the wrong game.
 	writefile('aetherv2/profiles/forcegame.txt', 'false')
 	vape.Place = tonumber(modulePlace) or game.PlaceId
 	local placePath = 'aetherv2/games/'..modulePlace..'.lua'
@@ -599,20 +521,14 @@ if not shared.VapeIndependent then
 		placeSource = downloadFile(placePath)
 	elseif not shared.VapeDeveloper then
 		setPhaseProgress('Downloading module for this game', 0.1)
-		-- One attempt only: most games simply have no module, and a 404 is the expected answer.
-		-- Retrying it would add seconds and two pointless requests to every unsupported game.
 		local body = fetchFile(placePath, 1)
 		if body then
-			writefile(placePath, '--This watermark is used to delete the file if its cached, remove it to make the file persist after vape updates.\n'..body)
+			writefile(placePath, watermark..body)
 			placeSource = readfile(placePath)
 		end
 	end
 	if placeSource then
-		-- Optional and watched: a game module that stalls (waiting on something the game has not
-		-- replicated yet) must never cost you the menu.
-		runWatchedChunk(placeSource, modulePlace, 'Loading module for this game', 75, true, license)
-	elseif forceRequested then
-		table.insert(loadingWarnings, 'Forced game module '..modulePlace..' could not be downloaded')
+		runWatchedChunk(placeSource, modulePlace, 'Loading module for this game', 15, true, license)
 	end
 	finishLoading()
 else
