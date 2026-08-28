@@ -164,6 +164,9 @@ const firstStageLoader = (origin, key) => [
 const sessionLoader = (origin, session) => [
   'local endpoint = ' + JSON.stringify(origin),
   'local session = ' + JSON.stringify(session),
+  '-- Commit-SHA approvals belong to one private-source session. A newly authorized loader must',
+  '-- resolve the commit again instead of reusing a SHA cached by the previous session.',
+  'shared.AetherResolvedCommit = nil',
   'loadstring(game:HttpGet(endpoint.."/source?path=init.lua&ref=' + encodeURIComponent(BRANCH) + '&session="..session, true), "init.lua")({',
   '    Closet = false,',
   '    SourceEndpoint = endpoint,',
