@@ -210,7 +210,8 @@ pcall(function()
 	local fallback = Runtime and Runtime.new and Runtime.new()
 	if type(fallback) == 'table' then
 		bedwars = fallback
-		getgenv().bedwars = bedwars
+		local env = getgenv()
+		env.bedwars = bedwars
 		shared.AetherBedwarsFallbackReady = fallback.Client ~= nil and fallback.Store ~= nil and fallback.ItemMeta ~= nil
 	end
 end)
