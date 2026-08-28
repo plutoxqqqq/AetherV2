@@ -8885,7 +8885,7 @@ function mainapi:CreateChangelogs()
 	body.Size, body.Position, body.AutomaticSize = UDim2.new(1, -28, 0, 0), UDim2.fromOffset(14, 12), Enum.AutomaticSize.Y
 	body.BackgroundTransparency, body.RichText = 1, true
 	body.Text = [=[<b><font color="#d378ff">BedWars</font></b>
-<font color="#63dc82">[+]</font> Added “MultiAction” to Exploits, allowing multiple actions at once, such as placing blocks while using Killaura.
+<font color="#ff6969">[-]</font> Removed retired game-specific modules.
 <font color="#63dc82">[+]</font> Added “AutoEnchant” to Inventory, which automatically repairs and uses the enchanting table.
 <font color="#6aa9ff">[^]</font> Renamed DeathTP to “RecoveryTP”.
 <font color="#6aa9ff">[^]</font> Merged the visual modules into one highly customizable Render module named “Theme”.
