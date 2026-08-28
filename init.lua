@@ -496,9 +496,6 @@ for _, folder in {'aetherv2', 'aetherv2/games', 'aetherv2/profiles', 'aetherv2/a
 	end
 end
 
-if not isfile('aetherv2/profiles/releasechannel.txt') then
-	writefile('aetherv2/profiles/releasechannel.txt', 'stable')
-end
 
 -- Drop-a-song note, written once. MP3Player reads whatever is in aetherv2/songs, so the folder is
 -- no use to anyone who does not know it is there.
@@ -526,19 +523,20 @@ end
 -- call the error message was parsed as if it were the page, the match failed, and the commit
 -- silently became 'main' - which then looked like an update and wiped the entire install. On a flaky
 -- connection that happened on every injection. A lookup that fails now changes nothing at all.
-local function selectedReleaseChannel()
-	local value = isfile('aetherv2/profiles/releasechannel.txt') and readfile('aetherv2/profiles/releasechannel.txt'):lower():gsub('%s+', '') or 'stable'
-	return ({stable = 'stable', beta = 'beta', nightly = 'nightly'})[value] or 'stable'
+local function configuredSourceRef()
+	return sourceEndpoint and sourceRef or 'main'
+end
+
+local function validCommit(value)
+	return type(value) == 'string' and value:match('^%x+$') ~= nil and #value >= 40 and #value <= 64
 end
 
 local function resolveCommit()
-	local channel = selectedReleaseChannel()
-	local branch = sourceEndpoint and sourceRef or (channel == 'stable' and 'main' or channel)
-	-- Reinjection in the same client should not repeat three update endpoints. The first injection
-	-- still performs the normal live check; this short in-memory reuse never survives a new client
-	-- session and therefore does not make persistent installs miss updates.
+	local branch = configuredSourceRef()
+	-- Reinjection in the same client should not repeat the live lookup. This short
+	-- reuse never survives a new client session, so it cannot hide a new build.
 	local recent = shared.AetherResolvedCommit
-	if type(recent) == 'table' and recent.Channel == channel and type(recent.Commit) == 'string' and os.clock() - (recent.CheckedAt or 0) < 60 then
+	if type(recent) == 'table' and recent.Ref == branch and type(recent.Commit) == 'string' and os.clock() - (recent.CheckedAt or 0) < 60 then
 		return recent.Commit
 	end
 	local sources
@@ -561,12 +559,27 @@ local function resolveCommit()
 			local found = body:match(source.Pattern)
 			if found and #found >= 40 then
 				found = found:sub(1, 40)
-				shared.AetherResolvedCommit = {Commit = found, Channel = channel, CheckedAt = os.clock()}
+				shared.AetherResolvedCommit = {Commit = found, Ref = branch, CheckedAt = os.clock()}
 				return found
 			end
 		end
 	end
 	return nil
+end
+
+-- A selected downgrade is valid only while it remains in the ten-version
+-- history exposed by the configured source. The current entry plus ten
+-- previous entries gives the loader one bounded, predictable window.
+local function pinnedCommitInHistory(commit)
+	local branch = configuredSourceRef()
+	local url = privateSourceUrl('history', nil, branch)
+		or ('https://api.github.com/repos/plutoxqqqq/AetherV2/commits?sha='..urlEncode(branch)..'&per_page=11')
+	if sourceEndpoint then url = url..'&limit=11' end
+	local suc, body = pcall(function()
+		return game:HttpGet(url, true)
+	end)
+	if not suc or type(body) ~= 'string' then return false end
+	return body:lower():find('"'..commit:lower()..'"', 1, true) ~= nil
 end
 
 -- The list of files a commit contains, read straight from git.
@@ -644,6 +657,7 @@ if isfile('aetherv2/profiles/manifest.json') then
 end
 
 local prefetchPaths = nil
+local versionPinPath = 'aetherv2/profiles/version-pin.txt'
 
 -- The version this install is on right now, e.g. '3.5'. Read straight off disk, so
 -- calling it before the update reports the version being replaced and calling it
@@ -659,7 +673,12 @@ end
 if not shared.VapeDeveloper then
 	local oldCommit = isfile('aetherv2/profiles/commit.txt') and readfile('aetherv2/profiles/commit.txt') or ''
 	_G.AetherV2SetLoadingStatus('Checking for updates', 0.12)
-	local commit = license.Commit or resolveCommit()
+	local pinnedCommit = isfile(versionPinPath) and readfile(versionPinPath):gsub('%s+', '') or nil
+	if pinnedCommit and (not validCommit(pinnedCommit) or not pinnedCommitInHistory(pinnedCommit)) then
+		pcall(delfile, versionPinPath)
+		pinnedCommit = nil
+	end
+	local commit = pinnedCommit or (type(license) == 'table' and license.Commit) or resolveCommit()
 
 	if commit and commit ~= oldCommit then
 		local previousVersion = installedVersion()
@@ -727,10 +746,9 @@ if not shared.VapeDeveloper then
 		end
 		prefetchPaths = newFiles
 	elseif oldCommit == '' then
-		-- First run with no answer: retain the configured private ref (or the public
-		-- release channel) rather than silently switching a gated client to main.
-		local channel = selectedReleaseChannel()
-		writefile('aetherv2/profiles/commit.txt', commit or (sourceEndpoint and sourceRef or (channel == 'stable' and 'main' or channel)))
+		-- First run with no answer: retain the configured private ref rather than
+		-- silently switching a gated client to main.
+		writefile('aetherv2/profiles/commit.txt', commit or configuredSourceRef())
 	else
 		-- Up to date. The stored list is this commit's file list, so it can drive the prefetch below
 		-- without another request.

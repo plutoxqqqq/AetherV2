@@ -1923,6 +1923,16 @@ run(function()
 		or ((character.Humanoid and character.Humanoid.HipHeight or 2) + (character.RootPart.Size.Y * 0.5))
     end
 
+    local function groundBelow(root)
+	-- A real floor anywhere below the player takes precedence over the fake platform.
+	-- The platform itself is excluded from this raycast by the active filter.
+	return workspace:Raycast(
+		root.Position + Vector3.new(0, 0.75, 0),
+		Vector3.new(0, -10000, 0),
+		rayCheck
+	)
+    end
+
     AirWalk = vape.Categories.Blatant:CreateModule({
 	Name = 'AirWalk',
 	Function = function(callback)
@@ -1943,14 +1953,9 @@ run(function()
 					lastGroundY = nil
 				end
 				local root = character.RootPart
-				local standHeight = clearance(character)
 				rayCheck.FilterDescendantsInstances = {lplr.Character, gameCamera, platform}
 				pcall(function() rayCheck.CollisionGroup = root.CollisionGroup end)
-				local ground = workspace:Raycast(
-					root.Position + Vector3.new(0, 0.75, 0),
-					Vector3.new(0, -(standHeight + 2.25), 0),
-					rayCheck
-				)
+				local ground = groundBelow(root)
 
 				if ground and ground.Normal.Y > 0.15 then
 					lastGroundY = ground.Position.Y
@@ -1986,12 +1991,10 @@ run(function()
 		trackedCharacter = character.Character
 		lastGroundY = nil
 	end
-	if character.Humanoid.FloorMaterial == Enum.Material.Air then return end
 	local root = character.RootPart
-	local standHeight = clearance(character)
 	rayCheck.FilterDescendantsInstances = {lplr.Character, gameCamera, platform}
 	pcall(function() rayCheck.CollisionGroup = root.CollisionGroup end)
-	local ground = workspace:Raycast(root.Position + Vector3.new(0, 0.75, 0), Vector3.new(0, -(standHeight + 2.25), 0), rayCheck)
+	local ground = groundBelow(root)
 	if ground and ground.Normal.Y > 0.15 then lastGroundY = ground.Position.Y end
     end))
 
@@ -2143,6 +2146,386 @@ run(function()
 		end
 	end,
     }
+
+    ------------------------------------------------------------------------
+    -- Shared visual-clone helper used by InfiniteFly. The real character is
+    -- kept away from the map while the anchored clone remains camera-visible.
+    ------------------------------------------------------------------------
+    local function createVisualClone(sourceCharacter)
+        if not sourceCharacter or not sourceCharacter.Parent then return nil end
+
+        local oldArchivable = sourceCharacter.Archivable
+        sourceCharacter.Archivable = true
+        local cloned, clone = pcall(function()
+            return sourceCharacter:Clone()
+        end)
+        sourceCharacter.Archivable = oldArchivable
+        if not cloned or not clone then return nil end
+
+        for _, object in ipairs(clone:GetDescendants()) do
+            if object:IsA('Script') or object:IsA('LocalScript') then
+                object:Destroy()
+            elseif object:IsA('BasePart') then
+                object.CanCollide = false
+                object.CanTouch = false
+                object.CanQuery = false
+            end
+        end
+
+        clone.Name = 'AetherInfiniteFlyClone'
+        clone.Parent = workspace
+        local cloneRoot = clone.PrimaryPart or clone:FindFirstChild('HumanoidRootPart')
+        local cloneHumanoid = clone:FindFirstChildOfClass('Humanoid')
+        if not cloneRoot or not cloneHumanoid then
+            pcall(clone.Destroy, clone)
+            return nil
+        end
+        clone.PrimaryPart = cloneRoot
+        cloneRoot.Anchored = true
+        clone:PivotTo(sourceCharacter:GetPivot())
+
+        local cloneAnimator = cloneHumanoid:FindFirstChildOfClass('Animator')
+        if not cloneAnimator then
+            cloneAnimator = Instance.new('Animator')
+            cloneAnimator.Parent = cloneHumanoid
+        end
+
+        local visual = {
+            Model = clone,
+            Root = cloneRoot,
+            Humanoid = cloneHumanoid,
+            Animator = cloneAnimator,
+            Connections = {},
+            Tracks = {},
+            Destroyed = false
+        }
+
+        function visual:Connect(signal, callback)
+            if self.Destroyed or not signal then return nil end
+            local ok, connection = pcall(signal.Connect, signal, callback)
+            if ok and connection then
+                table.insert(self.Connections, connection)
+                return connection
+            end
+        end
+
+        function visual:RemoveTrack(sourceTrack)
+            local entry = self.Tracks[sourceTrack]
+            if not entry then return end
+            self.Tracks[sourceTrack] = nil
+            if entry.Connection then pcall(entry.Connection.Disconnect, entry.Connection) end
+            if entry.Track then
+                pcall(entry.Track.Stop, entry.Track, 0)
+                pcall(entry.Track.Destroy, entry.Track)
+            end
+        end
+
+        function visual:Mirror(sourceTrack)
+            if self.Destroyed or not sourceTrack then return end
+            local ok, animation = pcall(function() return sourceTrack.Animation end)
+            if not ok or not animation then return end
+            self:RemoveTrack(sourceTrack)
+
+            local okLoad, mirrored = pcall(self.Animator.LoadAnimation, self.Animator, animation)
+            if not okLoad or not mirrored then return end
+            local priority = pcall(function() return sourceTrack.Priority end)
+            local looped = pcall(function() return sourceTrack.Looped end)
+            if priority then pcall(function() mirrored.Priority = sourceTrack.Priority end) end
+            if looped then pcall(function() mirrored.Looped = sourceTrack.Looped end) end
+
+            local weight = 1
+            local speed = 1
+            local timePosition = 0
+            pcall(function() weight = math.max(tonumber(sourceTrack.WeightCurrent) or 1, 0.01) end)
+            pcall(function() speed = tonumber(sourceTrack.Speed) or 1 end)
+            pcall(function() timePosition = sourceTrack.TimePosition end)
+            pcall(mirrored.Play, mirrored, 0, weight, speed)
+            pcall(function() mirrored.TimePosition = timePosition end)
+
+            local entry = {Track = mirrored, Connection = nil}
+            self.Tracks[sourceTrack] = entry
+            entry.Connection = self:Connect(sourceTrack.Stopped, function()
+                self:RemoveTrack(sourceTrack)
+            end)
+        end
+
+        function visual:Update()
+            if self.Destroyed then return end
+            for sourceTrack, entry in pairs(self.Tracks) do
+                local mirrored = entry.Track
+                local okPlaying, playing = pcall(function() return sourceTrack.IsPlaying end)
+                if not okPlaying then
+                    self:RemoveTrack(sourceTrack)
+                elseif playing then
+                    pcall(function() mirrored.TimePosition = sourceTrack.TimePosition end)
+                    pcall(mirrored.AdjustSpeed, mirrored, sourceTrack.Speed)
+                    pcall(mirrored.AdjustWeight, mirrored, sourceTrack.WeightCurrent, 0)
+                end
+            end
+        end
+
+        function visual:Destroy()
+            if self.Destroyed then return end
+            self.Destroyed = true
+            for _, connection in ipairs(self.Connections) do
+                pcall(connection.Disconnect, connection)
+            end
+            table.clear(self.Connections)
+            for sourceTrack in pairs(self.Tracks) do
+                self:RemoveTrack(sourceTrack)
+            end
+            if self.Model and self.Model.Parent then
+                pcall(self.Model.Destroy, self.Model)
+            end
+            self.Model = nil
+        end
+
+        local sourceAnimator = sourceCharacter:FindFirstChildOfClass('Humanoid')
+            and sourceCharacter:FindFirstChildOfClass('Humanoid'):FindFirstChildOfClass('Animator')
+        if sourceAnimator then
+            for _, track in ipairs(sourceAnimator:GetPlayingAnimationTracks()) do
+                visual:Mirror(track)
+            end
+            visual:Connect(sourceAnimator.AnimationPlayed, function(track)
+                visual:Mirror(track)
+            end)
+        end
+        return visual
+    end
+
+    local InfiniteFly
+    local infiniteFlyGeneration = 0
+    local infiniteFlyState
+    local InfiniteFlyUpSpeed
+    local InfiniteFlyDownSpeed
+
+    local function findCharacterRoot(character)
+        return character and (character.PrimaryPart or character:FindFirstChild('HumanoidRootPart'))
+    end
+
+    local function cleanupInfiniteFly()
+        local state = infiniteFlyState
+        if not state then return end
+        infiniteFlyState = nil
+
+        local finalCFrame = state.OriginalCFrame
+        if state.Visual and state.Visual.Root and state.Visual.Root.Parent then
+            local read, cloneCFrame = pcall(function()
+                return state.Visual.Root.CFrame
+            end)
+            if read and cloneCFrame then finalCFrame = cloneCFrame end
+        end
+
+        if state.Visual then
+            pcall(state.Visual.Destroy, state.Visual)
+            state.Visual = nil
+        end
+
+        local liveCharacter = lplr.Character
+        local liveRoot = findCharacterRoot(liveCharacter)
+        local liveHumanoid = liveCharacter and liveCharacter:FindFirstChildOfClass('Humanoid')
+        local camera = workspace.CurrentCamera or gameCamera
+        if camera then
+            pcall(function()
+                camera.CameraSubject = liveHumanoid or state.OriginalSubject
+            end)
+        end
+
+        if liveRoot and finalCFrame then
+            pcall(function()
+                liveRoot.CFrame = finalCFrame
+                liveRoot.AssemblyLinearVelocity = Vector3.zero
+                liveRoot.AssemblyAngularVelocity = Vector3.zero
+            end)
+            if liveHumanoid then
+                local humanoidState = Enum.HumanoidStateType.Freefall
+                local grounded = false
+                pcall(function()
+                    local params = RaycastParams.new()
+                    params.FilterType = Enum.RaycastFilterType.Exclude
+                    params.FilterDescendantsInstances = {liveCharacter}
+                    grounded = workspace:Raycast(
+                        finalCFrame.Position + Vector3.new(0, 2, 0),
+                        Vector3.new(0, -8, 0),
+                        params
+                    ) ~= nil
+                end)
+                if grounded then humanoidState = Enum.HumanoidStateType.Landed end
+                pcall(liveHumanoid.ChangeState, liveHumanoid, humanoidState)
+            end
+        end
+    end
+
+    -- The module callback handles normal toggles; this hook covers uninject and any
+    -- framework-level cleanup path that bypasses module callbacks.
+    vape:Clean(function()
+        infiniteFlyGeneration += 1
+        cleanupInfiniteFly()
+    end)
+
+    InfiniteFly = vape.Categories.Blatant:CreateModule({
+        Name = 'InfiniteFly',
+        Tooltip = 'Separates the visible clone from the real character for sustained vertical flight.',
+        Function = function(callback)
+            infiniteFlyGeneration += 1
+            local generation = infiniteFlyGeneration
+            if not callback then
+                cleanupInfiniteFly()
+                return
+            end
+
+            cleanupInfiniteFly()
+            local character = lplr.Character
+            local sourceRoot = findCharacterRoot(character)
+            local sourceHumanoid = character and character:FindFirstChildOfClass('Humanoid')
+            if not character or not sourceRoot or not sourceHumanoid or sourceHumanoid.Health <= 0 then
+                return
+            end
+
+            local state = {
+                OriginalCFrame = sourceRoot.CFrame,
+                OriginalVelocity = sourceRoot.AssemblyLinearVelocity,
+                OriginalAngularVelocity = sourceRoot.AssemblyAngularVelocity,
+                OriginalSubject = gameCamera.CameraSubject,
+                CloneHumanoid = nil,
+                Visual = nil,
+                Up = false,
+                Down = false,
+                Offset = 1000000
+            }
+            infiniteFlyState = state
+
+            local ok, err = xpcall(function()
+                state.Visual = createVisualClone(character)
+                if not state.Visual then error('visual clone unavailable') end
+                state.CloneHumanoid = state.Visual.Humanoid
+                gameCamera.CameraSubject = state.CloneHumanoid
+
+                sourceRoot.CFrame = CFrame.new(
+                    sourceRoot.Position + Vector3.new(0, state.Offset, 0)
+                ) * sourceRoot.CFrame.Rotation
+                sourceRoot.AssemblyLinearVelocity = Vector3.zero
+                sourceRoot.AssemblyAngularVelocity = Vector3.zero
+
+                state.Visual:Connect(sourceHumanoid.Died, function()
+                    if InfiniteFly.Enabled and infiniteFlyState == state then
+                        task.defer(function()
+                            if InfiniteFly.Enabled then InfiniteFly:Toggle() end
+                        end)
+                    end
+                end)
+                state.Visual:Connect(lplr.CharacterRemoving, function(removing)
+                    if removing == character and InfiniteFly.Enabled and infiniteFlyState == state then
+                        task.defer(function()
+                            if InfiniteFly.Enabled then InfiniteFly:Toggle() end
+                        end)
+                    end
+                end)
+                state.Visual:Connect(lplr.CharacterAdded, function()
+                    if InfiniteFly.Enabled and infiniteFlyState == state then
+                        task.defer(function()
+                            if InfiniteFly.Enabled then InfiniteFly:Toggle() end
+                        end)
+                    end
+                end)
+
+                local globalEvents = getgenv and getgenv().vapeEvents
+                if globalEvents and globalEvents.MatchEndEvent then
+                    state.Visual:Connect(globalEvents.MatchEndEvent.Event, function()
+                        if InfiniteFly.Enabled and infiniteFlyState == state then
+                            task.defer(function()
+                                if InfiniteFly.Enabled then InfiniteFly:Toggle() end
+                            end)
+                        end
+                    end)
+                end
+
+                state.Visual:Connect(inputService.InputBegan, function(input, processed)
+                    if processed or inputService:GetFocusedTextBox() then return end
+                    if input.KeyCode == Enum.KeyCode.Space then
+                        state.Up = true
+                    elseif input.KeyCode == Enum.KeyCode.LeftShift then
+                        state.Down = true
+                    end
+                end)
+                state.Visual:Connect(inputService.InputEnded, function(input)
+                    if input.KeyCode == Enum.KeyCode.Space then
+                        state.Up = false
+                    elseif input.KeyCode == Enum.KeyCode.LeftShift then
+                        state.Down = false
+                    end
+                end)
+
+                state.Visual:Connect(runService.RenderStepped, function(dt)
+                    if infiniteFlyState ~= state or generation ~= infiniteFlyGeneration
+                        or not InfiniteFly.Enabled then return end
+
+                    local liveCharacter = lplr.Character
+                    local liveRoot = findCharacterRoot(liveCharacter)
+                    local liveHumanoid = liveCharacter and liveCharacter:FindFirstChildOfClass('Humanoid')
+                    if not liveCharacter or not liveRoot or not liveHumanoid or liveHumanoid.Health <= 0
+                        or not state.Visual or not state.Visual.Root or not state.Visual.Root.Parent then
+                        task.defer(function()
+                            if InfiniteFly.Enabled and infiniteFlyState == state then InfiniteFly:Toggle() end
+                        end)
+                        return
+                    end
+
+                    local delta = math.clamp(tonumber(dt) or 0.016, 0, 0.1)
+                    local vertical = (state.Up and 1 or 0) - (state.Down and 1 or 0)
+                    local cloneRoot = state.Visual.Root
+                    local nextY = cloneRoot.Position.Y + vertical * (
+                        vertical >= 0 and InfiniteFlyUpSpeed.Value or InfiniteFlyDownSpeed.Value
+                    ) * delta
+                    local rotation = liveRoot.CFrame.Rotation
+
+                    -- X/Z follow the real character; Y stays on the clone except while a
+                    -- direction key is held.
+                    cloneRoot.CFrame = CFrame.new(
+                        liveRoot.Position.X,
+                        nextY,
+                        liveRoot.Position.Z
+                    ) * rotation
+
+                    -- Keep the real character at the protected offset without changing its
+                    -- horizontal movement source.
+                    if math.abs(liveRoot.Position.Y - (nextY + state.Offset)) > 2 then
+                        liveRoot.CFrame = CFrame.new(
+                            liveRoot.Position.X,
+                            nextY + state.Offset,
+                            liveRoot.Position.Z
+                        ) * rotation
+                    end
+                    liveRoot.AssemblyLinearVelocity = Vector3.zero
+                    liveRoot.AssemblyAngularVelocity = Vector3.zero
+                    state.Visual:Update()
+                end)
+            end, debug and debug.traceback or tostring)
+
+            if not ok then
+                warn('[AetherV2] InfiniteFly setup failed: '..tostring(err))
+                cleanupInfiniteFly()
+                task.defer(function()
+                    if InfiniteFly.Enabled then InfiniteFly:Toggle() end
+                end)
+            end
+        end
+    })
+
+    InfiniteFlyUpSpeed = InfiniteFly:CreateSlider({
+        Name = 'Fly up speed',
+        Min = 1,
+        Max = 150,
+        Default = 50,
+        Suffix = ' studs/s'
+    })
+    InfiniteFlyDownSpeed = InfiniteFly:CreateSlider({
+        Name = 'Fly down speed',
+        Min = 1,
+        Max = 150,
+        Default = 50,
+        Suffix = ' studs/s'
+    })
 
     Fly = vape.Categories.Blatant:CreateModule({
 	Name = 'Fly',

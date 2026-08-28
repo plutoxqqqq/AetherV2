@@ -533,9 +533,6 @@ end
 if not isfile('aetherv2/profiles/disableloading.txt') then
 	writefile('aetherv2/profiles/disableloading.txt', 'false')
 end
-if not isfile('aetherv2/profiles/releasechannel.txt') then
-	writefile('aetherv2/profiles/releasechannel.txt', 'stable')
-end
 
 globalenv.used_init = true
 setPhase('Preparing loading artwork', 0.82, 0.84)

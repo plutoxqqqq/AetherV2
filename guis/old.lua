@@ -3807,8 +3807,6 @@ mainapi:CreateCategory({
 	Icon = getcustomasset('aetherv2/assets/old/blatanticon.png'),
 	WindowSize = 164
 })
--- Exploits: game-specific exploit modules (kit exploits, disablers). Uses the Blatant
--- icon for now until a dedicated asset is made.
 mainapi:CreateCategory({
 	Name = 'Exploits',
 	Icon = getcustomasset('aetherv2/assets/old/blatanticon.png'),
@@ -4190,14 +4188,14 @@ topbar:CreateButton({
 			CombatCategory = 2,
 			BlatantCategory = 3,
 			ExploitsCategory = 4,
-			RenderCategory = 4,
-			LegitCategory = 5,
-			UtilityCategory = 6,
-			WorldCategory = 7,
-			InventoryCategory = 8,
-			MinigamesCategory = 9,
-			FriendsCategory = 10,
-			ProfilesCategory = 11
+			RenderCategory = 5,
+			LegitCategory = 6,
+			UtilityCategory = 7,
+			WorldCategory = 8,
+			InventoryCategory = 9,
+			MinigamesCategory = 10,
+			FriendsCategory = 11,
+			ProfilesCategory = 12
 		}
 		local categories = {}
 		for _, v in mainapi.Categories do

@@ -202,6 +202,37 @@ const commitSha = async ref => {
   return value.sha;
 };
 
+const versionHistory = async (ref = BRANCH, requestedLimit = 11) => {
+  if (!validRef(ref)) throw problem('This source ref is not approved', 403);
+  const limit = boundedNumber(requestedLimit, 11, 1, 11);
+  const value = await (await github(
+    'commits?sha=' + encodeURIComponent(ref) + '&per_page=' + limit
+  )).json();
+  if (!Array.isArray(value)) throw problem('GitHub returned an invalid version history', 502);
+
+  const versions = [];
+  for (const commit of value.slice(0, limit)) {
+    const sha = commit && typeof commit.sha === 'string' ? commit.sha : '';
+    if (!/^[a-f0-9]{40,64}$/i.test(sha)) continue;
+    let version = 'unavailable';
+    try {
+      const body = await sourceFile('version.txt', sha);
+      const found = body.match(/version\s*=\s*([^\r\n]+)/);
+      if (found) version = found[1].trim();
+    } catch {
+      // A missing version file should not make an otherwise valid history unusable.
+    }
+    const message = commit && commit.commit && typeof commit.commit.message === 'string'
+      ? commit.commit.message.split(/\r?\n/, 1)[0].slice(0, 120)
+      : '';
+    const date = commit && commit.commit && commit.commit.author && typeof commit.commit.author.date === 'string'
+      ? commit.commit.author.date
+      : '';
+    versions.push({sha, version, date, message});
+  }
+  return versions;
+};
+
 const tree = async ref => {
   const value = await (await github('git/trees/' + encodeURIComponent(ref) + '?recursive=1')).json();
   if (!value || !Array.isArray(value.tree) || value.truncated) throw problem('GitHub returned an incomplete source tree', 502);
@@ -333,6 +364,14 @@ const server = http.createServer(async (req, res) => {
       return text(res, 200, commit);
     }
 
+    if (req.method === 'GET' && url.pathname === '/history') {
+      const session = await requireSession(url);
+      if (!validRef(ref)) return json(res, 403, {success: false, error: 'This source ref is not approved'});
+      const versions = await versionHistory(ref, url.searchParams.get('limit'));
+      for (const version of versions) session.approvedRefs.add(version.sha);
+      return json(res, 200, {success: true, limit: versions.length, versions});
+    }
+
     if (req.method === 'GET' && url.pathname === '/tree') {
       const session = await requireSession(url);
       if (!sessionAllowsRef(session, ref)) return json(res, 403, {success: false, error: 'This source ref is not approved for this session'});
@@ -373,5 +412,6 @@ module.exports = {
   sessions,
   sourceFile,
   commitSha,
+  versionHistory,
   tree
 };

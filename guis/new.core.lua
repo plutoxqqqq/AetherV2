@@ -137,30 +137,37 @@ function glass:ApplySurface(surface, record)
 	end
 end
 
-function glass:Apply(value)
-	self.Level = math.clamp((tonumber(value) or 0) / 100, 0, 0.8)
-	for surface, record in self.Surfaces do self:ApplySurface(surface, record) end
-	if clickgui then
-		for _, object in clickgui:GetDescendants() do
-			if object:IsA('GuiObject')
-				and not self.Surfaces[object]
-				and object.BackgroundTransparency < 0.98
-				and object.Name ~= 'Fill'
-				and math.abs(object.BackgroundColor3.R - uipallet.Main.R) < 0.08
-				and math.abs(object.BackgroundColor3.G - uipallet.Main.G) < 0.08
-				and math.abs(object.BackgroundColor3.B - uipallet.Main.B) < 0.08 then
-				self.Interiors[object] = self.Interiors[object] or object.BackgroundTransparency
-			end
+function glass:ScanInteriors()
+	if not clickgui then return end
+	for _, object in clickgui:GetDescendants() do
+		if object:IsA('GuiObject')
+			and not self.Surfaces[object]
+			and object.BackgroundTransparency < 0.98
+			and object.Name ~= 'Fill'
+			and math.abs(object.BackgroundColor3.R - uipallet.Main.R) < 0.08
+			and math.abs(object.BackgroundColor3.G - uipallet.Main.G) < 0.08
+			and math.abs(object.BackgroundColor3.B - uipallet.Main.B) < 0.08 then
+			self.Interiors[object] = self.Interiors[object] or object.BackgroundTransparency
 		end
 	end
+end
+
+function glass:Refresh()
+	for surface, record in self.Surfaces do self:ApplySurface(surface, record) end
+	self:ScanInteriors()
 	for object, base in self.Interiors do
 		if object.Parent then
-			object.BackgroundTransparency = math.clamp(base + ((1 - base) * self.Level * 0.35), 0, 0.94)
+			object.BackgroundTransparency = math.clamp(base + ((1 - base) * self.Level * 0.55), 0, 0.96)
 		end
 	end
 	for stroke, base in self.Strokes do
 		if stroke.Parent then stroke.Transparency = math.clamp(base - (self.Level * 0.15), 0.55, 1) end
 	end
+end
+
+function glass:Apply(value)
+	self.Level = math.clamp((tonumber(value) or 0) / 100, 0, 0.8)
+	self:Refresh()
 end
 
 function mainapi:SetGlassTransparency(value)
@@ -627,24 +634,69 @@ end
 
 -- Private-source sessions cannot use public raw GitHub URLs. Keep all GUI-side lazy loads and
 -- reinjections on the same authenticated source route as the initial loader.
-local function remoteSourceUrl(path)
+local versionPinPath = 'aetherv2/profiles/version-pin.txt'
+
+local function sourceBranch()
+	local configured = type(license) == 'table' and license.SourceEndpoint and license.SourceRef or nil
+	configured = type(configured) == 'string' and configured:gsub('%s+', '') or ''
+	return configured ~= '' and configured or 'main'
+end
+
+local function installedSourceRef()
+	local ref = isfile('aetherv2/profiles/commit.txt') and readfile('aetherv2/profiles/commit.txt'):gsub('%s+', '') or ''
+	return ref ~= '' and ref or sourceBranch()
+end
+
+local function sourceSession()
+	local token = type(license) == 'table' and license.SourceToken or nil
+	if type(token) ~= 'string' or token == '' then error('Private source session is missing its session token', 0) end
+	return token
+end
+
+-- Private-source sessions cannot use public raw GitHub URLs. Keep all GUI-side lazy loads,
+-- version lookups, and reinjections on the same authenticated source route as the loader.
+local function remoteSourceUrl(path, ref)
 	local endpoint = type(license) == 'table' and license.SourceEndpoint
 	if type(endpoint) == 'string' and endpoint ~= '' then
 		endpoint = endpoint:gsub('/+$', '')
-		local token = type(license.SourceToken) == 'string' and license.SourceToken or nil
-		if not token or token == '' then
-			error('Private source session is missing its session token', 0)
-		end
-		local ref = isfile('aetherv2/profiles/commit.txt') and readfile('aetherv2/profiles/commit.txt'):gsub('%s+', '') or ''
-		ref = ref ~= '' and ref or (type(license.SourceRef) == 'string' and license.SourceRef or '')
-		if ref == '' then error('Private source ref is missing', 0) end
+		local selectedRef = ref or installedSourceRef()
 		return endpoint..'/source?path='..encodeRemoteSource(path:gsub('^aetherv2/', ''))..
-			'&ref='..encodeRemoteSource(ref)..'&session='..encodeRemoteSource(token)
+			'&ref='..encodeRemoteSource(selectedRef)..'&session='..encodeRemoteSource(sourceSession())
 	end
 
-	local commit = isfile('aetherv2/profiles/commit.txt') and readfile('aetherv2/profiles/commit.txt'):gsub('%s+', '') or 'main'
-	return 'https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..commit..'/'..
+	local selectedRef = ref or installedSourceRef()
+	return 'https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..selectedRef..'/'..
 		select(1, path:gsub('aetherv2/', ''))
+end
+
+local function remoteLoaderUrl()
+	local endpoint = type(license) == 'table' and license.SourceEndpoint
+	if type(endpoint) == 'string' and endpoint ~= '' then
+		endpoint = endpoint:gsub('/+$', '')
+		return endpoint..'/source?path=init.lua&ref='..encodeRemoteSource(sourceBranch())..
+			'&session='..encodeRemoteSource(sourceSession())
+	end
+	return 'https://raw.githubusercontent.com/plutoxqqqq/AetherV2/main/init.lua'
+end
+
+local function remoteCommitUrl(ref)
+	local endpoint = type(license) == 'table' and license.SourceEndpoint
+	if type(endpoint) == 'string' and endpoint ~= '' then
+		endpoint = endpoint:gsub('/+$', '')
+		return endpoint..'/commit?ref='..encodeRemoteSource(ref)..'&session='..encodeRemoteSource(sourceSession())
+	end
+	return 'https://api.github.com/repos/plutoxqqqq/AetherV2/commits/'..encodeRemoteSource(ref)
+end
+
+local function remoteHistoryUrl(limit)
+	local endpoint = type(license) == 'table' and license.SourceEndpoint
+	local requested = math.clamp(tonumber(limit) or 11, 1, 11)
+	if type(endpoint) == 'string' and endpoint ~= '' then
+		endpoint = endpoint:gsub('/+$', '')
+		return endpoint..'/history?ref='..encodeRemoteSource(sourceBranch())..
+			'&limit='..tostring(requested)..'&session='..encodeRemoteSource(sourceSession())
+	end
+	return 'https://api.github.com/repos/plutoxqqqq/AetherV2/commits?sha=main&per_page='..tostring(requested)
 end
 
 local function downloadFile(path, func)
@@ -3468,6 +3520,7 @@ function mainapi:BlurCheck()
 		setthreadidentity(8)
 		runService:SetRobloxGuiFocused(enabled or guiService:GetErrorType() ~= Enum.ConnectionError.OK and self.Blur and self.Blur.Enabled)
 	end
+	if clickgui then glass:Refresh() end
 end
 
 addMaid(mainapi)
@@ -5622,6 +5675,9 @@ function mainapi:CreateOverlay(categorysettings)
 		if clickgui.Visible then
 			window.Size = UDim2.fromOffset(window.Size.X.Offset, 41)
 			window.BackgroundTransparency = 0
+			local glassRecord = glass.Surfaces[window]
+			if glassRecord then glass:ApplySurface(window, glassRecord) end
+			glass:Refresh()
 			blur.Visible = true
 			icon.Visible = true
 			title.Visible = true
@@ -8812,7 +8868,7 @@ function mainapi:CreateChangelogs()
 	local status = Instance.new('TextLabel')
 	status.Size, status.Position, status.BackgroundTransparency = UDim2.new(1, -166, 0, 16), UDim2.fromOffset(14, 34), 1
 	status.TextXAlignment, status.TextColor3, status.TextSize, status.FontFace = Enum.TextXAlignment.Left, color.Dark(uipallet.Text, 0.38), 10, uipallet.Font
-	status.Text = 'Installed: v'..tostring(mainapi.Version)..'  •  Latest Stable: checking…  •  Latest Beta: checking…'
+	status.Text = 'Installed: v'..tostring(mainapi.Version)..'  •  Latest source: checking…'
 	status.Parent = window
 	local update = Instance.new('TextButton')
 	update.Size, update.Position = UDim2.fromOffset(128, 24), UDim2.new(1, -138, 0, 31)
@@ -8829,7 +8885,7 @@ function mainapi:CreateChangelogs()
 	body.Size, body.Position, body.AutomaticSize = UDim2.new(1, -28, 0, 0), UDim2.fromOffset(14, 12), Enum.AutomaticSize.Y
 	body.BackgroundTransparency, body.RichText = 1, true
 	body.Text = [=[<b><font color="#d378ff">BedWars</font></b>
-<font color="#63dc82">[+]</font> Added “MultiAction” to Exploits, allowing multiple actions at once, such as placing blocks while using Killaura.
+<font color="#ff6969">[-]</font> Removed retired game-specific modules.
 <font color="#63dc82">[+]</font> Added “AutoEnchant” to Inventory, which automatically repairs and uses the enchanting table.
 <font color="#6aa9ff">[^]</font> Renamed DeathTP to “RecoveryTP”.
 <font color="#6aa9ff">[^]</font> Merged the visual modules into one highly customizable Render module named “Theme”.
@@ -8848,15 +8904,15 @@ function mainapi:CreateChangelogs()
 	function api:Open()
 		window.Position = UDim2.new(0.5, -350, 0.5, -194); window.Visible = true; notes.CanvasPosition = Vector2.zero
 		task.spawn(function()
-			local function version(branch)
-				local ok, body = pcall(game.HttpGet, game, 'https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..branch..'/version.txt', true)
-				return ok and type(body) == 'string' and (body:match('version%s*=%s*([^\r\n]+)') or 'unavailable') or 'unavailable'
+			local ref = sourceBranch()
+			local ok, body = pcall(game.HttpGet, game, remoteSourceUrl('aetherv2/version.txt', ref), true)
+			local latest = ok and type(body) == 'string' and (body:match('version%s*=%s*([^\r\n]+)') or 'unavailable') or 'unavailable'
+			local available = latest ~= 'unavailable' and tostring(latest) ~= tostring(mainapi.Version)
+			local pinned = isfile(versionPinPath) and readfile(versionPinPath):gsub('%s+', '') or ''
+			if window.Parent then
+				status.Text = 'Installed: v'..tostring(mainapi.Version)..'  •  Latest source: v'..latest..
+					'  •  '..(pinned ~= '' and 'Pinned previous version' or (available and 'Update available' or 'Up to date'))
 			end
-			local stable, beta, nightly = version('main'), version('beta'), version('nightly')
-			local release = isfile('aetherv2/profiles/releasechannel.txt') and readfile('aetherv2/profiles/releasechannel.txt'):lower():gsub('%s+', '') or 'stable'
-			local selected = release == 'nightly' and nightly or (release == 'beta' and beta or stable)
-			local available = selected ~= 'unavailable' and tostring(selected) ~= tostring(mainapi.Version)
-			if window.Parent then status.Text = 'Installed: v'..tostring(mainapi.Version)..'  •  Latest Stable: v'..stable..'  •  Latest Beta: v'..beta..'  •  Update: '..(available and 'available' or 'up to date') end
 		end)
 	end
 	api.Window = window; self.Changelogs = api; return api
@@ -9725,8 +9781,6 @@ mainapi:CreateCategory({
 	Icon = getcustomasset('aetherv2/assets/new/blatanticon.png'),
 	Size = UDim2.fromOffset(14, 14)
 })
--- Exploits: game-specific exploit modules (kit exploits, disablers). Uses the Blatant
--- icon for now until a dedicated asset is made.
 mainapi:CreateCategory({
 	Name = 'Exploits',
 	Icon = getcustomasset('aetherv2/assets/new/blatanticon.png'),
@@ -9821,7 +9875,7 @@ mainapi:Clean(friends.ColorUpdate)
 	Configs
 ]]
 local reloadInProgress = false
-local function reloadAether()
+local function reloadAether(forceBootstrap)
 	if reloadInProgress then
 		mainapi:CreateNotification('AetherV2', 'A reinject is already in progress.', 4, 'warning')
 		return
@@ -9830,10 +9884,14 @@ local function reloadAether()
 	task.spawn(function()
 		shared.vapereload = true
 		local ok, err = xpcall(function()
-			local source = shared.VapeDeveloper
-				and readfile('aetherv2/main.lua')
-				or game:HttpGet(remoteSourceUrl('aetherv2/main.lua'), true)
-			local chunk, compileError = loadstring(source, 'main')
+			local chunkName = forceBootstrap and 'init' or 'main'
+			local source
+			if shared.VapeDeveloper then
+				source = readfile(forceBootstrap and 'aetherv2/init.lua' or 'aetherv2/main.lua')
+			else
+				source = game:HttpGet(forceBootstrap and remoteLoaderUrl() or remoteSourceUrl('aetherv2/main.lua'), true)
+			end
+			local chunk, compileError = loadstring(source, chunkName)
 			if not chunk then error('main.lua failed to compile: '..tostring(compileError), 0) end
 			chunk(license)
 		end, debug and debug.traceback or tostring)
@@ -9970,19 +10028,71 @@ general:CreateToggle({
 	Default = isfile('aetherv2/profiles/disableloading.txt') and readfile('aetherv2/profiles/disableloading.txt') == 'true',
 	Tooltip = 'Prevents AetherV2 from showing its startup loading screen'
 })
-local function currentReleaseChannel()
-	local value = isfile('aetherv2/profiles/releasechannel.txt') and readfile('aetherv2/profiles/releasechannel.txt'):lower():gsub('%s+', '') or 'stable'
-	return ({stable = 'Stable', beta = 'Beta', nightly = 'Nightly'})[value] or 'Stable'
-end
-general:CreateDropdown({
-	Name = 'Release Channel',
-	List = {'Stable', 'Beta', 'Nightly'},
-	Default = currentReleaseChannel(),
-	Function = function(value)
-		writefile('aetherv2/profiles/releasechannel.txt', tostring(value):lower())
+local downgradeEntries = {}
+local versionPicker
+versionPicker = general:CreateDropdown({
+	Name = 'Previous version',
+	List = {'Loading previous versions…'},
+	Default = 'Loading previous versions…',
+	Function = function(value, mouse)
+		if not mouse then return end
+		local entry = downgradeEntries[value]
+		if not entry then return end
+		writefile(versionPinPath, entry.Sha)
+		mainapi:CreateNotification('AetherV2', 'Pinned v'..entry.Version..' ('..entry.Sha:sub(1, 7)..'). Reinjecting…', 6, 'info')
+		reloadAether(true)
 	end,
-	Tooltip = 'Selects the update branch used on the next reinject'
+	Tooltip = 'Select one of the ten most recent previous script versions'
 })
+general:CreateButton({
+	Name = 'Use latest version',
+	Function = function()
+		if isfile(versionPinPath) then delfile(versionPinPath) end
+		mainapi:CreateNotification('AetherV2', 'Latest version selected. Reinjecting…', 6, 'info')
+		reloadAether(true)
+	end,
+	Tooltip = 'Clears the previous-version pin and reloads the latest source'
+})
+
+local function refreshVersionHistory()
+	task.spawn(function()
+		local ok, body = pcall(game.HttpGet, game, remoteHistoryUrl(11), true)
+		local decoded
+		if ok and type(body) == 'string' then
+			local decodedOk, result = pcall(httpService.JSONDecode, httpService, body)
+			if decodedOk then decoded = result end
+		end
+		local entries = type(decoded) == 'table' and (decoded.versions or decoded) or nil
+		local list = {}
+		table.clear(downgradeEntries)
+		if type(entries) == 'table' then
+			local current = isfile('aetherv2/profiles/commit.txt') and readfile('aetherv2/profiles/commit.txt'):gsub('%s+', '') or ''
+			for _, entry in entries do
+				local sha = type(entry) == 'table' and (entry.sha or entry.Sha) or nil
+				if type(sha) == 'string' and #sha >= 40 and sha ~= current then
+					local version = type(entry) == 'table' and (entry.version or entry.Version) or nil
+					if not version or version == '' or version == 'unavailable' then
+						local versionOk, versionBody = pcall(game.HttpGet, game, remoteSourceUrl('aetherv2/version.txt', sha), true)
+						if versionOk and type(versionBody) == 'string' then
+							version = versionBody:match('version%s*=%s*([^\r\n]+)')
+						end
+					end
+					version = tostring(version or 'unavailable'):gsub('%s+$', '')
+					local label = 'v'..version..' • '..sha:sub(1, 7)
+					downgradeEntries[label] = {Sha = sha, Version = version}
+					table.insert(list, label)
+					if #list >= 10 then break end
+				end
+			end
+		end
+		if #list == 0 then list = {'No previous versions available'} end
+		if versionPicker and versionPicker.Object and versionPicker.Object.Parent then
+			versionPicker:Change(list)
+		end
+	end)
+end
+refreshVersionHistory()
+
 mainapi.MobileMode = general:CreateToggle({
 	Name = 'Mobile Mode',
 	Function = function(enabled)
@@ -10026,62 +10136,58 @@ general:CreateButton({
 })
 local updatingModules = false
 local function updateGameModules()
-		if updatingModules then
-			mainapi:CreateNotification('AetherV2', 'A module update is already in progress.', 4, 'warning')
-			return
+	if updatingModules then
+		mainapi:CreateNotification('AetherV2', 'A module update is already in progress.', 4, 'warning')
+		return
+	end
+	updatingModules = true
+	task.spawn(function()
+		local function finish(message, kind)
+			updatingModules = false
+			mainapi:CreateNotification('AetherV2', message, 6, kind)
 		end
-		updatingModules = true
-		task.spawn(function()
-			local function finish(message, kind)
-				updatingModules = false
-				mainapi:CreateNotification('AetherV2', message, 6, kind)
-			end
-			local ok, result = pcall(function()
-				-- Resolve the selected release branch once, then download every module from
-				-- that immutable commit so universal and the PlaceId module stay paired.
-				-- universal.lua and the PlaceId module can never come from different revisions.
-				local nonce = tostring(os.time())..tostring(math.random(1000, 9999))
-				local release = isfile('aetherv2/profiles/releasechannel.txt') and readfile('aetherv2/profiles/releasechannel.txt'):lower():gsub('%s+', '') or 'stable'
-				local branch = release == 'stable' and 'main' or ({beta = 'beta', nightly = 'nightly'})[release] or 'main'
-				local commitBody = game:HttpGet('https://api.github.com/repos/plutoxqqqq/AetherV2/commits/'..branch..'?cache='..nonce, false)
-				local commit = commitBody:match('"sha"%s*:%s*"(%x+)"')
-				if not commit or #commit < 40 then error('could not resolve the latest '..branch..' commit') end
-				commit = commit:sub(1, 40)
+		local ok, result = pcall(function()
+			-- Resolve one immutable latest-source commit, then download the universal and
+			-- PlaceId modules from that same commit so the pair stays in sync.
+			local commitBody = game:HttpGet(remoteCommitUrl(sourceBranch()), true)
+			local commit = commitBody:match('^%s*(%x+)') or commitBody:match('"sha"%s*:%s*"(%x+)')
+			if not commit or #commit < 40 then error('could not resolve the latest source commit') end
+			commit = commit:sub(1, 40)
 
-				local place = tostring(game.PlaceId)
-				local paths = {'games/universal.lua', 'games/'..place..'.lua'}
-				local downloads = {}
-				for _, path in paths do
-					local body = game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..commit..'/'..path..'?cache='..nonce, false)
-					local lowered = body:sub(1, 300):lower()
-					if #body < 8 or lowered:find('<html', 1, true) or body:find('^404') then
-						error('no module exists for PlaceId '..place)
-					end
-					local chunk, compileError = loadstring(body, '@aetherv2/'..path)
-					if not chunk then error(path..' failed validation: '..tostring(compileError)) end
-					downloads[path] = body
+			local place = tostring(game.PlaceId)
+			local paths = {'games/universal.lua', 'games/'..place..'.lua'}
+			local downloads = {}
+			for _, path in paths do
+				local body = game:HttpGet(remoteSourceUrl(path, commit), true)
+				local lowered = body:sub(1, 300):lower()
+				if #body < 8 or lowered:find('<html', 1, true) or body:find('^404') then
+					error('no module exists for PlaceId '..place)
 				end
-
-				-- Validate the complete pair before touching disk. A failed request can therefore
-				-- never leave universal and the game module on mismatched revisions.
-				local watermark = '--This watermark is used to delete the file if its cached, remove it to make the file persist after vape updates.\n'
-				for path, body in downloads do
-					writefile('aetherv2/'..path, watermark..body)
-				end
-				return place, commit, branch
-			end)
-			if ok then
-				finish('Updated universal and PlaceId '..result..' modules. Reinject to load them.', 'info')
-			else
-				finish('Module update failed: '..tostring(result):gsub('^.-:%d+:%s*', ''), 'alert')
+				local chunk, compileError = loadstring(body, '@aetherv2/'..path)
+				if not chunk then error(path..' failed validation: '..tostring(compileError)) end
+				downloads[path] = body
 			end
+
+			local watermark = '--This watermark is used to delete the file if its cached, remove it to make the file persist after vape updates.\n'
+			for path, body in downloads do
+				writefile('aetherv2/'..path, watermark..body)
+			end
+			if isfile(versionPinPath) then delfile(versionPinPath) end
+			writefile('aetherv2/profiles/commit.txt', commit)
+			return place, commit
 		end)
+		if ok then
+			finish('Updated universal and PlaceId '..result..' modules. Reinject to load the latest source.', 'info')
+		else
+			finish('Module update failed: '..tostring(result):gsub('^.-:%d+:%s*', ''), 'alert')
+		end
+	end)
 end
 mainapi.UpdateGameModules = updateGameModules
 general:CreateButton({
 	Name = 'Update Modules',
 	Function = updateGameModules,
-	Tooltip = 'Downloads fresh universal and current PlaceId modules from the selected release channel'
+	Tooltip = 'Downloads fresh universal and current PlaceId modules from the latest source commit'
 })
 
 --[[
@@ -10317,7 +10423,7 @@ guipane:CreateButton({
 			CombatCategory = 2,
 			BlatantCategory = 3,
 			ExploitsCategory = 4,
-			RenderCategory = 4,
+			RenderCategory = 5,
 			LegitCategory = 6,
 			UtilityCategory = 7,
 			WorldCategory = 8,
@@ -11697,6 +11803,7 @@ end)()
 	spotCard.BackgroundColor3 = uipallet.Main
 	spotCard.BackgroundTransparency = 0.02
 	spotCard.AutoButtonColor = false
+	glass:Register(spotCard)
 	spotCard.Text = ''
 	spotCard.Parent = spotBackdrop
 	addCorner(spotCard, UDim.new(0, 12))
