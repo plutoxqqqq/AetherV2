@@ -1953,7 +1953,6 @@ run(function()
 					lastGroundY = nil
 				end
 				local root = character.RootPart
-				local standHeight = clearance(character)
 				rayCheck.FilterDescendantsInstances = {lplr.Character, gameCamera, platform}
 				pcall(function() rayCheck.CollisionGroup = root.CollisionGroup end)
 				local ground = groundBelow(root)
