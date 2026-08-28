@@ -787,26 +787,16 @@ local deferredFiles = {
 	['libraries/vm.lua'] = true
 }
 
--- Queue/match subplaces without dedicated files use the canonical module for their experience.
--- Keep this in sync with main.lua's runtime fallback.
-local experienceModules = {
-	[2619619496] = '6872274481' -- BedWars
-}
-
 local function neededFiles(files)
 	if not files then return {} end
 	local gui = selectedGui()
 	local assetFolder = gui
 	local place = tostring(game.PlaceId)
-	local forced
 	if isfile('aetherv2/profiles/forcegame.txt')
 		and readfile('aetherv2/profiles/forcegame.txt') == 'true'
 		and isfile('aetherv2/profiles/forcegameid.txt') then
-		forced = readfile('aetherv2/profiles/forcegameid.txt'):match('^%s*(%d+)%s*$')
+		local forced = readfile('aetherv2/profiles/forcegameid.txt'):match('^%s*(%d+)%s*$')
 		place = forced or place
-	end
-	if not forced and not files['games/'..place..'.lua'] then
-		place = experienceModules[game.GameId] or place
 	end
 	local wanted = {}
 	for path in files do

@@ -592,37 +592,21 @@ if not shared.VapeIndependent then
 	-- Force-loading is a one-shot debugging action. Consume it before running the chunk so even a
 	-- broken or stalled game module cannot leave the user permanently pinned to the wrong game.
 	writefile('aetherv2/profiles/forcegame.txt', 'false')
-	-- Some experiences teleport into queue/match subplaces that do not have their own file.
-	-- Try the exact PlaceId first (so dedicated lobby files still win), then fall back to the
-	-- experience's canonical module. Force game file remains an explicit one-shot override.
-	local experienceModules = {
-		[2619619496] = '6872274481' -- BedWars
-	}
-	local function sourceForPlace(place)
-		local path = 'aetherv2/games/'..place..'.lua'
-		if isfile(path) then
-			return downloadFile(path)
-		end
-		if not shared.VapeDeveloper then
-			setPhaseProgress('Downloading module for this game', 0.1)
-			-- One attempt only: a missing exact subplace is expected before the experience fallback.
-			local body = fetchFile(path, 1)
-			if body then
-				writefile(path, watermark..body)
-				return readfile(path)
-			end
-		end
-	end
-
-	local placeSource = sourceForPlace(modulePlace)
-	if not placeSource and not forceRequested then
-		local canonicalPlace = experienceModules[game.GameId]
-		if canonicalPlace and canonicalPlace ~= modulePlace then
-			modulePlace = canonicalPlace
-			placeSource = sourceForPlace(modulePlace)
-		end
-	end
 	vape.Place = tonumber(modulePlace) or game.PlaceId
+	local placePath = 'aetherv2/games/'..modulePlace..'.lua'
+	local placeSource
+	if isfile(placePath) then
+		placeSource = downloadFile(placePath)
+	elseif not shared.VapeDeveloper then
+		setPhaseProgress('Downloading module for this game', 0.1)
+		-- One attempt only: most games simply have no module, and a 404 is the expected answer.
+		-- Retrying it would add seconds and two pointless requests to every unsupported game.
+		local body = fetchFile(placePath, 1)
+		if body then
+			writefile(placePath, '--This watermark is used to delete the file if its cached, remove it to make the file persist after vape updates.\n'..body)
+			placeSource = readfile(placePath)
+		end
+	end
 	if placeSource then
 		-- Optional and watched: a game module that stalls (waiting on something the game has not
 		-- replicated yet) must never cost you the menu.
