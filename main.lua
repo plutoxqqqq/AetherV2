@@ -367,7 +367,7 @@ local function loadPremiumModules()
 	local function collectModules(prefix, destination)
 		for _, entry in ipairs(tree.tree) do
 			local path = type(entry) == 'table' and entry.path or nil
-			if entry.type == 'table' and entry.type == 'blob' and type(path) == 'string'
+			if type(entry) == 'table' and entry.type == 'blob' and type(path) == 'string'
 				and path:sub(1, #prefix) == prefix and path:sub(-4) == '.lua' then
 				-- The first folder below a game's root is the AetherV2 category:
 				-- games/universal/render/example.lua -> Render.
