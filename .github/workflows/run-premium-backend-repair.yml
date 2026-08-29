@@ -20,15 +20,29 @@ jobs:
           fetch-depth: 0
       - name: Apply repair
         run: python3 tools/premium_backend_repair.py
-      - name: Normalize generated JS headers
+      - name: Normalize generated JS
         run: |
           python3 - <<'PY'
           from pathlib import Path
+
           for name in ('backend/private-source.js', 'backend/private-source.test.js'):
               path = Path(name)
               text = path.read_text()
               text = text.replace("\\'use strict\\';", "'use strict';", 1)
               path.write_text(text)
+
+          path = Path('backend/private-source.js')
+          lines = path.read_text().splitlines()
+          for index, line in enumerate(lines):
+              if line.startswith('const PUBLIC_ORIGIN = '):
+                  lines[index:index + 1] = [
+                      "let PUBLIC_ORIGIN = String(process.env.PUBLIC_ORIGIN || '');",
+                      "while (PUBLIC_ORIGIN.endsWith('/')) PUBLIC_ORIGIN = PUBLIC_ORIGIN.slice(0, -1);",
+                  ]
+                  break
+          else:
+              raise SystemExit('PUBLIC_ORIGIN declaration not found')
+          path.write_text('\n'.join(lines) + '\n')
           PY
       - name: Install backend dependencies
         run: cd backend && npm ci
