@@ -11,31 +11,15 @@ local function currentRef()
 		ref = ref:gsub('%s+', '')
 		if ref ~= '' then return ref end
 	end
-	return type(license.SourceRef) == 'string' and license.SourceRef ~= '' and license.SourceRef or 'main'
+	return 'main'
 end
 
 local function validSource(body)
 	return type(body) == 'string' and #body > 32 and body ~= '404: Not Found'
 end
 
-local function encodeSourceValue(value)
-	return tostring(value):gsub('([^%w%-%._~])', function(character)
-		return string.format('%%%02X', string.byte(character))
-	end)
-end
-
 local function fetch(ref, path)
-	local endpoint = type(license) == 'table' and license.SourceEndpoint
-	local url
-	if type(endpoint) == 'string' and endpoint ~= '' then
-		local token = type(license.SourceToken) == 'string' and license.SourceToken or nil
-		if not token or token == '' then error('Private source session is missing its session token', 0) end
-		endpoint = endpoint:gsub('/+$', '')
-		url = endpoint..'/source?path='..encodeSourceValue(path)..
-			'&ref='..encodeSourceValue(ref)..'&session='..encodeSourceValue(token)
-	else
-		url = 'https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..ref..'/'..path
-	end
+	local url = 'https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..ref..'/'..path
 	local ok, body = pcall(game.HttpGet, game, url, true)
 	return ok and validSource(body) and body or nil, body
 end
@@ -50,12 +34,12 @@ local function getCore()
 	local body, lastError = fetch(activeRef, 'guis/new.core.lua')
 	if body then return body end
 
-	if activeRef ~= 'main' and not license.SourceEndpoint then
+	if activeRef ~= 'main' then
 		body, lastError = fetch('main', 'guis/new.core.lua')
 		if body then return body end
 	end
 
-	if not license.SourceEndpoint then
+	if true then
 		body, lastError = fetch(FALLBACK_COMMIT, 'guis/new.lua')
 		if body then return body end
 	end
