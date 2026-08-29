@@ -1,0 +1,272 @@
+name: Update premium Discord bot
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/update-premium-discord-bot.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Update Discord bot for premium-key flow
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          bot_path = Path('backend/discord-bot.js')
+          text = bot_path.read_text()
+
+          def once(old, new, label):
+              global text
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected 1 match, found {count}')
+              text = text.replace(old, new, 1)
+
+          once("const SOURCE_ORIGIN = String(process.env.PUBLIC_ORIGIN || '').replace(/\\/+$/, '');\n", "", 'remove bot PUBLIC_ORIGIN')
+          once("    .setDescription('Manage AetherV2 access keys')", "    .setDescription('Manage AetherV2 Premium keys')", 'command description')
+          once("    .addSubcommand(sub => sub.setName('panel').setDescription('Open the private key dashboard'))", "    .addSubcommand(sub => sub.setName('panel').setDescription('Open the private premium-key dashboard'))", 'panel description')
+          once("      .setDescription('Generate a new unbound key')", "      .setDescription('Generate a new unbound premium key')", 'generate description')
+
+          once(
+              "const codeBlock = (value, language = 'text') => '```' + language + '\\n' + String(value ?? '').replace(/```/g, 'ˋˋˋ') + '\\n```';\n",
+              "const codeBlock = (value, language = 'text') => '```' + language + '\\n' + String(value ?? '').replace(/```/g, 'ˋˋˋ') + '\\n```';\nconst copyable = (value, language = 'text') => codeBlock(value, language) + '\\n' + inline(value);\n",
+              'copyable helper'
+          )
+
+          once("    .setTitle('🔐 AetherV2 Key Manager')", "    .setTitle('🔐 AetherV2 Premium Key Manager')", 'dashboard title')
+          once(
+              "    .setDescription('Owner-only access control. Raw keys are never stored and can only be shown once.')",
+              "    .setDescription('Owner-only premium access. Normal AetherV2 is public and does not require a key. Raw premium keys are never stored and can only be shown once.')",
+              'dashboard description'
+          )
+          once("    .setTitle('🔑 AetherV2 Keys')", "    .setTitle('🔑 AetherV2 Premium Keys')", 'list title')
+
+          old_fields = """    .addFields(
+      {name: 'Key ID', value: codeBlock(info.keyId), inline: false},
+      {name: 'Label', value: inline(info.label || 'Unlabelled'), inline: true},
+      {name: 'Status', value: inline(statusText(info.status)), inline: true},
+      {name: 'Source', value: inline(info.source), inline: true},
+      {name: 'Roblox account', value: inline(bindingText(info.binding)), inline: false},
+      {name: 'Uses', value: inline(info.uses), inline: true},
+      {name: 'Created', value: inline(dateText(info.createdAt)), inline: true},
+      {name: 'Expires', value: inline(dateText(info.expiresAt)), inline: true}
+    )
+    .setFooter({text: 'Raw keys cannot be viewed or recovered'})"""
+          new_fields = """    .addFields(
+      {name: 'Key ID', value: copyable(info.keyId), inline: false},
+      {name: 'Label', value: inline(info.label || 'Unlabelled'), inline: true},
+      {name: 'Status', value: inline(statusText(info.status)), inline: true},
+      {name: 'Source', value: inline(info.source), inline: true},
+      {name: 'Roblox username', value: info.binding ? copyable(info.binding.username) : inline('unbound'), inline: false},
+      {name: 'Roblox UserId', value: info.binding ? copyable(info.binding.userId) : inline('unbound'), inline: false},
+      {name: 'Uses', value: inline(info.uses), inline: true},
+      {name: 'Created', value: copyable(dateText(info.createdAt)), inline: false},
+      {name: 'Expires', value: copyable(dateText(info.expiresAt)), inline: false}
+    )
+    .setFooter({text: 'Premium raw keys cannot be viewed or recovered'})"""
+          once(old_fields, new_fields, 'detail copy surfaces')
+
+          generated_pattern = re.compile(r"const generatedText = \(result, title = 'Generated key'\) => \{.*?\n\};\n\nconst keyIdFrom", re.S)
+          generated_replacement = r'''const generatedText = (result, title = 'Generated premium key') => {
+  const rawKey = String(result.key);
+  const loader = "loadstring(game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/main/init.lua', true), 'init.lua')({Closet = false, premiumKey = " + JSON.stringify(rawKey) + '})';
+  const content = [
+    '✅ **' + title + '**',
+    '',
+    'Normal AetherV2 works without this key. This key only unlocks AetherV2 Premium modules.',
+    '',
+    'Key ID', copyable(result.keyId),
+    'Label ' + inline(result.record.label || 'Unlabelled') + '  •  expires ' + inline(dateText(result.record.expiresAt)),
+    '',
+    '⚠️ **Copy the raw premium key now. It is not stored and cannot be shown again.**',
+    copyable(rawKey),
+    '',
+    'Premium loadstring', copyable(loader, 'lua')
+  ].join('\n');
+  if (content.length > MESSAGE_LIMIT) throw new Error('Generated premium loader exceeds Discord message limits');
+  return content;
+};
+
+const keyIdFrom'''
+          text, count = generated_pattern.subn(generated_replacement, text, count=1)
+          if count != 1:
+              raise SystemExit(f'generatedText replacement: expected 1 match, found {count}')
+
+          once(
+              "    revoke: ['Revoke this key?', 'Existing loader sessions will stop working immediately.'],",
+              "    revoke: ['Revoke this premium key?', 'Existing premium sessions will stop working immediately. Normal AetherV2 will still load.'],",
+              'revoke confirmation'
+          )
+          once(
+              "    unlink: ['Unlink this account?', 'The next verified Roblox account will be able to claim this key.'],",
+              "    unlink: ['Unlink this premium key?', 'The next verified Roblox account will be able to claim this premium key.'],",
+              'unlink confirmation'
+          )
+          once(
+              "    rotate: ['Rotate this key?', 'The old key and all of its sessions will be revoked. A replacement raw key will be shown once.']",
+              "    rotate: ['Rotate this premium key?', 'The old premium key and all premium sessions will be revoked. A replacement raw premium key will be shown once.']",
+              'rotate confirmation'
+          )
+
+          # Confirmation surfaces should make the stable identifiers copyable on desktop and mobile.
+          once("        {name: 'Key ID', value: codeBlock(info.keyId)},", "        {name: 'Key ID', value: copyable(info.keyId)},", 'confirmation key ID')
+          once("        {name: 'Account', value: inline(bindingText(info.binding)), inline: true}", "        {name: 'Account', value: info.binding ? copyable(info.binding.username) : inline('unbound'), inline: false}", 'confirmation account')
+
+          # Action replies: use the same dual copy surface for values users are likely to reuse.
+          once(
+              "    return reply(interaction, '✅ Updated key ' + inline(result.keyId) + '.\\nLabel ' + inline(result.record.label || 'none') + ' • expires ' + inline(dateText(result.record.expiresAt)) + '.');",
+              "    return reply(interaction, ['✅ Updated premium key', copyable(result.keyId), 'Label ' + inline(result.record.label || 'none'), 'Expires', copyable(dateText(result.record.expiresAt))].join('\\n'));",
+              'edit reply'
+          )
+          once(
+              "    return reply(interaction, '✅ Renewed and enabled ' + inline(result.keyId) + ' until ' + inline(dateText(result.record.expiresAt)) + '.');",
+              "    return reply(interaction, ['✅ Renewed and enabled premium key', copyable(result.keyId), 'Expires', copyable(dateText(result.record.expiresAt))].join('\\n'));",
+              'renew reply'
+          )
+          once(
+              "    return reply(interaction, '✅ Enabled ' + inline(result.keyId) + '.');",
+              "    return reply(interaction, ['✅ Enabled premium key', copyable(result.keyId)].join('\\n'));",
+              'enable reply'
+          )
+          once(
+              "    return interaction.editReply(safePayload({content: '✅ Revoked ' + inline(result.keyId) + '. Existing source sessions are now invalid.', embeds: [], components: []}));",
+              "    return interaction.editReply(safePayload({content: ['✅ Revoked premium key', copyable(result.keyId), 'Existing premium sessions are now invalid. Normal AetherV2 is unaffected.'].join('\\n'), embeds: [], components: []}));",
+              'revoke reply'
+          )
+          once(
+              "    return interaction.editReply(safePayload({content: '✅ Unlinked ' + inline(result.binding.username) + ' from ' + inline(result.keyId) + '.', embeds: [], components: []}));",
+              "    return interaction.editReply(safePayload({content: ['✅ Unlinked Roblox account', copyable(result.binding.username), 'From premium key', copyable(result.keyId)].join('\\n'), embeds: [], components: []}));",
+              'unlink reply'
+          )
+          once(
+              "    return reply(interaction, '✅ Updated ' + inline(result.keyId) + '.\\nLabel ' + inline(result.record.label || 'none') + ' • expires ' + inline(dateText(result.record.expiresAt)) + '.');",
+              "    return reply(interaction, ['✅ Updated premium key', copyable(result.keyId), 'Label ' + inline(result.record.label || 'none'), 'Expires', copyable(dateText(result.record.expiresAt))].join('\\n'));",
+              'modal edit reply'
+          )
+          once(
+              "    return reply(interaction, '✅ Renewed and enabled ' + inline(result.keyId) + ' until ' + inline(dateText(result.record.expiresAt)) + '.');",
+              "    return reply(interaction, ['✅ Renewed and enabled premium key', copyable(result.keyId), 'Expires', copyable(dateText(result.record.expiresAt))].join('\\n'));",
+              'modal renew reply'
+          )
+
+          once("  if (!SOURCE_ORIGIN) throw new Error('PUBLIC_ORIGIN is required');\n", "", 'remove PUBLIC_ORIGIN bot startup requirement')
+
+          # Static safeguards: the Discord bot must never generate the retired Render loader.
+          if '/loader?key=' in text:
+              raise SystemExit('retired /loader?key= flow still exists in Discord bot')
+          if 'SOURCE_ORIGIN' in text:
+              raise SystemExit('Discord bot still depends on SOURCE_ORIGIN')
+          if "premiumKey = " not in text or 'raw.githubusercontent.com/plutoxqqqq/AetherV2/main/init.lua' not in text:
+              raise SystemExit('new public GitHub premium loadstring missing')
+          if 'const copyable =' not in text:
+              raise SystemExit('dual copy helper missing')
+
+          bot_path.write_text(text)
+
+          # Update focused tests for the new premium-only loader and desktop/mobile copy surfaces.
+          test_path = Path('backend/discord-bot.test.js')
+          tests = test_path.read_text()
+          tests = tests.replace(
+              "test('generated raw keys and loaders use copy-button code blocks and stay within Discord limits', () => {",
+              "test('generated premium keys and loaders support desktop and mobile copying', () => {",
+              1
+          )
+          old_asserts = """  assert.ok(content.length <= bot.MESSAGE_LIMIT);
+  assert.match(content, /```text\\n[c]+\\n```/);
+  assert.match(content, /```lua\\nloadstring/);
+  assert.match(content, /cannot be shown again/i);"""
+          new_asserts = """  assert.ok(content.length <= bot.MESSAGE_LIMIT);
+  assert.match(content, /```text\\n[c]+\\n```/);
+  assert.match(content, /`[c]+`/);
+  assert.match(content, /```lua\\nloadstring/);
+  assert.match(content, /`loadstring\\(game:HttpGet/);
+  assert.match(content, /raw\\.githubusercontent\\.com\\/plutoxqqqq\\/AetherV2\\/main\\/init\\.lua/);
+  assert.match(content, /premiumKey = \\\"[c]+\\\"/);
+  assert.doesNotMatch(content, /\\/loader\\?key=/);
+  assert.match(content, /only unlocks AetherV2 Premium/i);
+  assert.match(content, /cannot be shown again/i);"""
+          if old_asserts not in tests:
+              raise SystemExit('generatedText test assertions not found')
+          tests = tests.replace(old_asserts, new_asserts, 1)
+          test_path.write_text(tests)
+
+          # Documentation now describes keys as optional premium access rather than normal-script access.
+          readme_path = Path('backend/README.md')
+          readme = readme_path.read_text()
+          readme = readme.replace(
+              'This directory contains the key-gated private-source service, its Discord management bot, and the separate config-review service.',
+              'This directory contains the optional premium-key service, its Discord management bot, and the separate config-review service. Normal AetherV2 loads publicly from GitHub without a key.',
+              1
+          )
+          readme = readme.replace(
+              'The application never stores or logs raw keys. Key IDs, usernames, and UserIds are safe to log. Note that loaders place a raw key in an HTTPS query string because Roblox executors use `game:HttpGet`; hosting/CDN access logs must therefore be disabled or tightly restricted and redacted.',
+              'The application never stores or logs raw keys. Key IDs, usernames, and UserIds are safe to log. Premium authorization sends the raw key to `/premium/authorize` over HTTPS; hosting/CDN access logs must therefore be disabled or tightly restricted and redacted.',
+              1
+          )
+          readme = readme.replace(
+              'The configured `GITHUB_BRANCH` is always approved and is used by generated session loaders. Additional refs must be listed explicitly.',
+              'The configured `GITHUB_BRANCH` remains the backend registry/source branch. Discord-generated loaders always enter through public `AetherV2/main/init.lua`; premium source comes from `PREMIUM_GITHUB_REPO` and `PREMIUM_GITHUB_BRANCH`. Additional backend refs must be listed explicitly.',
+              1
+          )
+          readme = readme.replace(
+              '- `/key generate` — creates a key and shows the raw key/loader once in copy-button code blocks.',
+              '- `/key generate` — creates an optional premium key and shows the raw key plus the public GitHub `premiumKey` loadstring once. Copyable values are shown both as fenced code blocks and inline code for desktop/mobile copying.',
+              1
+          )
+          readme = readme.replace(
+              '- `/key info` — copy-friendly safe details for a full key ID or unique prefix.',
+              '- `/key info` — safe premium-key details. Full key IDs, Roblox usernames/UserIds, and dates use both fenced and inline code copy surfaces.',
+              1
+          )
+          readme = readme.replace(
+              '- `/key revoke` — asks for confirmation, records a `revoke` event, and invalidates source sessions.',
+              '- `/key revoke` — asks for confirmation, records a `revoke` event, and immediately invalidates premium sessions; normal AetherV2 remains available.',
+              1
+          )
+          readme = readme.replace(
+              'Source and authorization rate limits are per process and per observed client IP.',
+              'Premium-source and authorization rate limits are per process and per observed client IP.',
+              1
+          )
+          readme = readme.replace(
+              'A GitHub or registry outage intentionally blocks source access until validation is available.',
+              'A GitHub or registry outage intentionally blocks premium access until validation is available; normal public AetherV2 does not depend on premium authorization.',
+              1
+          )
+          readme_path.write_text(readme)
+
+          print('premium Discord bot patches applied')
+          PY
+
+      - name: Run focused Discord bot tests
+        shell: bash
+        run: |
+          cd backend
+          npm ci
+          node --check discord-bot.js
+          node --test discord-bot.test.js
+
+      - name: Commit update
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backend/discord-bot.js backend/discord-bot.test.js backend/README.md
+          if git diff --cached --quiet; then
+            echo "No changes"
+            exit 0
+          fi
+          git commit -m "Update Discord bot for premium key flow"
+          git push
