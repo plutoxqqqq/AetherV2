@@ -284,6 +284,28 @@ const invalidateSessionsForKey = id => {
   return removed;
 };
 
+// The first working private loader validated a key when it created the session, then served source
+// entirely from that in-memory session. Later code re-read the GitHub-backed registry for every
+// asset/library/source request, multiplying upstream requests during a cold load. Keep source reads
+// in-memory again, but invalidate sessions immediately for key mutations performed by this process.
+const invalidateMutation = (name, selectIds) => {
+  const original = registry[name];
+  if (typeof original !== 'function') return;
+  registry[name] = async (...args) => {
+    const result = await original(...args);
+    for (const id of selectIds(result) || []) {
+      if (registry.validKeyId(id)) invalidateSessionsForKey(id);
+    }
+    return result;
+  };
+};
+invalidateMutation('revokeKey', result => [result && result.keyId]);
+invalidateMutation('unlinkKey', result => [result && result.keyId]);
+invalidateMutation('rotateKey', result => [result && result.oldKeyId]);
+invalidateMutation('editKey', result => result && result.record && registry.keyStatus(result.record) !== 'active'
+  ? [result.keyId]
+  : []);
+
 const createSession = binding => {
   pruneSessions();
   if (!binding || !registry.validKeyId(binding.id) || !binding.binding) throw problem('Cannot create a session for an invalid binding', 500);
@@ -305,23 +327,13 @@ const createSession = binding => {
   return session;
 };
 
-const requireSession = async url => {
+const requireSession = url => {
   const session = typeof url === 'string' ? url : url.searchParams.get('session') || '';
   if (!/^[a-f0-9]{64}$/.test(session)) throw problem('A valid loader session is required', 401);
   const value = sessions.get(session);
   if (!value || value.expiresAt <= Date.now()) {
     sessions.delete(session);
     throw problem('The loader session is missing or expired; run your private loader again', 401);
-  }
-  let active;
-  try {
-    active = await registry.isKeyIdActive(value.keyId);
-  } catch (error) {
-    throw problem('Key status could not be verified; access is temporarily unavailable', 502, {cause: error});
-  }
-  if (!active) {
-    invalidateSessionsForKey(value.keyId);
-    throw problem('This key was revoked or expired; run a renewed loader', 401);
   }
   return value;
 };
@@ -375,7 +387,7 @@ const server = http.createServer(async (req, res) => {
     const ref = url.searchParams.get('ref') || BRANCH;
 
     if (req.method === 'GET' && url.pathname === '/source') {
-      const session = await requireSession(url);
+      const session = requireSession(url);
       if (!sessionAllowsRef(session, ref)) return json(res, 403, {success: false, error: 'This source ref is not approved for this session'});
       const file = url.searchParams.get('path');
       if (!clientPath(file)) return json(res, 403, {success: false, error: 'This path is not available through the client proxy'});
@@ -383,7 +395,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'GET' && url.pathname === '/commit') {
-      const session = await requireSession(url);
+      const session = requireSession(url);
       if (!validRef(ref)) return json(res, 403, {success: false, error: 'This source ref is not approved'});
       const commit = await commitSha(ref);
       session.approvedRefs.add(commit);
@@ -391,7 +403,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'GET' && url.pathname === '/history') {
-      const session = await requireSession(url);
+      const session = requireSession(url);
       if (!validRef(ref)) return json(res, 403, {success: false, error: 'This source ref is not approved'});
       const versions = await versionHistory(ref, url.searchParams.get('limit'));
       for (const version of versions) session.approvedRefs.add(version.sha);
@@ -399,7 +411,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'GET' && url.pathname === '/tree') {
-      const session = await requireSession(url);
+      const session = requireSession(url);
       if (!sessionAllowsRef(session, ref)) return json(res, 403, {success: false, error: 'This source ref is not approved for this session'});
       return text(res, 200, await tree(ref), 'application/json; charset=utf-8');
     }

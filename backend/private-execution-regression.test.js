@@ -28,6 +28,15 @@ test('restored execution keeps exact PlaceId dispatch', () => {
   assert.equal(main.includes('game.GameId'), false);
 });
 
+test('authenticated source requests use the in-memory session instead of rereading the registry', () => {
+  const requireSessionBody = sourceServer.match(/const requireSession = url => \{([\s\S]*?)\n\};/);
+  assert.ok(requireSessionBody);
+  assert.equal(requireSessionBody[1].includes('isKeyIdActive'), false);
+  assert.match(sourceServer, /invalidateMutation\('revokeKey'/);
+  assert.match(sourceServer, /invalidateMutation\('unlinkKey'/);
+  assert.match(sourceServer, /invalidateMutation\('rotateKey'/);
+});
+
 test('private source still supports large BedWars files and bounded downgrade history', () => {
   assert.match(sourceServer, /git\/blobs\//);
   assert.match(sourceServer, /url\.pathname === '\/history'/);
