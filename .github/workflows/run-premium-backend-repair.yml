@@ -18,6 +18,16 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Fix generator quoting
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('tools/premium_backend_repair.py')
+          t = p.read_text()
+          t = t.replace("Path('backend/private-source.js').write_text(private_source)", "Path('backend/private-source.js').write_text(private_source.replace(\\\"\\\\\\'use strict\\\\\\';\\\", \\\"'use strict';\\\", 1))", 1)
+          t = t.replace("Path('backend/private-source.test.js').write_text(private_test)", "Path('backend/private-source.test.js').write_text(private_test.replace(\\\"\\\\\\'use strict\\\\\\';\\\", \\\"'use strict';\\\", 1))", 1)
+          p.write_text(t)
+          PY
       - name: Apply repair
         run: python3 tools/premium_backend_repair.py
       - name: Install backend dependencies
