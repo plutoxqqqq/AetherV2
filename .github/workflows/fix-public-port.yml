@@ -1,0 +1,137 @@
+name: Fix public source port
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/fix-public-port.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Patch public source flow and startup behavior
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new, label):
+              p = Path(path)
+              text = p.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{path}: expected exactly one {label} match, found {count}')
+              p.write_text(text.replace(old, new, 1))
+
+          # init.lua: normal Aether is always public GitHub. Legacy normal-source session
+          # fields are stripped; premium uses its separate PremiumEndpoint/session flow.
+          replace_once('init.lua',
+          "local license = ... or {}\n",
+          "local license = ... or {}\nif type(license) ~= 'table' then license = {} end\nlicense.SourceEndpoint = nil\nlicense.SourceToken = nil\nlicense.SourceRef = nil\nshared.AetherV2SourceEndpoint = nil\nshared.AetherV2SourceToken = nil\nshared.AetherV2SourceRef = nil\nshared.AetherV2PremiumAuthorized = false\n",
+          'init license header')
+
+          replace_once('init.lua',
+          "\tshared.AetherV2PremiumFetchTree = function()\n\t\treturn game:HttpGet(session.Endpoint..'/premium/tree?session='..premiumEncode(session.Token), true)\n\tend\n\treturn true\nend",
+          "\tshared.AetherV2PremiumFetchTree = function()\n\t\treturn game:HttpGet(session.Endpoint..'/premium/tree?session='..premiumEncode(session.Token), true)\n\tend\n\tshared.AetherV2PremiumAuthorized = true\n\treturn true\nend",
+          'premium success flag')
+
+          png_guard = "\tif path:lower():sub(-4) == '.png' and body:sub(1, 8) ~= '\\137PNG\\r\\n\\26\\n' then\n\t\treturn 'invalid PNG response'\n\tend\n"
+          needle = "\tlocal lowered = head:lower()\n\tif lowered:find('<!doctype html') or lowered:find('<html') then\n\t\treturn 'received an HTML error page instead of the file'\n\tend\n"
+          replace_once('init.lua', needle, needle + png_guard, 'init PNG validation')
+
+          replace_once('init.lua',
+          "\tlocal cachedProblem = exists and path:sub(-4) == '.lua' and payloadProblem(path, readfile(path)) or nil",
+          "\tlocal cachedProblem = exists and payloadProblem(path, readfile(path)) or nil",
+          'init cache validation')
+
+          replace_once('init.lua',
+          "\t\tif include and not deferredFiles[path] then\n\t\t\tlocal target = 'aetherv2/'..path\n\t\t\tif not isfile(target) then\n\t\t\t\ttable.insert(wanted, target)\n\t\t\tend\n\t\tend",
+          "\t\tif include and not deferredFiles[path] then\n\t\t\tlocal target = 'aetherv2/'..path\n\t\t\tlocal exists = isfile(target)\n\t\t\tif exists then\n\t\t\t\tlocal ok, cached = pcall(readfile, target)\n\t\t\t\tlocal problem = ok and payloadProblem(target, cached) or 'unreadable cache'\n\t\t\t\tif problem then\n\t\t\t\t\twarn('[AetherV2] Cached '..target..' is unusable ('..problem..'), downloading it again')\n\t\t\t\t\tdelfile(target)\n\t\t\t\t\texists = false\n\t\t\t\tend\n\t\t\tend\n\t\t\tif not exists then\n\t\t\t\ttable.insert(wanted, target)\n\t\t\tend\n\t\tend",
+          'prefetch cache healing')
+
+          # main.lua: keep the normal path public, heal bad cached assets too, show a
+          # premium-success notification, and do not interrupt startup just because a
+          # game chunk registered zero modules.
+          replace_once('main.lua',
+          "local license = ... or {}\n",
+          "local license = ... or {}\nif type(license) ~= 'table' then license = {} end\nlicense.SourceEndpoint = nil\nlicense.SourceToken = nil\nlicense.SourceRef = nil\n",
+          'main license header')
+
+          replace_once('main.lua',
+          "error('Private source transport is unavailable', 0)",
+          "error('Public GitHub source transport is unavailable', 0)",
+          'public transport error')
+
+          replace_once('main.lua', needle, needle + png_guard, 'main PNG validation')
+
+          replace_once('main.lua',
+          "\tlocal cachedProblem = exists and path:sub(-4) == '.lua' and payloadProblem(path, readfile(path)) or nil",
+          "\tlocal cachedProblem = exists and payloadProblem(path, readfile(path)) or nil",
+          'main cache validation')
+
+          replace_once('main.lua',
+          "local function downloadOptionalFile(path)\n\tif isfile(path) then return true end",
+          "local function downloadOptionalFile(path)\n\tif isfile(path) then\n\t\tlocal ok, cached = pcall(readfile, path)\n\t\tif ok and not payloadProblem(path, cached) then return true end\n\t\tdelfile(path)\n\tend",
+          'optional cache healing')
+
+          replace_once('main.lua',
+          "\ttable.clear(compileCache)\n\tshared.AetherCompileCache = nil\n\tif not loaded then failLoad(loadError) end\n\ttask.spawn(function()",
+          "\ttable.clear(compileCache)\n\tshared.AetherCompileCache = nil\n\tif not loaded then failLoad(loadError) end\n\tif shared.AetherV2PremiumAuthorized and not license.Closet then\n\t\tpcall(function()\n\t\t\tvape:CreateNotification('AetherV2 Premium', 'Premium key validated', 6, 'info')\n\t\tend)\n\tend\n\ttask.spawn(function()",
+          'premium notification')
+
+          replace_once('main.lua',
+          "\t\tlocal added = registeredOptionCount() - before\n\t\tif added <= 0 then\n\t\t\ttraceGameLoad('failed', 'game chunk registered no modules')\n\t\t\tfailLoad(repoPlacePath..' executed but registered no game modules')\n\t\tend\n\t\tgameLoadTrace.ModulesAdded = added\n\t\ttraceGameLoad('loaded', added..' registered options')",
+          "\t\tlocal added = registeredOptionCount() - before\n\t\tgameLoadTrace.ModulesAdded = math.max(added, 0)\n\t\tif added <= 0 then\n\t\t\ttraceGameLoad('loaded', '0 registered options')\n\t\t\twarn('[AetherV2] '..repoPlacePath..' executed but registered no game modules')\n\t\telse\n\t\t\ttraceGameLoad('loaded', added..' registered options')\n\t\tend",
+          'zero-module startup behavior')
+
+          # The GUI implementations still contain compatibility branches for the old
+          # SourceEndpoint contract. They receive the sanitized license above, but make
+          # that invariant explicit in each entry too so direct/reused GUI execution
+          # cannot accidentally revive normal Render source calls.
+          for gui in ('guis/new.core.lua', 'guis/old.lua', 'guis/rise.lua'):
+              p = Path(gui)
+              text = p.read_text()
+              marker = "local license = ... or {}\n"
+              if marker not in text:
+                  raise SystemExit(f'{gui}: license header not found')
+              if "license.SourceEndpoint = nil\nlicense.SourceToken = nil\nlicense.SourceRef = nil\n" not in text[:500]:
+                  text = text.replace(marker, marker + "if type(license) ~= 'table' then license = {} end\nlicense.SourceEndpoint = nil\nlicense.SourceToken = nil\nlicense.SourceRef = nil\n", 1)
+              p.write_text(text)
+
+          # Regression check: Render may remain in init/backend only for premium access.
+          normal_files = ['main.lua', 'guis/new.lua', 'guis/new.core.lua', 'guis/old.lua', 'guis/rise.lua']
+          for path in normal_files:
+              text = Path(path).read_text().lower()
+              if 'aetherv2.onrender.com' in text:
+                  raise SystemExit(f'{path}: normal source still contains Render origin')
+
+          print('patches applied')
+          PY
+
+      - name: Run backend regression tests
+        shell: bash
+        run: |
+          cd backend
+          npm ci
+          npm test
+
+      - name: Commit fixes
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add init.lua main.lua guis/new.core.lua guis/old.lua guis/rise.lua
+          if git diff --cached --quiet; then
+            echo "No changes"
+            exit 0
+          fi
+          git commit -m "Fix public source asset loading and premium startup UX"
+          git push
