@@ -40,8 +40,8 @@
       "username": "AetherV2Owner",
       "userId": "11515370034",
       "firstUsedAt": "2026-08-26T22:13:15.291Z",
-      "uses": 1,
-      "lastUsedAt": "2026-08-29T07:04:53.334Z",
+      "uses": 2,
+      "lastUsedAt": "2026-08-29T07:06:52.203Z",
       "transferredAt": "2026-08-29T07:04:19.885Z"
     }
   },
@@ -770,6 +770,16 @@
       "username": "AetherV2Owner",
       "userId": "11515370034",
       "uses": 1
+    },
+    {
+      "at": "2026-08-29T07:06:52.203Z",
+      "action": "use",
+      "keyId": "fdad1b82d01fa9abee01d94e46eee107c49d2bcd37f093f4ccd2b3654a54e324",
+      "actor": "loader",
+      "operationId": "2d6f7498-ccd9-485a-b0b9-70443ad8d3aa",
+      "username": "AetherV2Owner",
+      "userId": "11515370034",
+      "uses": 2
     }
   ]
 }
