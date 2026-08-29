@@ -25,12 +25,21 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
 
-          for name in ('backend/private-source.js', 'backend/private-source.test.js'):
+          # The repair generator stores JavaScript in Python raw strings. Its embedded JS was
+          # written with an extra escaping layer, so collapse exactly one layer before validation.
+          for name in (
+              'backend/private-source.js',
+              'backend/private-source.test.js',
+              'backend/discord-bot.js',
+              'backend/discord-bot.test.js',
+          ):
               path = Path(name)
               text = path.read_text()
               text = text.replace("\\'use strict\\';", "'use strict';", 1)
+              text = text.replace('\\\\', '\\')
               path.write_text(text)
 
+          # Avoid a slash-regex entirely for origin normalization.
           path = Path('backend/private-source.js')
           lines = path.read_text().splitlines()
           for index, line in enumerate(lines):
