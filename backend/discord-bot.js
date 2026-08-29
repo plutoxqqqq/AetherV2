@@ -17,12 +17,14 @@ const {
   TextInputStyle
 } = require('discord.js');
 const registry = require('./key-registry');
+const conflicts = require('./key-conflicts');
 
 const OWNER_IDS = new Set((process.env.DISCORD_OWNER_IDS || '').split(',').map(value => value.trim()).filter(Boolean));
 const APPLICATION_ID = process.env.DISCORD_APPLICATION_ID || '';
 const GUILD_ID = process.env.DISCORD_GUILD_ID || '';
 const PAGE_SIZE = 6;
 const AUDIT_PAGE_SIZE = 8;
+const CONFLICT_PAGE_SIZE = 5;
 const MESSAGE_LIMIT = 2000;
 const EMBED_DESCRIPTION_LIMIT = 4096;
 const VIEW_TTL = 30 * 60 * 1000;
@@ -46,6 +48,7 @@ const commands = [
     .setDescription('Manage AetherV2 Premium keys')
     .setDMPermission(false)
     .addSubcommand(sub => sub.setName('panel').setDescription('Open the private premium-key dashboard'))
+    .addSubcommand(sub => sub.setName('conflicts').setDescription('Review keys attempted by multiple Roblox accounts'))
     .addSubcommand(sub => sub
       .setName('generate')
       .setDescription('Generate a new unbound premium key')
@@ -117,9 +120,7 @@ const statusIcon = status => ({active: '🟢', disabled: '🔴', expired: '🟠'
 const statusRank = status => ({active: 0, expired: 1, disabled: 2}[status] ?? 3);
 const safePayload = payload => {
   const value = {...payload, allowedMentions: {parse: []}};
-  if (typeof value.content === 'string' && value.content.length > MESSAGE_LIMIT) {
-    value.content = truncate(value.content, MESSAGE_LIMIT);
-  }
+  if (typeof value.content === 'string' && value.content.length > MESSAGE_LIMIT) value.content = truncate(value.content, MESSAGE_LIMIT);
   return value;
 };
 
@@ -170,21 +171,22 @@ const filterText = filters => {
 };
 
 const dashboardView = async userId => {
-  const keys = await registry.listKeys();
+  const [keys, openConflicts] = await Promise.all([registry.listKeys(), conflicts.listConflicts({status: 'open'})]);
   const counts = keys.reduce((result, item) => {
     result[item.status] = (result[item.status] || 0) + 1;
     if (item.binding) result.bound += 1;
     return result;
   }, {active: 0, expired: 0, disabled: 0, bound: 0});
   const embed = new EmbedBuilder()
-    .setColor(0x5865f2)
+    .setColor(openConflicts.length ? 0xfee75c : 0x5865f2)
     .setTitle('🔐 AetherV2 Premium Key Manager')
     .setDescription('Owner-only premium access. Normal AetherV2 is public and does not require a key. Raw premium keys are never stored and can only be shown once.')
     .addFields(
       {name: 'All keys', value: inline(keys.length), inline: true},
       {name: 'Active', value: inline(counts.active), inline: true},
       {name: 'Inactive', value: inline(counts.expired + counts.disabled), inline: true},
-      {name: 'Bound accounts', value: inline(counts.bound), inline: true}
+      {name: 'Bound accounts', value: inline(counts.bound), inline: true},
+      {name: 'Open conflicts', value: inline(openConflicts.length), inline: true}
     )
     .setFooter({text: 'Private owner dashboard • refreshed'})
     .setTimestamp();
@@ -193,6 +195,7 @@ const dashboardView = async userId => {
     components: [new ActionRowBuilder().addComponents(
       button('aether:panel:' + userId + ':generate', 'Generate', ButtonStyle.Success),
       button('aether:panel:' + userId + ':list', 'View keys', ButtonStyle.Primary),
+      button('aether:panel:' + userId + ':conflicts', 'Conflicts', openConflicts.length ? ButtonStyle.Danger : ButtonStyle.Secondary),
       button('aether:panel:' + userId + ':audit', 'Audit log'),
       button('aether:panel:' + userId + ':refresh', 'Refresh')
     )]
@@ -244,6 +247,106 @@ const keyListView = async (userId, requestedPage = 0, viewId, initialFilters = {
   return {embeds: [embed], components};
 };
 
+const conflictListView = async (userId, requestedPage = 0) => {
+  const items = await conflicts.listConflicts({status: 'open'});
+  const pageCount = Math.max(1, Math.ceil(items.length / CONFLICT_PAGE_SIZE));
+  const page = Math.max(0, Math.min(Number(requestedPage) || 0, pageCount - 1));
+  const pageItems = items.slice(page * CONFLICT_PAGE_SIZE, (page + 1) * CONFLICT_PAGE_SIZE);
+  const embed = new EmbedBuilder()
+    .setColor(items.length ? 0xfee75c : 0x57f287)
+    .setTitle('⚠️ Premium key conflicts')
+    .setDescription(items.length
+      ? 'These attempts were rejected because the key was already bound to a different Roblox identity. Select one to moderate it.'
+      : 'No unresolved key conflicts were detected.')
+    .setFooter({text: 'Page ' + (page + 1) + ' of ' + pageCount + ' • ' + items.length + ' open conflict' + (items.length === 1 ? '' : 's')})
+    .setTimestamp();
+  for (const item of pageItems) {
+    embed.addFields({
+      name: truncate(item.attemptedUsername + ' → ' + item.boundUsername, 100),
+      value: [
+        'Conflict ' + inline(item.conflictId),
+        'Attempted ' + inline(item.attemptedUsername + ' (' + item.attemptedUserId + ')'),
+        'Bound to ' + inline(item.boundUsername + ' (' + item.boundUserId + ')'),
+        'Key ' + inline(item.keyId.slice(0, 16) + '…') + ' • attempts ' + inline(item.attempts),
+        'Last seen ' + inline(dateText(item.lastSeenAt)) + (item.banned ? ' • **user already banned**' : '')
+      ].join('\n')
+    });
+  }
+  const components = [new ActionRowBuilder().addComponents(
+    button('aether:conflicts:' + userId + ':' + page + ':prev', 'Previous', ButtonStyle.Secondary, page === 0),
+    button('aether:conflicts:' + userId + ':' + page + ':next', 'Next', ButtonStyle.Secondary, page >= pageCount - 1),
+    button('aether:conflicts:' + userId + ':' + page + ':refresh', 'Refresh'),
+    button('aether:conflicts:' + userId + ':' + page + ':home', 'Dashboard', ButtonStyle.Primary)
+  )];
+  if (pageItems.length) {
+    components.push(new ActionRowBuilder().addComponents(new StringSelectMenuBuilder()
+      .setCustomId('aether:conflictselect:' + userId + ':' + page)
+      .setPlaceholder('Select a conflict to review')
+      .addOptions(pageItems.map(item => ({
+        label: truncate(item.attemptedUsername + ' using ' + item.boundUsername + "'s key", 100),
+        description: truncate(item.attempts + ' rejected attempt' + (item.attempts === 1 ? '' : 's') + ' • ' + item.keyId.slice(0, 12), 100),
+        value: item.conflictId
+      }))));
+  }
+  return {embeds: [embed], components};
+};
+
+const conflictDetailView = async (userId, conflictId, page = 0) => {
+  const item = await conflicts.getConflict(conflictId);
+  const embed = new EmbedBuilder()
+    .setColor(0xfee75c)
+    .setTitle('⚠️ Key conflict details')
+    .addFields(
+      {name: 'Conflict ID', value: copyable(item.conflictId)},
+      {name: 'Attempted account', value: copyable(item.attemptedUsername + ' (' + item.attemptedUserId + ')')},
+      {name: 'Legitimate binding', value: copyable(item.boundUsername + ' (' + item.boundUserId + ')')},
+      {name: 'Key ID', value: copyable(item.keyId)},
+      {name: 'Rejected attempts', value: inline(item.attempts), inline: true},
+      {name: 'First seen', value: inline(dateText(item.firstSeenAt)), inline: true},
+      {name: 'Last seen', value: inline(dateText(item.lastSeenAt)), inline: true},
+      {name: 'Attempting user banned', value: inline(item.banned ? 'yes' : 'no'), inline: true}
+    )
+    .setFooter({text: 'The attempted authorization was rejected; no premium session was created.'})
+    .setTimestamp();
+  const base = 'aether:conflictdetail:' + userId + ':' + item.conflictId + ':' + page + ':';
+  return {
+    embeds: [embed],
+    components: [new ActionRowBuilder().addComponents(
+      button(base + 'back', 'Back', ButtonStyle.Primary),
+      button(base + 'ban_user', 'Ban user', ButtonStyle.Danger, item.banned),
+      button(base + 'revoke_key', 'Revoke key', ButtonStyle.Danger),
+      button(base + 'both', 'Ban + revoke', ButtonStyle.Danger),
+      button(base + 'ignore', 'Ignore', ButtonStyle.Secondary)
+    )]
+  };
+};
+
+const conflictConfirmView = async (userId, conflictId, page, action) => {
+  const item = await conflicts.getConflict(conflictId);
+  const labels = {
+    ban_user: ['Ban attempted Roblox user?', 'This Roblox UserId will be refused by every premium key until the ban store is changed.'],
+    revoke_key: ['Revoke the affected premium key?', 'The legitimate binding remains recorded, but the key and all live premium source sessions stop working.'],
+    both: ['Ban user and revoke key?', 'This bans the attempted Roblox UserId and revokes the affected premium key.']
+  };
+  if (!labels[action]) throw new Error('Unknown conflict action');
+  const base = 'aether:conflictconfirm:' + userId + ':' + item.conflictId + ':' + page + ':' + action + ':';
+  return {
+    embeds: [new EmbedBuilder()
+      .setColor(0xed4245)
+      .setTitle('⚠️ ' + labels[action][0])
+      .setDescription(labels[action][1])
+      .addFields(
+        {name: 'Attempted account', value: copyable(item.attemptedUsername + ' (' + item.attemptedUserId + ')')},
+        {name: 'Bound account', value: copyable(item.boundUsername + ' (' + item.boundUserId + ')')},
+        {name: 'Key ID', value: copyable(item.keyId)}
+      )],
+    components: [new ActionRowBuilder().addComponents(
+      button(base + 'yes', 'Confirm', ButtonStyle.Danger),
+      button(base + 'cancel', 'Cancel', ButtonStyle.Secondary)
+    )]
+  };
+};
+
 const auditDetail = event => {
   const extras = [];
   if (event.username) extras.push('user ' + inline(event.username));
@@ -254,9 +357,7 @@ const auditDetail = event => {
   if (event.expiresAt) extras.push('until ' + inline(dateText(event.expiresAt)));
   if (event.uses !== undefined) extras.push('uses ' + inline(event.uses));
   if (event.changes) {
-    const changes = Object.entries(event.changes).map(([name, value]) =>
-      name + '=' + (name === 'expiresAt' ? dateText(value) : String(value))
-    ).join(', ');
+    const changes = Object.entries(event.changes).map(([name, value]) => name + '=' + (name === 'expiresAt' ? dateText(value) : String(value))).join(', ');
     if (changes) extras.push('changed ' + inline(truncate(changes, 120)));
   }
   return truncate([
@@ -330,16 +431,12 @@ const generatedText = (result, title = 'Generated premium key') => {
   const rawKey = String(result.key);
   const loader = "loadstring(game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/main/init.lua', true), 'init.lua')({Closet = false, premiumKey = " + JSON.stringify(rawKey) + '})';
   const content = [
-    '✅ **' + title + '**',
-    '',
-    'Normal AetherV2 works without this key. This key only unlocks AetherV2 Premium modules.',
-    '',
+    '✅ **' + title + '**', '',
+    'Normal AetherV2 works without this key. This key only unlocks AetherV2 Premium modules.', '',
     'Key ID', copyable(result.keyId),
-    'Label ' + inline(result.record.label || 'Unlabelled') + '  •  expires ' + inline(dateText(result.record.expiresAt)),
-    '',
+    'Label ' + inline(result.record.label || 'Unlabelled') + '  •  expires ' + inline(dateText(result.record.expiresAt)), '',
     '⚠️ **Copy the raw premium key now. It is not stored and cannot be shown again.**',
-    copyable(rawKey),
-    '',
+    copyable(rawKey), '',
     'Premium loadstring', copyable(loader, 'lua')
   ].join('\n');
   if (content.length > MESSAGE_LIMIT) throw new Error('Generated premium loader exceeds Discord message limits');
@@ -405,23 +502,15 @@ const handleKeyCommand = async interaction => {
   const subcommand = interaction.options.getSubcommand();
   const actor = actorName(interaction);
   if (subcommand === 'panel') return respond(interaction, await dashboardView(interaction.user.id));
+  if (subcommand === 'conflicts') return respond(interaction, await conflictListView(interaction.user.id, 0));
   if (subcommand === 'list') return respond(interaction, await keyListView(interaction.user.id, 0, null, commandFilters(interaction)));
   if (subcommand === 'generate') {
-    const result = await registry.createKey({
-      label: interaction.options.getString('label', false) || undefined,
-      expiresAt: interaction.options.getString('expires_at', false) || undefined,
-      actor
-    });
+    const result = await registry.createKey({label: interaction.options.getString('label', false) || undefined, expiresAt: interaction.options.getString('expires_at', false) || undefined, actor});
     return reply(interaction, generatedText(result));
   }
   if (subcommand === 'info') return respond(interaction, await keyDetailView(interaction.user.id, keyIdFrom(interaction)));
   if (subcommand === 'edit') {
-    const result = await registry.editKey({
-      id: keyIdFrom(interaction),
-      label: interaction.options.getString('label', false) ?? undefined,
-      expiresAt: interaction.options.getString('expires_at', false) ?? undefined,
-      actor
-    });
+    const result = await registry.editKey({id: keyIdFrom(interaction), label: interaction.options.getString('label', false) ?? undefined, expiresAt: interaction.options.getString('expires_at', false) ?? undefined, actor});
     return reply(interaction, ['✅ Updated premium key', copyable(result.keyId), 'Label ' + inline(result.record.label || 'none'), 'Expires', copyable(dateText(result.record.expiresAt))].join('\n'));
   }
   if (subcommand === 'renew') {
@@ -455,6 +544,7 @@ const handlePanelButton = async interaction => {
   const action = parts[3];
   if (action === 'generate') return interaction.showModal(createKeyModal(ownerId));
   if (action === 'list') return updateComponent(interaction, keyListView(ownerId, 0));
+  if (action === 'conflicts') return updateComponent(interaction, conflictListView(ownerId, 0));
   if (action === 'audit') return updateComponent(interaction, auditView(ownerId));
   return updateComponent(interaction, dashboardView(ownerId));
 };
@@ -469,6 +559,49 @@ const handleListButton = async interaction => {
   if (action === 'prev') return updateComponent(interaction, keyListView(ownerId, page - 1, viewId));
   if (action === 'next') return updateComponent(interaction, keyListView(ownerId, page + 1, viewId));
   return updateComponent(interaction, keyListView(ownerId, page, viewId));
+};
+
+const handleConflictListButton = async interaction => {
+  const parts = interaction.customId.split(':');
+  const ownerId = parts[2];
+  const page = Number(parts[3]) || 0;
+  const action = parts[4];
+  if (action === 'home') return updateComponent(interaction, dashboardView(ownerId));
+  return updateComponent(interaction, conflictListView(ownerId, action === 'prev' ? page - 1 : action === 'next' ? page + 1 : page));
+};
+
+const handleConflictSelect = async interaction => {
+  const parts = interaction.customId.split(':');
+  return updateComponent(interaction, conflictDetailView(parts[2], interaction.values[0], Number(parts[3]) || 0));
+};
+
+const handleConflictDetailButton = async interaction => {
+  const parts = interaction.customId.split(':');
+  const ownerId = parts[2];
+  const conflictId = parts[3];
+  const page = Number(parts[4]) || 0;
+  const action = parts[5];
+  if (action === 'back') return updateComponent(interaction, conflictListView(ownerId, page));
+  if (action === 'ignore') {
+    await interaction.deferUpdate();
+    await conflicts.resolveConflict({id: conflictId, action: 'ignore', actor: actorName(interaction)});
+    return interaction.editReply(safePayload(await conflictListView(ownerId, page)));
+  }
+  if (['ban_user', 'revoke_key', 'both'].includes(action)) return updateComponent(interaction, conflictConfirmView(ownerId, conflictId, page, action));
+  throw new Error('Unknown conflict action');
+};
+
+const handleConflictConfirmButton = async interaction => {
+  const parts = interaction.customId.split(':');
+  const ownerId = parts[2];
+  const conflictId = parts[3];
+  const page = Number(parts[4]) || 0;
+  const action = parts[5];
+  const decision = parts[6];
+  if (decision === 'cancel') return updateComponent(interaction, conflictDetailView(ownerId, conflictId, page));
+  await interaction.deferUpdate();
+  await conflicts.resolveConflict({id: conflictId, action, actor: actorName(interaction)});
+  return interaction.editReply(safePayload(await conflictListView(ownerId, page)));
 };
 
 const handleAuditButton = async interaction => {
@@ -538,23 +671,14 @@ const handleModalSubmit = async interaction => {
   const actor = actorName(interaction);
   await interaction.deferReply({ephemeral: true});
   if (kind === 'generate') {
-    const result = await registry.createKey({
-      label: interaction.fields.getTextInputValue('label').trim() || undefined,
-      expiresAt: interaction.fields.getTextInputValue('expires_at').trim() || undefined,
-      actor
-    });
+    const result = await registry.createKey({label: interaction.fields.getTextInputValue('label').trim() || undefined, expiresAt: interaction.fields.getTextInputValue('expires_at').trim() || undefined, actor});
     return reply(interaction, generatedText(result));
   }
   const keyPrefix = parts[4];
   if (kind === 'edit') {
     const label = interaction.fields.getTextInputValue('label').trim();
     const expiresAt = interaction.fields.getTextInputValue('expires_at').trim();
-    const result = await registry.editKey({
-      id: keyPrefix,
-      label: label ? label : undefined,
-      expiresAt: expiresAt ? expiresAt : undefined,
-      actor
-    });
+    const result = await registry.editKey({id: keyPrefix, label: label ? label : undefined, expiresAt: expiresAt ? expiresAt : undefined, actor});
     return reply(interaction, ['✅ Updated premium key', copyable(result.keyId), 'Label ' + inline(result.record.label || 'none'), 'Expires', copyable(dateText(result.record.expiresAt))].join('\n'));
   }
   if (kind === 'renew') {
@@ -583,12 +707,8 @@ const handleInteraction = async interaction => {
     if (interaction.commandName !== 'key') return;
     if (!isOwnerId(interaction.user.id)) return reply(interaction, 'You are not authorized to manage AetherV2 keys.');
     await interaction.deferReply({ephemeral: true});
-    try {
-      await handleKeyCommand(interaction);
-    } catch (error) {
-      logSafeError('Discord key command failed', error);
-      await reply(interaction, '❌ ' + friendlyError(error));
-    }
+    try { await handleKeyCommand(interaction); }
+    catch (error) { logSafeError('Discord key command failed', error); await reply(interaction, '❌ ' + friendlyError(error)); }
     return;
   }
   if (!interaction.isButton() && !interaction.isStringSelectMenu() && !interaction.isModalSubmit()) return;
@@ -599,11 +719,18 @@ const handleInteraction = async interaction => {
       const type = interaction.customId.split(':')[1];
       if (type === 'panel') return await handlePanelButton(interaction);
       if (type === 'list') return await handleListButton(interaction);
+      if (type === 'conflicts') return await handleConflictListButton(interaction);
+      if (type === 'conflictdetail') return await handleConflictDetailButton(interaction);
+      if (type === 'conflictconfirm') return await handleConflictConfirmButton(interaction);
       if (type === 'audit') return await handleAuditButton(interaction);
       if (type === 'detail') return await handleDetailButton(interaction);
       if (type === 'confirm') return await handleConfirmButton(interaction);
     }
-    if (interaction.isStringSelectMenu()) return await handleKeySelect(interaction);
+    if (interaction.isStringSelectMenu()) {
+      const type = interaction.customId.split(':')[1];
+      if (type === 'conflictselect') return await handleConflictSelect(interaction);
+      return await handleKeySelect(interaction);
+    }
     if (interaction.isModalSubmit()) return await handleModalSubmit(interaction);
   } catch (error) {
     logSafeError('Discord dashboard action failed', error);
@@ -627,9 +754,7 @@ const startDiscordBot = async () => {
     try {
       await registerCommands();
       console.log('[AetherV2] Discord bot logged in as ' + client.user.tag);
-    } catch (error) {
-      logSafeError('Discord command registration failed', error);
-    }
+    } catch (error) { logSafeError('Discord command registration failed', error); }
   });
   client.on('interactionCreate', interaction => handleInteraction(interaction).catch(error => logSafeError('Discord interaction failed', error)));
   await client.login(process.env.DISCORD_TOKEN);
@@ -644,6 +769,8 @@ module.exports = {
   generatedText,
   auditView,
   keyListView,
+  conflictListView,
+  conflictDetailView,
   confirmationView,
   friendlyError,
   MESSAGE_LIMIT,
