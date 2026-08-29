@@ -58,7 +58,7 @@ AETHER_REGISTRY_FILE=backend/key-bindings.json
 AETHER_ALLOWED_REFS=main
 AETHER_ALLOWED_PATHS=init.lua,main.lua,loadstring,version.txt,cv,gui,assets/,configs/,games/,guis/,libraries/,profiles/
 # Restrict private premium files to the module paths the client needs.
-PREMIUM_ALLOWED_PATHS=init.lua,modules/,assets/,libraries/
+PREMIUM_ALLOWED_PATHS=games/
 AETHER_SESSION_MINUTES=120
 AETHER_MAX_SESSIONS=2000
 AETHER_MAX_SESSIONS_PER_KEY=3
@@ -78,15 +78,25 @@ The configured `GITHUB_BRANCH` is always approved and is used by generated sessi
 
 ## Premium modules
 
-The public `init.lua` always loads normal AetherV2 from GitHub. When the optional `premiumKey` is valid, it authorizes a short-lived session with `/premium/authorize`, then loads `init.lua` from the private `AetherV2Premium` repository through `/premium/source`. Invalid, revoked, expired, or omitted keys do not interrupt the public loader.
+The public `init.lua` always loads normal AetherV2 from GitHub. When the optional `premiumKey` is valid, it authorizes a short-lived session with `/premium/authorize`, then reads the private `AetherV2Premium` tree through `/premium/tree`. Invalid, revoked, expired, or omitted keys do not interrupt the public loader.
 
-Create the premium repository with an executable root `init.lua`. It is called as `init(vape, license)`; use the provided shared premium fetcher for any allowed module files:
+Premium modules are discovered automatically from this layout:
 
-```lua
-local fetch = assert(shared.AetherV2PremiumFetchSource, 'premium session is unavailable')
-local source = fetch('modules/example.lua')
-loadstring(source, 'premium/modules/example.lua')(vape, license)
+```text
+games/
+  universal/
+    blatant/
+      module.lua
+    render/
+      module.lua
+  <PlaceId>/
+    blatant/
+      module.lua
+    world/
+      module.lua
 ```
+
+All universal modules load first, then modules for the current `PlaceId`. Every category folder is supported—including `blatant`, `render`, and `world`—and empty folders require no special handling. Each module receives `(vape, license, context)`, where `context.Category` is the matching AetherV2 category name and `context.CategoryApi` is its API when the category exists. A module may either register directly or return a function that receives the same arguments.
 
 Keep `AetherV2Premium` private and grant the Render service's fine-grained GitHub token **Contents: Read** on it. Do not place its GitHub token or private URLs in the client loader.
 
