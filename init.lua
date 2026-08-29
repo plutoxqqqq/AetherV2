@@ -20,6 +20,22 @@ local function cachedLoadstring(source, chunkName)
 	return chunk, err
 end
 
+-- A Lua file containing only the cache watermark or comments compiles successfully but does
+-- nothing. Numeric game modules must contain executable source or Universal appears to be the only
+-- file that loaded forever after one interrupted/empty cache write.
+local function sourceHasCode(path, source)
+	if not path:match('games/%d+%.lua$') then return true end
+	if type(source) ~= 'string' then return false end
+	source = compileKey(source):gsub('^\239\187\191', '')
+	while true do
+		local before = source
+		source = source:gsub('^%s*%-%-%[(=*)%[.-%]%1%]', '')
+		source = source:gsub('^%s*%-%-[^\r\n]*', '')
+		if source == before then break end
+	end
+	return source:match('%S') ~= nil
+end
+
 local cloneref = cloneref or function(ref) return ref end
 -- Optional private-source proxy. The proxy keeps the GitHub token server-side while preserving
 -- the existing raw-GitHub fallback for installations that have not configured one yet.
@@ -376,6 +392,9 @@ local function payloadProblem(path, body)
 	if lowered:find('<!doctype html') or lowered:find('<html') then
 		return 'received an HTML error page instead of the file'
 	end
+	if path:sub(-4) == '.lua' and not sourceHasCode(path, body) then
+		return 'the numeric game module contains no executable code'
+	end
 	if path:sub(-4) == '.lua' and not cachedLoadstring(body, path) then
 		return 'the downloaded file did not compile'
 	end
@@ -434,8 +453,9 @@ end
 local function downloadFile(path, func)
 	-- Heal a broken cache instead of trusting it forever.
 	local exists = isfile(path)
-	if exists and path:sub(-4) == '.lua' and not cachedLoadstring(readfile(path), path) then
-		warn('[AetherV2] Cached '..path..' is unusable, downloading it again')
+	local cachedProblem = exists and path:sub(-4) == '.lua' and payloadProblem(path, readfile(path)) or nil
+	if cachedProblem then
+		warn('[AetherV2] Cached '..path..' is unusable ('..cachedProblem..'), downloading it again')
 		delfile(path)
 		exists = false
 	end
@@ -730,7 +750,12 @@ if not shared.VapeDeveloper then
 		-- First run with no answer: retain the configured private ref (or the public
 		-- release channel) rather than silently switching a gated client to main.
 		local channel = selectedReleaseChannel()
-		writefile('aetherv2/profiles/commit.txt', commit or (sourceEndpoint and sourceRef or (channel == 'stable' and 'main' or channel)))
+		local initialRef = commit or (sourceEndpoint and sourceRef or (channel == 'stable' and 'main' or channel))
+		writefile('aetherv2/profiles/commit.txt', initialRef)
+		-- The first run used to skip the tree entirely, which meant main.lua could not distinguish a
+		-- supported exact PlaceId from an unsupported game when its source request failed.
+		prefetchPaths = fetchFileList(initialRef)
+		if prefetchPaths then writeFileList(prefetchPaths) end
 	else
 		-- Up to date. The stored list is this commit's file list, so it can drive the prefetch below
 		-- without another request.
@@ -746,6 +771,10 @@ if not shared.VapeDeveloper then
 		end
 	end
 end
+
+-- main.lua uses this authoritative tree to make an exact supported game mandatory. When the tree
+-- endpoint is unavailable it still probes the exact path, but it never guesses by GameId.
+shared.AetherV2KnownSourceFiles = prefetchPaths
 
 if not isfile('aetherv2/profiles/disableloading.txt') then
 	writefile('aetherv2/profiles/disableloading.txt', 'false')
