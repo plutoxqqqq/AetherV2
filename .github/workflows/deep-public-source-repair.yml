@@ -18,7 +18,18 @@ jobs:
         with:
           fetch-depth: 0
       - name: Apply repair
-        run: python3 tools/deep_public_source_repair.py
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('tools/deep_public_source_repair.py')
+          t = p.read_text()
+          old = "text = replace_once(text, \"\\tlocal ref = readfile('aetherv2/profiles/commit.txt')\\n\", \"\\tlocal ref = selectedSourceRef()\\n\", 'main fetch ref')"
+          new = "text = text.replace(\"\\tlocal ref = readfile('aetherv2/profiles/commit.txt')\\n\", \"\\tlocal ref = selectedSourceRef()\\n\", 1)"
+          if old not in t:
+              raise SystemExit('source-ref patch line not found')
+          p.write_text(t.replace(old, new, 1))
+          PY
+          python3 tools/deep_public_source_repair.py
       - name: Verify repair
         run: |
           python3 - <<'PY'
