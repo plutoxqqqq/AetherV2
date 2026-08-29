@@ -6,7 +6,6 @@ on:
       - main
     paths:
       - tools/premium_backend_repair.py
-      - tools/fix_premium_backend_generator.py
       - .github/workflows/run-premium-backend-repair.yml
 
 permissions:
@@ -19,10 +18,18 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Finalize generator
-        run: python3 tools/fix_premium_backend_generator.py
       - name: Apply repair
         run: python3 tools/premium_backend_repair.py
+      - name: Normalize generated JS headers
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          for name in ('backend/private-source.js', 'backend/private-source.test.js'):
+              path = Path(name)
+              text = path.read_text()
+              text = text.replace("\\'use strict\\';", "'use strict';", 1)
+              path.write_text(text)
+          PY
       - name: Install backend dependencies
         run: cd backend && npm ci
       - name: Check backend syntax
