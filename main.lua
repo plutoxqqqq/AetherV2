@@ -346,6 +346,28 @@ local function runWatchedChunk(source, chunkName, label, timeout, optional, ...)
 	return result
 end
 
+local function loadPremiumModules()
+	local fetch = shared.AetherV2PremiumFetchSource
+	if type(fetch) ~= 'function' then return end
+	setPhase('Loading premium modules', 0.97, 0.985)
+	local ok, source = pcall(fetch, 'init.lua')
+	if not ok or type(source) ~= 'string' or #source < 8 then
+		warn('[AetherV2] Premium modules were unavailable; continuing with normal modules')
+		return
+	end
+	local chunk, compileError = loadstring(source, 'premium/init.lua')
+	if not chunk then
+		warn('[AetherV2] Premium modules did not compile: '..tostring(compileError))
+		return
+	end
+	local ran, runtimeError = xpcall(function()
+		return chunk(vape, license)
+	end, debug.traceback)
+	if not ran then
+		warn('[AetherV2] Premium modules failed: '..tostring(runtimeError))
+	end
+end
+
 local function finishLoading()
 	setPhase('Finalizing', 0.97, 0.99)
 	vape.Init = nil
@@ -556,6 +578,7 @@ if not shared.VapeIndependent then
 		gameLoadTrace.ModulesAdded = added
 		traceGameLoad('loaded', added..' registered options')
 	end
+	loadPremiumModules()
 	finishLoading()
 else
 	vape.Init = finishLoading
