@@ -37,8 +37,9 @@ test('game and GUI helpers inherit the authenticated private source transport', 
 });
 
 test('restored execution keeps exact PlaceId dispatch', () => {
-  assert.match(main, /local modulePlace = tostring\(game\.PlaceId\)/);
-  assert.match(main, /local placePath = 'aetherv2\/games\/'\.\.modulePlace\.\.'\.lua'/);
+  assert.match(main, /local requestedPlace = tostring\(game\.PlaceId\)/);
+  assert.match(main, /local modulePlace = requestedPlace/);
+  assert.match(main, /local repoPlacePath = 'games\/'\.\.modulePlace\.\.'\.lua'/);
   assert.equal(main.includes('game.GameId'), false);
 });
 
