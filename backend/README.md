@@ -36,6 +36,9 @@ npm test
 GITHUB_TOKEN=github_pat_...
 GITHUB_REPO=plutoxqqqq/AetherV2
 GITHUB_BRANCH=main
+# Private repository holding only premium modules; grant this token Contents: Read.
+PREMIUM_GITHUB_REPO=plutoxqqqq/AetherV2Premium
+PREMIUM_GITHUB_BRANCH=main
 PUBLIC_ORIGIN=https://source.example.com
 
 DISCORD_TOKEN=...
@@ -54,6 +57,8 @@ Legacy `AETHER_KEY`, `AETHER_KEYS`, and singular `DISCORD_OWNER_ID` fallbacks ar
 AETHER_REGISTRY_FILE=backend/key-bindings.json
 AETHER_ALLOWED_REFS=main
 AETHER_ALLOWED_PATHS=init.lua,main.lua,loadstring,version.txt,cv,gui,assets/,configs/,games/,guis/,libraries/,profiles/
+# Restrict private premium files to the module paths the client needs.
+PREMIUM_ALLOWED_PATHS=init.lua,modules/,assets/,libraries/
 AETHER_SESSION_MINUTES=120
 AETHER_MAX_SESSIONS=2000
 AETHER_MAX_SESSIONS_PER_KEY=3
@@ -69,6 +74,21 @@ AETHER_AUDIT_LIMIT=500
 ```
 
 The configured `GITHUB_BRANCH` is always approved and is used by generated session loaders. Additional refs must be listed explicitly. Keep the path list limited to files the client genuinely needs; backend, workflow, Git metadata, and arbitrary repository files are denied by default.
+
+
+## Premium modules
+
+The public `init.lua` always loads normal AetherV2 from GitHub. When the optional `premiumKey` is valid, it authorizes a short-lived session with `/premium/authorize`, then loads `init.lua` from the private `AetherV2Premium` repository through `/premium/source`. Invalid, revoked, expired, or omitted keys do not interrupt the public loader.
+
+Create the premium repository with an executable root `init.lua`. It is called as `init(vape, license)`; use the provided shared premium fetcher for any allowed module files:
+
+```lua
+local fetch = assert(shared.AetherV2PremiumFetchSource, 'premium session is unavailable')
+local source = fetch('modules/example.lua')
+loadstring(source, 'premium/modules/example.lua')(vape, license)
+```
+
+Keep `AetherV2Premium` private and grant the Render service's fine-grained GitHub token **Contents: Read** on it. Do not place its GitHub token or private URLs in the client loader.
 
 ## Running and deploying
 
