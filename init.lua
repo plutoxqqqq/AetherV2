@@ -37,6 +37,53 @@ local function sourceHasCode(path, source)
 end
 
 local cloneref = cloneref or function(ref) return ref end
+
+-- The public loader always runs. A premium key is optional and only creates a short-lived
+-- session for the private AetherV2Premium repository when the Render validator accepts it.
+local function premiumEncode(value)
+	return tostring(value):gsub('([^%w%-%._~])', function(character)
+		return string.format('%%%02X', string.byte(character))
+	end)
+end
+
+local function premiumEndpoint()
+	local endpoint = type(license) == 'table' and license.PremiumEndpoint or nil
+	if (type(endpoint) ~= 'string' or endpoint == '') and getgenv then
+		pcall(function() endpoint = getgenv().AetherV2PremiumEndpoint end)
+	end
+	if (type(endpoint) ~= 'string' or endpoint == '') then endpoint = shared.AetherV2PremiumEndpoint end
+	if type(endpoint) ~= 'string' or endpoint == '' then endpoint = 'https://aetherv2.onrender.com' end
+	return endpoint:gsub('/+$', '')
+end
+
+local function authorizePremium()
+	local key = type(license) == 'table' and license.premiumKey or nil
+	if type(key) ~= 'string' or key == '' or key == 'KEY_HERE' then return false end
+	local player = game:GetService('Players').LocalPlayer
+	if not player then return false end
+	local endpoint = premiumEndpoint()
+	local url = endpoint..'/premium/authorize?key='..premiumEncode(key)
+		..'&username='..premiumEncode(player.Name)..'&userId='..premiumEncode(player.UserId)
+	local ok, body = pcall(game.HttpGet, game, url, true)
+	if not ok or type(body) ~= 'string' then return false end
+	local stage = loadstring(body, 'aether-premium-authorize')
+	if not stage then return false end
+	local ran, session = pcall(stage)
+	if not ran or type(session) ~= 'table'
+		or type(session.Endpoint) ~= 'string'
+		or type(session.Token) ~= 'string'
+		or type(session.Ref) ~= 'string' then
+		return false
+	end
+	shared.AetherV2PremiumEndpoint = session.Endpoint
+	shared.AetherV2PremiumToken = session.Token
+	shared.AetherV2PremiumRef = session.Ref
+	shared.AetherV2PremiumFetchSource = function(path)
+		return game:HttpGet(session.Endpoint..'/premium/source?path='..premiumEncode(path)
+			..'&session='..premiumEncode(session.Token), true)
+	end
+	return true
+end
 local isfile = isfile or function(file)
 	local suc, res = pcall(function()
 		return readfile(file)
@@ -864,6 +911,10 @@ prefetch(prefetchPaths)
 
 _G.AetherV2SetLoadingStatus('Preparing loading artwork...', 0.70)
 pcall(downloadFile, 'aetherv2/assets/new/loading.png')
+
+-- A rejected/unavailable premium check is deliberately silent: it must never prevent
+-- normal AetherV2 from loading.
+pcall(authorizePremium)
 
 _G.AetherV2SetLoadingStatus('Loading main script', 0.82)
 local mainChunk = cachedLoadstring(downloadFile('aetherv2/main.lua'), 'main')
