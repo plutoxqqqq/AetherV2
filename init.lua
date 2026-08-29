@@ -82,6 +82,9 @@ local function authorizePremium()
 		return game:HttpGet(session.Endpoint..'/premium/source?path='..premiumEncode(path)
 			..'&session='..premiumEncode(session.Token), true)
 	end
+	shared.AetherV2PremiumFetchTree = function()
+		return game:HttpGet(session.Endpoint..'/premium/tree?session='..premiumEncode(session.Token), true)
+	end
 	return true
 end
 local isfile = isfile or function(file)
