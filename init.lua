@@ -40,10 +40,30 @@ end
 
 local cloneref = cloneref or function(ref) return ref end
 
+local localAssetFunctions = {}
+local function addLocalAssetFunction(candidate)
+	if type(candidate) == 'function' and not table.find(localAssetFunctions, candidate) then
+		table.insert(localAssetFunctions, candidate)
+	end
+end
+addLocalAssetFunction(getcustomasset)
+addLocalAssetFunction(getsynasset)
+local executorEnvironment = getgenv and getgenv() or nil
+if type(executorEnvironment) == 'table' then
+	addLocalAssetFunction(executorEnvironment.getcustomasset)
+	addLocalAssetFunction(executorEnvironment.getsynasset)
+end
+if type(syn) == 'table' then
+	addLocalAssetFunction(syn.getcustomasset)
+	addLocalAssetFunction(syn.getsynasset)
+end
+
 local function safeLocalAsset(path)
-	if type(getcustomasset) ~= 'function' then return '' end
-	local ok, result = pcall(getcustomasset, path)
-	return ok and result or ''
+	for _, registerAsset in localAssetFunctions do
+		local ok, result = pcall(registerAsset, path)
+		if ok and type(result) == 'string' and result ~= '' then return result end
+	end
+	return ''
 end
 
 -- The public loader always runs. A premium key is optional and only creates a short-lived
@@ -433,15 +453,32 @@ local function repoUrl(path, ref)
 	return 'https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..selectedRef..'/'..select(1, path:gsub('^aetherv2/', ''))
 end
 
+local executorRequest = request or http_request
+if type(executorRequest) ~= 'function' and type(syn) == 'table' then executorRequest = syn.request end
+if type(executorRequest) ~= 'function' and type(http) == 'table' then executorRequest = http.request end
+
+local function publicHttpGet(url, binary)
+	if binary and type(executorRequest) == 'function' then
+		local ok, response = pcall(executorRequest, {Url = url, Method = 'GET'})
+		if ok and type(response) == 'table' then
+			local status = tonumber(response.StatusCode or response.Status or response.status_code or 200) or 0
+			local body = response.Body or response.body
+			if status >= 200 and status < 300 and type(body) == 'string' then return body end
+		end
+	end
+	return game:HttpGet(url, true)
+end
+
 -- Fetch with retries, returning the body or nil plus a reason. Most failures here are transient - a
 -- dropped connection, a moment of rate limiting - and one of them used to end the whole load.
 local function fetchFile(path, ref, attempts)
 	attempts = attempts or 3
 	local url = repoUrl(path, ref)
+	local cleanPath = tostring(path):gsub('^aetherv2/', '')
 	local problem
 	for attempt = 1, attempts do
 		local suc, res = pcall(function()
-			return game:HttpGet(url, true)
+			return publicHttpGet(url, cleanPath:sub(1, 7) == 'assets/')
 		end)
 		if suc then
 			problem = payloadProblem(path, res)

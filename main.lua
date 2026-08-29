@@ -79,9 +79,26 @@ local function publicSourceUrl(path, ref)
 	return 'https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..selectedSourceRef(ref)..'/'..path:gsub('^aetherv2/', '')
 end
 
+local executorRequest = request or http_request
+if type(executorRequest) ~= 'function' and type(syn) == 'table' then executorRequest = syn.request end
+if type(executorRequest) ~= 'function' and type(http) == 'table' then executorRequest = http.request end
+
+local function sharedPublicHttpGet(url, binary)
+	if binary and type(executorRequest) == 'function' then
+		local ok, response = pcall(executorRequest, {Url = url, Method = 'GET'})
+		if ok and type(response) == 'table' then
+			local status = tonumber(response.StatusCode or response.Status or response.status_code or 200) or 0
+			local body = response.Body or response.body
+			if status >= 200 and status < 300 and type(body) == 'string' then return body end
+		end
+	end
+	return game:HttpGet(url, true)
+end
+
 -- Game and GUI modules use this shared fetcher when they need another public source file.
 shared.AetherV2FetchSource = function(path, ref)
-	return game:HttpGet(publicSourceUrl(path, ref), true)
+	local cleanPath = tostring(path):gsub('^aetherv2/', '')
+	return sharedPublicHttpGet(publicSourceUrl(cleanPath, ref), cleanPath:sub(1, 7) == 'assets/')
 end
 
 -- init.lua owns the loading UI. main.lua only reports progress to that shared screen.

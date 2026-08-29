@@ -42,7 +42,24 @@ local httpService = cloneref(game:GetService('HttpService'))
 local fontsize = Instance.new('GetTextBoundsParams')
 fontsize.Width = math.huge
 local notifications
-local assetfunction = getcustomasset
+local assetfunctions = {}
+local function addAssetFunction(candidate)
+	if type(candidate) == 'function' and not table.find(assetfunctions, candidate) then
+		table.insert(assetfunctions, candidate)
+	end
+end
+addAssetFunction(getcustomasset)
+addAssetFunction(getsynasset)
+local executorEnvironment = getgenv and getgenv() or nil
+if type(executorEnvironment) == 'table' then
+	addAssetFunction(executorEnvironment.getcustomasset)
+	addAssetFunction(executorEnvironment.getsynasset)
+end
+if type(syn) == 'table' then
+	addAssetFunction(syn.getcustomasset)
+	addAssetFunction(syn.getsynasset)
+end
+local assetfunction = assetfunctions[1]
 local getcustomasset
 local clickgui
 local scaledgui
@@ -353,15 +370,23 @@ local function downloadFile(path, func)
 		if path:sub(-4) == '.lua' then res = '--This watermark is used to delete the file if its cached, remove it to make the file persist after vape updates.\n'..res end
 		ensureDownloadFolder(path)
 		writefile(path, res)
+		local readOk, cached = pcall(readfile, path)
+		if not readOk or not validDownloadedFile(path, cached) then
+			error('Cached asset/source verification failed for '..path, 0)
+		end
 	end
 	return (func or readfile)(path)
 end
 
 getcustomasset = function(path)
-	local downloaded = pcall(downloadFile, path)
-	if assetfunction and downloaded then
-		local success, result = pcall(assetfunction, path)
-		if success then return result end
+	local downloaded, downloadError = pcall(downloadFile, path)
+	if downloaded then
+		for _, registerAsset in assetfunctions do
+			local success, result = pcall(registerAsset, path)
+			if success and type(result) == 'string' and result ~= '' then return result end
+		end
+	else
+		warn('[AetherV2] Failed to cache asset '..tostring(path)..': '..tostring(downloadError))
 	end
 	return getcustomassets[path] or ''
 end
