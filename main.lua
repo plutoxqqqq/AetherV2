@@ -28,6 +28,18 @@ local watermark = '--This watermark is used to delete the file if its cached, re
 local function compileKey(source)
 	return source:sub(1, #watermark) == watermark and source:sub(#watermark + 1) or source
 end
+local function sourceHasCode(path, source)
+	if not path:match('games/%d+%.lua$') then return true end
+	if type(source) ~= 'string' then return false end
+	source = compileKey(source):gsub('^\239\187\191', '')
+	while true do
+		local before = source
+		source = source:gsub('^%s*%-%-%[(=*)%[.-%]%1%]', '')
+		source = source:gsub('^%s*%-%-[^\r\n]*', '')
+		if source == before then break end
+	end
+	return source:match('%S') ~= nil
+end
 local loadstring = function(...)
 	local source, chunkName = ...
 	local key = compileKey(source)
@@ -197,6 +209,9 @@ local function payloadProblem(path, body)
 	if lowered:find('<!doctype html') or lowered:find('<html') then
 		return 'received an HTML error page instead of the file'
 	end
+	if path:sub(-4) == '.lua' and not sourceHasCode(path, body) then
+		return 'the numeric game module contains no executable code'
+	end
 	if path:sub(-4) == '.lua' and not loadstring(body, path) then
 		return 'the downloaded file did not compile'
 	end
@@ -230,8 +245,9 @@ end
 
 local function downloadFile(path, func)
 	local exists = isfile(path)
-	if exists and path:sub(-4) == '.lua' and not loadstring(readfile(path), path) then
-		warn('[AetherV2] Cached '..path..' is unusable, downloading it again')
+	local cachedProblem = exists and path:sub(-4) == '.lua' and payloadProblem(path, readfile(path)) or nil
+	if cachedProblem then
+		warn('[AetherV2] Cached '..path..' is unusable ('..cachedProblem..'), downloading it again')
 		delfile(path)
 		exists = false
 	end
@@ -263,6 +279,20 @@ local function downloadOptionalFile(path)
 end
 
 local loadingWarnings = {}
+local gameLoadTrace
+
+local function traceGameLoad(state, detail)
+	if not gameLoadTrace then return end
+	gameLoadTrace.State = state
+	gameLoadTrace.Detail = detail
+	gameLoadTrace.UpdatedAt = os.clock()
+	table.insert(gameLoadTrace.Events, {
+		State = state,
+		Detail = detail,
+		At = gameLoadTrace.UpdatedAt
+	})
+	warn('[AetherV2/GameLoader] '..state..(detail and (' | '..tostring(detail)) or ''))
+end
 
 local function runLoadingChunk(source, chunkName, ...)
 	local chunk = loadstring(source, chunkName)
@@ -312,7 +342,8 @@ local function runWatchedChunk(source, chunkName, label, timeout, optional, ...)
 
 	local args = table.pack(...)
 	local finished, ok, result = false, true, nil
-	task.spawn(function()
+	local worker
+	worker = task.spawn(function()
 		if vape and vape.ThreadFix then setthreadidentity(8) end
 		ok, result = xpcall(function()
 			return chunk(table.unpack(args, 1, args.n))
@@ -325,7 +356,14 @@ local function runWatchedChunk(source, chunkName, label, timeout, optional, ...)
 	while not finished do
 		local elapsed = os.clock() - started
 		if elapsed > timeout then
-			table.insert(loadingWarnings, chunkName..' is still loading after '..math.floor(elapsed)..' seconds - the menu was opened without it')
+			local message = chunkName..' is still loading after '..math.floor(elapsed)..' seconds'
+			local requiredGame = gameLoadTrace and chunkName == tostring(gameLoadTrace.ResolvedPlace)
+			if requiredGame then
+				pcall(task.cancel, worker)
+				traceGameLoad('failed', message)
+				failLoad(message)
+			end
+			table.insert(loadingWarnings, message..' - the menu was opened without it')
 			applyLateModules(chunkName)
 			return nil
 		end
@@ -339,6 +377,9 @@ local function runWatchedChunk(source, chunkName, label, timeout, optional, ...)
 		if optional then
 			table.insert(loadingWarnings, tostring(result))
 			return nil
+		end
+		if gameLoadTrace and chunkName == tostring(gameLoadTrace.ResolvedPlace) then
+			traceGameLoad('failed', tostring(result))
 		end
 		failLoad(result)
 	end
@@ -482,7 +523,8 @@ if not shared.VapeIndependent then
 	runWatchedChunk(downloadFile('aetherv2/games/universal.lua'), 'universal', 'Loading universal modules', 30, false, license)
 
 	setPhase('Loading game modules', 0.93, 0.97)
-	local modulePlace = tostring(game.PlaceId)
+	local requestedPlace = tostring(game.PlaceId)
+	local modulePlace = requestedPlace
 	if isfile('aetherv2/profiles/forcegame.txt')
 		and readfile('aetherv2/profiles/forcegame.txt') == 'true'
 		and isfile('aetherv2/profiles/forcegameid.txt') then
@@ -491,24 +533,76 @@ if not shared.VapeIndependent then
 	end
 	writefile('aetherv2/profiles/forcegame.txt', 'false')
 	vape.Place = tonumber(modulePlace) or game.PlaceId
-	local placePath = 'aetherv2/games/'..modulePlace..'.lua'
+
+	local repoPlacePath = 'games/'..modulePlace..'.lua'
+	local placePath = 'aetherv2/'..repoPlacePath
+	local knownFiles = shared.AetherV2KnownSourceFiles
+	local exactKnown = type(knownFiles) == 'table' and knownFiles[repoPlacePath] ~= nil
+	gameLoadTrace = {
+		RequestedPlace = requestedPlace,
+		ResolvedPlace = modulePlace,
+		Path = repoPlacePath,
+		KnownCompatible = exactKnown,
+		StartedAt = os.clock(),
+		Events = {}
+	}
+	shared.AetherGameLoadTrace = gameLoadTrace
+	traceGameLoad('selected', (modulePlace ~= requestedPlace and ('forced from '..requestedPlace) or 'exact PlaceId'))
+
 	local placeSource
 	if isfile(placePath) then
-		placeSource = downloadFile(placePath)
-	elseif not shared.VapeDeveloper then
+		local cachedProblem = payloadProblem(placePath, readfile(placePath))
+		if cachedProblem then
+			traceGameLoad('cache-rejected', cachedProblem)
+			delfile(placePath)
+		else
+			placeSource = readfile(placePath)
+			traceGameLoad('source-ready', 'validated cache')
+		end
+	end
+
+	if not placeSource and not shared.VapeDeveloper then
 		setPhaseProgress('Downloading module for this game', 0.1)
+		traceGameLoad('fetching', repoPlacePath)
 		local body, problem = fetchFile(placePath, 3)
 		if body then
 			writefile(placePath, watermark..body)
 			placeSource = readfile(placePath)
+			traceGameLoad('source-ready', 'authenticated source')
+		elseif exactKnown then
+			traceGameLoad('failed', problem)
+			failLoad('Supported game module '..repoPlacePath..' could not be downloaded - '..tostring(problem))
 		elseif problem and not tostring(problem):find('404', 1, true) then
-			local warning = 'Could not download '..placePath..' - '..tostring(problem)
-			table.insert(loadingWarnings, warning)
-			warn('[AetherV2] '..warning)
+			traceGameLoad('failed', problem)
+			failLoad('Could not determine game compatibility for '..repoPlacePath..' - '..tostring(problem))
+		else
+			traceGameLoad('unsupported', 'exact file does not exist')
 		end
 	end
+
 	if placeSource then
-		runWatchedChunk(placeSource, modulePlace, 'Loading module for this game', 15, true, license)
+		local function registeredOptionCount()
+			local count, seen = 0, {}
+			for _, category in pairs(vape.Categories or {}) do
+				local options = type(category) == 'table' and category.Options or nil
+				if type(options) == 'table' and not seen[options] then
+					seen[options] = true
+					for _ in pairs(options) do count += 1 end
+				end
+			end
+			return count
+		end
+
+		local before = registeredOptionCount()
+		traceGameLoad('executing', #placeSource..' bytes')
+		runWatchedChunk(placeSource, modulePlace, 'Loading module for this game', 75, false, license)
+		local added = registeredOptionCount() - before
+		if added <= 0 then
+			traceGameLoad('failed', 'game chunk registered no modules')
+			failLoad(repoPlacePath..' executed but registered no game modules')
+		end
+		gameLoadTrace.ModulesAdded = added
+		traceGameLoad('loaded', added..' registered options')
 	end
 	finishLoading()
 else
