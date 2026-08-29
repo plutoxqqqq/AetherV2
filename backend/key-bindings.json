@@ -40,8 +40,8 @@
       "username": "parkssscyg",
       "userId": "1438538762",
       "firstUsedAt": "2026-08-29T05:34:34.712Z",
-      "lastUsedAt": "2026-08-29T05:34:34.712Z",
-      "uses": 1
+      "lastUsedAt": "2026-08-29T05:36:11.161Z",
+      "uses": 2
     }
   },
   "keys": {
@@ -730,6 +730,16 @@
       "username": "parkssscyg",
       "userId": "1438538762",
       "uses": 1
+    },
+    {
+      "at": "2026-08-29T05:36:11.161Z",
+      "action": "use",
+      "keyId": "47c37b94c953ca2f64aafc9b46562ca43780a57fddeddeff6d3500694ff22569",
+      "actor": "loader",
+      "operationId": "5530b14f-ce57-4b53-b9a9-059afb3e1d10",
+      "username": "parkssscyg",
+      "userId": "1438538762",
+      "uses": 2
     }
   ]
 }
