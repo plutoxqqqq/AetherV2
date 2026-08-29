@@ -37,6 +37,15 @@ test('public AetherV2 always uses raw GitHub while premium remains session-gated
   assert.match(main, /local function loadPremiumModules/);
 });
 
+test('premium discovery loads every universal and place category without requiring files', () => {
+  assert.match(main, /collectModules\('games\/universal\//);
+  assert.match(main, /collectModules\('games\/'.*placeId/);
+  assert.match(main, /CategoryApi = categoryApi/);
+  assert.match(main, /for index, module in ipairs\(modules\) do/);
+  assert.match(sourceServer, /url\.pathname === '\/premium\/tree'/);
+  assert.match(sourceServer, /defaultPremiumAllowedPaths = \['games\/'\]/);
+});
+
 test('restored execution keeps exact PlaceId dispatch', () => {
   assert.match(main, /local requestedPlace = tostring\(game\.PlaceId\)/);
   assert.match(main, /local modulePlace = requestedPlace/);
