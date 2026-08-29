@@ -43,6 +43,13 @@
       "uses": 3,
       "lastUsedAt": "2026-08-29T07:07:16.844Z",
       "transferredAt": "2026-08-29T07:04:19.885Z"
+    },
+    "8e5bd4179b423e0e17cf2f0a4d1ee4d5e6ab22f49dddd1abb0233b2fc25a772d": {
+      "username": "yoosupall",
+      "userId": "11371317219",
+      "firstUsedAt": "2026-08-29T07:15:33.739Z",
+      "lastUsedAt": "2026-08-29T07:15:33.739Z",
+      "uses": 1
     }
   },
   "keys": {
@@ -790,6 +797,16 @@
       "username": "AetherV2Owner",
       "userId": "11515370034",
       "uses": 3
+    },
+    {
+      "at": "2026-08-29T07:15:33.739Z",
+      "action": "bind",
+      "keyId": "8e5bd4179b423e0e17cf2f0a4d1ee4d5e6ab22f49dddd1abb0233b2fc25a772d",
+      "actor": "loader",
+      "operationId": "a8293bf3-4b1d-4f90-8fea-3a51dcc2a863",
+      "username": "yoosupall",
+      "userId": "11371317219",
+      "uses": 1
     }
   ]
 }
