@@ -89,14 +89,14 @@ jobs:
           "\t\tlocal added = registeredOptionCount() - before\n\t\tgameLoadTrace.ModulesAdded = math.max(added, 0)\n\t\tif added <= 0 then\n\t\t\ttraceGameLoad('loaded', '0 registered options')\n\t\t\twarn('[AetherV2] '..repoPlacePath..' executed but registered no game modules')\n\t\telse\n\t\t\ttraceGameLoad('loaded', added..' registered options')\n\t\tend",
           'zero-module startup behavior')
 
-          # The three actual GUI implementations still had the legacy normal-source
-          # proxy branch. Remove it rather than merely relying on absent fields.
+          # Old and Rise still had a legacy normal-source proxy branch. The New GUI core
+          # already relies on the public loader and has no remoteSourceUrl branch to remove.
           public_gui_fetch = """local function remoteSourceUrl(path)\n\tlocal commit = isfile('aetherv2/profiles/commit.txt') and readfile('aetherv2/profiles/commit.txt'):gsub('%s+', '') or 'main'\n\tif commit == '' then commit = 'main' end\n\treturn 'https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..commit..'/'..\n\t\tselect(1, path:gsub('^aetherv2/', ''))\nend\n"""
           remote_pattern = re.compile(
               r"local function encodeRemoteSource\(value\)\n.*?\nend\n\nlocal function remoteSourceUrl\(path\)\n.*?\nend\n",
               re.S,
           )
-          for gui in ('guis/new.core.lua', 'guis/old.lua', 'guis/rise.lua'):
+          for gui in ('guis/old.lua', 'guis/rise.lua'):
               p = Path(gui)
               text = p.read_text()
               text, count = remote_pattern.subn(public_gui_fetch, text, count=1)
@@ -131,7 +131,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add init.lua main.lua guis/new.core.lua guis/old.lua guis/rise.lua
+          git add init.lua main.lua guis/old.lua guis/rise.lua
           if git diff --cached --quiet; then
             echo "No changes"
             exit 0
