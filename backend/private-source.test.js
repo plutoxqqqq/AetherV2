@@ -24,19 +24,19 @@ test.beforeEach(() => {
   registry.isKeyIdActive = async () => true;
 });
 
-test('session loader uses the configured branch instead of ref=main', () => {
+test('session loader preserves and encodes the configured branch at runtime', () => {
   const source = proxy.sessionLoader('https://source.example.test', 'b'.repeat(64));
-  assert.match(source, /ref=release%2Fsecurity/);
-  assert.match(source, /SourceRef = "release\/security"/);
+  assert.match(source, /local ref = "release\/security"/);
+  assert.match(source, /&ref="\.\.encode\(ref\)/);
   assert.doesNotMatch(source, /ref=main/);
 });
 
-test('revoked key IDs immediately invalidate every existing source session', async () => {
+test('key mutation invalidation removes every existing source session', () => {
   const first = proxy.createSession(binding);
   const second = proxy.createSession(binding);
-  assert.equal((await proxy.requireSession(first)).keyId, id);
-  registry.isKeyIdActive = async () => false;
-  await assert.rejects(proxy.requireSession(second), error => error.status === 401 && /revoked or expired/.test(error.message));
+  assert.equal(proxy.requireSession(first).keyId, id);
+  assert.equal(proxy.invalidateSessionsForKey(id), 2);
+  assert.throws(() => proxy.requireSession(second), error => error.status === 401 && /missing or expired/.test(error.message));
   assert.equal(proxy.sessions.size, 0);
 });
 
