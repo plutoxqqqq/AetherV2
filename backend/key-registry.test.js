@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 
 process.env.GITHUB_TOKEN = 'test-token';
 process.env.GITHUB_REPO = 'plutoxqqqq/AetherV2';
-process.env.GITHUB_BRANCH = 'release/security';
+process.env.AETHER_REGISTRY_BRANCH = 'release/security';
 process.env.AETHER_RETRY_BASE_MS = '0';
 process.env.AETHER_GITHUB_RETRIES = '2';
 process.env.AETHER_GITHUB_CONFLICT_RETRIES = '4';

@@ -21,7 +21,6 @@ const registry = require('./key-registry');
 const OWNER_IDS = new Set((process.env.DISCORD_OWNER_IDS || '').split(',').map(value => value.trim()).filter(Boolean));
 const APPLICATION_ID = process.env.DISCORD_APPLICATION_ID || '';
 const GUILD_ID = process.env.DISCORD_GUILD_ID || '';
-const SOURCE_ORIGIN = String(process.env.PUBLIC_ORIGIN || '').replace(/\/+$/, '');
 const PAGE_SIZE = 6;
 const AUDIT_PAGE_SIZE = 8;
 const MESSAGE_LIMIT = 2000;
@@ -44,12 +43,12 @@ const statusOption = option => option
 const commands = [
   new SlashCommandBuilder()
     .setName('key')
-    .setDescription('Manage AetherV2 access keys')
+    .setDescription('Manage AetherV2 Premium keys')
     .setDMPermission(false)
-    .addSubcommand(sub => sub.setName('panel').setDescription('Open the private key dashboard'))
+    .addSubcommand(sub => sub.setName('panel').setDescription('Open the private premium-key dashboard'))
     .addSubcommand(sub => sub
       .setName('generate')
-      .setDescription('Generate a new unbound key')
+      .setDescription('Generate a new unbound premium key')
       .addStringOption(optionString('label', 'Optional label for this key'))
       .addStringOption(optionString('expires_at', 'Future ISO date/time, or omit for no expiry')))
     .addSubcommand(sub => sub
@@ -104,6 +103,7 @@ const truncate = (value, length) => {
 };
 const inline = value => '`' + String(value ?? '').replace(/`/g, 'ˋ') + '`';
 const codeBlock = (value, language = 'text') => '```' + language + '\n' + String(value ?? '').replace(/```/g, 'ˋˋˋ') + '\n```';
+const copyable = (value, language = 'text') => codeBlock(value, language) + '\n' + inline(value);
 const actorName = interaction => interaction.user.username + ' (' + interaction.user.id + ')';
 const isOwnerId = value => OWNER_IDS.has(String(value));
 const dateText = value => {
@@ -178,8 +178,8 @@ const dashboardView = async userId => {
   }, {active: 0, expired: 0, disabled: 0, bound: 0});
   const embed = new EmbedBuilder()
     .setColor(0x5865f2)
-    .setTitle('🔐 AetherV2 Key Manager')
-    .setDescription('Owner-only access control. Raw keys are never stored and can only be shown once.')
+    .setTitle('🔐 AetherV2 Premium Key Manager')
+    .setDescription('Owner-only premium access. Normal AetherV2 is public and does not require a key. Raw premium keys are never stored and can only be shown once.')
     .addFields(
       {name: 'All keys', value: inline(keys.length), inline: true},
       {name: 'Active', value: inline(counts.active), inline: true},
@@ -210,7 +210,7 @@ const keyListView = async (userId, requestedPage = 0, viewId, initialFilters = {
   const pageKeys = keys.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
   const embed = new EmbedBuilder()
     .setColor(0x5865f2)
-    .setTitle('🔑 AetherV2 Keys')
+    .setTitle('🔑 AetherV2 Premium Keys')
     .setDescription(filterText(filters) + '\n' + (keys.length ? 'Select a key below to manage it.' : 'No keys match these filters.'))
     .setFooter({text: 'Page ' + (page + 1) + ' of ' + pageCount + ' • ' + keys.length + ' result' + (keys.length === 1 ? '' : 's')})
     .setTimestamp();
@@ -298,16 +298,17 @@ const keyDetailView = async (userId, keyPrefix, viewId, page = 0) => {
     .setColor(info.status === 'active' ? 0x57f287 : info.status === 'expired' ? 0xfee75c : 0xed4245)
     .setTitle(statusIcon(info.status) + ' Key details')
     .addFields(
-      {name: 'Key ID', value: codeBlock(info.keyId), inline: false},
+      {name: 'Key ID', value: copyable(info.keyId), inline: false},
       {name: 'Label', value: inline(info.label || 'Unlabelled'), inline: true},
       {name: 'Status', value: inline(statusText(info.status)), inline: true},
       {name: 'Source', value: inline(info.source), inline: true},
-      {name: 'Roblox account', value: inline(bindingText(info.binding)), inline: false},
+      {name: 'Roblox username', value: info.binding ? copyable(info.binding.username) : inline('unbound'), inline: false},
+      {name: 'Roblox UserId', value: info.binding ? copyable(info.binding.userId) : inline('unbound'), inline: false},
       {name: 'Uses', value: inline(info.uses), inline: true},
-      {name: 'Created', value: inline(dateText(info.createdAt)), inline: true},
-      {name: 'Expires', value: inline(dateText(info.expiresAt)), inline: true}
+      {name: 'Created', value: copyable(dateText(info.createdAt)), inline: false},
+      {name: 'Expires', value: copyable(dateText(info.expiresAt)), inline: false}
     )
-    .setFooter({text: 'Raw keys cannot be viewed or recovered'})
+    .setFooter({text: 'Premium raw keys cannot be viewed or recovered'})
     .setTimestamp();
   const stateAction = info.status === 'active' ? 'revoke' : info.status === 'expired' ? 'renew' : 'enable';
   const stateLabel = info.status === 'active' ? 'Revoke' : info.status === 'expired' ? 'Renew' : 'Enable';
@@ -325,21 +326,23 @@ const keyDetailView = async (userId, keyPrefix, viewId, page = 0) => {
   };
 };
 
-const generatedText = (result, title = 'Generated key') => {
-  if (!SOURCE_ORIGIN) throw new Error('PUBLIC_ORIGIN is required before generating loaders');
-  const loader = 'loadstring(game:HttpGet("' + SOURCE_ORIGIN + '/loader?key=' + result.key + '", true))()';
+const generatedText = (result, title = 'Generated premium key') => {
+  const rawKey = String(result.key);
+  const loader = "loadstring(game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/main/init.lua', true), 'init.lua')({Closet = false, premiumKey = " + JSON.stringify(rawKey) + '})';
   const content = [
     '✅ **' + title + '**',
     '',
-    'Key ID', codeBlock(result.keyId),
+    'Normal AetherV2 works without this key. This key only unlocks AetherV2 Premium modules.',
+    '',
+    'Key ID', copyable(result.keyId),
     'Label ' + inline(result.record.label || 'Unlabelled') + '  •  expires ' + inline(dateText(result.record.expiresAt)),
     '',
-    '⚠️ **Copy the raw key now. It is not stored and cannot be shown again.**',
-    codeBlock(result.key),
+    '⚠️ **Copy the raw premium key now. It is not stored and cannot be shown again.**',
+    copyable(rawKey),
     '',
-    'Loader', codeBlock(loader, 'lua')
+    'Premium loadstring', copyable(loader, 'lua')
   ].join('\n');
-  if (content.length > MESSAGE_LIMIT) throw new Error('Generated loader exceeds Discord message limits');
+  if (content.length > MESSAGE_LIMIT) throw new Error('Generated premium loader exceeds Discord message limits');
   return content;
 };
 
@@ -368,9 +371,9 @@ const renewKeyModal = (userId, keyPrefix) => new ModalBuilder()
 const confirmationView = async (userId, action, keyPrefix, viewId, page = 0) => {
   const info = await registry.getKeyInfo(keyPrefix);
   const verbs = {
-    revoke: ['Revoke this key?', 'Existing loader sessions will stop working immediately.'],
-    unlink: ['Unlink this account?', 'The next verified Roblox account will be able to claim this key.'],
-    rotate: ['Rotate this key?', 'The old key and all of its sessions will be revoked. A replacement raw key will be shown once.']
+    revoke: ['Revoke this premium key?', 'Existing premium sessions will stop working immediately. Normal AetherV2 will still load.'],
+    unlink: ['Unlink this premium key?', 'The next verified Roblox account will be able to claim this premium key.'],
+    rotate: ['Rotate this premium key?', 'The old premium key and all premium sessions will be revoked. A replacement raw premium key will be shown once.']
   };
   if (!verbs[action]) throw new Error('Unknown confirmation action');
   const base = 'aether:confirm:' + userId + ':' + action + ':' + info.keyId.slice(0, 16) + ':' + viewId + ':' + page + ':';
@@ -380,9 +383,9 @@ const confirmationView = async (userId, action, keyPrefix, viewId, page = 0) => 
       .setTitle('⚠️ ' + verbs[action][0])
       .setDescription(verbs[action][1])
       .addFields(
-        {name: 'Key ID', value: codeBlock(info.keyId)},
+        {name: 'Key ID', value: copyable(info.keyId)},
         {name: 'Label', value: inline(info.label), inline: true},
-        {name: 'Account', value: inline(bindingText(info.binding)), inline: true}
+        {name: 'Account', value: info.binding ? copyable(info.binding.username) : inline('unbound'), inline: false}
       )],
     components: [new ActionRowBuilder().addComponents(
       button(base + 'yes', 'Confirm ' + action, ButtonStyle.Danger),
@@ -419,11 +422,11 @@ const handleKeyCommand = async interaction => {
       expiresAt: interaction.options.getString('expires_at', false) ?? undefined,
       actor
     });
-    return reply(interaction, '✅ Updated key ' + inline(result.keyId) + '.\nLabel ' + inline(result.record.label || 'none') + ' • expires ' + inline(dateText(result.record.expiresAt)) + '.');
+    return reply(interaction, ['✅ Updated premium key', copyable(result.keyId), 'Label ' + inline(result.record.label || 'none'), 'Expires', copyable(dateText(result.record.expiresAt))].join('\n'));
   }
   if (subcommand === 'renew') {
     const result = await registry.renewKey({id: keyIdFrom(interaction), expiresAt: interaction.options.getString('expires_at'), actor});
-    return reply(interaction, '✅ Renewed and enabled ' + inline(result.keyId) + ' until ' + inline(dateText(result.record.expiresAt)) + '.');
+    return reply(interaction, ['✅ Renewed and enabled premium key', copyable(result.keyId), 'Expires', copyable(dateText(result.record.expiresAt))].join('\n'));
   }
   if (subcommand === 'unlink') {
     const id = interaction.options.getString('key_id', false) || undefined;
@@ -440,7 +443,7 @@ const handleKeyCommand = async interaction => {
   }
   if (subcommand === 'enable') {
     const result = await registry.enableKey({id: keyIdFrom(interaction), actor});
-    return reply(interaction, '✅ Enabled ' + inline(result.keyId) + '.');
+    return reply(interaction, ['✅ Enabled premium key', copyable(result.keyId)].join('\n'));
   }
   if (subcommand === 'audit') return respond(interaction, await auditView(interaction.user.id, 0, interaction.options.getInteger('limit', false) || 40));
   return reply(interaction, 'Unknown key command.');
@@ -520,11 +523,11 @@ const handleConfirmButton = async interaction => {
   }
   if (action === 'revoke') {
     const result = await registry.revokeKey({id: keyPrefix, actor});
-    return interaction.editReply(safePayload({content: '✅ Revoked ' + inline(result.keyId) + '. Existing source sessions are now invalid.', embeds: [], components: []}));
+    return interaction.editReply(safePayload({content: ['✅ Revoked premium key', copyable(result.keyId), 'Existing premium sessions are now invalid. Normal AetherV2 is unaffected.'].join('\n'), embeds: [], components: []}));
   }
   if (action === 'unlink') {
     const result = await registry.unlinkKey({id: keyPrefix, actor});
-    return interaction.editReply(safePayload({content: '✅ Unlinked ' + inline(result.binding.username) + ' from ' + inline(result.keyId) + '.', embeds: [], components: []}));
+    return interaction.editReply(safePayload({content: ['✅ Unlinked Roblox account', copyable(result.binding.username), 'From premium key', copyable(result.keyId)].join('\n'), embeds: [], components: []}));
   }
   throw new Error('Unknown confirmation action');
 };
@@ -552,11 +555,11 @@ const handleModalSubmit = async interaction => {
       expiresAt: expiresAt ? expiresAt : undefined,
       actor
     });
-    return reply(interaction, '✅ Updated ' + inline(result.keyId) + '.\nLabel ' + inline(result.record.label || 'none') + ' • expires ' + inline(dateText(result.record.expiresAt)) + '.');
+    return reply(interaction, ['✅ Updated premium key', copyable(result.keyId), 'Label ' + inline(result.record.label || 'none'), 'Expires', copyable(dateText(result.record.expiresAt))].join('\n'));
   }
   if (kind === 'renew') {
     const result = await registry.renewKey({id: keyPrefix, expiresAt: interaction.fields.getTextInputValue('expires_at').trim(), actor});
-    return reply(interaction, '✅ Renewed and enabled ' + inline(result.keyId) + ' until ' + inline(dateText(result.record.expiresAt)) + '.');
+    return reply(interaction, ['✅ Renewed and enabled premium key', copyable(result.keyId), 'Expires', copyable(dateText(result.record.expiresAt))].join('\n'));
   }
   return reply(interaction, 'Unknown modal.');
 };
@@ -619,7 +622,6 @@ const startDiscordBot = async () => {
   if (!process.env.DISCORD_TOKEN) throw new Error('DISCORD_TOKEN is required');
   if (!APPLICATION_ID) throw new Error('DISCORD_APPLICATION_ID is required');
   if (OWNER_IDS.size === 0) throw new Error('DISCORD_OWNER_IDS is required');
-  if (!SOURCE_ORIGIN) throw new Error('PUBLIC_ORIGIN is required');
   const client = new Client({intents: [GatewayIntentBits.Guilds]});
   client.once('ready', async () => {
     try {

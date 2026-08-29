@@ -2,114 +2,69 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 
 process.env.GITHUB_TOKEN = 'test-token';
 process.env.GITHUB_REPO = 'plutoxqqqq/AetherV2';
-process.env.GITHUB_BRANCH = 'release/security';
-process.env.PUBLIC_ORIGIN = 'https://source.example.test';
-process.env.AETHER_ALLOWED_REFS = 'release/security,release/candidate';
-process.env.AETHER_MAX_SESSIONS_PER_KEY = '2';
-process.env.AETHER_RETRY_BASE_MS = '0';
-process.env.AETHER_GITHUB_RETRIES = '0';
-
-global.fetch = async () => ({status: 500, ok: false, json: async () => ({message: 'failure'})});
+process.env.AETHER_REGISTRY_BRANCH = 'aether-key-registry';
+process.env.PUBLIC_ORIGIN = 'https://aether.example';
+process.env.PREMIUM_GITHUB_REPO = 'plutoxqqqq/AetherV2Premium';
+process.env.PREMIUM_GITHUB_BRANCH = 'main';
+process.env.PREMIUM_ALLOWED_PATHS = 'games/';
+process.env.AETHER_KEY_LOCAL_FALLBACK = 'true';
+process.env.AETHER_KEY_LOCAL_WRITE = 'true';
+process.env.KEY_REGISTRY_FILE = path.join(__dirname, 'tmp-premium-source.json');
+process.env.KEY_BINDINGS_FILE = path.join(__dirname, 'tmp-premium-bindings.json');
+try { fs.unlinkSync(process.env.KEY_REGISTRY_FILE); } catch {}
+try { fs.unlinkSync(process.env.KEY_BINDINGS_FILE); } catch {}
 
 const registry = require('./key-registry');
-const proxy = require('./private-source');
-const id = 'a'.repeat(64);
-const binding = {id, binding: {username: 'Session_User', userId: '123'}};
+const service = require('./private-source');
 
-test.beforeEach(() => {
-  proxy.sessions.clear();
-  registry.isKeyIdActive = async () => true;
+test.after(() => {
+  try { fs.unlinkSync(process.env.KEY_REGISTRY_FILE); } catch {}
+  try { fs.unlinkSync(process.env.KEY_BINDINGS_FILE); } catch {}
 });
 
-test('session loader preserves and encodes the configured branch at runtime', () => {
-  const source = proxy.sessionLoader('https://source.example.test', 'b'.repeat(64));
-  assert.match(source, /local ref = "release\/security"/);
-  assert.match(source, /&ref="\.\.encode\(ref\)/);
-  assert.doesNotMatch(source, /ref=main/);
+test('premium path validation accepts only configured game paths', () => {
+  assert.equal(service.premiumClientPath('games/universal/render/example.lua'), true);
+  assert.equal(service.premiumClientPath('games/6872274481/blatant/example.lua'), true);
+  assert.equal(service.premiumClientPath('README.md'), false);
+  assert.equal(service.premiumClientPath('../games/a.lua'), false);
 });
 
-test('key mutation invalidation removes every existing source session', () => {
-  const first = proxy.createSession(binding);
-  const second = proxy.createSession(binding);
-  assert.equal(proxy.requireSession(first).keyId, id);
-  assert.equal(proxy.invalidateSessionsForKey(id), 2);
-  assert.throws(() => proxy.requireSession(second), error => error.status === 401 && /missing or expired/.test(error.message));
-  assert.equal(proxy.sessions.size, 0);
+test('premium loader only exposes session metadata', () => {
+  const loader = service.premiumSessionLoader('https://aether.example', {token: 'a'.repeat(64)});
+  assert.match(loader, /Endpoint=/);
+  assert.match(loader, /Token=/);
+  assert.match(loader, /Ref=/);
+  assert.doesNotMatch(loader, /SourceEndpoint|\/source\?/);
 });
 
-test('per-key session limit evicts the oldest session', () => {
-  const first = proxy.createSession(binding);
-  proxy.createSession(binding);
-  proxy.createSession(binding);
-  assert.equal(proxy.sessions.size, 2);
-  assert.equal(proxy.sessions.has(first), false);
-});
-
-test('source refs and paths are restricted to configured allowlists', () => {
-  assert.equal(proxy.validRef('release/security'), true);
-  assert.equal(proxy.validRef('main'), false);
-  assert.equal(proxy.clientPath('games/universal.lua'), true);
-  assert.equal(proxy.clientPath('backend/key-bindings.json'), false);
-  assert.equal(proxy.clientPath('.github/workflows/deploy.yml'), false);
-  assert.equal(proxy.clientPath('games/../backend/key-bindings.json'), false);
-  assert.equal(proxy.treePath('games'), true);
-});
-
-test('commit SHAs are approved only for the session that resolved them', () => {
-  const commit = 'c'.repeat(40);
-  const first = {approvedRefs: new Set([commit])};
-  const second = {approvedRefs: new Set()};
-  assert.equal(proxy.sessionAllowsRef(first, commit), true);
-  assert.equal(proxy.sessionAllowsRef(second, commit), false);
-  assert.equal(proxy.sessionAllowsRef(first, 'd'.repeat(40)), false);
-  assert.equal(proxy.sessionAllowsRef(second, 'release/security'), true);
-});
-
-test('large source files fall back to Git blobs when Contents API omits content', async () => {
-  const originalFetch = global.fetch;
-  const blobSha = 'b'.repeat(40);
-  const calls = [];
-  global.fetch = async url => {
-    const requestUrl = String(url);
-    calls.push(requestUrl);
-    if (requestUrl.includes('/contents/games/6872274481.lua?ref=release%2Fsecurity')) {
-      return {
-        status: 200,
-        ok: true,
-        json: async () => ({
-          type: 'file',
-          size: 1049949,
-          sha: blobSha,
-          encoding: 'none',
-          content: ''
-        })
-      };
-    }
-    if (requestUrl.includes('/git/blobs/' + blobSha)) {
-      return {
-        status: 200,
-        ok: true,
-        json: async () => ({
-          encoding: 'base64',
-          content: Buffer.from('return "large"\n').toString('base64')
-        })
-      };
-    }
-    return {status: 404, ok: false, json: async () => ({message: 'unexpected request'})};
-  };
-
+test('premium sessions are revalidated against live key state and binding', async () => {
+  const original = registry.getKeyInfo;
+  const id = 'b'.repeat(64);
+  const session = service.createSession({id, binding: {username: 'ExampleUser', userId: '12345'}});
+  registry.getKeyInfo = async () => ({status: 'active', binding: {username: 'ExampleUser', userId: '12345'}});
   try {
-    assert.equal(await proxy.sourceFile('games/6872274481.lua', 'release/security'), 'return "large"\n');
-    assert.equal(calls.length, 2);
-    assert.ok(calls[1].includes('/git/blobs/' + blobSha));
+    assert.equal((await service.requireSession(session.token)).keyId, id);
+    registry.getKeyInfo = async () => ({status: 'disabled', binding: {username: 'ExampleUser', userId: '12345'}});
+    await assert.rejects(() => service.requireSession(session.token), /revoked, expired, rotated, or unlinked/i);
+    assert.equal(service.sessions.has(session.token), false);
   } finally {
-    global.fetch = originalFetch;
+    registry.getKeyInfo = original;
   }
 });
 
-test('GitHub failures are surfaced without serving stale source', async () => {
-  await assert.rejects(proxy.sourceFile('init.lua', 'release/security'), error => error.status === 502);
+test('unlinked or transferred bindings invalidate an existing premium session', async () => {
+  const original = registry.getKeyInfo;
+  const id = 'c'.repeat(64);
+  const session = service.createSession({id, binding: {username: 'OriginalUser', userId: '777'}});
+  registry.getKeyInfo = async () => ({status: 'active', binding: {username: 'DifferentUser', userId: '888'}});
+  try {
+    await assert.rejects(() => service.requireSession(session.token), /revoked, expired, rotated, or unlinked/i);
+  } finally {
+    registry.getKeyInfo = original;
+  }
 });

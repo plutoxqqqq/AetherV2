@@ -40,12 +40,18 @@ test('owner authorization uses immutable configured Discord IDs', async () => {
   assert.match(payload.content, /not authorized/i);
 });
 
-test('generated raw keys and loaders use copy-button code blocks and stay within Discord limits', () => {
+test('generated premium keys and loaders support desktop and mobile copying', () => {
   const raw = 'c'.repeat(64);
   const content = bot.generatedText({key: raw, keyId: 'd'.repeat(64), record: {label: 'Customer', expiresAt: null}});
   assert.ok(content.length <= bot.MESSAGE_LIMIT);
   assert.match(content, /```text\n[c]+\n```/);
+  assert.match(content, /`[c]+`/);
   assert.match(content, /```lua\nloadstring/);
+  assert.match(content, /`loadstring\(game:HttpGet/);
+  assert.match(content, /raw\.githubusercontent\.com\/plutoxqqqq\/AetherV2\/main\/init\.lua/);
+  assert.match(content, /premiumKey = \"[c]+\"/);
+  assert.doesNotMatch(content, /\/loader\?key=/);
+  assert.match(content, /only unlocks AetherV2 Premium/i);
   assert.match(content, /cannot be shown again/i);
 });
 

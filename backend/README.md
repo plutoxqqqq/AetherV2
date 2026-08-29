@@ -1,16 +1,16 @@
 # AetherV2 backend services
 
-This directory contains the key-gated private-source service, its Discord management bot, and the separate config-review service.
+This directory contains the optional premium-key service, its Discord management bot, and the separate config-review service. Normal AetherV2 loads publicly from GitHub without a key.
 
 ## Security model
 
 The Discord bot generates a random 256-bit key and returns the raw value exactly once in an ephemeral response. The registry stores only its SHA-256 key ID plus safe metadata, binding, usage count, and audit history.
 
-On first authorization, a key binds to a Roblox username/UserId verified against Roblox. Successful later authorizations by that same identity increment the usage count. Source access uses a short-lived in-memory session, but every `/source`, `/tree`, and `/commit` request rechecks the session’s key ID against the live registry. Revocation or expiry therefore invalidates existing sessions instead of waiting for their session TTL.
+On first authorization, a key binds to a Roblox username/UserId verified against Roblox. Successful later authorizations by that same identity increment the usage count. Premium access uses a short-lived in-memory session, and every `/premium/source` and `/premium/tree` request rechecks the key status and current Roblox binding against the live registry. Revocation or expiry therefore invalidates existing sessions instead of waiting for their session TTL.
 
-The proxy allows only configured refs and client path prefixes. It fails closed if the registry or GitHub cannot be checked. Requests have timeouts and bounded retries; registry mutations retry GitHub SHA conflicts idempotently.
+The premium proxy allows only the configured private premium branch and premium path prefixes. It fails closed if the registry or GitHub cannot be checked. Requests have timeouts and bounded retries; registry mutations retry GitHub SHA conflicts idempotently.
 
-The application never stores or logs raw keys. Key IDs, usernames, and UserIds are safe to log. Note that loaders place a raw key in an HTTPS query string because Roblox executors use `game:HttpGet`; hosting/CDN access logs must therefore be disabled or tightly restricted and redacted.
+The application never stores or logs raw keys. Key IDs, usernames, and UserIds are safe to log. Premium authorization sends the raw key to `/premium/authorize` over HTTPS, so hosting/CDN access logs must be disabled or tightly restricted and redacted.
 
 ## Requirements
 
@@ -117,13 +117,13 @@ For a combined deployment, use `node private-source.js`, an HTTPS origin matchin
 All key-management responses are ephemeral and restricted to configured Discord managers:
 
 - `/key panel` — dashboard with totals, key list, audit log, and refresh.
-- `/key generate` — creates a key and shows the raw key/loader once in copy-button code blocks.
+- `/key generate` — creates an optional premium key and shows the raw key plus the public GitHub `premiumKey` loadstring once. Copyable values use both fenced code blocks and inline code for desktop/mobile.
 - `/key list` — paginated list, filterable by status, username, label, and source.
-- `/key info` — copy-friendly safe details for a full key ID or unique prefix.
+- `/key info` — safe premium-key details; full key IDs, Roblox usernames/UserIds, and dates use both fenced and inline copy formats.
 - `/key edit` — changes label or expiry. `none` clears either value.
 - `/key renew` — sets a required future expiry and reactivates an expired/revoked key.
 - `/key unlink` — asks for confirmation, then removes the Roblox binding.
-- `/key revoke` — asks for confirmation, records a `revoke` event, and invalidates source sessions.
+- `/key revoke` — asks for confirmation, records a `revoke` event, and invalidates premium sessions; normal AetherV2 remains public.
 - `/key enable` — enables a non-expired revoked key and records an `enable` event.
 - `/key rotate` — asks for confirmation, revokes the old key, transfers its binding, and shows the replacement raw key once.
 - `/key audit` — paginated, size-bounded audit output.
@@ -136,7 +136,7 @@ The complete registry structure is validated before reads are accepted or writes
 
 Registry mutations carry an operation ID. If GitHub reports a SHA conflict, timeout, rate limit, or transient server failure, the operation rereads the registry and retries without duplicating generation, binding usage, or audit events.
 
-Source and authorization rate limits are per process and per observed client IP. Leave `AETHER_TRUST_PROXY=false` unless the service is reachable only through a trusted reverse proxy that replaces `X-Forwarded-For`. Sessions and limiter buckets are in memory, so a restart invalidates sessions and resets limits. Run a shared external limiter/session store if deploying multiple replicas. A GitHub or registry outage intentionally blocks source access until validation is available.
+Source and authorization rate limits are per process and per observed client IP. Leave `AETHER_TRUST_PROXY=false` unless the service is reachable only through a trusted reverse proxy that replaces `X-Forwarded-For`. Sessions and limiter buckets are in memory, so a restart invalidates sessions and resets limits. Run a shared external limiter/session store if deploying multiple replicas. A GitHub or registry outage intentionally blocks premium access until validation is available; normal public AetherV2 is unaffected.
 
 ## Config-review service
 

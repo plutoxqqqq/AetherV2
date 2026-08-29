@@ -10,14 +10,11 @@ const boundedNumber = (value, fallback, min, max) => {
 };
 
 const PORT = boundedNumber(process.env.PORT, 3000, 1, 65535);
-const REPOSITORY = process.env.GITHUB_REPO || '';
-const BRANCH = process.env.GITHUB_BRANCH || '';
 const TOKEN = process.env.GITHUB_TOKEN || '';
-// Premium source is intentionally separate from the public AetherV2 repository. The same
-// fine-grained token must have Contents: Read permission on this private repository.
 const PREMIUM_REPOSITORY = process.env.PREMIUM_GITHUB_REPO || '';
 const PREMIUM_BRANCH = process.env.PREMIUM_GITHUB_BRANCH || 'main';
-const PUBLIC_ORIGIN = String(process.env.PUBLIC_ORIGIN || '').replace(/\/+$/, '');
+let PUBLIC_ORIGIN = String(process.env.PUBLIC_ORIGIN || '');
+while (PUBLIC_ORIGIN.endsWith('/')) PUBLIC_ORIGIN = PUBLIC_ORIGIN.slice(0, -1);
 const SESSION_TTL = boundedNumber(process.env.AETHER_SESSION_MINUTES, 120, 5, 1440) * 60 * 1000;
 const MAX_SESSIONS = boundedNumber(process.env.AETHER_MAX_SESSIONS, 2000, 10, 20000);
 const MAX_SESSIONS_PER_KEY = boundedNumber(process.env.AETHER_MAX_SESSIONS_PER_KEY, 3, 1, 20);
@@ -31,7 +28,7 @@ const TRUST_PROXY = process.env.AETHER_TRUST_PROXY === 'true';
 const sessions = new Map();
 const rateBuckets = new Map();
 
-if (!TOKEN || !REPOSITORY || !BRANCH) throw new Error('GITHUB_TOKEN, GITHUB_REPO, and GITHUB_BRANCH are required');
+if (!TOKEN) throw new Error('GITHUB_TOKEN is required');
 try {
   const origin = new URL(PUBLIC_ORIGIN);
   const local = ['localhost', '127.0.0.1', '::1'].includes(origin.hostname);
@@ -42,56 +39,36 @@ try {
 
 const syntacticRef = value => typeof value === 'string' && value.length > 0 && value.length <= 200 &&
   !value.includes('..') && !value.includes('\\') && !value.includes('?') && !value.includes('#') && !/\s/.test(value);
-const allowedRefs = new Set((process.env.AETHER_ALLOWED_REFS || BRANCH).split(',').map(value => value.trim()).filter(Boolean));
-allowedRefs.add(BRANCH);
-for (const ref of allowedRefs) {
-  if (!syntacticRef(ref)) throw new Error('AETHER_ALLOWED_REFS contains an invalid ref');
+if (PREMIUM_REPOSITORY && !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(PREMIUM_REPOSITORY)) {
+  throw new Error('PREMIUM_GITHUB_REPO must be owner/repository');
 }
+if (!syntacticRef(PREMIUM_BRANCH)) throw new Error('PREMIUM_GITHUB_BRANCH is invalid');
 
-const defaultAllowedPaths = [
-  'init.lua', 'main.lua', 'reinstall.luau', 'loadstring', 'version.txt', 'cv', 'gui',
-  'assets/', 'configs/', 'games/', 'guis/', 'libraries/', 'profiles/'
-];
-const allowedPaths = (process.env.AETHER_ALLOWED_PATHS || defaultAllowedPaths.join(','))
-  .split(',').map(value => value.trim()).filter(Boolean);
 const defaultPremiumAllowedPaths = ['games/'];
 const premiumAllowedPaths = (process.env.PREMIUM_ALLOWED_PATHS || defaultPremiumAllowedPaths.join(','))
   .split(',').map(value => value.trim()).filter(Boolean);
-
-const headers = {
-  authorization: 'Bearer ' + TOKEN,
-  accept: 'application/vnd.github+json',
-  'user-agent': 'aetherv2-private-source-proxy',
-  'x-github-api-version': '2022-11-28'
-};
-
-const wait = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
-const problem = (message, status = 400, extra = {}) => Object.assign(new Error(message), {status, ...extra});
-const validRef = value => syntacticRef(value) && allowedRefs.has(value);
 const validPath = value => typeof value === 'string' && value.length > 0 && value.length <= 300 &&
   !value.startsWith('/') && !value.includes('\\') && !value.includes('?') && !value.includes('#') &&
   value.split('/').every(segment => segment && segment !== '.' && segment !== '..');
-const pathMatches = (value, includeAncestors = false) => allowedPaths.some(allowed =>
-  allowed.endsWith('/')
-    ? value.startsWith(allowed) || includeAncestors && allowed.startsWith(value + '/')
-    : value === allowed
-);
-const clientPath = value => validPath(value) && pathMatches(value, false);
-const treePath = value => validPath(value) && pathMatches(value, true);
 const premiumPathMatches = value => premiumAllowedPaths.some(allowed =>
   allowed.endsWith('/') ? value.startsWith(allowed) : value === allowed
 );
 const premiumClientPath = value => validPath(value) && premiumPathMatches(value);
-
-for (const allowed of allowedPaths) {
-  const sample = allowed.endsWith('/') ? allowed.slice(0, -1) : allowed;
-  if (!validPath(sample)) throw new Error('AETHER_ALLOWED_PATHS contains an invalid path');
-}
 for (const allowed of premiumAllowedPaths) {
   const sample = allowed.endsWith('/') ? allowed.slice(0, -1) : allowed;
   if (!validPath(sample)) throw new Error('PREMIUM_ALLOWED_PATHS contains an invalid path');
 }
 const premiumEnabled = Boolean(PREMIUM_REPOSITORY && PREMIUM_BRANCH);
+
+const headers = {
+  authorization: 'Bearer ' + TOKEN,
+  accept: 'application/vnd.github+json',
+  'user-agent': 'aetherv2-premium-source',
+  'x-github-api-version': '2022-11-28'
+};
+const wait = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
+const problem = (message, status = 400, extra = {}) => Object.assign(new Error(message), {status, ...extra});
+const retryStatus = status => status === 408 || status === 429 || status >= 500;
 
 const json = (res, status, value, extraHeaders = {}) => {
   res.writeHead(status, {
@@ -104,27 +81,19 @@ const json = (res, status, value, extraHeaders = {}) => {
   });
   res.end(JSON.stringify(value));
 };
-
 const text = (res, status, value, contentType = 'text/plain; charset=utf-8') => {
-  res.writeHead(status, {
-    'content-type': contentType,
-    'cache-control': 'no-store',
-    'access-control-allow-origin': '*'
-  });
+  res.writeHead(status, {'content-type': contentType, 'cache-control': 'no-store', 'access-control-allow-origin': '*'});
   res.end(value);
 };
 
-const requestIp = req => String(
-  TRUST_PROXY && req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown'
-).split(',')[0].trim().slice(0, 100);
+const requestIp = req => String(TRUST_PROXY && req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown')
+  .split(',')[0].trim().slice(0, 100);
 const consumeRateLimit = (req, pathname) => {
   const now = Date.now();
-  if (rateBuckets.size > 10000) {
-    for (const [key, value] of rateBuckets) if (value.resetAt <= now) rateBuckets.delete(key);
-  }
-  const authRoute = pathname === '/loader' || pathname === '/authorize' || pathname === '/premium/authorize';
+  if (rateBuckets.size > 10000) for (const [key, value] of rateBuckets) if (value.resetAt <= now) rateBuckets.delete(key);
+  const authRoute = pathname === '/premium/authorize';
   const limit = authRoute ? AUTH_RATE_LIMIT : RATE_LIMIT;
-  const key = requestIp(req) + ':' + (authRoute ? 'auth' : 'source');
+  const key = requestIp(req) + ':' + (authRoute ? 'auth' : 'premium-source');
   let bucket = rateBuckets.get(key);
   if (!bucket || bucket.resetAt <= now) bucket = {count: 0, resetAt: now + RATE_WINDOW_MS};
   bucket.count += 1;
@@ -132,7 +101,6 @@ const consumeRateLimit = (req, pathname) => {
   return bucket.count <= limit ? null : Math.max(1, Math.ceil((bucket.resetAt - now) / 1000));
 };
 
-const retryStatus = status => status === 408 || status === 429 || status >= 500;
 const fetchWithRetry = async (url, options = {}, retries = REQUEST_RETRIES) => {
   let lastError;
   for (let attempt = 0; attempt <= retries; attempt += 1) {
@@ -149,240 +117,77 @@ const fetchWithRetry = async (url, options = {}, retries = REQUEST_RETRIES) => {
   throw lastError || problem('Upstream request failed', 502);
 };
 
-const githubUrl = (repository, endpoint) => 'https://api.github.com/repos/' + repository + '/' + endpoint;
-const githubFor = repository => async endpoint => {
-  const response = await fetchWithRetry(githubUrl(repository, endpoint), {headers});
+const premiumGithub = async endpoint => {
+  if (!premiumEnabled) throw problem('Premium modules are not configured yet', 503);
+  const response = await fetchWithRetry('https://api.github.com/repos/' + PREMIUM_REPOSITORY + '/' + endpoint, {headers});
   if (!response.ok) throw problem(
-    response.status === 404 ? 'Requested source was not found' : 'GitHub source request failed with HTTP ' + response.status,
+    response.status === 404 ? 'Requested premium source was not found' : 'GitHub premium source request failed with HTTP ' + response.status,
     response.status === 404 ? 404 : 502
   );
   return response;
 };
-const github = githubFor(REPOSITORY);
-const premiumGithub = premiumEnabled ? githubFor(PREMIUM_REPOSITORY) : null;
 
 const createOrigin = () => PUBLIC_ORIGIN;
-const firstStageLoader = (origin, key) => [
-  'local endpoint = ' + JSON.stringify(origin),
-  'local key = ' + JSON.stringify(key),
-  'local players = game:GetService("Players")',
-  'repeat task.wait() until players.LocalPlayer',
-  'local player = players.LocalPlayer',
-  'local function encode(value)',
-  '  return tostring(value):gsub("([^%w%-%._~])", function(character)',
-  '    return string.format("%%%02X", string.byte(character))',
-  '  end)',
-  'end',
-  'local url = endpoint.."/authorize?key="..encode(key).."&username="..encode(player.Name).."&userId="..tostring(player.UserId)',
-  'local stage = game:HttpGet(url, true)',
-  'loadstring(stage, "aether-authorize")()'
-].join('\n');
+const premiumSessionLoader = (origin, session) => 'return {Endpoint=' + JSON.stringify(origin) +
+  ',Token=' + JSON.stringify(session.token) + ',Ref=' + JSON.stringify(PREMIUM_BRANCH) + '}';
 
-const sessionLoader = (origin, session) => [
-  'local endpoint = ' + JSON.stringify(origin),
-  'local session = ' + JSON.stringify(session),
-  'local ref = ' + JSON.stringify(BRANCH),
-  'local function encode(value)',
-  '  return tostring(value):gsub("([^%w%-%._~])", function(character)',
-  '    return string.format("%%%02X", string.byte(character))',
-  '  end)',
-  'end',
-  '-- Immutable commit approvals are session-local. Never reuse a commit cached by an older session.',
-  'shared.AetherResolvedCommit = nil',
-  'shared.AetherV2SourceEndpoint = endpoint',
-  'shared.AetherV2SourceToken = session',
-  'shared.AetherV2SourceRef = ref',
-  'shared.AetherV2FetchSource = function(path, sourceRef)',
-  '  sourceRef = sourceRef or shared.AetherV2SourceRef',
-  '  if not sourceRef or sourceRef == "" then error("Private source ref is missing", 0) end',
-  '  local cleanPath = tostring(path):gsub("^aetherv2/", "")',
-  '  return game:HttpGet(endpoint.."/source?path="..encode(cleanPath).."&ref="..encode(sourceRef).."&session="..session, true)',
-  'end',
-  'if getgenv then',
-  '  getgenv().AetherV2SourceEndpoint = endpoint',
-  '  getgenv().AetherV2SourceToken = session',
-  '  getgenv().AetherV2SourceRef = ref',
-  'end',
-  'local config = {Closet = false, SourceEndpoint = endpoint, SourceToken = session, SourceRef = ref}',
-  '-- Preserve the existing bounded downgrade feature without changing the restored init flow.',
-  'if isfile and readfile and isfile("aetherv2/profiles/version-pin.txt") then',
-  '  local pin = tostring(readfile("aetherv2/profiles/version-pin.txt")):gsub("%s+", "")',
-  '  if pin:match("^%x+$") and #pin >= 40 and #pin <= 64 then',
-  '    local ok, history = pcall(game.HttpGet, game, endpoint.."/history?ref="..encode(ref).."&limit=11&session="..session, true)',
-  '    if ok and type(history) == "string" and history:lower():find("\\\""..pin:lower().."\\\"", 1, true) then',
-  '      config.Commit = pin',
-  '    elseif delfile then pcall(delfile, "aetherv2/profiles/version-pin.txt") end',
-  '  elseif delfile then pcall(delfile, "aetherv2/profiles/version-pin.txt") end',
-  'end',
-  'loadstring(game:HttpGet(endpoint.."/source?path=init.lua&ref="..encode(ref).."&session="..session, true), "init.lua")(config)'
-].join('\n');
-
-const premiumSessionLoader = (origin, session) => [
-  'return {',
-  '  Endpoint = ' + JSON.stringify(origin) + ',',
-  '  Token = ' + JSON.stringify(session) + ',',
-  '  Ref = ' + JSON.stringify(PREMIUM_BRANCH),
-  '}'
-].join('\n');
-
-const encodePath = file => file.split('/').map(encodeURIComponent).join('/');
-// GitHub's Contents API stops returning usable base64 content for files larger than 1 MiB.
-// BedWars' match module is currently just over that limit, so fall back to the Git blob endpoint,
-// which supports the full file size. The contents response includes the blob SHA we need.
-const decodeBase64 = value => Buffer.from(value.replace(/\s/g, ''), 'base64').toString('utf8');
-const sourceFileFrom = async (request, file, ref) => {
-  const response = await request('contents/' + encodePath(file) + '?ref=' + encodeURIComponent(ref));
-  const value = await response.json();
-  if (!value || value.type !== 'file') throw problem('GitHub returned an invalid source file', 502);
-
-  const hasContents = value.encoding === 'base64' && typeof value.content === 'string' &&
-    !(value.size > 0 && value.content.trim() === '');
-  if (hasContents) return decodeBase64(value.content);
-
-  if (typeof value.sha !== 'string' || !/^[a-f0-9]{40}$/i.test(value.sha)) {
-    throw problem('GitHub returned an unusable large source file', 502);
-  }
-  const blob = await (await request('git/blobs/' + encodeURIComponent(value.sha))).json();
-  if (!blob || blob.encoding !== 'base64' || typeof blob.content !== 'string') {
-    throw problem('GitHub returned an unusable source blob', 502);
-  }
-  return decodeBase64(blob.content);
-};
-const sourceFile = (file, ref) => sourceFileFrom(github, file, ref);
-const premiumSourceFile = (file, ref = PREMIUM_BRANCH) => {
-  if (!premiumGithub) throw problem('Premium source is not configured', 503);
-  return sourceFileFrom(premiumGithub, file, ref);
-};
-
-const commitSha = async ref => {
-  const value = await (await github('commits/' + encodeURIComponent(ref))).json();
-  if (!value || typeof value.sha !== 'string' || !/^[a-f0-9]{40,64}$/i.test(value.sha)) throw problem('GitHub returned an invalid commit', 502);
-  return value.sha;
-};
-
-const versionHistory = async (ref = BRANCH, requestedLimit = 11) => {
-  if (!validRef(ref)) throw problem('This source ref is not approved', 403);
-  const limit = boundedNumber(requestedLimit, 11, 1, 11);
-  const value = await (await github('commits?sha=' + encodeURIComponent(ref) + '&per_page=' + limit)).json();
-  if (!Array.isArray(value)) throw problem('GitHub returned an invalid version history', 502);
-
-  const versions = [];
-  for (const commit of value.slice(0, limit)) {
-    const sha = commit && typeof commit.sha === 'string' ? commit.sha : '';
-    if (!/^[a-f0-9]{40,64}$/i.test(sha)) continue;
-    let version = 'unavailable';
-    try {
-      const body = await sourceFile('version.txt', sha);
-      const found = body.match(/version\s*=\s*([^\r\n]+)/);
-      if (found) version = found[1].trim();
-    } catch {
-      // A missing version file should not make an otherwise valid history unusable.
-    }
-    const message = commit && commit.commit && typeof commit.commit.message === 'string'
-      ? commit.commit.message.split(/\r?\n/, 1)[0].slice(0, 120)
-      : '';
-    const date = commit && commit.commit && commit.commit.author && typeof commit.commit.author.date === 'string'
-      ? commit.commit.author.date
-      : '';
-    versions.push({sha, version, date, message});
-  }
-  return versions;
-};
-
-const tree = async ref => {
-  const value = await (await github('git/trees/' + encodeURIComponent(ref) + '?recursive=1')).json();
-  if (!value || !Array.isArray(value.tree) || value.truncated) throw problem('GitHub returned an incomplete source tree', 502);
-  value.tree = value.tree.filter(entry => entry && typeof entry.path === 'string' && treePath(entry.path));
-  return JSON.stringify(value);
-};
-
-const premiumTree = async () => {
-  if (!premiumGithub) throw problem('Premium source is not configured', 503);
-  const value = await (await premiumGithub('git/trees/' + encodeURIComponent(PREMIUM_BRANCH) + '?recursive=1')).json();
-  if (!value || !Array.isArray(value.tree) || value.truncated) throw problem('GitHub returned an incomplete premium tree', 502);
-  value.tree = value.tree.filter(entry => entry && entry.type === 'blob' && typeof entry.path === 'string' &&
-    entry.path.endsWith('.lua') && premiumClientPath(entry.path));
-  return JSON.stringify(value);
-};
-
-const validKey = value => registry.isValidKey(value);
-
-const pruneSessions = () => {
+const cleanupSessions = () => {
   const now = Date.now();
-  for (const [session, value] of sessions) if (value.expiresAt <= now) sessions.delete(session);
+  for (const [token, session] of sessions) if (session.expiresAt <= now) sessions.delete(token);
+  while (sessions.size >= MAX_SESSIONS) sessions.delete(sessions.keys().next().value);
 };
-
-const invalidateSessionsForKey = id => {
+const invalidateSessionsForKey = keyId => {
   let removed = 0;
-  for (const [session, value] of sessions) {
-    if (value.keyId === id) {
-      sessions.delete(session);
+  for (const [token, session] of sessions) {
+    if (session.keyId === keyId) {
+      sessions.delete(token);
       removed += 1;
     }
   }
   return removed;
 };
-
-// The first working private loader validated a key when it created the session, then served source
-// entirely from that in-memory session. Later code re-read the GitHub-backed registry for every
-// asset/library/source request, multiplying upstream requests during a cold load. Keep source reads
-// in-memory again, but invalidate sessions immediately for key mutations performed by this process.
-const invalidateMutation = (name, selectIds) => {
-  const original = registry[name];
-  if (typeof original !== 'function') return;
-  registry[name] = async (...args) => {
-    const result = await original(...args);
-    for (const id of selectIds(result) || []) {
-      if (registry.validKeyId(id)) invalidateSessionsForKey(id);
-    }
-    return result;
-  };
-};
-invalidateMutation('revokeKey', result => [result && result.keyId]);
-invalidateMutation('unlinkKey', result => [result && result.keyId]);
-invalidateMutation('rotateKey', result => [result && result.oldKeyId]);
-invalidateMutation('editKey', result => result && result.record && registry.keyStatus(result.record) !== 'active'
-  ? [result.keyId]
-  : []);
-
 const createSession = binding => {
-  pruneSessions();
-  if (!binding || !registry.validKeyId(binding.id) || !binding.binding) throw problem('Cannot create a session for an invalid binding', 500);
-  const sameKey = Array.from(sessions.entries())
-    .filter(([, value]) => value.keyId === binding.id)
+  cleanupSessions();
+  const sameKey = [...sessions.entries()].filter(([, session]) => session.keyId === binding.id)
     .sort((left, right) => left[1].createdAt - right[1].createdAt);
   while (sameKey.length >= MAX_SESSIONS_PER_KEY) sessions.delete(sameKey.shift()[0]);
-  if (sessions.size >= MAX_SESSIONS) throw problem('The source session limit has been reached; try again shortly', 503);
-  const session = crypto.randomBytes(32).toString('hex');
+  const token = crypto.randomBytes(32).toString('hex');
   const createdAt = Date.now();
-  sessions.set(session, {
+  const session = {
+    token,
     createdAt,
     expiresAt: createdAt + SESSION_TTL,
     keyId: binding.id,
-    approvedRefs: new Set(),
     username: binding.binding.username,
     userId: String(binding.binding.userId)
-  });
+  };
+  sessions.set(token, session);
   return session;
 };
 
-const requireSession = url => {
-  const session = typeof url === 'string' ? url : url.searchParams.get('session') || '';
-  if (!/^[a-f0-9]{64}$/.test(session)) throw problem('A valid loader session is required', 401);
-  const value = sessions.get(session);
-  if (!value || value.expiresAt <= Date.now()) {
-    sessions.delete(session);
-    throw problem('The loader session is missing or expired; run your private loader again', 401);
+const sessionTokenFrom = value => typeof value === 'string' ? value : value.searchParams.get('session') || '';
+const requireSession = async value => {
+  const token = sessionTokenFrom(value);
+  if (!/^[a-f0-9]{64}$/.test(token)) throw problem('A valid premium session is required', 401);
+  const session = sessions.get(token);
+  if (!session || session.expiresAt <= Date.now()) {
+    sessions.delete(token);
+    throw problem('The premium session is missing or expired; execute AetherV2 again', 401);
   }
-  return value;
+  let info;
+  try {
+    info = await registry.getKeyInfo(session.keyId);
+  } catch {
+    sessions.delete(token);
+    throw problem('The premium key is no longer active', 401);
+  }
+  const binding = info.binding;
+  if (info.status !== 'active' || !binding || binding.username.toLowerCase() !== session.username.toLowerCase() || String(binding.userId) !== session.userId) {
+    sessions.delete(token);
+    throw problem('The premium key was revoked, expired, rotated, or unlinked', 401);
+  }
+  return session;
 };
-
-// Named refs are approved by configuration. Immutable commit SHAs become available
-// only after this same session resolves one through /commit, preventing callers from
-// using the proxy as an arbitrary private-repository file reader.
-const sessionAllowsRef = (session, ref) => validRef(ref) || Boolean(
-  session && syntacticRef(ref) && /^[a-f0-9]{40,64}$/i.test(ref) && session.approvedRefs.has(ref)
-);
 
 const verifyRobloxIdentity = async person => {
   const response = await fetchWithRetry('https://users.roblox.com/v1/users/' + encodeURIComponent(person.userId));
@@ -390,6 +195,22 @@ const verifyRobloxIdentity = async person => {
   if (!response.ok) throw problem('Roblox identity verification is temporarily unavailable', 502);
   const value = await response.json();
   return value && typeof value.name === 'string' && value.name.toLowerCase() === String(person.username).toLowerCase();
+};
+
+const premiumSourceFile = async file => {
+  if (!premiumClientPath(file) || !file.endsWith('.lua')) throw problem('This premium path is not available', 403);
+  const response = await premiumGithub('contents/' + file.split('/').map(encodeURIComponent).join('/') + '?ref=' + encodeURIComponent(PREMIUM_BRANCH));
+  const body = await response.json();
+  if (!body || typeof body.content !== 'string' || body.encoding !== 'base64') throw problem('GitHub returned invalid premium source', 502);
+  return Buffer.from(body.content.replace(/\s/g, ''), 'base64').toString('utf8');
+};
+const premiumTree = async () => {
+  const response = await premiumGithub('git/trees/' + encodeURIComponent(PREMIUM_BRANCH) + '?recursive=1');
+  const body = await response.json();
+  if (!body || !Array.isArray(body.tree) || body.truncated) throw problem('GitHub returned an incomplete premium tree', 502);
+  const tree = body.tree.filter(entry => entry && entry.type === 'blob' && premiumClientPath(entry.path) && entry.path.endsWith('.lua'))
+    .map(entry => ({path: entry.path, mode: entry.mode, type: entry.type, sha: entry.sha, size: entry.size}));
+  return JSON.stringify({sha: body.sha, truncated: false, tree});
 };
 
 const server = http.createServer(async (req, res) => {
@@ -400,13 +221,7 @@ const server = http.createServer(async (req, res) => {
     if (retryAfter) return json(res, 429, {success: false, error: 'Too many requests; try again shortly'}, {'retry-after': String(retryAfter)});
 
     if (req.method === 'GET' && url.pathname === '/health') {
-      return json(res, 200, {success: true, service: 'aetherv2-private-source', keyGating: true, discordBot: Boolean(process.env.DISCORD_TOKEN)});
-    }
-
-    if (req.method === 'GET' && url.pathname === '/loader') {
-      const key = url.searchParams.get('key') || '';
-      if (!await validKey(key)) return json(res, 401, {success: false, error: 'This AetherV2 key is invalid, revoked, or expired'});
-      return text(res, 200, firstStageLoader(createOrigin(), key));
+      return json(res, 200, {success: true, service: 'aetherv2-premium-source', normalSource: 'public-github', premiumEnabled, discordBot: Boolean(process.env.DISCORD_TOKEN)});
     }
 
     if (req.method === 'GET' && url.pathname === '/premium/authorize') {
@@ -425,73 +240,24 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'GET' && url.pathname === '/premium/source') {
-      if (!premiumEnabled) return json(res, 503, {success: false, error: 'Premium modules are not configured yet'});
-      requireSession(url);
+      await requireSession(url);
       const file = url.searchParams.get('path');
-      if (!premiumClientPath(file) || !file.endsWith('.lua')) return json(res, 403, {success: false, error: 'This premium path is not available through the client proxy'});
       return text(res, 200, await premiumSourceFile(file));
     }
 
     if (req.method === 'GET' && url.pathname === '/premium/tree') {
-      if (!premiumEnabled) return json(res, 503, {success: false, error: 'Premium modules are not configured yet'});
-      requireSession(url);
+      await requireSession(url);
       return text(res, 200, await premiumTree(), 'application/json; charset=utf-8');
-    }
-
-    if (req.method === 'GET' && url.pathname === '/authorize') {
-      const key = url.searchParams.get('key') || '';
-      const keyInfo = await registry.resolveKey(key);
-      const person = {username: url.searchParams.get('username'), userId: url.searchParams.get('userId')};
-      if (!keyInfo) return json(res, 401, {success: false, error: 'This AetherV2 key is invalid, revoked, or expired'});
-      if (!/^[A-Za-z0-9_]{3,20}$/.test(String(person.username || '')) || !/^\d{1,20}$/.test(String(person.userId || ''))) {
-        return json(res, 400, {success: false, error: 'The Roblox username or UserId is invalid'});
-      }
-      if (!await verifyRobloxIdentity(person)) return json(res, 403, {success: false, error: 'The Roblox username does not match that UserId'});
-      const binding = await registry.bindKey(keyInfo.keyId, person);
-      console.log('[AetherV2] key ID ' + binding.id.slice(0, 12) + ' authorized for ' + person.username + ' (' + person.userId + ')');
-      return text(res, 200, sessionLoader(createOrigin(), createSession(binding)));
-    }
-
-    const ref = url.searchParams.get('ref') || BRANCH;
-
-    if (req.method === 'GET' && url.pathname === '/source') {
-      const session = requireSession(url);
-      if (!sessionAllowsRef(session, ref)) return json(res, 403, {success: false, error: 'This source ref is not approved for this session'});
-      const file = url.searchParams.get('path');
-      if (!clientPath(file)) return json(res, 403, {success: false, error: 'This path is not available through the client proxy'});
-      return text(res, 200, await sourceFile(file, ref));
-    }
-
-    if (req.method === 'GET' && url.pathname === '/commit') {
-      const session = requireSession(url);
-      if (!validRef(ref)) return json(res, 403, {success: false, error: 'This source ref is not approved'});
-      const commit = await commitSha(ref);
-      session.approvedRefs.add(commit);
-      return text(res, 200, commit);
-    }
-
-    if (req.method === 'GET' && url.pathname === '/history') {
-      const session = requireSession(url);
-      if (!validRef(ref)) return json(res, 403, {success: false, error: 'This source ref is not approved'});
-      const versions = await versionHistory(ref, url.searchParams.get('limit'));
-      for (const version of versions) session.approvedRefs.add(version.sha);
-      return json(res, 200, {success: true, limit: versions.length, versions});
-    }
-
-    if (req.method === 'GET' && url.pathname === '/tree') {
-      const session = requireSession(url);
-      if (!sessionAllowsRef(session, ref)) return json(res, 403, {success: false, error: 'This source ref is not approved for this session'});
-      return text(res, 200, await tree(ref), 'application/json; charset=utf-8');
     }
 
     return json(res, 404, {success: false, error: 'Endpoint not found'});
   } catch (error) {
-    return json(res, error.status || 500, {success: false, error: error.message || 'Private source request failed'});
+    return json(res, error.status || 500, {success: false, error: error.message || 'Premium source request failed'});
   }
 });
 
 if (require.main === module) {
-  server.listen(PORT, () => console.log('AetherV2 private-source proxy listening on ' + PORT));
+  server.listen(PORT, () => console.log('AetherV2 premium-source service listening on ' + PORT));
   if (process.env.DISCORD_TOKEN) {
     try {
       const bot = require('./discord-bot');
@@ -505,22 +271,13 @@ if (require.main === module) {
 module.exports = {
   server,
   validPath,
-  validRef,
-  validKey,
-  clientPath,
-  treePath,
   premiumClientPath,
   verifyRobloxIdentity,
-  sessionLoader,
+  premiumSessionLoader,
   createSession,
   requireSession,
-  sessionAllowsRef,
   invalidateSessionsForKey,
   sessions,
-  sourceFile,
   premiumSourceFile,
-  premiumTree,
-  commitSha,
-  versionHistory,
-  tree
+  premiumTree
 };
