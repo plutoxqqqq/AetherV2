@@ -13,6 +13,10 @@ const PORT = boundedNumber(process.env.PORT, 3000, 1, 65535);
 const REPOSITORY = process.env.GITHUB_REPO || '';
 const BRANCH = process.env.GITHUB_BRANCH || '';
 const TOKEN = process.env.GITHUB_TOKEN || '';
+// Premium source is intentionally separate from the public AetherV2 repository. The same
+// fine-grained token must have Contents: Read permission on this private repository.
+const PREMIUM_REPOSITORY = process.env.PREMIUM_GITHUB_REPO || '';
+const PREMIUM_BRANCH = process.env.PREMIUM_GITHUB_BRANCH || 'main';
 const PUBLIC_ORIGIN = String(process.env.PUBLIC_ORIGIN || '').replace(/\/+$/, '');
 const SESSION_TTL = boundedNumber(process.env.AETHER_SESSION_MINUTES, 120, 5, 1440) * 60 * 1000;
 const MAX_SESSIONS = boundedNumber(process.env.AETHER_MAX_SESSIONS, 2000, 10, 20000);
@@ -50,6 +54,9 @@ const defaultAllowedPaths = [
 ];
 const allowedPaths = (process.env.AETHER_ALLOWED_PATHS || defaultAllowedPaths.join(','))
   .split(',').map(value => value.trim()).filter(Boolean);
+const defaultPremiumAllowedPaths = ['init.lua', 'modules/', 'assets/', 'libraries/'];
+const premiumAllowedPaths = (process.env.PREMIUM_ALLOWED_PATHS || defaultPremiumAllowedPaths.join(','))
+  .split(',').map(value => value.trim()).filter(Boolean);
 
 const headers = {
   authorization: 'Bearer ' + TOKEN,
@@ -71,11 +78,20 @@ const pathMatches = (value, includeAncestors = false) => allowedPaths.some(allow
 );
 const clientPath = value => validPath(value) && pathMatches(value, false);
 const treePath = value => validPath(value) && pathMatches(value, true);
+const premiumPathMatches = value => premiumAllowedPaths.some(allowed =>
+  allowed.endsWith('/') ? value.startsWith(allowed) : value === allowed
+);
+const premiumClientPath = value => validPath(value) && premiumPathMatches(value);
 
 for (const allowed of allowedPaths) {
   const sample = allowed.endsWith('/') ? allowed.slice(0, -1) : allowed;
   if (!validPath(sample)) throw new Error('AETHER_ALLOWED_PATHS contains an invalid path');
 }
+for (const allowed of premiumAllowedPaths) {
+  const sample = allowed.endsWith('/') ? allowed.slice(0, -1) : allowed;
+  if (!validPath(sample)) throw new Error('PREMIUM_ALLOWED_PATHS contains an invalid path');
+}
+const premiumEnabled = Boolean(PREMIUM_REPOSITORY && PREMIUM_BRANCH);
 
 const json = (res, status, value, extraHeaders = {}) => {
   res.writeHead(status, {
@@ -106,7 +122,7 @@ const consumeRateLimit = (req, pathname) => {
   if (rateBuckets.size > 10000) {
     for (const [key, value] of rateBuckets) if (value.resetAt <= now) rateBuckets.delete(key);
   }
-  const authRoute = pathname === '/loader' || pathname === '/authorize';
+  const authRoute = pathname === '/loader' || pathname === '/authorize' || pathname === '/premium/authorize';
   const limit = authRoute ? AUTH_RATE_LIMIT : RATE_LIMIT;
   const key = requestIp(req) + ':' + (authRoute ? 'auth' : 'source');
   let bucket = rateBuckets.get(key);
@@ -133,16 +149,17 @@ const fetchWithRetry = async (url, options = {}, retries = REQUEST_RETRIES) => {
   throw lastError || problem('Upstream request failed', 502);
 };
 
-const githubUrl = endpoint => 'https://api.github.com/repos/' + REPOSITORY + '/' + endpoint;
-const githubRequest = endpoint => fetchWithRetry(githubUrl(endpoint), {headers});
-const github = async endpoint => {
-  const response = await githubRequest(endpoint);
+const githubUrl = (repository, endpoint) => 'https://api.github.com/repos/' + repository + '/' + endpoint;
+const githubFor = repository => async endpoint => {
+  const response = await fetchWithRetry(githubUrl(repository, endpoint), {headers});
   if (!response.ok) throw problem(
     response.status === 404 ? 'Requested source was not found' : 'GitHub source request failed with HTTP ' + response.status,
     response.status === 404 ? 404 : 502
   );
   return response;
 };
+const github = githubFor(REPOSITORY);
+const premiumGithub = premiumEnabled ? githubFor(PREMIUM_REPOSITORY) : null;
 
 const createOrigin = () => PUBLIC_ORIGIN;
 const firstStageLoader = (origin, key) => [
@@ -200,13 +217,21 @@ const sessionLoader = (origin, session) => [
   'loadstring(game:HttpGet(endpoint.."/source?path=init.lua&ref="..encode(ref).."&session="..session, true), "init.lua")(config)'
 ].join('\n');
 
+const premiumSessionLoader = (origin, session) => [
+  'return {',
+  '  Endpoint = ' + JSON.stringify(origin) + ',',
+  '  Token = ' + JSON.stringify(session) + ',',
+  '  Ref = ' + JSON.stringify(PREMIUM_BRANCH),
+  '}'
+].join('\n');
+
 const encodePath = file => file.split('/').map(encodeURIComponent).join('/');
 // GitHub's Contents API stops returning usable base64 content for files larger than 1 MiB.
 // BedWars' match module is currently just over that limit, so fall back to the Git blob endpoint,
 // which supports the full file size. The contents response includes the blob SHA we need.
 const decodeBase64 = value => Buffer.from(value.replace(/\s/g, ''), 'base64').toString('utf8');
-const sourceFile = async (file, ref) => {
-  const response = await github('contents/' + encodePath(file) + '?ref=' + encodeURIComponent(ref));
+const sourceFileFrom = async (request, file, ref) => {
+  const response = await request('contents/' + encodePath(file) + '?ref=' + encodeURIComponent(ref));
   const value = await response.json();
   if (!value || value.type !== 'file') throw problem('GitHub returned an invalid source file', 502);
 
@@ -217,11 +242,16 @@ const sourceFile = async (file, ref) => {
   if (typeof value.sha !== 'string' || !/^[a-f0-9]{40}$/i.test(value.sha)) {
     throw problem('GitHub returned an unusable large source file', 502);
   }
-  const blob = await (await github('git/blobs/' + encodeURIComponent(value.sha))).json();
+  const blob = await (await request('git/blobs/' + encodeURIComponent(value.sha))).json();
   if (!blob || blob.encoding !== 'base64' || typeof blob.content !== 'string') {
     throw problem('GitHub returned an unusable source blob', 502);
   }
   return decodeBase64(blob.content);
+};
+const sourceFile = (file, ref) => sourceFileFrom(github, file, ref);
+const premiumSourceFile = (file, ref = PREMIUM_BRANCH) => {
+  if (!premiumGithub) throw problem('Premium source is not configured', 503);
+  return sourceFileFrom(premiumGithub, file, ref);
 };
 
 const commitSha = async ref => {
@@ -370,6 +400,29 @@ const server = http.createServer(async (req, res) => {
       return text(res, 200, firstStageLoader(createOrigin(), key));
     }
 
+    if (req.method === 'GET' && url.pathname === '/premium/authorize') {
+      if (!premiumEnabled) return json(res, 503, {success: false, error: 'Premium modules are not configured yet'});
+      const key = url.searchParams.get('key') || '';
+      const keyInfo = await registry.resolveKey(key);
+      const person = {username: url.searchParams.get('username'), userId: url.searchParams.get('userId')};
+      if (!keyInfo) return json(res, 401, {success: false, error: 'This premium key is invalid, revoked, or expired'});
+      if (!/^[A-Za-z0-9_]{3,20}$/.test(String(person.username || '')) || !/^\d{1,20}$/.test(String(person.userId || ''))) {
+        return json(res, 400, {success: false, error: 'The Roblox username or UserId is invalid'});
+      }
+      if (!await verifyRobloxIdentity(person)) return json(res, 403, {success: false, error: 'The Roblox username does not match that UserId'});
+      const binding = await registry.bindKey(keyInfo.keyId, person);
+      console.log('[AetherV2] premium key ID ' + binding.id.slice(0, 12) + ' authorized for ' + person.username + ' (' + person.userId + ')');
+      return text(res, 200, premiumSessionLoader(createOrigin(), createSession(binding)));
+    }
+
+    if (req.method === 'GET' && url.pathname === '/premium/source') {
+      if (!premiumEnabled) return json(res, 503, {success: false, error: 'Premium modules are not configured yet'});
+      requireSession(url);
+      const file = url.searchParams.get('path');
+      if (!premiumClientPath(file)) return json(res, 403, {success: false, error: 'This premium path is not available through the client proxy'});
+      return text(res, 200, await premiumSourceFile(file));
+    }
+
     if (req.method === 'GET' && url.pathname === '/authorize') {
       const key = url.searchParams.get('key') || '';
       const keyInfo = await registry.resolveKey(key);
@@ -441,6 +494,7 @@ module.exports = {
   validKey,
   clientPath,
   treePath,
+  premiumClientPath,
   verifyRobloxIdentity,
   sessionLoader,
   createSession,
@@ -449,6 +503,7 @@ module.exports = {
   invalidateSessionsForKey,
   sessions,
   sourceFile,
+  premiumSourceFile,
   commitSha,
   versionHistory,
   tree
