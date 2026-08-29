@@ -1,0 +1,48 @@
+name: Run final asset display repair
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - tools/final_asset_display_repair.py
+      - .github/workflows/run-final-asset-display-repair.yml
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply repair
+        run: python3 tools/final_asset_display_repair.py
+      - name: Verify repaired asset paths
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          init = Path('init.lua').read_text()
+          main = Path('main.lua').read_text()
+          assert "cleanPath:sub(1, 7) == 'assets/'" in init
+          assert "cleanPath:sub(1, 7) == 'assets/'" in main
+          assert 'localAssetFunctions' in init
+          for name in ('guis/new.core.lua', 'guis/old.lua', 'guis/rise.lua'):
+              text = Path(name).read_text()
+              assert 'addAssetFunction(getsynasset)' in text
+              assert "type(result) == 'string' and result ~= ''" in text
+              assert 'Cached asset/source verification failed for ' in text
+              assert "if success then return result end" not in text
+          print('asset display static verification passed')
+          PY
+      - name: Run execution regression
+        run: node backend/private-execution-regression.test.js
+      - name: Commit repair
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add init.lua main.lua guis/new.core.lua guis/old.lua guis/rise.lua
+          git commit -m "Fix asset registration and binary downloads"
+          git push
