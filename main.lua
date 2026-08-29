@@ -364,40 +364,62 @@ local function loadPremiumModules()
 	end
 
 	local placeId = tostring(vape.Place or game.PlaceId)
-	local universalPrefix = 'games/universal/blatant/'
-	local gamePrefix = 'games/'..placeId..'/blatant/'
-	local universal, gameModules = {}, {}
-	for _, entry in ipairs(tree.tree) do
-		local path = type(entry) == 'table' and entry.path or nil
-		if entry.type == 'blob' and type(path) == 'string' and path:sub(-4) == '.lua' then
-			if path:sub(1, #universalPrefix) == universalPrefix then
-				table.insert(universal, path)
-			elseif path:sub(1, #gamePrefix) == gamePrefix then
-				table.insert(gameModules, path)
+	local function collectModules(prefix, destination)
+		for _, entry in ipairs(tree.tree) do
+			local path = type(entry) == 'table' and entry.path or nil
+			if entry.type == 'table' and entry.type == 'blob' and type(path) == 'string'
+				and path:sub(1, #prefix) == prefix and path:sub(-4) == '.lua' then
+				-- The first folder below a game's root is the AetherV2 category:
+				-- games/universal/render/example.lua -> Render.
+				local category = path:sub(#prefix + 1):match('^([^/]+)/')
+				if category and category ~= '' then
+					table.insert(destination, {Path = path, Category = category})
+				end
 			end
 		end
+		table.sort(destination, function(left, right) return left.Path < right.Path end)
 	end
-	table.sort(universal)
-	table.sort(gameModules)
+
+	local universal, gameModules = {}, {}
+	collectModules('games/universal/', universal)
+	collectModules('games/'..placeId..'/', gameModules)
 
 	local modules = {}
-	for _, path in ipairs(universal) do table.insert(modules, path) end
-	for _, path in ipairs(gameModules) do table.insert(modules, path) end
-	for index, path in ipairs(modules) do
+	for _, module in ipairs(universal) do table.insert(modules, module) end
+	for _, module in ipairs(gameModules) do table.insert(modules, module) end
+	for index, module in ipairs(modules) do
 		setPhase('Loading premium modules ('..index..'/'..#modules..')', 0.975, 0.985)
-		local received, source = pcall(fetchSource, path)
+		local received, source = pcall(fetchSource, module.Path)
 		if received and type(source) == 'string' and #source >= 8 then
-			local chunk, compileError = loadstring(source, 'premium/'..path)
+			local chunk, compileError = loadstring(source, 'premium/'..module.Path)
 			if chunk then
-				local ran, runtimeError = xpcall(function()
-					return chunk(vape, license)
+				local categoryName, categoryApi = module.Category, nil
+				for name, category in pairs(vape.Categories or {}) do
+					if tostring(name):lower() == module.Category:lower() then
+						categoryName, categoryApi = name, category
+						break
+					end
+				end
+				local context = {
+					Category = categoryName,
+					CategoryApi = categoryApi,
+					Path = module.Path,
+					Scope = module.Path:sub(1, #'games/universal/') == 'games/universal/' and 'universal' or 'game'
+				}
+				local ran, result = xpcall(function()
+					return chunk(vape, license, context)
 				end, debug.traceback)
-				if not ran then warn('[AetherV2] Premium module '..path..' failed: '..tostring(runtimeError)) end
+				if ran and type(result) == 'function' then
+					ran, result = xpcall(function()
+						return result(vape, license, context)
+					end, debug.traceback)
+				end
+				if not ran then warn('[AetherV2] Premium module '..module.Path..' failed: '..tostring(result)) end
 			else
-				warn('[AetherV2] Premium module '..path..' did not compile: '..tostring(compileError))
+				warn('[AetherV2] Premium module '..module.Path..' did not compile: '..tostring(compileError))
 			end
 		else
-			warn('[AetherV2] Premium module '..path..' could not be fetched')
+			warn('[AetherV2] Premium module '..module.Path..' could not be fetched')
 		end
 	end
 end
