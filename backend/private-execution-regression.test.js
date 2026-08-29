@@ -76,8 +76,11 @@ test('numeric game caches must contain executable source', () => {
   }
 });
 
-test('the first authorized run publishes the exact source tree to main', () => {
-  assert.match(init, /prefetchPaths = fetchFileList\(initialRef\)/);
+test('public loader heals stale refs and publishes the current source tree', () => {
+  assert.match(init, /shared\.AetherV2PublicRef = commit/);
+  assert.match(init, /fetchFileList\(shared\.AetherV2PublicRef or 'main'\)/);
+  assert.match(init, /verifySelectedAssets\(prefetchPaths\)/);
+  assert.doesNotMatch(init, /selectedReleaseChannel|releasechannel\.txt/);
   assert.match(init, /shared\.AetherV2KnownSourceFiles = prefetchPaths/);
   assert.match(main, /knownFiles\[repoPlacePath\] ~= nil/);
 });

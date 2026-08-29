@@ -66,13 +66,12 @@ end
 local playersService = cloneref(game:GetService('Players'))
 local httpService = cloneref(game:GetService('HttpService'))
 local function selectedSourceRef(ref)
-	if type(ref) == 'string' and ref:gsub('%s+', '') ~= '' then
-		return ref:gsub('%s+', '')
+	if type(ref) == 'string' and ref:gsub('%s+', '') ~= '' then return ref:gsub('%s+', '') end
+	if type(shared.AetherV2PublicRef) == 'string' and shared.AetherV2PublicRef:gsub('%s+', '') ~= '' then
+		return shared.AetherV2PublicRef:gsub('%s+', '')
 	end
 	local ok, cached = pcall(readfile, 'aetherv2/profiles/commit.txt')
-	if ok and type(cached) == 'string' and cached:gsub('%s+', '') ~= '' then
-		return cached:gsub('%s+', '')
-	end
+	if ok and type(cached) == 'string' and cached:gsub('%s+', '') ~= '' then return cached:gsub('%s+', '') end
 	return 'main'
 end
 
@@ -183,7 +182,7 @@ end
 
 local function fetchFile(path, attempts)
 	attempts = attempts or 3
-	local ref = readfile('aetherv2/profiles/commit.txt')
+	local ref = selectedSourceRef()
 	local problem
 	for attempt = 1, attempts do
 		local suc, res = pcall(function()
@@ -206,6 +205,26 @@ local function fetchFile(path, attempts)
 	return nil, problem
 end
 
+local function ensureParentFolder(path)
+	local parent = path:gsub('\\', '/'):match('^(.*)/[^/]+$')
+	if not parent then return end
+	local built = ''
+	for segment in parent:gmatch('[^/]+') do
+		built = built == '' and segment or built..'/'..segment
+		if not isfolder(built) then pcall(makefolder, built) end
+	end
+end
+
+local function storePublicFile(path, body)
+	ensureParentFolder(path)
+	if path:sub(-4) == '.lua' then body = watermark..body end
+	local ok, err = pcall(writefile, path, body)
+	if not ok then return false, err end
+	local readOk, cached = pcall(readfile, path)
+	local problem = readOk and payloadProblem(path, cached) or 'unreadable cache'
+	return problem == nil, problem
+end
+
 local function downloadFile(path, func)
 	local exists = isfile(path)
 	local cachedProblem = exists and payloadProblem(path, readfile(path)) or nil
@@ -217,13 +236,9 @@ local function downloadFile(path, func)
 	if not exists then
 		setPhaseProgress('Downloading '..path, 0.15)
 		local body, problem = fetchFile(path)
-		if not body then
-			failLoad('Could not download '..path..' - '..tostring(problem))
-		end
-		if path:sub(-4) == '.lua' then
-			body = watermark..body
-		end
-		writefile(path, body)
+		if not body then failLoad('Could not download '..path..' - '..tostring(problem)) end
+		local stored, storeProblem = storePublicFile(path, body)
+		if not stored then failLoad('Could not cache '..path..' - '..tostring(storeProblem)) end
 		setPhaseProgress('Downloaded '..path, 0.75)
 	end
 	return (func or readfile)(path)
@@ -235,14 +250,12 @@ local function downloadOptionalFile(path)
 		if ok and not payloadProblem(path, cached) then return true end
 		delfile(path)
 	end
-	local ref = readfile('aetherv2/profiles/commit.txt')
 	local suc, res = pcall(function()
 		if type(shared.AetherV2FetchSource) ~= 'function' then return nil end
-		return shared.AetherV2FetchSource(path, ref)
+		return shared.AetherV2FetchSource(path, selectedSourceRef())
 	end)
-	if not suc or type(res) ~= 'string' or res == '404: Not Found' then return false end
-	writefile(path, res)
-	return true
+	if not suc or payloadProblem(path, res) then return false end
+	return storePublicFile(path, res)
 end
 
 local loadingWarnings = {}
@@ -535,13 +548,10 @@ for _, folder in {'aetherv2/songs'} do
 	if not isfolder(folder) then makefolder(folder) end
 end
 if not isfile('aetherv2/profiles/commit.txt') then
-	writefile('aetherv2/profiles/commit.txt', sourceRef or 'main')
+	writefile('aetherv2/profiles/commit.txt', selectedSourceRef())
 end
 if not isfile('aetherv2/profiles/disableloading.txt') then
 	writefile('aetherv2/profiles/disableloading.txt', 'false')
-end
-if not isfile('aetherv2/profiles/releasechannel.txt') then
-	writefile('aetherv2/profiles/releasechannel.txt', 'stable')
 end
 
 globalenv.used_init = true
@@ -610,7 +620,7 @@ if not shared.VapeIndependent then
 		if body then
 			writefile(placePath, watermark..body)
 			placeSource = readfile(placePath)
-			traceGameLoad('source-ready', 'authenticated source')
+			traceGameLoad('source-ready', 'public GitHub source')
 		elseif exactKnown then
 			traceGameLoad('failed', problem)
 			failLoad('Supported game module '..repoPlacePath..' could not be downloaded - '..tostring(problem))

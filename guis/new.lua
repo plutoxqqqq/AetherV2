@@ -3,9 +3,11 @@
 
 local license = ... or {}
 local CORE_LOCAL = 'aetherv2/guis/new.core.lua'
-local FALLBACK_COMMIT = '1a6a7d57004f4cbc974ce7aecb12f04017c93763'
 
 local function currentRef()
+	if type(shared.AetherV2PublicRef) == 'string' and shared.AetherV2PublicRef:gsub('%s+', '') ~= '' then
+		return shared.AetherV2PublicRef:gsub('%s+', '')
+	end
 	local ok, ref = pcall(readfile, 'aetherv2/profiles/commit.txt')
 	if ok and type(ref) == 'string' then
 		ref = ref:gsub('%s+', '')
@@ -15,7 +17,9 @@ local function currentRef()
 end
 
 local function validSource(body)
-	return type(body) == 'string' and #body > 32 and body ~= '404: Not Found'
+	if type(body) ~= 'string' or #body <= 32 or body == '404: Not Found' then return false end
+	local head = body:sub(1, 300):lower()
+	return not head:find('<!doctype html') and not head:find('<html') and not body:find('SourceEndpoint', 1, true)
 end
 
 local function fetch(ref, path)
@@ -39,10 +43,6 @@ local function getCore()
 		if body then return body end
 	end
 
-	if true then
-		body, lastError = fetch(FALLBACK_COMMIT, 'guis/new.lua')
-		if body then return body end
-	end
 	error('AetherV2 GUI: failed to load new.core.lua: '..tostring(lastError), 0)
 end
 

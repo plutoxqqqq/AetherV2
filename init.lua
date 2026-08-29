@@ -1,12 +1,6 @@
 --!nocheck
 local license = ... or {}
 if type(license) ~= 'table' then license = {} end
-license.SourceEndpoint = nil
-license.SourceToken = nil
-license.SourceRef = nil
-shared.AetherV2SourceEndpoint = nil
-shared.AetherV2SourceToken = nil
-shared.AetherV2SourceRef = nil
 shared.AetherV2PremiumAuthorized = false
 
 -- A cached Lua file used to be compiled once to validate it and then compiled again moments later
@@ -45,6 +39,12 @@ local function sourceHasCode(path, source)
 end
 
 local cloneref = cloneref or function(ref) return ref end
+
+local function safeLocalAsset(path)
+	if type(getcustomasset) ~= 'function' then return '' end
+	local ok, result = pcall(getcustomasset, path)
+	return ok and result or ''
+end
 
 -- The public loader always runs. A premium key is optional and only creates a short-lived
 -- session for the private AetherV2Premium repository when the Render validator accepts it.
@@ -217,7 +217,7 @@ local function buildNewLoadingScreen(screen)
 	logo.Size = UDim2.fromOffset(250, 96)
 	logo.BackgroundTransparency = 1
 	logo.ScaleType = Enum.ScaleType.Fit
-	logo.Image = isfile('aetherv2/assets/new/loading.png') and getcustomasset('aetherv2/assets/new/loading.png') or ''
+	logo.Image = isfile('aetherv2/assets/new/loading.png') and safeLocalAsset('aetherv2/assets/new/loading.png') or ''
 	logo.ImageTransparency = 1
 	logo.Parent = scrim
 	tweenService:Create(logo, TweenInfo.new(0.5), {ImageTransparency = 0}):Play()
@@ -339,7 +339,7 @@ local function buildNewLoadingScreen(screen)
 		end
 		-- The logo is downloaded during the load, so pick it up as soon as it lands.
 		if logo.Parent and logo.Image == '' and isfile('aetherv2/assets/new/loading.png') then
-			logo.Image = getcustomasset('aetherv2/assets/new/loading.png')
+			logo.Image = safeLocalAsset('aetherv2/assets/new/loading.png')
 		end
 	end
 	return screen
@@ -424,8 +424,13 @@ local function payloadProblem(path, body)
 end
 
 local function repoUrl(path, ref)
-	local selectedRef = ref or readfile('aetherv2/profiles/commit.txt')
-	return 'https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..selectedRef..'/'..select(1, path:gsub('aetherv2/', ''))
+	local selectedRef = ref or shared.AetherV2PublicRef
+	if type(selectedRef) ~= 'string' or selectedRef:gsub('%s+', '') == '' then
+		local ok, cached = pcall(readfile, 'aetherv2/profiles/commit.txt')
+		selectedRef = ok and type(cached) == 'string' and cached:gsub('%s+', '') or ''
+	end
+	if selectedRef == '' then selectedRef = 'main' end
+	return 'https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..selectedRef..'/'..select(1, path:gsub('^aetherv2/', ''))
 end
 
 -- Fetch with retries, returning the body or nil plus a reason. Most failures here are transient - a
@@ -451,24 +456,27 @@ local function fetchFile(path, ref, attempts)
 	return nil, problem
 end
 
-local function storeFile(path, body)
-	-- GitHub paths include nested folders (for example libraries/bedwars/controllers).
-	-- Executors generally do not create missing
-	-- parents for writefile, so create each parent segment before caching a file.
+local function ensureParentFolder(path)
 	local parent = path:gsub('\\', '/'):match('^(.*)/[^/]+$')
-	if parent then
-		local built = ''
-		for segment in parent:gmatch('[^/]+') do
-			built = built == '' and segment or built..'/'..segment
-			if not isfolder(built) then
-				pcall(makefolder, built)
-			end
+	if not parent then return end
+	local built = ''
+	for segment in parent:gmatch('[^/]+') do
+		built = built == '' and segment or built..'/'..segment
+		if not isfolder(built) then
+			local ok, err = pcall(makefolder, built)
+			if not ok and not isfolder(built) then error('Could not create '..built..': '..tostring(err), 0) end
 		end
 	end
-	if path:sub(-4) == '.lua' then
-		body = watermark..body
-	end
-	writefile(path, body)
+end
+
+local function storeFile(path, body)
+	ensureParentFolder(path)
+	if path:sub(-4) == '.lua' then body = watermark..body end
+	local ok, err = pcall(writefile, path, body)
+	if not ok then error('Could not write '..path..': '..tostring(err), 0) end
+	local readOk, cached = pcall(readfile, path)
+	if not readOk or payloadProblem(path, cached) then error('Cached file verification failed for '..path, 0) end
+	return true
 end
 
 local function downloadFile(path, func)
@@ -530,16 +538,13 @@ local function wipeFolder(path)
 end
 
 
-for _, folder in {'aetherv2', 'aetherv2/games', 'aetherv2/profiles', 'aetherv2/assets', 'aetherv2/assets/new', 'aetherv2/libraries', 'aetherv2/guis', 'aetherv2/configs', 'aetherv2/songs', 'aetherv2/songs/spotify'} do
+for _, folder in {'aetherv2', 'aetherv2/games', 'aetherv2/profiles', 'aetherv2/assets', 'aetherv2/assets/new', 'aetherv2/assets/old', 'aetherv2/assets/rise', 'aetherv2/assets/wurst', 'aetherv2/libraries', 'aetherv2/guis', 'aetherv2/configs', 'aetherv2/songs', 'aetherv2/songs/spotify'} do
 	if not isfolder(folder) then
 		_G.AetherV2SetLoadingStatus('Creating '..folder, 0.08)
 		makefolder(folder)
 	end
 end
 
-if not isfile('aetherv2/profiles/releasechannel.txt') then
-	writefile('aetherv2/profiles/releasechannel.txt', 'stable')
-end
 
 -- Drop-a-song note, written once. MP3Player reads whatever is in aetherv2/songs, so the folder is
 -- no use to anyone who does not know it is there.
@@ -567,40 +572,29 @@ end
 -- call the error message was parsed as if it were the page, the match failed, and the commit
 -- silently became 'main' - which then looked like an update and wiped the entire install. On a flaky
 -- connection that happened on every injection. A lookup that fails now changes nothing at all.
-local function selectedReleaseChannel()
-	local value = isfile('aetherv2/profiles/releasechannel.txt') and readfile('aetherv2/profiles/releasechannel.txt'):lower():gsub('%s+', '') or 'stable'
-	return ({stable = 'stable', beta = 'beta', nightly = 'nightly'})[value] or 'stable'
-end
-
 local function resolveCommit()
-	local channel = selectedReleaseChannel()
-	local branch = channel == 'stable' and 'main' or channel
-	-- Reinjection in the same client should not repeat three update endpoints. The first injection
-	-- still performs the normal live check; this short in-memory reuse never survives a new client
-	-- session and therefore does not make persistent installs miss updates.
 	local recent = shared.AetherResolvedCommit
-	if type(recent) == 'table' and recent.Channel == channel and type(recent.Commit) == 'string' and os.clock() - (recent.CheckedAt or 0) < 60 then
+	if type(recent) == 'table' and recent.Channel == 'main' and type(recent.Commit) == 'string'
+		and os.clock() - (recent.CheckedAt or 0) < 60 then
 		return recent.Commit
 	end
 	local sources = {
-		{Url = 'https://api.github.com/repos/plutoxqqqq/AetherV2/commits/'..branch, Pattern = '"sha"%s*:%s*"(%x+)'},
-		{Url = 'https://github.com/plutoxqqqq/AetherV2/commits/'..branch..'.atom', Pattern = 'Commit/(%x+)'},
-		{Url = 'https://github.com/plutoxqqqq/AetherV2/tree/'..branch, Pattern = 'currentOid[^%x]*(%x+)'}
+		{Url = 'https://api.github.com/repos/plutoxqqqq/AetherV2/commits/main', Pattern = '"sha"%s*:%s*"(%x+)'},
+		{Url = 'https://github.com/plutoxqqqq/AetherV2/commits/main.atom', Pattern = 'Commit/(%x+)'},
+		{Url = 'https://github.com/plutoxqqqq/AetherV2/tree/main', Pattern = 'currentOid[^%x]*(%x+)'}
 	}
 	for _, source in sources do
-		local suc, body = pcall(function()
-			return game:HttpGet(source.Url, true)
-		end)
+		local suc, body = pcall(game.HttpGet, game, source.Url, true)
 		if suc and type(body) == 'string' then
 			local found = body:match(source.Pattern)
 			if found and #found >= 40 then
 				found = found:sub(1, 40)
-				shared.AetherResolvedCommit = {Commit = found, Channel = channel, CheckedAt = os.clock()}
+				shared.AetherResolvedCommit = {Commit = found, Channel = 'main', CheckedAt = os.clock()}
 				return found
 			end
 		end
 	end
-	return nil
+	return 'main'
 end
 
 -- The list of files a commit contains, read straight from git.
@@ -691,11 +685,14 @@ local function installedVersion()
 end
 
 if not shared.VapeDeveloper then
-	local oldCommit = isfile('aetherv2/profiles/commit.txt') and readfile('aetherv2/profiles/commit.txt') or ''
+	local oldCommit = isfile('aetherv2/profiles/commit.txt') and readfile('aetherv2/profiles/commit.txt'):gsub('%s+', '') or ''
 	_G.AetherV2SetLoadingStatus('Checking for updates', 0.12)
-	local commit = license.Commit or resolveCommit()
+	local commit = license.Commit or resolveCommit() or 'main'
+	commit = tostring(commit):gsub('%s+', '')
+	if commit == '' then commit = 'main' end
+	shared.AetherV2PublicRef = commit
 
-	if commit and commit ~= oldCommit then
+	if commit ~= oldCommit then
 		local previousVersion = installedVersion()
 
 		-- Update only what actually changed.
@@ -760,30 +757,17 @@ if not shared.VapeDeveloper then
 			delfile(fileListPath)
 		end
 		prefetchPaths = newFiles
-	elseif oldCommit == '' then
-		-- First run with no answer: retain the configured private ref (or the public
-		-- release channel) rather than silently switching a gated client to main.
-		local channel = selectedReleaseChannel()
-		local initialRef = commit or (channel == 'stable' and 'main' or channel)
-		writefile('aetherv2/profiles/commit.txt', initialRef)
-		-- The first run used to skip the tree entirely, which meant main.lua could not distinguish a
-		-- supported exact PlaceId from an unsupported game when its source request failed.
-		prefetchPaths = fetchFileList(initialRef)
-		if prefetchPaths then writeFileList(prefetchPaths) end
 	else
-		-- Up to date. The stored list is this commit's file list, so it can drive the prefetch below
-		-- without another request.
 		prefetchPaths = readFileList()
 		if not prefetchPaths then
-			-- Nothing stored yet: an install from before this list existed, or one whose last update
-			-- could not fetch it. Fetch it now, so the prefetch has something to work from and the
-			-- next update can be incremental instead of wiping.
-			prefetchPaths = fetchFileList(oldCommit)
-			if prefetchPaths then
-				writeFileList(prefetchPaths)
-			end
+			prefetchPaths = fetchFileList(commit)
+			if prefetchPaths then writeFileList(prefetchPaths) end
 		end
 	end
+else
+	local ok, cached = pcall(readfile, 'aetherv2/profiles/commit.txt')
+	shared.AetherV2PublicRef = ok and type(cached) == 'string' and cached:gsub('%s+', '') or 'main'
+	if shared.AetherV2PublicRef == '' then shared.AetherV2PublicRef = 'main' end
 end
 
 -- main.lua uses this authoritative tree to make an exact supported game mandatory. When the tree
@@ -897,6 +881,35 @@ local function prefetch(files)
 	repeat task.wait(0.05) until active <= 0 or os.clock() > deadline
 end
 
+local function selectedAssetPath(path)
+	if type(path) ~= 'string' or path:sub(1, 7) ~= 'assets/' then return false end
+	local gui = selectedGui()
+	return path:sub(1, 8 + #gui) == 'assets/'..gui..'/'
+		or path == 'assets/new/loading.png'
+		or gui == 'old' and (path == 'assets/new/guivape.png' or path == 'assets/new/guiv4.png')
+end
+
+local function verifySelectedAssets(files)
+	if type(files) ~= 'table' then return end
+	for repoPath in files do
+		if selectedAssetPath(repoPath) then
+			local target = 'aetherv2/'..repoPath
+			local valid = false
+			if isfile(target) then
+				local ok, cached = pcall(readfile, target)
+				valid = ok and payloadProblem(target, cached) == nil
+			end
+			if not valid then
+				if isfile(target) then delfile(target) end
+				local body, problem = fetchFile(target, shared.AetherV2PublicRef, 3)
+				if not body then failLoad('Could not download required asset '..repoPath..' - '..tostring(problem)) end
+				local stored, storeError = pcall(storeFile, target, body)
+				if not stored then failLoad('Could not cache required asset '..repoPath..' - '..tostring(storeError)) end
+			end
+		end
+	end
+end
+
 _G.AetherV2SetLoadingStatus('Checking version', 0.18)
 downloadFile('aetherv2/version.txt')
 
@@ -930,7 +943,9 @@ if maintenance and maintenance:match("^%s*true%s*$") then
 end
 
 -- Only worth doing once we know the script is actually going to run.
+if not prefetchPaths then prefetchPaths = fetchFileList(shared.AetherV2PublicRef or 'main') end
 prefetch(prefetchPaths)
+verifySelectedAssets(prefetchPaths)
 
 _G.AetherV2SetLoadingStatus('Preparing loading artwork...', 0.70)
 pcall(downloadFile, 'aetherv2/assets/new/loading.png')

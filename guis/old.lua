@@ -303,23 +303,55 @@ local function createMobileButton(buttonapi, position)
 	buttonapi.Bind = {Button = button}
 end
 
+local function installedSourceRef()
+	local sharedRef = type(shared.AetherV2PublicRef) == 'string' and shared.AetherV2PublicRef:gsub('%s+', '') or ''
+	if sharedRef ~= '' then return sharedRef end
+	local commit = isfile('aetherv2/profiles/commit.txt') and readfile('aetherv2/profiles/commit.txt'):gsub('%s+', '') or ''
+	return commit ~= '' and commit or 'main'
+end
+
 local function remoteSourceUrl(path)
-	local commit = isfile('aetherv2/profiles/commit.txt') and readfile('aetherv2/profiles/commit.txt'):gsub('%s+', '') or 'main'
-	if commit == '' then commit = 'main' end
-	return 'https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..commit..'/'..
+	return 'https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..installedSourceRef()..'/'..
 		select(1, path:gsub('^aetherv2/', ''))
 end
 
+local function validDownloadedFile(path, body)
+	if type(body) ~= 'string' or #body < 8 then return false end
+	local head = body:sub(1, 300):lower()
+	if head:find('^%s*404') or head:find('^%s*429') or head:find('^%s*5%d%d:') or head:find('<!doctype html') or head:find('<html') then return false end
+	if path:lower():sub(-4) == '.png' then return body:sub(1, 8) == '\137PNG\r\n\26\n' end
+	return true
+end
+
+local function ensureDownloadFolder(path)
+	local parent = path:gsub('\\', '/'):match('^(.*)/[^/]+$')
+	if not parent then return end
+	local built = ''
+	for segment in parent:gmatch('[^/]+') do
+		built = built == '' and segment or built..'/'..segment
+		if not isfolder(built) then pcall(makefolder, built) end
+	end
+end
+
 local function downloadFile(path, func)
-	if not isfile(path) then
+	local exists = isfile(path)
+	if exists then
+		local ok, cached = pcall(readfile, path)
+		if not ok or not validDownloadedFile(path, cached) then
+			if delfile then pcall(delfile, path) else pcall(writefile, path, '') end
+			exists = false
+		end
+	end
+	if not exists then
 		createDownloader(path)
 		local suc, res = pcall(function()
+			if type(shared.AetherV2FetchSource) == 'function' then return shared.AetherV2FetchSource(path, installedSourceRef()) end
 			return game:HttpGet(remoteSourceUrl(path), true)
 		end)
-		if not suc or res == '404: Not Found' then error(res) end
-		if path:find('.lua') then
-			res = '--This watermark is used to delete the file if its cached, remove it to make the file persist after vape updates.\n'..res
-		end
+		if not suc then error(res) end
+		if not validDownloadedFile(path, res) then error('Invalid GitHub response while downloading '..path, 0) end
+		if path:sub(-4) == '.lua' then res = '--This watermark is used to delete the file if its cached, remove it to make the file persist after vape updates.\n'..res end
+		ensureDownloadFolder(path)
 		writefile(path, res)
 	end
 	return (func or readfile)(path)
@@ -327,7 +359,7 @@ end
 
 getcustomasset = function(path)
 	local downloaded = pcall(downloadFile, path)
-	if not inputService.TouchEnabled and assetfunction and downloaded then
+	if assetfunction and downloaded then
 		local success, result = pcall(assetfunction, path)
 		if success then return result end
 	end

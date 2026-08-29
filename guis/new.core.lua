@@ -639,6 +639,8 @@ local function sourceBranch()
 end
 
 local function installedSourceRef()
+	local sharedRef = type(shared.AetherV2PublicRef) == 'string' and shared.AetherV2PublicRef:gsub('%s+', '') or ''
+	if sharedRef ~= '' then return sharedRef end
 	local ref = isfile('aetherv2/profiles/commit.txt') and readfile('aetherv2/profiles/commit.txt'):gsub('%s+', '') or ''
 	return ref ~= '' and ref or sourceBranch()
 end
