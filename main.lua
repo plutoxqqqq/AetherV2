@@ -347,24 +347,58 @@ local function runWatchedChunk(source, chunkName, label, timeout, optional, ...)
 end
 
 local function loadPremiumModules()
-	local fetch = shared.AetherV2PremiumFetchSource
-	if type(fetch) ~= 'function' then return end
-	setPhase('Loading premium modules', 0.97, 0.985)
-	local ok, source = pcall(fetch, 'init.lua')
-	if not ok or type(source) ~= 'string' or #source < 8 then
+	local fetchSource = shared.AetherV2PremiumFetchSource
+	local fetchTree = shared.AetherV2PremiumFetchTree
+	if type(fetchSource) ~= 'function' or type(fetchTree) ~= 'function' then return end
+
+	setPhase('Finding premium modules', 0.97, 0.975)
+	local ok, treeBody = pcall(fetchTree)
+	if not ok or type(treeBody) ~= 'string' then
 		warn('[AetherV2] Premium modules were unavailable; continuing with normal modules')
 		return
 	end
-	local chunk, compileError = loadstring(source, 'premium/init.lua')
-	if not chunk then
-		warn('[AetherV2] Premium modules did not compile: '..tostring(compileError))
+	local decoded, tree = pcall(httpService.JSONDecode, httpService, treeBody)
+	if not decoded or type(tree) ~= 'table' or type(tree.tree) ~= 'table' then
+		warn('[AetherV2] Premium module list was invalid; continuing with normal modules')
 		return
 	end
-	local ran, runtimeError = xpcall(function()
-		return chunk(vape, license)
-	end, debug.traceback)
-	if not ran then
-		warn('[AetherV2] Premium modules failed: '..tostring(runtimeError))
+
+	local placeId = tostring(vape.Place or game.PlaceId)
+	local universalPrefix = 'games/universal/blatant/'
+	local gamePrefix = 'games/'..placeId..'/blatant/'
+	local universal, gameModules = {}, {}
+	for _, entry in ipairs(tree.tree) do
+		local path = type(entry) == 'table' and entry.path or nil
+		if entry.type == 'blob' and type(path) == 'string' and path:sub(-4) == '.lua' then
+			if path:sub(1, #universalPrefix) == universalPrefix then
+				table.insert(universal, path)
+			elseif path:sub(1, #gamePrefix) == gamePrefix then
+				table.insert(gameModules, path)
+			end
+		end
+	end
+	table.sort(universal)
+	table.sort(gameModules)
+
+	local modules = {}
+	for _, path in ipairs(universal) do table.insert(modules, path) end
+	for _, path in ipairs(gameModules) do table.insert(modules, path) end
+	for index, path in ipairs(modules) do
+		setPhase('Loading premium modules ('..index..'/'..#modules..')', 0.975, 0.985)
+		local received, source = pcall(fetchSource, path)
+		if received and type(source) == 'string' and #source >= 8 then
+			local chunk, compileError = loadstring(source, 'premium/'..path)
+			if chunk then
+				local ran, runtimeError = xpcall(function()
+					return chunk(vape, license)
+				end, debug.traceback)
+				if not ran then warn('[AetherV2] Premium module '..path..' failed: '..tostring(runtimeError)) end
+			else
+				warn('[AetherV2] Premium module '..path..' did not compile: '..tostring(compileError))
+			end
+		else
+			warn('[AetherV2] Premium module '..path..' could not be fetched')
+		end
 	end
 end
 
