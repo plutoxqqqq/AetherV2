@@ -3,6 +3,7 @@
 const http = require('node:http');
 const crypto = require('node:crypto');
 const registry = require('./key-registry');
+require('./key-conflicts');
 
 const boundedNumber = (value, fallback, min, max) => {
   const number = Number(value);
@@ -175,9 +176,8 @@ const requireSession = async value => {
     throw problem('The premium session is missing or expired; execute AetherV2 again', 401);
   }
   let info;
-  try {
-    info = await registry.getKeyInfo(session.keyId);
-  } catch {
+  try { info = await registry.getKeyInfo(session.keyId); }
+  catch {
     sessions.delete(token);
     throw problem('The premium key is no longer active', 401);
   }
