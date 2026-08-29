@@ -240,6 +240,27 @@ patchExact('category hover refresh', [=[
 	end)
 ]=], 'categoryHovered = true')
 
+patchExact('home free premium tier row', [=[
+	local gameRow = row(146, 'Current game', 'Detecting…')
+	local kitRow = row(194, 'Detected kit', 'Checking…')
+	local profileRow = row(242, 'Current profile', tostring(mainapi.Profile))
+	local sessionRow = row(290, 'AetherV2', 'v'..tostring(mainapi.Version)..' • 0m')
+]=], [=[
+	local gameRow = row(146, 'Current game', 'Detecting…')
+	local kitRow = row(194, 'Detected kit', 'Checking…')
+	local profileRow = row(242, 'Current profile', tostring(mainapi.Profile))
+	local function aetherHomeTier()
+		return shared.AetherV2PremiumAuthorized == true and 'Premium' or 'Free'
+	end
+	local sessionRow = row(290, 'AetherV2', 'v'..tostring(mainapi.Version)..' • '..aetherHomeTier()..' • 0m')
+]=], 'local function aetherHomeTier()')
+
+patchExact('home free premium tier uptime', [=[
+				sessionRow.Detail.Text = 'v'..tostring(mainapi.Version)..' • '..math.floor((os.clock() - (mainapi.StartedAt or os.clock())) / 60)..'m'
+]=], [=[
+				sessionRow.Detail.Text = 'v'..tostring(mainapi.Version)..' • '..aetherHomeTier()..' • '..math.floor((os.clock() - (mainapi.StartedAt or os.clock())) / 60)..'m'
+]=], "sessionRow.Detail.Text = 'v'..tostring(mainapi.Version)..' • '..aetherHomeTier()")
+
 local cache = type(shared.AetherCompileCache) == 'table' and shared.AetherCompileCache or nil
 local compiled, compileError = cache and cache[source] or nil
 if not compiled then
