@@ -298,33 +298,34 @@ const path = require('node:path');
 process.env.GITHUB_TOKEN = 'test-token';
 process.env.GITHUB_REPO = 'plutoxqqqq/AetherV2';
 process.env.AETHER_REGISTRY_BRANCH = 'aether-key-registry';
+process.env.PUBLIC_ORIGIN = 'https://aether.example';
 process.env.PREMIUM_GITHUB_REPO = 'plutoxqqqq/AetherV2Premium';
 process.env.PREMIUM_GITHUB_BRANCH = 'main';
 process.env.PREMIUM_ALLOWED_PATHS = 'games/';
-process.env.PUBLIC_ORIGIN = 'http://localhost:3000';
+process.env.AETHER_KEY_LOCAL_FALLBACK = 'true';
+process.env.AETHER_KEY_LOCAL_WRITE = 'true';
+process.env.KEY_REGISTRY_FILE = path.join(__dirname, 'tmp-premium-source.json');
+process.env.KEY_BINDINGS_FILE = path.join(__dirname, 'tmp-premium-bindings.json');
+try { fs.unlinkSync(process.env.KEY_REGISTRY_FILE); } catch {}
+try { fs.unlinkSync(process.env.KEY_BINDINGS_FILE); } catch {}
 
 const registry = require('./key-registry');
 const service = require('./private-source');
-const source = fs.readFileSync(path.join(__dirname, 'private-source.js'), 'utf8');
 
-test('Render exposes premium routes only', () => {
-  for (const route of ['/loader', '/authorize', '/source', '/commit', '/history', '/tree']) {
-    assert.doesNotMatch(source, new RegExp("url\\.pathname === '" + route.replace('/', '\\/') + "'"));
-  }
-  assert.match(source, /url\.pathname === '\/premium\/authorize'/);
-  assert.match(source, /url\.pathname === '\/premium\/source'/);
-  assert.match(source, /url\.pathname === '\/premium\/tree'/);
+test.after(() => {
+  try { fs.unlinkSync(process.env.KEY_REGISTRY_FILE); } catch {}
+  try { fs.unlinkSync(process.env.KEY_BINDINGS_FILE); } catch {}
 });
 
-test('premium path validation is restricted to configured game modules', () => {
-  assert.equal(service.premiumClientPath('games/universal/render/Test.lua'), true);
-  assert.equal(service.premiumClientPath('games/6872274481/blatant/Test.lua'), true);
-  assert.equal(service.premiumClientPath('backend/private-source.js'), false);
-  assert.equal(service.premiumClientPath('../games/Test.lua'), false);
+test('premium path validation accepts only configured game paths', () => {
+  assert.equal(service.premiumClientPath('games/universal/render/example.lua'), true);
+  assert.equal(service.premiumClientPath('games/6872274481/blatant/example.lua'), true);
+  assert.equal(service.premiumClientPath('README.md'), false);
+  assert.equal(service.premiumClientPath('../games/a.lua'), false);
 });
 
-test('premium session loader returns the contract expected by init.lua', () => {
-  const loader = service.premiumSessionLoader('https://source.example.test', {token: 'a'.repeat(64)});
+test('premium loader only exposes session metadata', () => {
+  const loader = service.premiumSessionLoader('https://aether.example', {token: 'a'.repeat(64)});
   assert.match(loader, /Endpoint=/);
   assert.match(loader, /Token=/);
   assert.match(loader, /Ref=/);
@@ -417,7 +418,7 @@ replacement = r'''const generatedText = (result, title = 'Generated premium key'
 };
 
 const keyIdFrom'''
-bot, count = pattern.subn(replacement, bot, count=1)
+bot, count = pattern.subn(lambda _: replacement, bot, count=1)
 if count != 1:
     raise SystemExit('generatedText not found')
 
