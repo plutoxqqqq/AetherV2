@@ -21,6 +21,9 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
+
+          # Keep the committed one-shot repair script strict, while adapting the two assumptions
+          # discovered by the audit before running it.
           p = Path('tools/deep_public_source_repair.py')
           t = p.read_text()
           old = "text = replace_once(text, \"\\tlocal ref = readfile('aetherv2/profiles/commit.txt')\\n\", \"\\tlocal ref = selectedSourceRef()\\n\", 'main fetch ref')"
@@ -32,6 +35,43 @@ jobs:
           p.write_text(t)
           PY
           python3 tools/deep_public_source_repair.py
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          # A second loading-logo refresh path also used the executor global directly. It must be
+          # guarded for executors that can write assets but do not expose getcustomasset.
+          p = Path('init.lua')
+          t = p.read_text()
+          old = "\t\t\tlogo.Image = getcustomasset('aetherv2/assets/new/loading.png')"
+          new = "\t\t\tlogo.Image = safeLocalAsset('aetherv2/assets/new/loading.png')"
+          if old not in t:
+              raise SystemExit('late loading-logo getcustomasset call not found')
+          p.write_text(t.replace(old, new, 1))
+
+          # The previous regression asserted the removed first-run release-channel branch. Replace it
+          # with the new invariant: current main/public ref is published, stale channel state is gone,
+          # and required assets are verified synchronously after the parallel prefetch.
+          p = Path('backend/private-execution-regression.test.js')
+          t = p.read_text()
+          old = """test('the first authorized run publishes the exact source tree to main', () => {
+  assert.match(initSource, /prefetchPaths = fetchFileList\\(initialRef\\)/);
+  assert.match(initSource, /shared\\.AetherV2KnownSourceFiles = prefetchPaths/);
+  assert.match(mainSource, /knownSourceFiles\\[repoPlacePath\\]/);
+});"""
+          new = """test('public loader heals stale refs and publishes the current source tree', () => {
+  assert.match(initSource, /shared\\.AetherV2PublicRef = commit/);
+  assert.match(initSource, /fetchFileList\\(shared\\.AetherV2PublicRef or 'main'\\)/);
+  assert.match(initSource, /verifySelectedAssets\\(prefetchPaths\\)/);
+  assert.doesNotMatch(initSource, /selectedReleaseChannel|releasechannel\\.txt/);
+  assert.match(initSource, /shared\\.AetherV2KnownSourceFiles = prefetchPaths/);
+  assert.match(mainSource, /knownSourceFiles\\[repoPlacePath\\]/);
+});"""
+          if old not in t:
+              raise SystemExit('obsolete source-tree regression not found')
+          p.write_text(t.replace(old, new, 1))
+          PY
+
       - name: Verify repair
         run: |
           python3 - <<'PY'
@@ -44,11 +84,15 @@ jobs:
           wrapper = Path('guis/new.lua').read_text()
           assert 'shared.AetherV2PublicRef = commit' in init
           assert 'verifySelectedAssets(prefetchPaths)' in init
+          assert "safeLocalAsset('aetherv2/assets/new/loading.png')" in init
+          assert "getcustomasset('aetherv2/assets/new/loading.png')" not in init
           assert 'selectedSourceRef()' in main
           assert 'public GitHub source' in main
           assert 'shared.AetherV2PublicRef' in core
           assert 'validDownloadedFile' in old and 'validDownloadedFile' in rise
           assert 'FALLBACK_COMMIT' not in wrapper
+          assert 'releasechannel' not in init.lower()
+          assert 'releasechannel' not in main.lower()
           for body in [init, main, core, old, rise, wrapper]:
               for legacy in ['license.SourceEndpoint', 'license.SourceToken', 'license.SourceRef', 'shared.AetherV2SourceEndpoint', 'shared.AetherV2SourceToken', 'shared.AetherV2SourceRef']:
                   assert legacy not in body, legacy
@@ -56,10 +100,11 @@ jobs:
           PY
           cd backend
           node --test private-execution-regression.test.js
+
       - name: Commit repair
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add init.lua main.lua guis/new.lua guis/new.core.lua guis/old.lua guis/rise.lua
+          git add init.lua main.lua guis/new.lua guis/new.core.lua guis/old.lua guis/rise.lua backend/private-execution-regression.test.js
           git commit -m "Fully repair public source and asset loading"
           git push
