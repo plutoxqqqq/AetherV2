@@ -37,46 +37,6 @@ local function sourceHasCode(path, source)
 end
 
 local cloneref = cloneref or function(ref) return ref end
--- Optional private-source proxy. The proxy keeps the GitHub token server-side while preserving
--- the existing raw-GitHub fallback for installations that have not configured one yet.
-local function normalizeSourceEndpoint(value)
-	if type(value) ~= 'string' then return nil end
-	value = value:gsub('%s+', '')
-	while value:sub(-1) == '/' do value = value:sub(1, -2) end
-	return value ~= '' and value or nil
-end
-local function urlEncode(value)
-	return tostring(value):gsub('([^%w%-%._~])', function(character)
-		return string.format('%%%02X', string.byte(character))
-	end)
-end
-local sourceEndpoint
-local sourceToken
-local sourceRef
-if type(license) == 'table' then
-	sourceEndpoint = normalizeSourceEndpoint(license.SourceEndpoint)
-	sourceToken = type(license.SourceToken) == 'string' and license.SourceToken or nil
-	sourceRef = type(license.SourceRef) == 'string' and license.SourceRef or nil
-end
-if not sourceEndpoint and getgenv then
-	pcall(function()
-		sourceEndpoint = normalizeSourceEndpoint(getgenv().AetherV2SourceEndpoint)
-		sourceToken = sourceToken or getgenv().AetherV2SourceToken
-	end)
-end
-if not sourceEndpoint then
-	sourceEndpoint = normalizeSourceEndpoint(shared.AetherV2SourceEndpoint)
-	sourceToken = sourceToken or shared.AetherV2SourceToken
-end
-local function privateSourceUrl(route, path, ref)
-	if not sourceEndpoint then return nil end
-	ref = ref or sourceRef
-	if not ref or ref == '' then error('Private source configuration is missing SourceRef', 0) end
-	local sessionSuffix = sourceToken and ('&session='..urlEncode(sourceToken)) or ''
-	local query = '?ref='..urlEncode(ref)..sessionSuffix
-	if path then query = '?path='..urlEncode(path:gsub('^aetherv2/', ''))..'&ref='..urlEncode(ref)..sessionSuffix end
-	return sourceEndpoint..'/'..route..query
-end
 local isfile = isfile or function(file)
 	local suc, res = pcall(function()
 		return readfile(file)
@@ -403,8 +363,7 @@ end
 
 local function repoUrl(path, ref)
 	local selectedRef = ref or readfile('aetherv2/profiles/commit.txt')
-	return privateSourceUrl('source', path, selectedRef)
-		or ('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..selectedRef..'/'..select(1, path:gsub('aetherv2/', '')))
+	return 'https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..selectedRef..'/'..select(1, path:gsub('aetherv2/', ''))
 end
 
 -- Fetch with retries, returning the body or nil plus a reason. Most failures here are transient - a
@@ -553,7 +512,7 @@ end
 
 local function resolveCommit()
 	local channel = selectedReleaseChannel()
-	local branch = sourceEndpoint and sourceRef or (channel == 'stable' and 'main' or channel)
+	local branch = channel == 'stable' and 'main' or channel
 	-- Reinjection in the same client should not repeat three update endpoints. The first injection
 	-- still performs the normal live check; this short in-memory reuse never survives a new client
 	-- session and therefore does not make persistent installs miss updates.
@@ -561,18 +520,11 @@ local function resolveCommit()
 	if type(recent) == 'table' and recent.Channel == channel and type(recent.Commit) == 'string' and os.clock() - (recent.CheckedAt or 0) < 60 then
 		return recent.Commit
 	end
-	local sources
-	if sourceEndpoint then
-		sources = {
-			{Url = privateSourceUrl('commit', nil, branch), Pattern = '^%s*(%x+)'}
-		}
-	else
-		sources = {
-			{Url = 'https://api.github.com/repos/plutoxqqqq/AetherV2/commits/'..branch, Pattern = '"sha"%s*:%s*"(%x+)'},
-			{Url = 'https://github.com/plutoxqqqq/AetherV2/commits/'..branch..'.atom', Pattern = 'Commit/(%x+)'},
-			{Url = 'https://github.com/plutoxqqqq/AetherV2/tree/'..branch, Pattern = 'currentOid[^%x]*(%x+)'}
-		}
-	end
+	local sources = {
+		{Url = 'https://api.github.com/repos/plutoxqqqq/AetherV2/commits/'..branch, Pattern = '"sha"%s*:%s*"(%x+)'},
+		{Url = 'https://github.com/plutoxqqqq/AetherV2/commits/'..branch..'.atom', Pattern = 'Commit/(%x+)'},
+		{Url = 'https://github.com/plutoxqqqq/AetherV2/tree/'..branch, Pattern = 'currentOid[^%x]*(%x+)'}
+	}
 	for _, source in sources do
 		local suc, body = pcall(function()
 			return game:HttpGet(source.Url, true)
@@ -605,7 +557,7 @@ end
 -- everything, which is exactly what used to happen anyway.
 local function fetchFileList(ref)
 	local suc, body = pcall(function()
-		return game:HttpGet(privateSourceUrl('tree', nil, ref) or ('https://api.github.com/repos/plutoxqqqq/AetherV2/git/trees/'..ref..'?recursive=1'), true)
+		return game:HttpGet('https://api.github.com/repos/plutoxqqqq/AetherV2/git/trees/'..ref..'?recursive=1', true)
 	end)
 	if not suc or type(body) ~= 'string' then return nil end
 	-- Only ever set on a repository far larger than this one, but a partial list would silently
@@ -750,7 +702,7 @@ if not shared.VapeDeveloper then
 		-- First run with no answer: retain the configured private ref (or the public
 		-- release channel) rather than silently switching a gated client to main.
 		local channel = selectedReleaseChannel()
-		local initialRef = commit or (sourceEndpoint and sourceRef or (channel == 'stable' and 'main' or channel))
+		local initialRef = commit or (channel == 'stable' and 'main' or channel)
 		writefile('aetherv2/profiles/commit.txt', initialRef)
 		-- The first run used to skip the tree entirely, which meant main.lua could not distinguish a
 		-- supported exact PlaceId from an unsupported game when its source request failed.
