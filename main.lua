@@ -65,64 +65,24 @@ local cloneref = cloneref or function(obj)
 end
 local playersService = cloneref(game:GetService('Players'))
 local httpService = cloneref(game:GetService('HttpService'))
-local function normalizeSourceEndpoint(value)
-	if type(value) ~= 'string' then return nil end
-	value = value:gsub('%s+', '')
-	while value:sub(-1) == '/' do value = value:sub(1, -2) end
-	return value ~= '' and value or nil
-end
-local function urlEncode(value)
-	return tostring(value):gsub('([^%w%-%._~])', function(character)
-		return string.format('%%%02X', string.byte(character))
-	end)
-end
-local sourceEndpoint
-local sourceToken
-local sourceRef
-if type(license) == 'table' then
-	sourceEndpoint = normalizeSourceEndpoint(license.SourceEndpoint)
-	sourceToken = type(license.SourceToken) == 'string' and license.SourceToken or nil
-	sourceRef = type(license.SourceRef) == 'string' and license.SourceRef or nil
-end
-if not sourceEndpoint and getgenv then
-	pcall(function()
-		sourceEndpoint = normalizeSourceEndpoint(getgenv().AetherV2SourceEndpoint)
-		sourceToken = sourceToken or getgenv().AetherV2SourceToken
-		sourceRef = sourceRef or getgenv().AetherV2SourceRef
-	end)
-end
-if not sourceEndpoint then
-	sourceEndpoint = normalizeSourceEndpoint(shared.AetherV2SourceEndpoint)
-	sourceToken = sourceToken or shared.AetherV2SourceToken
-	sourceRef = sourceRef or shared.AetherV2SourceRef
-end
-if not shared.VapeDeveloper and (not sourceEndpoint or not sourceToken or sourceToken == '' or not sourceRef or sourceRef == '') then
-	error('Private source configuration is incomplete; run the key-gated loader again', 0)
-end
-local function privateSourceUrl(path, ref)
-	if not sourceEndpoint then return nil end
-	ref = ref or sourceRef
-	if not ref or ref == '' then error('Private source configuration is missing SourceRef', 0) end
-	if not sourceToken or sourceToken == '' then error('Private source configuration is missing SourceToken', 0) end
-	return sourceEndpoint..'/source?path='..urlEncode(path:gsub('^aetherv2/', ''))..'&ref='..urlEncode(ref)..'&session='..urlEncode(sourceToken)
+local function selectedSourceRef(ref)
+	if type(ref) == 'string' and ref:gsub('%s+', '') ~= '' then
+		return ref:gsub('%s+', '')
+	end
+	local ok, cached = pcall(readfile, 'aetherv2/profiles/commit.txt')
+	if ok and type(cached) == 'string' and cached:gsub('%s+', '') ~= '' then
+		return cached:gsub('%s+', '')
+	end
+	return 'main'
 end
 
--- Give every GUI/game/library the same authenticated source transport. Several large game files
--- have their own tiny download helper; without this shared function they fall back to public raw
--- GitHub, which cannot read a private repository.
-if sourceEndpoint and sourceToken and sourceRef then
-	shared.AetherV2SourceEndpoint = sourceEndpoint
-	shared.AetherV2SourceToken = sourceToken
-	shared.AetherV2SourceRef = sourceRef
-	shared.AetherV2FetchSource = function(path, ref)
-		local selectedRef = ref
-		if not selectedRef or selectedRef == '' then
-			local ok, cached = pcall(readfile, 'aetherv2/profiles/commit.txt')
-			selectedRef = ok and type(cached) == 'string' and cached:gsub('%s+', '') or ''
-			if selectedRef == '' then selectedRef = sourceRef end
-		end
-		return game:HttpGet(privateSourceUrl(path, selectedRef), true)
-	end
+local function publicSourceUrl(path, ref)
+	return 'https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..selectedSourceRef(ref)..'/'..path:gsub('^aetherv2/', '')
+end
+
+-- Game and GUI modules use this shared fetcher when they need another public source file.
+shared.AetherV2FetchSource = function(path, ref)
+	return game:HttpGet(publicSourceUrl(path, ref), true)
 end
 
 -- init.lua owns the loading UI. main.lua only reports progress to that shared screen.
@@ -410,16 +370,8 @@ local function finishLoading()
 				if shared.VapeDeveloper then
 					loadstring(readfile('aetherv2/main.lua'), 'main')(_scriptconfig)
 				else
-					local config = _scriptconfig
-					local function encode(value)
-						return tostring(value):gsub('([^%w%-%._~])', function(character)
-							return string.format('%%%02X', string.byte(character))
-						end)
-					end
-					assert(config.SourceEndpoint and config.SourceToken and config.SourceRef, 'Private source configuration is incomplete')
 					shared.AetherResolvedCommit = nil
-					local endpoint = tostring(config.SourceEndpoint):gsub('/+$', '')
-					loadstring(game:HttpGet(endpoint..'/source?path=init.lua&ref='..encode(config.SourceRef)..'&session='..encode(config.SourceToken), true), 'init.lua')(config)
+					loadstring(game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/main/init.lua', true), 'init.lua')(_scriptconfig)
 				end
 			]]
 			local teleportConfig = httpService:JSONEncode(license)
