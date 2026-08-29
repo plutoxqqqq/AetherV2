@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 
 
 def replace_once(path, old, new, label):
@@ -12,9 +13,15 @@ def replace_once(path, old, new, label):
     return True
 
 
-# init.lua: support the common executor custom-asset aliases and never accept a silent nil/empty
-# registration result as a valid image. This specifically fixes executors that expose a stub
-# getcustomasset while their working implementation is getsynasset/syn.getcustomasset.
+def regex_once(text, pattern, replacement, label, flags=0):
+    updated, count = re.subn(pattern, replacement, text, count=1, flags=flags)
+    if count != 1:
+        raise SystemExit(f'expected one {label} marker, found {count}')
+    return updated
+
+
+# Loader loading-screen artwork: support common executor aliases and reject nil/empty "successful"
+# registrations. A stub getcustomasset must not hide a working getsynasset/syn implementation.
 replace_once(
     'init.lua',
     "local cloneref = cloneref or function(ref) return ref end\n\nlocal function safeLocalAsset(path)\n\tif type(getcustomasset) ~= 'function' then return '' end\n\tlocal ok, result = pcall(getcustomasset, path)\n\treturn ok and result or ''\nend",
@@ -22,9 +29,9 @@ replace_once(
     'safe local asset function',
 )
 
-# init.lua: raw PNG/font bodies are binary. Prefer an executor request API for assets because some
-# game:HttpGet implementations UTF-8-normalize binary responses while still working perfectly for
-# Lua/JSON. Fall back to game:HttpGet everywhere else.
+# Asset bodies are binary. Some executor game:HttpGet implementations are fine for Lua/JSON but
+# normalize binary strings. Prefer executor request APIs for assets, while retaining HttpGet as the
+# universal fallback.
 replace_once(
     'init.lua',
     "local function repoUrl(path, ref)\n\tlocal selectedRef = ref or shared.AetherV2PublicRef\n\tif type(selectedRef) ~= 'string' or selectedRef:gsub('%s+', '') == '' then\n\t\tlocal ok, cached = pcall(readfile, 'aetherv2/profiles/commit.txt')\n\t\tselectedRef = ok and type(cached) == 'string' and cached:gsub('%s+', '') or ''\n\tend\n\tif selectedRef == '' then selectedRef = 'main' end\n\treturn 'https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..selectedRef..'/'..select(1, path:gsub('^aetherv2/', ''))\nend\n\n-- Fetch with retries, returning the body or nil plus a reason. Most failures here are transient - a\n-- dropped connection, a moment of rate limiting - and one of them used to end the whole load.\nlocal function fetchFile(path, ref, attempts)\n\tattempts = attempts or 3\n\tlocal url = repoUrl(path, ref)\n\tlocal problem\n\tfor attempt = 1, attempts do\n\t\tlocal suc, res = pcall(function()\n\t\t\treturn game:HttpGet(url, true)\n\t\tend)",
@@ -32,8 +39,7 @@ replace_once(
     'binary-safe init fetcher',
 )
 
-# main.lua: all lazy GUI/asset fetches go through this helper after startup. Preserve raw binary
-# bodies through request/http_request/syn.request when available.
+# All lazy GUI fetches route through main.lua. Keep those asset fetches binary-safe too.
 replace_once(
     'main.lua',
     "-- Game and GUI modules use this shared fetcher when they need another public source file.\nshared.AetherV2FetchSource = function(path, ref)\n\treturn game:HttpGet(publicSourceUrl(path, ref), true)\nend",
@@ -78,56 +84,69 @@ for path in ('guis/new.core.lua', 'guis/old.lua', 'guis/rise.lua'):
     replace_once(path, 'local assetfunction = getcustomasset\nlocal getcustomasset', asset_function_block, 'asset API resolver')
     p = Path(path)
     text = p.read_text()
-    old_wrapper = """getcustomasset = function(path)
-\tlocal downloaded = pcall(downloadFile, path)
-\tif assetfunction and downloaded then
-\t\tlocal success, result = pcall(assetfunction, path)
-\t\tif success then return result end
-\tend
-\treturn getcustomassets[path] or ''
-end"""
+
+    # Replace either historical variable naming (suc/res or success/result), with optional comments
+    # before the wrapper. This is intentionally structural instead of a whole-block literal match.
     if asset_wrapper not in text:
-        if text.count(old_wrapper) != 1:
-            raise SystemExit(f'{path}: expected one asset wrapper, found {text.count(old_wrapper)}')
-        text = text.replace(old_wrapper, asset_wrapper, 1)
+        wrapper_pattern = (
+            r"getcustomasset = function\(path\)\n"
+            r"\tlocal downloaded = pcall\(downloadFile, path\)\n"
+            r"\tif assetfunction and downloaded then\n"
+            r"\t\tlocal (?:suc, res|success, result) = pcall\(assetfunction, path\)\n"
+            r"\t\tif (?:suc|success) then return (?:res|result) end\n"
+            r"\tend\n"
+            r"\treturn getcustomassets\[path\] or ''\n"
+            r"end"
+        )
+        text = regex_once(text, wrapper_pattern, lambda _: asset_wrapper, f'{path} asset wrapper')
 
-    # Verify the file after write. The previous GUI-side downloader validated the network response
-    # but never checked what actually landed on disk.
-    old_write = "\t\tensureDownloadFolder(path)\n\t\twritefile(path, res)\n\tend\n\treturn (func or readfile)(path)"
-    new_write = "\t\tensureDownloadFolder(path)\n\t\twritefile(path, res)\n\t\tlocal readOk, cached = pcall(readfile, path)\n\t\tif not readOk or not validDownloadedFile(path, cached) then\n\t\t\terror('Cached asset/source verification failed for '..path, 0)\n\t\tend\n\tend\n\treturn (func or readfile)(path)"
-    if new_write not in text:
-        if text.count(old_write) != 1:
-            raise SystemExit(f'{path}: expected one write verification marker, found {text.count(old_write)}')
-        text = text.replace(old_write, new_write, 1)
+    # Verify the exact bytes that landed on disk after every GUI-side lazy download.
+    if 'Cached asset/source verification failed for ' not in text:
+        write_pattern = (
+            r"(\t\tensureDownloadFolder\(path\)\n\t\twritefile\(path, res\)\n)"
+            r"(\tend\n\n?\treturn \(func or readfile\)\(path\))"
+        )
+        write_replacement = (
+            "\\1"
+            "\t\tlocal readOk, cached = pcall(readfile, path)\n"
+            "\t\tif not readOk or not validDownloadedFile(path, cached) then\n"
+            "\t\t\terror('Cached asset/source verification failed for '..path, 0)\n"
+            "\t\tend\n"
+            "\\2"
+        )
+        text = regex_once(text, write_pattern, write_replacement, f'{path} post-write verification')
 
-    # If the shared transport ever returns a bad body, retry the direct public URL before failing.
-    old_fetch = """\t\tlocal suc, res = pcall(function()
-\t\t\tif type(shared.AetherV2FetchSource) == 'function' then return shared.AetherV2FetchSource(path, installedSourceRef()) end
-\t\t\treturn game:HttpGet(remoteSourceUrl(path), true)
-\t\tend)
-\t\tif not suc then error(res) end
-\t\tif not validDownloadedFile(path, res) then error('Invalid GitHub response while downloading '..path, 0) end"""
-    new_fetch = """\t\tlocal suc, res = pcall(function()
-\t\t\tif type(shared.AetherV2FetchSource) == 'function' then
-\t\t\t\tlocal sharedOk, sharedBody = pcall(shared.AetherV2FetchSource, path, installedSourceRef())
-\t\t\t\tif sharedOk and validDownloadedFile(path, sharedBody) then return sharedBody end
-\t\t\tend
-\t\t\treturn game:HttpGet(remoteSourceUrl(path), true)
-\t\tend)
-\t\tif not suc then error(res) end
-\t\tif not validDownloadedFile(path, res) then error('Invalid GitHub response while downloading '..path, 0) end"""
-    if new_fetch not in text:
-        if text.count(old_fetch) != 1:
-            raise SystemExit(f'{path}: expected one transport fallback marker, found {text.count(old_fetch)}')
-        text = text.replace(old_fetch, new_fetch, 1)
+    # If the shared transport returns invalid bytes, retry the canonical raw GitHub URL. Account for
+    # both compact and expanded formatting in the three GUI implementations.
+    if 'local sharedOk, sharedBody = pcall(shared.AetherV2FetchSource' not in text:
+        fetch_pattern = (
+            r"\t\tlocal suc, res = pcall\(function\(\)\n"
+            r"\t\t\tif type\(shared\.AetherV2FetchSource\) == 'function' then(?:\n)?"
+            r"(?:\t\t\t\t)?return shared\.AetherV2FetchSource\(path, installedSourceRef\(\)\)(?:\n\t\t\tend)?\n"
+            r"\t\t\treturn game:HttpGet\(remoteSourceUrl\(path\), true\)\n"
+            r"\t\tend\)"
+        )
+        fetch_replacement = (
+            "\t\tlocal suc, res = pcall(function()\n"
+            "\t\t\tif type(shared.AetherV2FetchSource) == 'function' then\n"
+            "\t\t\t\tlocal sharedOk, sharedBody = pcall(shared.AetherV2FetchSource, path, installedSourceRef())\n"
+            "\t\t\t\tif sharedOk and validDownloadedFile(path, sharedBody) then return sharedBody end\n"
+            "\t\t\tend\n"
+            "\t\t\treturn game:HttpGet(remoteSourceUrl(path), true)\n"
+            "\t\tend)"
+        )
+        text = regex_once(text, fetch_pattern, lambda _: fetch_replacement, f'{path} transport fallback')
+
     p.write_text(text)
 
-# Guard against accidentally leaving the silent-success bug anywhere in the active GUI files.
+# Guards: no active GUI may treat a nil/empty local-asset return as success, and every GUI must know
+# the common alias family.
 for path in ('guis/new.core.lua', 'guis/old.lua', 'guis/rise.lua'):
     text = Path(path).read_text()
-    if "if success then return result end" in text:
+    if re.search(r"if (?:suc|success) then return (?:res|result) end", text):
         raise SystemExit(f'{path}: silent custom-asset success path still exists')
-    if 'getsynasset' not in text or 'assetfunctions' not in text:
-        raise SystemExit(f'{path}: executor asset aliases were not installed')
+    for marker in ('getsynasset', 'assetfunctions', "type(result) == 'string' and result ~= ''"):
+        if marker not in text:
+            raise SystemExit(f'{path}: missing asset compatibility marker: {marker}')
 
 print('final asset display repair applied')
