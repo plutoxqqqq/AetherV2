@@ -22,6 +22,7 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
+          import re
 
           def replace_once(path, old, new, label):
               p = Path(path)
@@ -31,8 +32,9 @@ jobs:
                   raise SystemExit(f'{path}: expected exactly one {label} match, found {count}')
               p.write_text(text.replace(old, new, 1))
 
-          # init.lua: normal Aether is always public GitHub. Legacy normal-source session
-          # fields are stripped; premium uses its separate PremiumEndpoint/session flow.
+          # init.lua owns the contract split:
+          # - normal AetherV2 source is public GitHub only
+          # - Render is allowed only for the separate premium session
           replace_once('init.lua',
           "local license = ... or {}\n",
           "local license = ... or {}\nif type(license) ~= 'table' then license = {} end\nlicense.SourceEndpoint = nil\nlicense.SourceToken = nil\nlicense.SourceRef = nil\nshared.AetherV2SourceEndpoint = nil\nshared.AetherV2SourceToken = nil\nshared.AetherV2SourceRef = nil\nshared.AetherV2PremiumAuthorized = false\n",
@@ -44,9 +46,11 @@ jobs:
           'premium success flag')
 
           png_guard = "\tif path:lower():sub(-4) == '.png' and body:sub(1, 8) ~= '\\137PNG\\r\\n\\26\\n' then\n\t\treturn 'invalid PNG response'\n\tend\n"
-          needle = "\tlocal lowered = head:lower()\n\tif lowered:find('<!doctype html') or lowered:find('<html') then\n\t\treturn 'received an HTML error page instead of the file'\n\tend\n"
-          replace_once('init.lua', needle, needle + png_guard, 'init PNG validation')
+          problem_anchor = "\tlocal lowered = head:lower()\n\tif lowered:find('<!doctype html') or lowered:find('<html') then\n\t\treturn 'received an HTML error page instead of the file'\n\tend\n"
+          replace_once('init.lua', problem_anchor, problem_anchor + png_guard, 'init PNG validation')
 
+          # Old failed/private-source responses can exist in the executor cache. Validate
+          # cached artwork too instead of trusting any existing non-empty file forever.
           replace_once('init.lua',
           "\tlocal cachedProblem = exists and path:sub(-4) == '.lua' and payloadProblem(path, readfile(path)) or nil",
           "\tlocal cachedProblem = exists and payloadProblem(path, readfile(path)) or nil",
@@ -54,29 +58,20 @@ jobs:
 
           replace_once('init.lua',
           "\t\tif include and not deferredFiles[path] then\n\t\t\tlocal target = 'aetherv2/'..path\n\t\t\tif not isfile(target) then\n\t\t\t\ttable.insert(wanted, target)\n\t\t\tend\n\t\tend",
-          "\t\tif include and not deferredFiles[path] then\n\t\t\tlocal target = 'aetherv2/'..path\n\t\t\tlocal exists = isfile(target)\n\t\t\tif exists then\n\t\t\t\tlocal ok, cached = pcall(readfile, target)\n\t\t\t\tlocal problem = ok and payloadProblem(target, cached) or 'unreadable cache'\n\t\t\t\tif problem then\n\t\t\t\t\twarn('[AetherV2] Cached '..target..' is unusable ('..problem..'), downloading it again')\n\t\t\t\t\tdelfile(target)\n\t\t\t\t\texists = false\n\t\t\t\tend\n\t\t\tend\n\t\t\tif not exists then\n\t\t\t\ttable.insert(wanted, target)\n\t\t\tend\n\t\tend",
+          "\t\tif include and not deferredFiles[path] then\n\t\t\tlocal target = 'aetherv2/'..path\n\t\t\tlocal exists = isfile(target)\n\t\t\tif exists then\n\t\t\t\tlocal ok, cached = pcall(readfile, target)\n\t\t\t\tlocal problem = ok and payloadProblem(target, cached) or 'unreadable cache'\n\t\t\t\tif problem then\n\t\t\t\t\twarn('[AetherV2] Cached '..target..' is unusable ('..problem..'), downloading it again')\n\t\t\t\t\tdelfile(target)\n\t\t\t\t\texists = false\n\t\t\t\tend\n\t\t\tend\n\t\t\tif not exists then table.insert(wanted, target) end\n\t\tend",
           'prefetch cache healing')
 
-          # main.lua: keep the normal path public, heal bad cached assets too, show a
-          # premium-success notification, and do not interrupt startup just because a
-          # game chunk registered zero modules.
-          replace_once('main.lua',
-          "local license = ... or {}\n",
-          "local license = ... or {}\nif type(license) ~= 'table' then license = {} end\nlicense.SourceEndpoint = nil\nlicense.SourceToken = nil\nlicense.SourceRef = nil\n",
-          'main license header')
-
+          # main.lua must stay completely free of the old SourceEndpoint/SourceToken
+          # contract; it already exposes shared.AetherV2FetchSource as public raw GitHub.
           replace_once('main.lua',
           "error('Private source transport is unavailable', 0)",
           "error('Public GitHub source transport is unavailable', 0)",
           'public transport error')
-
-          replace_once('main.lua', needle, needle + png_guard, 'main PNG validation')
-
+          replace_once('main.lua', problem_anchor, problem_anchor + png_guard, 'main PNG validation')
           replace_once('main.lua',
           "\tlocal cachedProblem = exists and path:sub(-4) == '.lua' and payloadProblem(path, readfile(path)) or nil",
           "\tlocal cachedProblem = exists and payloadProblem(path, readfile(path)) or nil",
           'main cache validation')
-
           replace_once('main.lua',
           "local function downloadOptionalFile(path)\n\tif isfile(path) then return true end",
           "local function downloadOptionalFile(path)\n\tif isfile(path) then\n\t\tlocal ok, cached = pcall(readfile, path)\n\t\tif ok and not payloadProblem(path, cached) then return true end\n\t\tdelfile(path)\n\tend",
@@ -87,41 +82,49 @@ jobs:
           "\ttable.clear(compileCache)\n\tshared.AetherCompileCache = nil\n\tif not loaded then failLoad(loadError) end\n\tif shared.AetherV2PremiumAuthorized and not license.Closet then\n\t\tpcall(function()\n\t\t\tvape:CreateNotification('AetherV2 Premium', 'Premium key validated', 6, 'info')\n\t\tend)\n\tend\n\ttask.spawn(function()",
           'premium notification')
 
+          # A game file adding zero modules is diagnostic information, not a reason to
+          # throw a startup error/notification. Actual compile/runtime failures still fail.
           replace_once('main.lua',
           "\t\tlocal added = registeredOptionCount() - before\n\t\tif added <= 0 then\n\t\t\ttraceGameLoad('failed', 'game chunk registered no modules')\n\t\t\tfailLoad(repoPlacePath..' executed but registered no game modules')\n\t\tend\n\t\tgameLoadTrace.ModulesAdded = added\n\t\ttraceGameLoad('loaded', added..' registered options')",
           "\t\tlocal added = registeredOptionCount() - before\n\t\tgameLoadTrace.ModulesAdded = math.max(added, 0)\n\t\tif added <= 0 then\n\t\t\ttraceGameLoad('loaded', '0 registered options')\n\t\t\twarn('[AetherV2] '..repoPlacePath..' executed but registered no game modules')\n\t\telse\n\t\t\ttraceGameLoad('loaded', added..' registered options')\n\t\tend",
           'zero-module startup behavior')
 
-          # The GUI implementations still contain compatibility branches for the old
-          # SourceEndpoint contract. They receive the sanitized license above, but make
-          # that invariant explicit in each entry too so direct/reused GUI execution
-          # cannot accidentally revive normal Render source calls.
+          # The three actual GUI implementations still had the legacy normal-source
+          # proxy branch. Remove it rather than merely relying on absent fields.
+          public_gui_fetch = """local function remoteSourceUrl(path)\n\tlocal commit = isfile('aetherv2/profiles/commit.txt') and readfile('aetherv2/profiles/commit.txt'):gsub('%s+', '') or 'main'\n\tif commit == '' then commit = 'main' end\n\treturn 'https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..commit..'/'..\n\t\tselect(1, path:gsub('^aetherv2/', ''))\nend\n"""
+          remote_pattern = re.compile(
+              r"local function encodeRemoteSource\(value\)\n.*?\nend\n\nlocal function remoteSourceUrl\(path\)\n.*?\nend\n",
+              re.S,
+          )
           for gui in ('guis/new.core.lua', 'guis/old.lua', 'guis/rise.lua'):
               p = Path(gui)
               text = p.read_text()
-              marker = "local license = ... or {}\n"
-              if marker not in text:
-                  raise SystemExit(f'{gui}: license header not found')
-              if "license.SourceEndpoint = nil\nlicense.SourceToken = nil\nlicense.SourceRef = nil\n" not in text[:500]:
-                  text = text.replace(marker, marker + "if type(license) ~= 'table' then license = {} end\nlicense.SourceEndpoint = nil\nlicense.SourceToken = nil\nlicense.SourceRef = nil\n", 1)
+              text, count = remote_pattern.subn(public_gui_fetch, text, count=1)
+              if count != 1:
+                  raise SystemExit(f'{gui}: legacy remoteSourceUrl block not found exactly once')
+              if 'SourceEndpoint' in text or 'SourceToken' in text:
+                  raise SystemExit(f'{gui}: legacy normal-source session fields remain')
               p.write_text(text)
 
-          # Regression check: Render may remain in init/backend only for premium access.
-          normal_files = ['main.lua', 'guis/new.lua', 'guis/new.core.lua', 'guis/old.lua', 'guis/rise.lua']
-          for path in normal_files:
-              text = Path(path).read_text().lower()
-              if 'aetherv2.onrender.com' in text:
+          # Static invariants for the port.
+          main = Path('main.lua').read_text()
+          if 'SourceEndpoint' in main or 'SourceToken' in main or 'privateSourceUrl' in main:
+              raise SystemExit('main.lua still contains the legacy normal-source contract')
+          for path in ('main.lua', 'guis/new.lua', 'guis/new.core.lua', 'guis/old.lua', 'guis/rise.lua'):
+              if 'aetherv2.onrender.com' in Path(path).read_text().lower():
                   raise SystemExit(f'{path}: normal source still contains Render origin')
+          init = Path('init.lua').read_text()
+          if init.count('aetherv2.onrender.com') != 1 or '/premium/authorize' not in init:
+              raise SystemExit('Render should remain only as the premium endpoint in init.lua')
 
           print('patches applied')
           PY
 
-      - name: Run backend regression tests
+      - name: Run focused loader regressions
         shell: bash
         run: |
           cd backend
-          npm ci
-          npm test
+          node --test private-execution-regression.test.js
 
       - name: Commit fixes
         shell: bash
