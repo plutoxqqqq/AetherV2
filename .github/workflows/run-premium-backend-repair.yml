@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - tools/premium_backend_repair.py
+      - tools/finalize_premium_tests.py
       - .github/workflows/run-premium-backend-repair.yml
 
 permissions:
@@ -25,8 +26,6 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
 
-          # The repair generator stores JavaScript in Python raw strings. Its embedded JS was
-          # written with an extra escaping layer, so collapse exactly one layer before validation.
           for name in (
               'backend/private-source.js',
               'backend/private-source.test.js',
@@ -39,7 +38,6 @@ jobs:
               text = text.replace('\\\\', '\\')
               path.write_text(text)
 
-          # Avoid a slash-regex entirely for origin normalization.
           path = Path('backend/private-source.js')
           lines = path.read_text().splitlines()
           for index, line in enumerate(lines):
@@ -53,6 +51,8 @@ jobs:
               raise SystemExit('PUBLIC_ORIGIN declaration not found')
           path.write_text('\n'.join(lines) + '\n')
           PY
+      - name: Align premium-only regressions
+        run: python3 tools/finalize_premium_tests.py
       - name: Install backend dependencies
         run: cd backend && npm ci
       - name: Check backend syntax
@@ -61,11 +61,24 @@ jobs:
         run: cd backend && npm test
       - name: Verify architecture
         run: |
-          python3 -c "from pathlib import Path; s=Path('backend/private-source.js').read_text(); b=Path('backend/discord-bot.js').read_text(); assert \"url.pathname === '/loader'\" not in s; assert \"url.pathname === '/authorize'\" not in s; assert \"url.pathname === '/source'\" not in s; assert \"url.pathname === '/commit'\" not in s; assert \"url.pathname === '/history'\" not in s; assert \"url.pathname === '/tree'\" not in s; assert \"url.pathname === '/premium/authorize'\" in s; assert \"url.pathname === '/premium/source'\" in s; assert \"url.pathname === '/premium/tree'\" in s; assert '/loader?key=' not in b; assert 'premiumKey = ' in b; assert 'const copyable =' in b"
+          python3 - <<'PY'
+          from pathlib import Path
+          s = Path('backend/private-source.js').read_text()
+          b = Path('backend/discord-bot.js').read_text()
+          for route in ('/loader', '/authorize', '/source', '/commit', '/history', '/tree'):
+              assert "url.pathname === '" + route + "'" not in s
+          for route in ('/premium/authorize', '/premium/source', '/premium/tree'):
+              assert "url.pathname === '" + route + "'" in s
+          assert '/loader?key=' not in b
+          assert 'premiumKey = ' in b
+          assert 'const copyable =' in b
+          assert "codeBlock(value, language) + '\\n' + inline(value)" in b
+          print('premium-only architecture verification passed')
+          PY
       - name: Commit repair
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add backend/private-source.js backend/private-source.test.js backend/discord-bot.js backend/discord-bot.test.js backend/README.md
+          git add backend/private-source.js backend/private-source.test.js backend/discord-bot.js backend/discord-bot.test.js backend/private-execution-regression.test.js backend/key-registry.test.js backend/README.md
           git commit -m "Make Render premium-only and update key bot"
           git push
