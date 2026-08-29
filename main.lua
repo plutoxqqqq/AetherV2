@@ -169,6 +169,9 @@ local function payloadProblem(path, body)
 	if lowered:find('<!doctype html') or lowered:find('<html') then
 		return 'received an HTML error page instead of the file'
 	end
+	if path:lower():sub(-4) == '.png' and body:sub(1, 8) ~= '\137PNG\r\n\26\n' then
+		return 'invalid PNG response'
+	end
 	if path:sub(-4) == '.lua' and not sourceHasCode(path, body) then
 		return 'the numeric game module contains no executable code'
 	end
@@ -185,7 +188,7 @@ local function fetchFile(path, attempts)
 	for attempt = 1, attempts do
 		local suc, res = pcall(function()
 			if type(shared.AetherV2FetchSource) ~= 'function' then
-				error('Private source transport is unavailable', 0)
+				error('Public GitHub source transport is unavailable', 0)
 			end
 			return shared.AetherV2FetchSource(path, ref)
 		end)
@@ -205,7 +208,7 @@ end
 
 local function downloadFile(path, func)
 	local exists = isfile(path)
-	local cachedProblem = exists and path:sub(-4) == '.lua' and payloadProblem(path, readfile(path)) or nil
+	local cachedProblem = exists and payloadProblem(path, readfile(path)) or nil
 	if cachedProblem then
 		warn('[AetherV2] Cached '..path..' is unusable ('..cachedProblem..'), downloading it again')
 		delfile(path)
@@ -227,7 +230,11 @@ local function downloadFile(path, func)
 end
 
 local function downloadOptionalFile(path)
-	if isfile(path) then return true end
+	if isfile(path) then
+		local ok, cached = pcall(readfile, path)
+		if ok and not payloadProblem(path, cached) then return true end
+		delfile(path)
+	end
 	local ref = readfile('aetherv2/profiles/commit.txt')
 	local suc, res = pcall(function()
 		if type(shared.AetherV2FetchSource) ~= 'function' then return nil end
@@ -433,6 +440,11 @@ local function finishLoading()
 	table.clear(compileCache)
 	shared.AetherCompileCache = nil
 	if not loaded then failLoad(loadError) end
+	if shared.AetherV2PremiumAuthorized and not license.Closet then
+		pcall(function()
+			vape:CreateNotification('AetherV2 Premium', 'Premium key validated', 6, 'info')
+		end)
+	end
 	task.spawn(function()
 		repeat
 			vape:Save()
@@ -627,12 +639,13 @@ if not shared.VapeIndependent then
 		traceGameLoad('executing', #placeSource..' bytes')
 		runWatchedChunk(placeSource, modulePlace, 'Loading module for this game', 75, false, license)
 		local added = registeredOptionCount() - before
+		gameLoadTrace.ModulesAdded = math.max(added, 0)
 		if added <= 0 then
-			traceGameLoad('failed', 'game chunk registered no modules')
-			failLoad(repoPlacePath..' executed but registered no game modules')
+			traceGameLoad('loaded', '0 registered options')
+			warn('[AetherV2] '..repoPlacePath..' executed but registered no game modules')
+		else
+			traceGameLoad('loaded', added..' registered options')
 		end
-		gameLoadTrace.ModulesAdded = added
-		traceGameLoad('loaded', added..' registered options')
 	end
 	loadPremiumModules()
 	finishLoading()

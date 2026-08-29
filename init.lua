@@ -1,5 +1,13 @@
 --!nocheck
 local license = ... or {}
+if type(license) ~= 'table' then license = {} end
+license.SourceEndpoint = nil
+license.SourceToken = nil
+license.SourceRef = nil
+shared.AetherV2SourceEndpoint = nil
+shared.AetherV2SourceToken = nil
+shared.AetherV2SourceRef = nil
+shared.AetherV2PremiumAuthorized = false
 
 -- A cached Lua file used to be compiled once to validate it and then compiled again moments later
 -- to execute it.  The GUI and game chunks are large, so that duplicate parser/codegen work was a
@@ -85,6 +93,7 @@ local function authorizePremium()
 	shared.AetherV2PremiumFetchTree = function()
 		return game:HttpGet(session.Endpoint..'/premium/tree?session='..premiumEncode(session.Token), true)
 	end
+	shared.AetherV2PremiumAuthorized = true
 	return true
 end
 local isfile = isfile or function(file)
@@ -402,6 +411,9 @@ local function payloadProblem(path, body)
 	if lowered:find('<!doctype html') or lowered:find('<html') then
 		return 'received an HTML error page instead of the file'
 	end
+	if path:lower():sub(-4) == '.png' and body:sub(1, 8) ~= '\137PNG\r\n\26\n' then
+		return 'invalid PNG response'
+	end
 	if path:sub(-4) == '.lua' and not sourceHasCode(path, body) then
 		return 'the numeric game module contains no executable code'
 	end
@@ -462,7 +474,7 @@ end
 local function downloadFile(path, func)
 	-- Heal a broken cache instead of trusting it forever.
 	local exists = isfile(path)
-	local cachedProblem = exists and path:sub(-4) == '.lua' and payloadProblem(path, readfile(path)) or nil
+	local cachedProblem = exists and payloadProblem(path, readfile(path)) or nil
 	if cachedProblem then
 		warn('[AetherV2] Cached '..path..' is unusable ('..cachedProblem..'), downloading it again')
 		delfile(path)
@@ -839,9 +851,17 @@ local function neededFiles(files)
 		end
 		if include and not deferredFiles[path] then
 			local target = 'aetherv2/'..path
-			if not isfile(target) then
-				table.insert(wanted, target)
+			local exists = isfile(target)
+			if exists then
+				local ok, cached = pcall(readfile, target)
+				local problem = ok and payloadProblem(target, cached) or 'unreadable cache'
+				if problem then
+					warn('[AetherV2] Cached '..target..' is unusable ('..problem..'), downloading it again')
+					delfile(target)
+					exists = false
+				end
 			end
+			if not exists then table.insert(wanted, target) end
 		end
 	end
 	return wanted

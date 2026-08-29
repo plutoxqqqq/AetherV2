@@ -324,27 +324,11 @@ local function createHighlight(size, pos)
 	end
 end
 
-local function encodeRemoteSource(value)
-	return tostring(value):gsub('([^%w%-%._~])', function(character)
-		return string.format('%%%02X', string.byte(character))
-	end)
-end
-
 local function remoteSourceUrl(path)
-	local endpoint = type(license) == 'table' and license.SourceEndpoint
-	if type(endpoint) == 'string' and endpoint ~= '' then
-		endpoint = endpoint:gsub('/+$', '')
-		local token = type(license.SourceToken) == 'string' and license.SourceToken or nil
-		if not token or token == '' then error('Private source session is missing its session token', 0) end
-		local ref = isfile('aetherv2/profiles/commit.txt') and readfile('aetherv2/profiles/commit.txt'):gsub('%s+', '') or ''
-		ref = ref ~= '' and ref or (type(license.SourceRef) == 'string' and license.SourceRef or '')
-		if ref == '' then error('Private source ref is missing', 0) end
-		return endpoint..'/source?path='..encodeRemoteSource(path:gsub('^aetherv2/', ''))..
-			'&ref='..encodeRemoteSource(ref)..'&session='..encodeRemoteSource(token)
-	end
 	local commit = isfile('aetherv2/profiles/commit.txt') and readfile('aetherv2/profiles/commit.txt'):gsub('%s+', '') or 'main'
+	if commit == '' then commit = 'main' end
 	return 'https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..commit..'/'..
-		select(1, path:gsub('aetherv2/', ''))
+		select(1, path:gsub('^aetherv2/', ''))
 end
 
 local function downloadFile(path, func)
