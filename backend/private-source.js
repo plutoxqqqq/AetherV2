@@ -54,7 +54,7 @@ const defaultAllowedPaths = [
 ];
 const allowedPaths = (process.env.AETHER_ALLOWED_PATHS || defaultAllowedPaths.join(','))
   .split(',').map(value => value.trim()).filter(Boolean);
-const defaultPremiumAllowedPaths = ['init.lua', 'modules/', 'assets/', 'libraries/'];
+const defaultPremiumAllowedPaths = ['games/'];
 const premiumAllowedPaths = (process.env.PREMIUM_ALLOWED_PATHS || defaultPremiumAllowedPaths.join(','))
   .split(',').map(value => value.trim()).filter(Boolean);
 
@@ -296,6 +296,15 @@ const tree = async ref => {
   return JSON.stringify(value);
 };
 
+const premiumTree = async () => {
+  if (!premiumGithub) throw problem('Premium source is not configured', 503);
+  const value = await (await premiumGithub('git/trees/' + encodeURIComponent(PREMIUM_BRANCH) + '?recursive=1')).json();
+  if (!value || !Array.isArray(value.tree) || value.truncated) throw problem('GitHub returned an incomplete premium tree', 502);
+  value.tree = value.tree.filter(entry => entry && entry.type === 'blob' && typeof entry.path === 'string' &&
+    entry.path.endsWith('.lua') && premiumClientPath(entry.path));
+  return JSON.stringify(value);
+};
+
 const validKey = value => registry.isValidKey(value);
 
 const pruneSessions = () => {
@@ -419,8 +428,14 @@ const server = http.createServer(async (req, res) => {
       if (!premiumEnabled) return json(res, 503, {success: false, error: 'Premium modules are not configured yet'});
       requireSession(url);
       const file = url.searchParams.get('path');
-      if (!premiumClientPath(file)) return json(res, 403, {success: false, error: 'This premium path is not available through the client proxy'});
+      if (!premiumClientPath(file) || !file.endsWith('.lua')) return json(res, 403, {success: false, error: 'This premium path is not available through the client proxy'});
       return text(res, 200, await premiumSourceFile(file));
+    }
+
+    if (req.method === 'GET' && url.pathname === '/premium/tree') {
+      if (!premiumEnabled) return json(res, 503, {success: false, error: 'Premium modules are not configured yet'});
+      requireSession(url);
+      return text(res, 200, await premiumTree(), 'application/json; charset=utf-8');
     }
 
     if (req.method === 'GET' && url.pathname === '/authorize') {
@@ -504,6 +519,7 @@ module.exports = {
   sessions,
   sourceFile,
   premiumSourceFile,
+  premiumTree,
   commitSha,
   versionHistory,
   tree
