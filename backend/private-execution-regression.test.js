@@ -22,18 +22,19 @@ const aliases = [
   ['80041634734121', '77790193039862']
 ];
 
-test('each authorized loader session owns fresh immutable-ref approval state', () => {
-  assert.match(sourceServer, /shared\.AetherResolvedCommit = nil/);
-  assert.match(sourceServer, /SourceEndpoint = endpoint/);
-  assert.match(sourceServer, /SourceToken = session/);
-  assert.match(sourceServer, /SourceRef = ref/);
+test('premium sessions are separate from the public AetherV2 source path', () => {
+  assert.match(sourceServer, /PREMIUM_GITHUB_REPO/);
+  assert.match(sourceServer, /const premiumSessionLoader/);
+  assert.match(sourceServer, /url\.pathname === '\/premium\/authorize'/);
+  assert.match(sourceServer, /url\.pathname === '\/premium\/source'/);
+  assert.match(sourceServer, /premiumSourceFile/);
 });
 
-test('game and GUI helpers inherit the authenticated private source transport', () => {
-  assert.match(sourceServer, /shared\.AetherV2FetchSource = function/);
-  assert.match(main, /shared\.AetherV2FetchSource = function/);
-  assert.match(main, /shared\.AetherV2FetchSource\(path, ref\)/);
-  assert.equal(main.includes('raw.githubusercontent.com/plutoxqqqq/AetherV2'), false);
+test('public AetherV2 always uses raw GitHub while premium remains session-gated', () => {
+  assert.match(main, /raw\.githubusercontent\.com\/plutoxqqqq\/AetherV2/);
+  assert.doesNotMatch(main, /SourceEndpoint|SourceToken|privateSourceUrl/);
+  assert.match(init, /pcall\(authorizePremium\)/);
+  assert.match(main, /local function loadPremiumModules/);
 });
 
 test('restored execution keeps exact PlaceId dispatch', () => {
