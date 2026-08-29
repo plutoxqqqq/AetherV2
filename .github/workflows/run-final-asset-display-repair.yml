@@ -5,7 +5,7 @@ on:
     branches:
       - main
     paths:
-      - tools/final_asset_display_repair.py
+      - tools/apply_asset_runtime_fix.py
       - .github/workflows/run-final-asset-display-repair.yml
 
 permissions:
@@ -18,8 +18,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Apply repair
-        run: python3 tools/final_asset_display_repair.py
+      - name: Apply focused repair
+        run: python3 tools/apply_asset_runtime_fix.py
       - name: Verify repaired asset paths
         run: |
           python3 - <<'PY'
@@ -29,12 +29,14 @@ jobs:
           assert "cleanPath:sub(1, 7) == 'assets/'" in init
           assert "cleanPath:sub(1, 7) == 'assets/'" in main
           assert 'localAssetFunctions' in init
+          assert 'request or http_request' in init
           for name in ('guis/new.core.lua', 'guis/old.lua', 'guis/rise.lua'):
               text = Path(name).read_text()
               assert 'addAssetFunction(getsynasset)' in text
               assert "type(result) == 'string' and result ~= ''" in text
               assert 'Cached asset/source verification failed for ' in text
               assert "if success then return result end" not in text
+              assert "if suc then return res end" not in text
           print('asset display static verification passed')
           PY
       - name: Run execution regression
