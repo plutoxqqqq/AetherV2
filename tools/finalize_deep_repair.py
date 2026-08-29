@@ -22,8 +22,6 @@ if append_marker not in text:
     text += r'''
 
 # FINAL_DEEP_REPAIR_PATCHES
-# The loading screen refreshes its logo after the parallel asset fetch. Guard that second call too;
-# some executors support the filesystem but do not expose a custom-asset registration function.
 p = Path('init.lua')
 t = p.read_text()
 old = "\t\t\tlogo.Image = getcustomasset('aetherv2/assets/new/loading.png')"
@@ -34,22 +32,20 @@ elif new not in t:
     raise SystemExit('late loading logo path not found')
 p.write_text(t)
 
-# The old regression explicitly required the deleted first-run release-channel branch. Assert the
-# new current-public-ref and synchronous asset-healing invariants instead.
 p = Path('backend/private-execution-regression.test.js')
 t = p.read_text()
 old = """test('the first authorized run publishes the exact source tree to main', () => {
-  assert.match(initSource, /prefetchPaths = fetchFileList\\(initialRef\\)/);
-  assert.match(initSource, /shared\\.AetherV2KnownSourceFiles = prefetchPaths/);
-  assert.match(mainSource, /knownSourceFiles\\[repoPlacePath\\]/);
+  assert.match(init, /prefetchPaths = fetchFileList\\(initialRef\\)/);
+  assert.match(init, /shared\\.AetherV2KnownSourceFiles = prefetchPaths/);
+  assert.match(main, /knownFiles\\[repoPlacePath\\] ~= nil/);
 });"""
 new = """test('public loader heals stale refs and publishes the current source tree', () => {
-  assert.match(initSource, /shared\\.AetherV2PublicRef = commit/);
-  assert.match(initSource, /fetchFileList\\(shared\\.AetherV2PublicRef or 'main'\\)/);
-  assert.match(initSource, /verifySelectedAssets\\(prefetchPaths\\)/);
-  assert.doesNotMatch(initSource, /selectedReleaseChannel|releasechannel\\.txt/);
-  assert.match(initSource, /shared\\.AetherV2KnownSourceFiles = prefetchPaths/);
-  assert.match(mainSource, /knownSourceFiles\\[repoPlacePath\\]/);
+  assert.match(init, /shared\\.AetherV2PublicRef = commit/);
+  assert.match(init, /fetchFileList\\(shared\\.AetherV2PublicRef or 'main'\\)/);
+  assert.match(init, /verifySelectedAssets\\(prefetchPaths\\)/);
+  assert.doesNotMatch(init, /selectedReleaseChannel|releasechannel\\.txt/);
+  assert.match(init, /shared\\.AetherV2KnownSourceFiles = prefetchPaths/);
+  assert.match(main, /knownFiles\\[repoPlacePath\\] ~= nil/);
 });"""
 if old in t:
     t = t.replace(old, new, 1)
