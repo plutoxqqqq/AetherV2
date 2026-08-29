@@ -325,11 +325,12 @@ local function downloadFile(path, func)
 	return (func or readfile)(path)
 end
 
-getcustomasset = not inputService.TouchEnabled and assetfunction and function(path)
-	local success, result = pcall(downloadFile, path, assetfunction)
-	if success then return result end
-	return getcustomassets[path] or ''
-end or function(path)
+getcustomasset = function(path)
+	local downloaded = pcall(downloadFile, path)
+	if not inputService.TouchEnabled and assetfunction and downloaded then
+		local success, result = pcall(assetfunction, path)
+		if success then return result end
+	end
 	return getcustomassets[path] or ''
 end
 

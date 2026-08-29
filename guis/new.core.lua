@@ -632,14 +632,10 @@ local function encodeRemoteSource(value)
 	end)
 end
 
--- Private-source sessions cannot use public raw GitHub URLs. Keep all GUI-side lazy loads and
--- reinjections on the same authenticated source route as the initial loader.
 local versionPinPath = 'aetherv2/profiles/version-pin.txt'
 
 local function sourceBranch()
-	local configured = type(license) == 'table' and license.SourceEndpoint and license.SourceRef or nil
-	configured = type(configured) == 'string' and configured:gsub('%s+', '') or ''
-	return configured ~= '' and configured or 'main'
+	return 'main'
 end
 
 local function installedSourceRef()
@@ -647,82 +643,88 @@ local function installedSourceRef()
 	return ref ~= '' and ref or sourceBranch()
 end
 
-local function sourceSession()
-	local token = type(license) == 'table' and license.SourceToken or nil
-	if type(token) ~= 'string' or token == '' then error('Private source session is missing its session token', 0) end
-	return token
-end
-
--- Private-source sessions cannot use public raw GitHub URLs. Keep all GUI-side lazy loads,
--- version lookups, and reinjections on the same authenticated source route as the loader.
 local function remoteSourceUrl(path, ref)
-	local endpoint = type(license) == 'table' and license.SourceEndpoint
-	if type(endpoint) == 'string' and endpoint ~= '' then
-		endpoint = endpoint:gsub('/+$', '')
-		local selectedRef = ref or installedSourceRef()
-		return endpoint..'/source?path='..encodeRemoteSource(path:gsub('^aetherv2/', ''))..
-			'&ref='..encodeRemoteSource(selectedRef)..'&session='..encodeRemoteSource(sourceSession())
-	end
-
 	local selectedRef = ref or installedSourceRef()
 	return 'https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..selectedRef..'/'..
-		select(1, path:gsub('aetherv2/', ''))
+		select(1, path:gsub('^aetherv2/', ''))
 end
 
 local function remoteLoaderUrl()
-	local endpoint = type(license) == 'table' and license.SourceEndpoint
-	if type(endpoint) == 'string' and endpoint ~= '' then
-		endpoint = endpoint:gsub('/+$', '')
-		return endpoint..'/source?path=init.lua&ref='..encodeRemoteSource(sourceBranch())..
-			'&session='..encodeRemoteSource(sourceSession())
-	end
 	return 'https://raw.githubusercontent.com/plutoxqqqq/AetherV2/main/init.lua'
 end
 
 local function remoteCommitUrl(ref)
-	local endpoint = type(license) == 'table' and license.SourceEndpoint
-	if type(endpoint) == 'string' and endpoint ~= '' then
-		endpoint = endpoint:gsub('/+$', '')
-		return endpoint..'/commit?ref='..encodeRemoteSource(ref)..'&session='..encodeRemoteSource(sourceSession())
-	end
 	return 'https://api.github.com/repos/plutoxqqqq/AetherV2/commits/'..encodeRemoteSource(ref)
 end
 
 local function remoteHistoryUrl(limit)
-	local endpoint = type(license) == 'table' and license.SourceEndpoint
 	local requested = math.clamp(tonumber(limit) or 11, 1, 11)
-	if type(endpoint) == 'string' and endpoint ~= '' then
-		endpoint = endpoint:gsub('/+$', '')
-		return endpoint..'/history?ref='..encodeRemoteSource(sourceBranch())..
-			'&limit='..tostring(requested)..'&session='..encodeRemoteSource(sourceSession())
-	end
 	return 'https://api.github.com/repos/plutoxqqqq/AetherV2/commits?sha=main&per_page='..tostring(requested)
 end
 
+local function validDownloadedFile(path, body)
+	if type(body) ~= 'string' or #body < 8 then return false end
+	local head = body:sub(1, 300):lower()
+	if head:find('^%s*404') or head:find('^%s*429') or head:find('^%s*5%d%d:')
+		or head:find('<!doctype html') or head:find('<html') then
+		return false
+	end
+	if path:lower():sub(-4) == '.png' then
+		return body:sub(1, 8) == '\137PNG\r\n\26\n'
+	end
+	return true
+end
+
+local function ensureDownloadFolder(path)
+	local parent = path:gsub('\\', '/'):match('^(.*)/[^/]+$')
+	if not parent then return end
+	local built = ''
+	for segment in parent:gmatch('[^/]+') do
+		built = built == '' and segment or built..'/'..segment
+		if not isfolder(built) then pcall(makefolder, built) end
+	end
+end
+
 local function downloadFile(path, func)
-	if not isfile(path) then
+	local exists = isfile(path)
+	if exists then
+		local ok, cached = pcall(readfile, path)
+		if not ok or not validDownloadedFile(path, cached) then
+			if delfile then pcall(delfile, path) else pcall(writefile, path, '') end
+			exists = false
+		end
+	end
+
+	if not exists then
 		createDownloader(path)
 		local suc, res = pcall(function()
+			if type(shared.AetherV2FetchSource) == 'function' then
+				return shared.AetherV2FetchSource(path, installedSourceRef())
+			end
 			return game:HttpGet(remoteSourceUrl(path), true)
 		end)
-		if not suc or res == '404: Not Found' then
-			error(res)
+		if not suc then error(res) end
+		if not validDownloadedFile(path, res) then
+			error('Invalid GitHub response while downloading '..path, 0)
 		end
-		if path:find('.lua') then
+		if path:sub(-4) == '.lua' then
 			res = '--This watermark is used to delete the file if its cached, remove it to make the file persist after vape updates.\n'..res
 		end
+		ensureDownloadFolder(path)
 		writefile(path, res)
 	end
+
 	return (func or readfile)(path)
 end
 
-getcustomasset = assetfunction and function(path)
-	local suc, res = pcall(downloadFile, path, assetfunction)
-	if suc then
-		return res
+-- Download/cache the file even when the executor cannot register custom local assets.
+-- assetfunction only controls whether we can display that cached file directly.
+getcustomasset = function(path)
+	local downloaded = pcall(downloadFile, path)
+	if assetfunction and downloaded then
+		local suc, res = pcall(assetfunction, path)
+		if suc then return res end
 	end
-	return getcustomassets[path] or ''
-end or function(path)
 	return getcustomassets[path] or ''
 end
 
