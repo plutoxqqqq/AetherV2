@@ -14820,79 +14820,43 @@ end)
 
 
 run(function()
-    local AutoPlay
-    local Random
-    -- One queue attempt in flight at a time; the death and match-end paths can both fire.
-    local queueing = false
-
-    local function isEveryoneDead()
-        return #bedwars.Store:getState().Party.members <= 0
-    end
-
-    -- BedWars only accepts a queue request from the party leader, and only while the party is not
-    -- already queued. Playing solo there is no party at all, so reading Party.leader.userId threw
-    -- straight out of the event handler and the queue was never even attempted - which is most of
-    -- "AutoPlay doesn't queue". A missing leader is us.
-    local function canQueue()
-        local ok, res = pcall(function()
-            local state = bedwars.Store:getState()
-            if state.Game.customMatch then return false end
-            local party = state.Party
-            local leader = party and party.leader
-            if leader and leader.userId and leader.userId ~= lplr.UserId then return false end
-            return (party and party.queueState or 0) == 0
-        end)
-        return ok and res == true
-    end
-
-    local function pickMode()
-        if not Random.Enabled then return store.queueType end
-        local listofmodes = {}
-        pcall(function()
-            for i, v in bedwars.QueueMeta do
-                if not v.disabled and not v.voiceChatOnly and not v.rankCategory then
-                    table.insert(listofmodes, i)
-                end
-            end
-        end)
-        return #listofmodes > 0 and listofmodes[math.random(1, #listofmodes)] or store.queueType
-    end
-
-    local function joinQueue()
-        if queueing or not AutoPlay.Enabled or not canQueue() then return end
-        queueing = true
-        local mode = pickMode()
-        pcall(function() bedwars.QueueController:joinQueue(mode) end)
-        -- The request sent on the match-end frame is sometimes swallowed while the end screen is
-        -- still animating in. Check back once and send it again if nothing took, rather than
-        -- firing blind and sitting in the lobby.
-        task.delay(6, function()
-            if AutoPlay.Enabled and canQueue() then
-                pcall(function() bedwars.QueueController:joinQueue(mode) end)
-            end
-            queueing = false
-        end)
-    end
-
-    AutoPlay = vape.Categories.Utility:CreateModule({
-        Name = 'AutoPlay',
-        Function = function(callback)
-            if callback then
-                queueing = false
-                AutoPlay:Clean(vapeEvents.EntityDeathEvent.Event:Connect(function(deathTable)
-                    if deathTable.finalKill and deathTable.entityInstance == lplr.Character and isEveryoneDead() and store.matchState ~= 2 then
-                        joinQueue()
-                    end
-                end))
-                AutoPlay:Clean(vapeEvents.MatchEndEvent.Event:Connect(joinQueue))
-            end
-        end,
-        Tooltip = 'Automatically queues after the match ends'
-    })
-    Random = AutoPlay:CreateToggle({
-        Name = 'Random',
-        Tooltip = 'Chooses a random mode'
-    })
+	local AutoPlay
+	local Random
+	
+	local function joinQueue()
+		if not bedwars.Store:getState().Game.customMatch and bedwars.Store:getState().Party.leader.userId == lplr.UserId and bedwars.Store:getState().Party.queueState == 0 then
+			if Random.Enabled then
+				local listofmodes = {}
+				for i, v in bedwars.QueueMeta do
+					if not v.disabled and not v.voiceChatOnly and not v.rankCategory then
+						table.insert(listofmodes, i)
+					end
+				end
+				bedwars.QueueController:joinQueue(listofmodes[math.random(1, #listofmodes)])
+			else
+				bedwars.QueueController:joinQueue(store.queueType)
+			end
+		end
+	end
+	
+	AutoPlay = vape.Categories.Utility:CreateModule({
+		Name = 'AutoPlay',
+		Function = function(callback)
+			if callback then
+				AutoPlay:Clean(vapeEvents.EntityDeathEvent.Event:Connect(function(deathTable)
+					if deathTable.finalKill and deathTable.entityInstance == lplr.Character and #bedwars.Store:getState().Party.members <= 0 and store.matchState ~= 2 then
+						joinQueue()
+					end
+				end))
+				AutoPlay:Clean(vapeEvents.MatchEndEvent.Event:Connect(joinQueue))
+			end
+		end,
+		Tooltip = 'Automatically queues after the match ends'
+	})
+	Random = AutoPlay:CreateToggle({
+		Name = 'Random',
+		Tooltip = 'Chooses a random mode'
+	})
 end)
 
 run(function()
@@ -28958,47 +28922,111 @@ end)
 ]]
 
 run(function()
-    local ArmorTrims
-    local Color
-    local Type
-
-    ArmorTrims = vape.Categories.Legit:CreateModule({
-        Name = 'ArmorTrims',
-        Function = function(callback)
-            if callback then
-                ArmorTrims:Clean(entitylib.Events.LocalAdded:Connect(function(ent)
-				task.delay(1, function()
-                        if not ArmorTrims.Enabled then return end
-					lplr:SetAttribute('ArmorTrimType', Type.Value)
-                        lplr:SetAttribute('ArmorTrimColor', Color3.fromHSV(Color.Hue, Color.Sat, Color.Value))
-				end)
-			end))
-            end
-        end
-    })
-
-    local list = {}
-    for i = 1, 12 do
-        table.insert(list, 'trim_'.. i)
-    end
-    Type = ArmorTrims:CreateDropdown({
-        Name = 'Trim type',
-        List = list,
-        Default = list[1],
-        Function = function(val)
-            if ArmorTrims.Enabled and lplr.Character then
-                lplr:SetAttribute('ArmorTrimType', val)
-            end
-        end
-    })
-    Color = ArmorTrims:CreateColorSlider({
-        Name = 'Trim color',
-        Function = function(hue, sat, val)
-            if ArmorTrims.Enabled and lplr.Character then
-                lplr:SetAttribute('ArmorTrimColor', Color3.fromHSV(hue, sat, val))
-            end
-        end
-    })
+	local ArmorChanger
+	local Trim
+	local Color
+	local Effect
+	local Rank
+	
+	local added = {}
+	local trims, colors, effects = {}, {}, {}
+	
+	for _, trim in bedwars.ArmorTrimType do
+		table.insert(trims, trim)
+	end
+	table.sort(trims)
+	
+	for _, color in bedwars.ArmorTrimColor do
+		table.insert(colors, color)
+	end
+	table.sort(colors)
+	
+	for _, effect in bedwars.ArmorTrimEffectType do
+		table.insert(effects, effect)
+	end
+	table.sort(effects)
+	
+	local function clearTrim()
+		for _, v in added do
+			if v.Parent then
+				v:Destroy()
+			end
+		end
+		table.clear(added)
+	end
+	
+	local function applyTrim()
+		clearTrim()
+		if not ArmorChanger.Enabled or not lplr.Character then return end
+	
+		local before = {}
+		for _, v in lplr.Character:GetDescendants() do
+			before[v] = true
+		end
+	
+		bedwars.ArmorTrimController:attachArmorTrimEffects(lplr.Character, Trim.Value, Color.Value, Rank.Value - 1, Effect.Value)
+	
+		for _, v in lplr.Character:GetDescendants() do
+			if not before[v] then
+				table.insert(added, v)
+			end
+		end
+	end
+	
+	ArmorChanger = vape.Categories.Render:CreateModule({
+		Name = 'ArmorTrims',
+		Function = function(callback)
+			if callback then
+				ArmorChanger:Clean(lplr.CharacterAdded:Connect(function()
+					task.wait(1)
+					applyTrim()
+				end))
+				ArmorChanger:Clean(clearTrim)
+			end
+			applyTrim()
+		end,
+		Tooltip = 'Puts an armor trim on yourself, only you can see it'
+	})
+	Trim = ArmorChanger:CreateDropdown({
+		Name = 'Trim',
+		List = trims,
+		Function = function()
+			if ArmorChanger.Enabled then
+				applyTrim()
+			end
+		end
+	})
+	Color = ArmorChanger:CreateDropdown({
+		Name = 'Color',
+		List = colors,
+		Function = function()
+			if ArmorChanger.Enabled then
+				applyTrim()
+			end
+		end
+	})
+	Effect = ArmorChanger:CreateDropdown({
+		Name = 'Effect',
+		List = effects,
+		Function = function()
+			if ArmorChanger.Enabled then
+				applyTrim()
+			end
+		end
+	})
+	Rank = ArmorChanger:CreateSlider({
+		Name = 'Tier',
+		Min = 1,
+		Max = 7,
+		Default = 7,
+		Function = function()
+			if ArmorChanger.Enabled then
+				applyTrim()
+			end
+		end,
+		Tooltip = 'Higher tiers use the fancier version of the effect, 7 is nightmare'
+	})
+	
 end)
 
 run(function()
