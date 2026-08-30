@@ -40,8 +40,8 @@
       "username": "AetherV2Owner",
       "userId": "11515370034",
       "firstUsedAt": "2026-08-26T22:13:15.291Z",
-      "uses": 13,
-      "lastUsedAt": "2026-08-30T04:57:42.995Z",
+      "uses": 14,
+      "lastUsedAt": "2026-08-30T21:22:16.511Z",
       "transferredAt": "2026-08-29T07:04:19.885Z"
     },
     "8e5bd4179b423e0e17cf2f0a4d1ee4d5e6ab22f49dddd1abb0233b2fc25a772d": {
@@ -934,6 +934,16 @@
       "username": "chadmcthundder",
       "userId": "11416977899",
       "uses": 2
+    },
+    {
+      "at": "2026-08-30T21:22:16.511Z",
+      "action": "use",
+      "keyId": "fdad1b82d01fa9abee01d94e46eee107c49d2bcd37f093f4ccd2b3654a54e324",
+      "actor": "loader",
+      "operationId": "a9bdc757-ea0e-4ddb-8dac-49052a2faa12",
+      "username": "AetherV2Owner",
+      "userId": "11515370034",
+      "uses": 14
     }
   ]
 }
