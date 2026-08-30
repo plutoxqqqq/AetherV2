@@ -1,12 +1,12 @@
 {
   "name": "aetherv2-backend",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": true,
   "scripts": {
     "start": "node server.js",
-    "start:source": "node private-source.js",
+    "start:source": "node cloud-private-source.js",
     "start:bot": "node discord-bot.js",
-    "check": "node --check server.js && node --check key-registry.js && node --check key-conflicts.js && node --check private-source.js && node --check discord-bot.js",
+    "check": "node --check server.js && node --check key-registry.js && node --check key-conflicts.js && node --check private-source.js && node --check cloud-configs.js && node --check cloud-private-source.js && node --check discord-bot.js",
     "test": "node --test"
   },
   "engines": {
