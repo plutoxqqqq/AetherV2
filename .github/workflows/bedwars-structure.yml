@@ -6,6 +6,7 @@ on:
       - codex/split-bedwars-modules-analytics
     paths:
       - tools/apply-bedwars-refactor.py
+      - tools/patch-refactor-standalone.py
       - tools/build-bedwars-bundle.py
       - games/6872274481/**
   workflow_dispatch:
@@ -25,6 +26,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Patch splitter for standalone modules
+        run: python tools/patch-refactor-standalone.py
       - name: Apply one-time structural refactor
         if: hashFiles('tools/apply-bedwars-refactor.py') != ''
         run: python tools/apply-bedwars-refactor.py
