@@ -1,8 +1,11 @@
--- AetherV2 classic GUI entry.
--- Keep the large implementation in new.core.lua and apply compatibility fixes here before compiling it.
+-- AetherV2 classic controller entry + Liquid Glass frontend.
+-- new.core.lua remains the authoritative feature/controller implementation. This wrapper
+-- applies compatibility patches, initializes Cloud Configs, then hands the complete API to
+-- liquidglass.lua. If Liquid Glass fails, the existing new GUI remains as a safe fallback.
 
 local license = ... or {}
 local CORE_LOCAL = 'aetherv2/guis/new.core.lua'
+local LIQUID_LOCAL = 'aetherv2/guis/liquidglass.lua'
 
 local function currentRef()
 	if type(shared.AetherV2PublicRef) == 'string' and shared.AetherV2PublicRef:gsub('%s+', '') ~= '' then
@@ -28,21 +31,21 @@ local function fetch(ref, path)
 	return ok and validSource(body) and body or nil, body
 end
 
+local function fetchWithMainFallback(path)
+	local ref = currentRef()
+	local body, err = fetch(ref, path)
+	if body then return body end
+	if ref ~= 'main' then body, err = fetch('main', path) end
+	return body, err
+end
+
 local function getCore()
 	if isfile and isfile(CORE_LOCAL) then
 		local readOk, cached = pcall(readfile, CORE_LOCAL)
 		if readOk and validSource(cached) then return cached end
 	end
-
-	local activeRef = currentRef()
-	local body, lastError = fetch(activeRef, 'guis/new.core.lua')
+	local body, lastError = fetchWithMainFallback('guis/new.core.lua')
 	if body then return body end
-
-	if activeRef ~= 'main' then
-		body, lastError = fetch('main', 'guis/new.core.lua')
-		if body then return body end
-	end
-
 	error('AetherV2 GUI: failed to load new.core.lua: '..tostring(lastError), 0)
 end
 
@@ -139,7 +142,7 @@ patchExact('late module edit refresh', [=[
 		if categoryapi.UpdateHidden then categoryapi:UpdateHidden() end
 
 		mainapi:SortModules()
-]=], 'task.defer(function()\n\t\t\tif not moduleapi.Object or not moduleapi.Object.Parent then return end')
+]=], 'moduleapi:RefreshHiddenState(mainapi.EditGUI == true)')
 
 patchExact('category edit mode refresh', [=[
 	function categoryapi:SetEditMode(enabled)
@@ -202,9 +205,6 @@ patchExact('category hover refresh', [=[
 	end)
 	clickgui:GetPropertyChangedSignal('Visible'):Connect(function()
 		if not clickgui.Visible then
-			-- Closing the whole menu is also the end of a global category-edit session.
-			-- Otherwise Done/pencil visibility and hidden rows retain half of the old state
-			-- when Roblox suppresses MouseLeave on an invisible ScreenGui.
 			if mainapi.EditGUI then
 				mainapi.EditGUI = false
 				for _, category in mainapi.Categories do
@@ -250,9 +250,6 @@ patchExact('home free premium tier uptime', [=[
 				sessionRow.Detail.Text = 'v'..tostring(mainapi.Version)..' • '..aetherHomeTier()..' • '..math.floor((os.clock() - (mainapi.StartedAt or os.clock())) / 60)..'m'
 ]=], "sessionRow.Detail.Text = 'v'..tostring(mainapi.Version)..' • '..aetherHomeTier()")
 
--- Cloud Configs reuses the existing JSON import path. The optional skipLoad flag is
--- only used for background Sync to Copy updates so an inactive local copy can be
--- refreshed without switching the player's current config.
 patchExact('cloud import skip-load signature', [=[
 local function importJsonConfig(text, requestedName)
 ]=], [=[
@@ -297,6 +294,59 @@ local importNameBox
 local importJsonBox = profiles:CreateTextBox({
 ]=], 'mainapi.CloudConfigInternals = {')
 
+-- Expose controller-created action buttons to alternate frontends without changing their
+-- save/load format. Options already have APIs; buttons historically returned nil and therefore
+-- could not be represented outside the legacy category window (Cloud Configs included).
+patchExact('frontend button registry', [=[
+		optionsettings.Function = optionsettings.Function or function() end
+
+		button.MouseEnter:Connect(function()
+			tween:Tween(bkg, uipallet.Tween, {
+				BackgroundColor3 = color.Light(uipallet.Main, 0.0875)
+			})
+		end)
+		button.MouseLeave:Connect(function()
+			tween:Tween(bkg, uipallet.Tween, {
+				BackgroundColor3 = color.Light(uipallet.Main, 0.05)
+			})
+		end)
+		button.MouseButton1Click:Connect(optionsettings.Function)
+
+		-- Expose the button and its label so callers can give feedback (eg. flashing
+		-- temporary status text on action buttons). Existing callers ignore the return.
+		return {Object = button, Label = label, Name = optionsettings.Name}
+	end,
+	ColorSlider = function(optionsettings, children, api)
+]=], [=[
+		optionsettings.Function = optionsettings.Function or function() end
+		local optionapi = {
+			Type = 'Button',
+			Name = optionsettings.Name,
+			Tooltip = optionsettings.Tooltip,
+			Function = optionsettings.Function,
+			Object = button,
+			Label = label,
+			Index = getTableSize(api.Options)
+		}
+		api.LiquidButtons = api.LiquidButtons or {}
+		table.insert(api.LiquidButtons, optionapi)
+
+		button.MouseEnter:Connect(function()
+			tween:Tween(bkg, uipallet.Tween, {
+				BackgroundColor3 = color.Light(uipallet.Main, 0.0875)
+			})
+		end)
+		button.MouseLeave:Connect(function()
+			tween:Tween(bkg, uipallet.Tween, {
+				BackgroundColor3 = color.Light(uipallet.Main, 0.05)
+			})
+		end)
+		button.MouseButton1Click:Connect(optionsettings.Function)
+		return optionapi
+	end,
+	ColorSlider = function(optionsettings, children, api)
+]=], 'api.LiquidButtons = api.LiquidButtons or {}')
+
 local cache = type(shared.AetherCompileCache) == 'table' and shared.AetherCompileCache or nil
 local compiled, compileError = cache and cache[source] or nil
 if not compiled then
@@ -315,8 +365,7 @@ if isfile and isfile('aetherv2/libraries/cloud-configs.lua') then
 	if ok and validSource(cached) then cloudSource = cached end
 end
 if not cloudSource then
-	cloudSource, cloudError = fetch(currentRef(), 'libraries/cloud-configs.lua')
-	if not cloudSource and currentRef() ~= 'main' then cloudSource, cloudError = fetch('main', 'libraries/cloud-configs.lua') end
+	cloudSource, cloudError = fetchWithMainFallback('libraries/cloud-configs.lua')
 end
 if cloudSource then
 	local cloudChunk, cloudCompileError = loadstring(cloudSource, 'libraries/cloud-configs.lua')
@@ -328,6 +377,34 @@ if cloudSource then
 	end
 elseif cloudError then
 	warn('[AetherV2] Cloud Configs could not be fetched: '..tostring(cloudError))
+end
+
+-- Full Liquid Glass replacement frontend. The controller has already created every category,
+-- option, profile/config API, cloud action and module API at this point, so Liquid Glass receives
+-- the complete feature surface rather than a cut-down parallel implementation.
+local liquidSource, liquidError
+if isfile and isfile(LIQUID_LOCAL) then
+	local ok, cached = pcall(readfile, LIQUID_LOCAL)
+	if ok and validSource(cached) then liquidSource = cached end
+end
+if not liquidSource then
+	liquidSource, liquidError = fetchWithMainFallback('guis/liquidglass.lua')
+	if liquidSource and type(writefile) == 'function' then pcall(writefile, LIQUID_LOCAL, liquidSource) end
+end
+if liquidSource then
+	local liquidChunk, liquidCompileError = loadstring(liquidSource, 'guis/liquidglass.lua')
+	if liquidChunk then
+		local ok, result = xpcall(function() return liquidChunk(license, mainapi) end, debug.traceback)
+		if ok and type(result) == 'table' then
+			mainapi = result
+		elseif not ok then
+			warn('[AetherV2] Liquid Glass failed to initialise; using classic new GUI: '..tostring(result))
+		end
+	else
+		warn('[AetherV2] Liquid Glass did not compile; using classic new GUI: '..tostring(liquidCompileError))
+	end
+elseif liquidError then
+	warn('[AetherV2] Liquid Glass could not be fetched; using classic new GUI: '..tostring(liquidError))
 end
 
 return mainapi
