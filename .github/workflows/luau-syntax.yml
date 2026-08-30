@@ -4,7 +4,8 @@ on:
   pull_request:
     paths:
       - '**/*.lua'
-      - 'tools/build-bedwars-bundle.py'
+      - 'backend/**'
+      - 'tools/**'
       - '.github/workflows/luau-syntax.yml'
   push:
     branches:
@@ -21,9 +22,10 @@ jobs:
         with:
           ref: ${{ github.event_name == 'push' && github.ref_name || github.head_ref }}
 
-      - name: Fix reported BedWars nil call
+      - name: Apply requested repairs
         shell: bash
         run: |
+          python3 tools/apply-stats-details-fixes.py
           python3 - <<'PY'
           from pathlib import Path
           path = Path('games/6872274481/main.lua')
@@ -40,7 +42,7 @@ jobs:
       - name: Rebuild BedWars bundle
         run: python3 tools/build-bedwars-bundle.py
 
-      - name: Assemble Liquid Glass source for syntax validation
+      - name: Assemble Liquid Glass source
         shell: bash
         run: |
           cat \
@@ -62,40 +64,56 @@ jobs:
         shell: bash
         run: |
           set -uo pipefail
+          mkdir -p /tmp/luau-diagnostics
           failures=0
+          : > /tmp/luau-diagnostics/results.txt
           check_file() {
             local file="$1"
             echo "Checking $file"
             if ! /tmp/luau/luau-compile "$file" >/tmp/luau.out 2>/tmp/luau.err; then
               failures=$((failures + 1))
-              echo "=== $file ==="
-              cat /tmp/luau.out
-              cat /tmp/luau.err
+              {
+                echo "=== $file ==="
+                cat /tmp/luau.out
+                cat /tmp/luau.err
+                echo
+              } | tee -a /tmp/luau-diagnostics/results.txt
             fi
           }
           while IFS= read -r -d '' file; do
             check_file "$file"
           done < <(find . -type f -name '*.lua' -not -path './.git/*' -not -path './guis/liquidglass/*' -print0)
           check_file /tmp/liquidglass-full.lua
-          if [ "$failures" -ne 0 ]; then
-            echo "$failures Luau source(s) failed syntax compilation"
-            exit 1
-          fi
+          echo "failures=$failures" | tee -a /tmp/luau-diagnostics/results.txt
+          if [ "$failures" -ne 0 ]; then exit 1; fi
 
-      - name: Commit repaired source and generated bundle
+      - name: Run backend tests
+        if: success()
+        working-directory: backend
+        run: |
+          npm ci
+          npm run check
+          npm test
+
+      - name: Upload Luau diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: luau-diagnostics
+          path: /tmp/luau-diagnostics
+
+      - name: Commit repaired sources
         if: success() && github.event_name == 'push'
         shell: bash
         run: |
-          if git diff --quiet -- games/6872274481/main.lua games/6872274481/bundle.lua; then
-            exit 0
-          fi
+          if git diff --quiet; then exit 0; fi
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add games/6872274481/main.lua games/6872274481/bundle.lua
-          git commit -m 'Fix BedWars LongJump Jade hook runtime call'
+          git add backend/execution-stats.js backend/discord-bot.js backend/execution-stats-v2.test.js init.lua games/6872274481/main.lua games/6872274481/bundle.lua
+          git commit -m 'Fix BedWars runtime and execution details telemetry'
           git push origin HEAD:${{ github.ref_name }}
 
-      - name: Ensure generated bundle is current
+      - name: Ensure bundle is current
         if: success()
         run: |
           python3 tools/build-bedwars-bundle.py
