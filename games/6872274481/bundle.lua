@@ -5145,17 +5145,12 @@ run(function()
     local NoFall
     local Mode
     local MinVelocity
-    local FallThreshold
-    local SpoofState
-    local GroundDistance
-    local AnchorAttempts
     local BlockClutch
     local TelepearlClutch
     local DaoClutch
     local JadeHammerClutch
     local VoidAxeClutch
     local HealthCheck
-    local DamagePercent
     local CvDamage
     local Zephyr
     local rayCheck = RaycastParams.new()
@@ -5165,7 +5160,6 @@ run(function()
     local plainCheck = RaycastParams.new()
     plainCheck.RespectCanCollide = true
     plainCheck.FilterType = Enum.RaycastFilterType.Exclude
-    local lastAnchor = 0
     local usedPearl = false
     local lastLegitUse = 0
     local clutchBusyUntil = 0
@@ -5356,7 +5350,7 @@ run(function()
         local health = (lplr.Character and lplr.Character:GetAttribute('Health')) or humanoid.Health
         local fallBlocks = math.max(0, ((fallAnchorY or root.Position.Y) - ground.Position.Y) / 3)
         local estimatedDamage = math.max(0, fallBlocks - 6) * 5
-        return estimatedDamage >= (health * ((DamagePercent and DamagePercent.Value or 100) / 100))
+        return estimatedDamage >= health
     end
 
     local function abilityClutch(item, ability, callback)
@@ -5560,14 +5554,6 @@ run(function()
         end
     end
 
-    local function anchorClutch(root)
-        local attempts = AnchorAttempts and AnchorAttempts.Value or 5
-        if tick() - lastAnchor < (1 / math.max(attempts, 1)) then return end
-        lastAnchor = tick()
-        root.AssemblyLinearVelocity = Vector3.zero
-        root.Velocity = Vector3.zero
-    end
-
     -- Blatant. Nothing physical happens here at all: the character falls at full speed, lands
     -- where and when it would have, and no velocity, position or humanoid state is ever touched.
     -- The only thing that changes is what the server has on its books for the fall.
@@ -5614,54 +5600,6 @@ run(function()
             )
         end)
         return success
-    end
-
-    -- RakNet mode. The only one that works underneath the game entirely: it edits the physics
-    -- packet on its way out of the client.
-    --
-    -- What a fall was worth is decided from what you replicate while you are in the air, and the
-    -- humanoid state rides along in the standard 0x1b physics packet - the same packet and the
-    -- same offset StateSpoofer writes to. So for as long as a dangerous fall is in progress this
-    -- rewrites that one byte to a grounded state: the server is told about someone running, never
-    -- about someone falling, and a fall that was never reported has nothing to settle on landing.
-    --
-    -- Nothing local changes. Not velocity, not position, not the state your own client is using -
-    -- the fall looks and feels exactly as it always did on your screen, and the only difference
-    -- is what leaves the machine.
-    --
-    -- A send hook runs on the network thread, where one error disconnects you, so there are two
-    -- hard rules here: everything is inside a pcall with an explicit length check, and while the
-    -- fall is not dangerous the hook returns immediately without touching the packet, so ordinary
-    -- movement replicates byte for byte the way it normally would.
-    local rakHook, spoofFall = nil, false
-
-    local function addRakHook()
-        if rakHook then return end
-        rakHook = function(packet)
-            if not spoofFall then return end
-            pcall(function()
-                local data = packet.AsBuffer
-                local packetId = packet.AsArray and packet.AsArray[1]
-                if not packetId and data and buffer.len(data) > 0 then
-                    packetId = buffer.readu8(data, 0)
-                end
-                if packetId == 0x1b then
-                    local state = SpoofState and Enum.HumanoidStateType[SpoofState.Value]
-                    if data and state and buffer.len(data) >= 26 then
-                        buffer.writeu8(data, 25, state.Value + 32)
-                        packet:SetData(data)
-                    end
-                end
-            end)
-        end
-        pcall(raknet.add_send_hook, rakHook)
-    end
-
-    local function removeRakHook()
-        spoofFall = false
-        if not rakHook then return end
-        pcall(raknet.remove_send_hook, rakHook)
-        rakHook = nil
     end
 
     local cvStateConnections = {}
@@ -5737,15 +5675,9 @@ run(function()
         local legit = Mode and Mode.Value == 'Legit'
         if CvDamage and CvDamage.Object then CvDamage.Object.Visible = not legit end
         if MinVelocity and MinVelocity.Object then MinVelocity.Object.Visible = legit end
-        if GroundDistance and GroundDistance.Object then GroundDistance.Object.Visible = legit end
         if HealthCheck and HealthCheck.Object then HealthCheck.Object.Visible = legit end
-        if DamagePercent and DamagePercent.Object then DamagePercent.Object.Visible = legit end
         for _, option in {BlockClutch, TelepearlClutch, DaoClutch, JadeHammerClutch, VoidAxeClutch, Zephyr} do
             if option and option.Object then option.Object.Visible = legit end
-        end
-        -- Legacy experimental controls are intentionally hidden after the merge.
-        for _, option in {AnchorAttempts, FallThreshold, SpoofState} do
-            if option and option.Object then option.Object.Visible = false end
         end
     end
 
@@ -5769,7 +5701,7 @@ run(function()
                         if humanoid.FloorMaterial ~= Enum.Material.Air then
                             usedPearl = false
                         elseif Mode.Value == 'Legit' then
-                            local ground = getGround(root, character, HealthCheck and HealthCheck.Enabled and 300 or (GroundDistance and GroundDistance.Value or 30))
+                            local ground = getGround(root, character, HealthCheck and HealthCheck.Enabled and 300 or 30)
                             local zephyred = false
                             if Zephyr and Zephyr.Enabled then
                                 zephyred = zephyrClutch(root, humanoid, ground)
@@ -5783,7 +5715,6 @@ run(function()
             else
                 restoreCvStateConnections()
                 usedPearl = false
-                lastAnchor = 0
                 lastLegitUse = 0
                 clutchBusyUntil = 0
                 lastBlockPlace = 0
@@ -5791,10 +5722,9 @@ run(function()
                 zephyrFired = false
                 fallAnchorY = nil
                 trackedFall = 0
-                removeRakHook()
             end
         end,
-        Tooltip = 'Prevents fall damage. Blatant uses cv NoFallDamage behavior; Legit keeps Aether clutch logic.'
+        Tooltip = 'Prevents fall damage'
     })
 	Mode = NoFall:CreateDropdown({
 		Name = 'Mode',
@@ -5806,7 +5736,7 @@ run(function()
                 NoFall:Toggle()
             end
         end,
-		Tooltip = 'Blatant - cv NoFallDamage behavior\nLegit - Aether clutch logic'
+		Tooltip = 'Blatant - completely cancels/reduces fall damage\nLegit - clutches using semi-legit means'
     })
     CvDamage = NoFall:CreateSlider({
         Name = 'Damage',
@@ -5814,68 +5744,32 @@ run(function()
         Max = 100,
         Default = 0,
         Suffix = '%',
-        Tooltip = 'Blatant only: matches cv NoFallDamage damage percentage behavior'
+        Tooltip = 'How much % of fall damage to take'
     })
     MinVelocity = NoFall:CreateSlider({
         Name = 'Minimum Velocity',
         Min = 35,
         Max = 120,
         Default = 60,
-        Tooltip = 'How fast the drop has to be before Legit uses a clutch. Blatant ignores it'
-    })
-    FallThreshold = NoFall:CreateSlider({
-        Name = 'Fall threshold',
-        Min = 40,
-        Max = 120,
-        Default = 85,
-        Suffix = ' studs/s',
-        Visible = false,
-        Tooltip = 'RakNet: how fast the fall must get before packet spoofing starts. Blatant always sends it'
-    })
-    SpoofState = NoFall:CreateDropdown({
-        Name = 'Reported state',
-        List = {'Running', 'Landed', 'RunningNoPhysics'},
-        Visible = false,
-        Tooltip = 'RakNet only: the humanoid state sent during a dangerous fall. Running is safest, try Landed if it fails'
-    })
-    GroundDistance = NoFall:CreateSlider({
-        Name = 'Ground Check',
-        Min = 8,
-        Max = 80,
-        Default = 30
-    })
-    AnchorAttempts = NoFall:CreateSlider({
-        Name = 'Attempts per second',
-        Min = 1,
-        Max = 12,
-        Default = 5,
-        Visible = false
+        Tooltip = 'How fast the drop has to be before Legit uses a clutch'
     })
     BlockClutch = NoFall:CreateToggle({
         Name = 'Blocks',
         Default = true,
-        Tooltip = 'Places blocks directly beneath you shortly before fall damage would apply'
+        Tooltip = 'Places blocks directly beneath you while falling'
     })
     HealthCheck = NoFall:CreateToggle({
         Name = 'Health check',
         Tooltip = 'Only clutches when the estimated fall damage would be lethal'
     })
-    DamagePercent = NoFall:CreateSlider({
-        Name = 'Damage threshold',
-        Min = 1,
-        Max = 100,
-        Default = 100,
-        Suffix = '%',
-        Tooltip = 'With Health check on, only clutches when estimated fall damage reaches this percentage of current health'
-    })
     Zephyr = NoFall:CreateToggle({
         Name = 'Zephyr',
-        Tooltip = 'Legit only: jumps just before landing so a Zephyr/WindWalker kit negates the fall'
+        Tooltip = 'Jumps before landing with Zephyr'
     })
     TelepearlClutch = NoFall:CreateToggle({
         Name = 'Telepearl',
         Default = true,
-        Tooltip = 'Throws a telepearl to nearby safe ground after block clutching is unavailable'
+        Tooltip = 'Throws a telepearl to nearby safe ground'
     })
     DaoClutch = NoFall:CreateToggle({
         Name = 'Dao',
@@ -20447,7 +20341,7 @@ function Runtime:InstallLongJumpJadeHook(longJumpModule)
     longJumpModule._AetherJadeV2Hook=true
 end
 
-Runtime:InstallLongJumpJadeHook(moduleByName('LongJump'))
+Runtime:InstallLongJumpJadeHook(Runtime.ModuleByName and Runtime.ModuleByName('LongJump'))
 
 
 end

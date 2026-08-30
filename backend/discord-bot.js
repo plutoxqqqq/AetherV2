@@ -120,7 +120,7 @@ const userListView = (ownerId, requestedPage = 0) => {
     embed.addFields({
       name: (profile.active ? '🟢 ' : '⚪ ') + (profile.username || ('UserId ' + profile.userId)),
       value: [
-        inline(accessText(profile.lastAccess)) + ' • ' + inline(profile.executions + ' uses') + ' • ' + inline(formatDuration(profile.trackedSeconds)),
+        inline(accessText(profile.lastAccess)) + ' • ' + inline(profile.executions + ' uses') + ' • ' + inline(profile.active ? 'Calculating' : formatDuration(profile.trackedSeconds)),
         'Premium/free ' + inline(profile.premiumExecutions + '/' + profile.freeExecutions) + ' • last ' + inline(dateText(profile.lastSeenAt))
       ].join('\n')
     });
@@ -137,7 +137,7 @@ const userListView = (ownerId, requestedPage = 0) => {
       .setPlaceholder('Select a player')
       .addOptions(result.users.map(profile => ({
         label: truncate(profile.username || ('UserId ' + profile.userId), 100),
-        description: truncate(accessText(profile.lastAccess) + ' • ' + profile.executions + ' uses • ' + formatDuration(profile.trackedSeconds), 100),
+        description: truncate(accessText(profile.lastAccess) + ' • ' + profile.executions + ' uses • ' + (profile.active ? 'Calculating' : formatDuration(profile.trackedSeconds)), 100),
         value: profile.profileId
       })))))
   }
@@ -166,7 +166,7 @@ const userDetailView = async (ownerId, profileId, page = 0) => {
       {name: 'Roblox identity', value: inline(profile.username || 'unknown') + '\n' + inline(profile.userId), inline: true},
       {name: 'Latest access', value: inline(accessText(profile.lastAccess)) + '\n' + inline(keyState), inline: true},
       {name: 'Aether uses', value: inline(profile.executions), inline: true},
-      {name: 'Tracked use time', value: inline(formatDuration(profile.trackedSeconds)), inline: true},
+      {name: 'Tracked use time', value: inline(profile.active ? 'Calculating' : formatDuration(profile.trackedSeconds)), inline: true},
       {name: 'Premium / Free', value: inline(profile.premiumExecutions + ' / ' + profile.freeExecutions), inline: true},
       {name: 'Sessions tracked', value: inline(profile.sessions), inline: true},
       {name: 'First seen', value: inline(dateText(profile.firstSeenAt)), inline: false},

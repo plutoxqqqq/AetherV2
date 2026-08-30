@@ -55,7 +55,8 @@ test('public AetherV2 always uses raw GitHub while premium remains session-gated
 });
 
 test('split wrappers keep analytics heartbeat and premium tagging isolated', () => {
-  assert.match(initWrapper, /event\s*=\s*'heartbeat'/);
+  assert.match(initWrapper, /event\s*=\s*eventName\s*or\s*'heartbeat'|sendTelemetry\(sessionId,\s*'heartbeat'\)/);
+  assert.match(initWrapper, /sendTelemetry\(sessionId,\s*'session_end'\)/);
   assert.match(initWrapper, /sessionId/);
   assert.match(initWrapper, /AetherV2PremiumAuthorized/);
   assert.match(mainWrapper, /loadedModule\.Premium\s*=\s*true/);

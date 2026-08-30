@@ -62,6 +62,14 @@ test('heartbeats classify launches and accumulate real tracked time', async () =
   }
 });
 
+test('legacy graph periods also use daily points', () => {
+  for (const period of ['hourly', 'daily', 'weekly', 'monthly', '7d', '30d', '90d', 'all']) {
+    const graph = stats.renderGraph(period, 'executions');
+    assert.ok(graph.points.length >= 1);
+    assert.ok(graph.points.every(point => /^\d{4}-\d{2}-\d{2}$/.test(point.key)), period + ' should use daily keys');
+  }
+});
+
 test('all-time graph is daily and renders a valid PNG', () => {
   const graph = stats.renderGraph('all', 'executions');
   assert.ok(graph.points.length >= 1);

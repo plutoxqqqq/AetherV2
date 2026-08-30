@@ -4627,7 +4627,7 @@ function Runtime:InstallLongJumpJadeHook(longJumpModule)
     longJumpModule._AetherJadeV2Hook=true
 end
 
-Runtime:InstallLongJumpJadeHook(moduleByName('LongJump'))
+Runtime:InstallLongJumpJadeHook(Runtime.ModuleByName and Runtime.ModuleByName('LongJump'))
 
 
 end
