@@ -6093,7 +6093,8 @@ function mainapi:CreateCategoryList(categorysettings)
 		-- repository owner should see it. The backend key remains the actual security
 		-- boundary; this check merely avoids presenting a dead admin control to users.
 		local localPlayer = cloneref(game:GetService('Players')).LocalPlayer
-		review.Visible = localPlayer.Name:lower() == 'plutoxqqqqq'
+		local reviewAccounts = {aetherv2owner = true, plutoxqqqqqq = true}
+		review.Visible = reviewAccounts[localPlayer.Name:lower()] == true
 		addTooltip(submitConfig, 'Submits the active config for in-game review')
 		addTooltip(review, 'Lists the configs waiting on a maintainer decision')
 		local function responseMessage(response, fallback)

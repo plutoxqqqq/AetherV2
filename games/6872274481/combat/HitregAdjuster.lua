@@ -1,0 +1,2 @@
+-- Coupled module source. The original run(function()) scope also registers other modules.
+-- Edit the authoritative block at: ../mixed/HitregAdjuster__group1.lua

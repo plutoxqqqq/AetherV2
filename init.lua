@@ -84,6 +84,26 @@ local function premiumEndpoint()
 	return endpoint:gsub('/+$', '')
 end
 
+local function reportExecution()
+	local player = game:GetService('Players').LocalPlayer
+	if not player then return end
+	local endpoint = premiumEndpoint()..'/analytics/execution'
+	local requestFunction = (syn and syn.request) or http_request or request
+	if type(requestFunction) == 'function' then
+		local http = game:GetService('HttpService')
+		local ok = pcall(requestFunction, {
+			Url = endpoint,
+			Method = 'POST',
+			Headers = {['Content-Type'] = 'application/json'},
+			Body = http:JSONEncode({userId = tostring(player.UserId), placeId = tostring(game.PlaceId)})
+		})
+		if ok then return end
+	end
+	-- Executors without a request API still contribute to execution totals, but no user identity is sent.
+	pcall(game.HttpGet, game, endpoint, true)
+end
+task.spawn(reportExecution)
+
 local function authorizePremium()
 	local key = type(license) == 'table' and license.premiumKey or nil
 	if type(key) ~= 'string' or key == '' or key == 'KEY_HERE' then return false end

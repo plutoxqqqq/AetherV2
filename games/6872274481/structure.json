@@ -1,0 +1,19 @@
+{
+  "generatedFrom": "games/6872274481.lua",
+  "moduleBlocks": 212,
+  "moduleRegistrations": 218,
+  "coupledGroups": 4,
+  "categories": [
+    "blatant",
+    "combat",
+    "exploits",
+    "inventory",
+    "kits",
+    "legit",
+    "minigames",
+    "render",
+    "utility",
+    "visuals",
+    "world"
+  ]
+}
