@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Workflow helper: upgrades the one-time splitter before the large source migration runs.
 from pathlib import Path
 
 path = Path(__file__).with_name('apply-bedwars-refactor.py')
