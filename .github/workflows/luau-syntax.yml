@@ -16,10 +16,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Rebuild BedWars bundle
+      - name: Inspect and rebuild BedWars bundle
+        shell: bash
         run: |
+          set -euo pipefail
+          mkdir -p /tmp/aether-diagnostics
+          {
+            echo '=== committed bundle: lines 20435-20465 ==='
+            nl -ba games/6872274481/bundle.lua | sed -n '20435,20465p'
+          } > /tmp/aether-diagnostics/bundle-area-before.txt
           python3 tools/build-bedwars-bundle.py
-          git diff --exit-code -- games/6872274481/bundle.lua
+          {
+            echo '=== rebuilt bundle: lines 20435-20465 ==='
+            nl -ba games/6872274481/bundle.lua | sed -n '20435,20465p'
+            echo
+            echo '=== generated bundle diff stat ==='
+            git diff --stat -- games/6872274481/bundle.lua || true
+          } > /tmp/aether-diagnostics/bundle-area-after.txt
+          git diff -- games/6872274481/bundle.lua > /tmp/aether-diagnostics/bundle-rebuild.diff || true
 
       - name: Install Luau compiler
         run: |
@@ -30,19 +44,34 @@ jobs:
       - name: Check every Luau file
         shell: bash
         run: |
-          set -euo pipefail
+          set -uo pipefail
           failures=0
+          : > /tmp/aether-diagnostics/luau-syntax.txt
           while IFS= read -r -d '' file; do
             echo "Checking $file"
-            if ! /tmp/luau/luau-compile "$file" >/dev/null; then
+            if ! /tmp/luau/luau-compile "$file" >/tmp/luau.out 2>/tmp/luau.err; then
               failures=$((failures + 1))
+              {
+                echo "=== $file ==="
+                cat /tmp/luau.out
+                cat /tmp/luau.err
+                echo
+              } >> /tmp/aether-diagnostics/luau-syntax.txt
             fi
           done < <(find . -type f -name '*.lua' -not -path './.git/*' -print0)
+          echo "failures=$failures" >> /tmp/aether-diagnostics/luau-syntax.txt
           if [ "$failures" -ne 0 ]; then
-            echo "$failures Luau file(s) failed syntax compilation"
+            cat /tmp/aether-diagnostics/luau-syntax.txt
             exit 1
           fi
 
-      - name: Show reported runtime area
+      - name: Upload diagnostics
         if: always()
-        run: nl -ba games/6872274481/bundle.lua | sed -n '20435,20465p'
+        uses: actions/upload-artifact@v4
+        with:
+          name: luau-diagnostics
+          path: /tmp/aether-diagnostics
+
+      - name: Ensure generated bundle is current
+        if: success()
+        run: git diff --exit-code -- games/6872274481/bundle.lua
