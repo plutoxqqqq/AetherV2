@@ -4,14 +4,10 @@ on:
   push:
     branches:
       - codex/split-bedwars-modules-analytics
+      - codex/one-module-per-file-cleanup
     paths:
       - .github/workflows/bedwars-structure.yml
-      - tools/apply-bedwars-refactor.py
-      - tools/apply-aug30-unfinished.py
-      - tools/fix-aug30-verification.py
-      - tools/patch-refactor-standalone.py
-      - tools/patch-refactor-discord.py
-      - tools/build-bedwars-bundle.py
+      - tools/**
       - games/6872274481/**
       - games/universal.lua
       - libraries/entity.lua
@@ -27,7 +23,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: codex/split-bedwars-modules-analytics
+          ref: ${{ github.ref_name }}
           fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
@@ -43,6 +39,8 @@ jobs:
         run: python tools/apply-aug30-unfinished.py
       - name: Apply verification fixes
         run: python tools/fix-aug30-verification.py
+      - name: Report module-file audit
+        run: python tools/audit-bedwars-modules.py --report-only
       - name: Rebuild BedWars runtime bundle
         run: python tools/build-bedwars-bundle.py
       - name: Validate backend JavaScript
@@ -59,5 +57,5 @@ jobs:
             echo "No generated changes"
             exit 0
           fi
-          git commit -m "Finish Aug 30 module and UI requests"
-          git push origin HEAD:codex/split-bedwars-modules-analytics
+          git commit -m "Validate BedWars one-module-per-file structure"
+          git push origin HEAD:${{ github.ref_name }}
