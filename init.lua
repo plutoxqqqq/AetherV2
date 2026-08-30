@@ -2,6 +2,13 @@
 local license = ... or {}
 if type(license) ~= 'table' then license = {} end
 shared.AetherV2PremiumAuthorized = false
+-- A premium session is valid for one execution only. A previous injection can leave
+-- fetch closures/token state behind in shared, so clear every session-derived value
+-- before attempting authorization for this execution.
+shared.AetherV2PremiumToken = nil
+shared.AetherV2PremiumRef = nil
+shared.AetherV2PremiumFetchSource = nil
+shared.AetherV2PremiumFetchTree = nil
 
 -- A cached Lua file used to be compiled once to validate it and then compiled again moments later
 -- to execute it.  The GUI and game chunks are large, so that duplicate parser/codegen work was a

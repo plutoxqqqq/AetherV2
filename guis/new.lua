@@ -96,7 +96,7 @@ function mainapi:CreateCategory(categorysettings)
 function mainapi:CreateCategory(categorysettings)
 	local categoryapi = {
 		Type = 'Category',
-		Expanded = false
+		Expanded = categorysettings.Name == 'World'
 	}
 	local categoryHovered = false
 ]=], 'local categoryHovered = false')
@@ -139,17 +139,6 @@ patchExact('late module edit refresh', [=[
 		if categoryapi.UpdateHidden then categoryapi:UpdateHidden() end
 
 		mainapi:SortModules()
-		task.defer(function()
-			if not moduleapi.Object or not moduleapi.Object.Parent then return end
-			moduleapi:RefreshHiddenState(mainapi.EditGUI == true)
-			if categoryapi.UpdateHidden then categoryapi:UpdateHidden() end
-			mainapi:SortModules()
-			local parent = moduleapi.Object.Parent
-			local layout = parent:FindFirstChildOfClass('UIListLayout')
-			if parent:IsA('ScrollingFrame') and layout then
-				parent.CanvasSize = UDim2.fromOffset(0, layout.AbsoluteContentSize.Y / scale.Scale)
-			end
-		end)
 ]=], 'task.defer(function()\n\t\t\tif not moduleapi.Object or not moduleapi.Object.Parent then return end')
 
 patchExact('category edit mode refresh', [=[
