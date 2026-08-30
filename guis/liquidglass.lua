@@ -64,12 +64,10 @@ local function getPart(name)
 		local ok, cached = pcall(readfile, localPath)
 		if ok and validSource(cached) then return cached end
 	end
-
 	local ref = currentRef()
 	local body = fetch(REMOTE_DIR..name, ref)
 	if not body and ref ~= 'main' then body = fetch(REMOTE_DIR..name, 'main') end
 	if not body then error('AetherV2 Liquid Glass: failed to load '..name, 0) end
-
 	if type(writefile) == 'function' then
 		ensureFolder(LOCAL_DIR)
 		pcall(writefile, localPath, body)
@@ -80,6 +78,22 @@ end
 local source = table.create(#PARTS)
 for index, name in ipairs(PARTS) do source[index] = getPart(name) end
 source = table.concat(source, '\n')
+
+-- Premium modules keep their real module names/config keys. The loader marks them with
+-- module.Premium/module.Tag; Liquid Glass renders that metadata as a compact pill.
+local badgeMarker = "    local name=label(card,moduleDisplayName(module),13,true); name.Size=UDim2.new(1,-76,0,24); name.Position=UDim2.fromOffset(14,10); name.ZIndex=114"
+local badgeReplacement = [[    local name=label(card,moduleDisplayName(module),13,true); name.Size=UDim2.new(1,module.Premium and -154 or -76,0,24); name.Position=UDim2.fromOffset(14,10); name.ZIndex=114
+    if module.Premium then
+        local premium=label(card,'PREMIUM',8,true,Color3.fromRGB(238,222,255),Enum.TextXAlignment.Center)
+        premium.Size=UDim2.fromOffset(62,20); premium.Position=UDim2.new(1,-142,0,12); premium.BackgroundColor3=accent(); premium.BackgroundTransparency=.78; premium.ZIndex=116; corner(premium,7)
+        create('UIStroke',{Color=accent(),Transparency=.52,Thickness=1},premium)
+    end]]
+local first, last = source:find(badgeMarker, 1, true)
+if first and not source:find(badgeMarker, last + 1, true) then
+	source = source:sub(1, first - 1)..badgeReplacement..source:sub(last + 1)
+else
+	warn('[AetherV2] Liquid Glass premium badge patch skipped: module-card marker was not unique')
+end
 
 local cache = type(shared.AetherCompileCache) == 'table' and shared.AetherCompileCache or nil
 local chunk, compileError = cache and cache[source] or nil
