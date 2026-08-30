@@ -1,7 +1,7 @@
 run(function()
     local ChillLighting
     local oldAmbient, oldOutdoor
-    ChillLighting = vape.Categories.Visuals:CreateModule({
+    ChillLighting = vape.Categories.Render:CreateModule({
         Name = 'ChillLighting',
         Function = function(callback)
             if callback then

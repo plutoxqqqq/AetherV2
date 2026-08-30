@@ -45,7 +45,7 @@ def run_spans(source):
                 elif c == '\\': escaped = True
                 elif c == quote: quote = None
                 i += 1; continue
-            if c in ('\'', '"'):
+            if c in ('\'', '"', '`'):
                 quote = c; i += 1; continue
             if source.startswith('--', i):
                 nl = source.find('\n', i + 2)
@@ -108,7 +108,7 @@ def split_run_batch(relative):
     path = BED / relative
     if not path.exists(): return
     source = read(path)
-    entries = []
+    entries, generated = [], []
     for start, end in top_level_runs(source):
         block = source[start:end]
         mods = modules(block)
@@ -116,12 +116,19 @@ def split_run_batch(relative):
             raise RuntimeError(f'{relative}: expected one module per top-level run, got {mods}')
         name, category = mods[0]
         target = f'{category}/{safe_name(name)}.lua'
-        write(BED / target, block.rstrip() + '\n')
+        generated.append((target, block.rstrip() + '\n'))
         entries.append(target)
     if not entries:
         raise RuntimeError(f'{relative}: no top-level module runs')
     replace_marker(relative, entries)
-    path.unlink()
+    for target, block in generated:
+        if target != relative:
+            write(BED / target, block)
+    same = next((block for target, block in generated if target == relative), None)
+    if same is not None:
+        write(path, same)
+    elif path.exists():
+        path.unlink()
     print(f'Split {relative} -> {len(entries)} files')
 
 
@@ -191,7 +198,7 @@ def balanced_call(source, start):
             elif c == '\\': escaped = True
             elif c == quote: quote = None
             i += 1; continue
-        if c in ('\'', '"'): quote = c; i += 1; continue
+        if c in ('\'', '"', '`'): quote = c; i += 1; continue
         if source.startswith('--', i):
             nl = source.find('\n', i + 2); i = len(source) if nl < 0 else nl + 1; continue
         if c == '(': depth += 1

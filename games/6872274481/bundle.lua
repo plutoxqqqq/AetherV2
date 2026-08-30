@@ -71,9 +71,6 @@ if vape.Categories and not vape.Categories.Exploits then
 	vape.Categories.Exploits = vape.Categories.Blatant
 end
 
-if vape.Categories and not vape.Categories.Visuals then
-	vape.Categories.Visuals = vape.Categories.Render
-end
 local entitylib = vape.Libraries.entity
 local targetinfo = vape.Libraries.targetinfo
 local sessioninfo = vape.Libraries.sessioninfo
@@ -202,10 +199,7 @@ local AetherMatchRuntime
 -- Every kit module registers here instead of into a category tab. On the default GUI this
 -- is the Kits window opened by the friends icon beside the search bar; GUIs that do not
 -- implement that window fall back to the Minigames tab so nothing is lost on them.
-local kits = vape.Categories.Kits or vape.Categories.Minigames
-if vape.Categories and not vape.Categories.Minigames then
-    vape.Categories.Minigames = vape.Categories.World or vape.Categories.Utility
-end
+local kits = vape.Categories.Kits
 
 local function addBlur(parent)
 	local blur = Instance.new('ImageLabel')
@@ -3420,8 +3414,7 @@ run(function()
 end)
 
 
-run(function()
-    if canDebug then
+if canDebug then
 run(function()
 	local HitregAdjuster, Hitreg
 	local firstConnection, restoreConnection
@@ -3453,7 +3446,9 @@ run(function()
 	})
 	Hitreg = HitregAdjuster:CreateSlider({Name = 'Hitreg', Min = 1, Max = 36, Default = 35, Suffix = ' hits / 10s'})
 end)
+end
 
+if canDebug then
 run(function()
 	local DeathAdderAimbot, Mode, BedRange, Targets, Sort, TargetPart, FOV
 	local originalDirection, hookedDirection
@@ -3511,6 +3506,13 @@ run(function()
 	TargetPart = DeathAdderAimbot:CreateDropdown({Name = 'Part', List = {'RootPart', 'Head'}})
 	FOV = DeathAdderAimbot:CreateSlider({Name = 'FOV', Min = 1, Max = 1000, Default = 1000})
 end)
+end
+
+run(function()
+    if canDebug then
+
+
+
 
 run(function()
 	local BlockReach
@@ -6255,7 +6257,7 @@ end)
 run(function()
     local ChillLighting
     local oldAmbient, oldOutdoor
-    ChillLighting = vape.Categories.Visuals:CreateModule({
+    ChillLighting = vape.Categories.Render:CreateModule({
         Name = 'ChillLighting',
         Function = function(callback)
             if callback then
@@ -9551,6 +9553,20 @@ run(function()
         Tooltip = 'Steer the boost with your movement keys instead of flying in a straight line'
     })
 
+    local api = {
+        Module = LongJump,
+        Methods = LongJumpMethods,
+        GetHeldMethod = heldLongJumpMethod,
+        GetJumpTick = function() return JumpTick end
+    }
+    shared.AetherLongJumpRuntime = api
+    vape:Clean(function() if shared.AetherLongJumpRuntime == api then shared.AetherLongJumpRuntime = nil end end)
+end)
+
+run(function()
+    local runtime = shared.AetherLongJumpRuntime
+    if not runtime or not runtime.Module then warn('[AetherV2] LongJumpBypass requires LongJump runtime'); return end
+    local LongJumpBypass, BypassBoost
     -- LongJumpBypass: reuses two built-in behaviours back to back. On key it activates a compatible
     -- tool the way LongJump does - by switching LongJump on, so the launch, arc and speed are
     -- LongJump's own - and while that boost carries you it applies BoostAirJump's push (upward
@@ -9559,9 +9575,9 @@ run(function()
     -- it and the maneuver ends. Lives in the same block as LongJump so it can watch the shared boost
     -- window (JumpTick) and reuse LongJumpMethods to check you actually have a compatible tool.
     local function findBypassTool()
-		local method, item, name = heldLongJumpMethod()
+		local method, item, name = runtime.GetHeldMethod()
 		if method then return name, item end
-        for name in LongJumpMethods do
+        for name in runtime.Methods do
             local item = getItem(name)
             if item or store.equippedKit == name then
                 return name, item
@@ -9597,10 +9613,10 @@ run(function()
 
                 -- 1. Activate the compatible tool with LongJump's own behaviour. Switching the module
                 --    on fires the launch and runs its boost driver, exactly as using LongJump yourself.
-                local longWasOn = LongJump.Enabled
-                if not LongJump.Enabled then LongJump:Toggle() end
+                local longWasOn = runtime.Module.Enabled
+                if not runtime.Module.Enabled then runtime.Module:Toggle() end
                 -- 'Limit to items' with nothing in hand makes LongJump switch straight back off.
-                if not LongJump.Enabled then
+                if not runtime.Module.Enabled then
                     return task.spawn(function() if LongJumpBypass.Enabled then LongJumpBypass:Toggle() end end)
                 end
 
@@ -9617,7 +9633,7 @@ run(function()
                 local direction
                 repeat
                     runService.PreSimulation:Wait()
-                    local boosting = JumpTick > tick()
+                    local boosting = runtime.GetJumpTick() > tick()
                     if boosting and not launched then
                         launched = true
                         boostStart = tick()
@@ -9640,7 +9656,7 @@ run(function()
                 until not LongJumpBypass.Enabled or (launched and tick() - boostStart >= 2) or tick() - bypassStart > 8
 
                 -- Put LongJump back how we found it, then end the maneuver as asked.
-                if LongJump.Enabled and not longWasOn then LongJump:Toggle() end
+                if runtime.Module.Enabled and not longWasOn then runtime.Module:Toggle() end
                 -- Cancel every component only after LongJump's driver has been stopped. Gravity
                 -- owns the next simulation frame, producing a true unpowered free-fall.
                 if launched and entitylib.isAlive then
@@ -13029,6 +13045,7 @@ run(function()
 	})
 	MarkerColor = ProjectileLanding:CreateColorSlider({Name = 'Marker Color', DefaultOpacity = 0})
 end)
+
 run(function()
     local BulletTracers
     local Material
@@ -13136,17 +13153,6 @@ run(function()
     })
 end)
 
---[[
-    SkinChanger
-
-    Replaced with the reference build's approach. Rather than cloning skin models onto your
-    hand and welding them, it sets the itemSkin field the game already carries on every
-    inventory entry and re-renders the viewmodel, so the item shows up with that skin (and its
-    sounds) through the game's own path. One dropdown per item kind - pick the skin family and
-    every matching item you hold uses it.
-
-    Client-side only: nobody else sees the change.
-]]
 run(function()
 	local SkinChanger
 	local Options = {}
@@ -13424,8 +13430,6 @@ run(function()
     })
 end)
 
--- Lobby milestone state remains available when BedWars transitions into a match.  Keep this
--- integration defensive because older queues do not load the milestone controller or metadata.
 run(function()
     local ClaimRewards, CratesOnly, Notify
     local claimGeneration = 0
@@ -13915,16 +13919,6 @@ run(function()
     })
 end)
 
---[[
-    Utility
-]]
-
--- MP3Player: plays your own .mp3 files out of the aetherv2/songs folder the loader creates.
---
--- The folder is scanned live, so songs added or deleted while you are in a game are picked up
--- without a reinject (Auto refresh, plus a Refresh button for right now). Anything the executor
--- can turn into an asset works - mp3, wav, ogg.
---
 run(function()
     local MP3Player
     local Volume
@@ -27416,20 +27410,7 @@ run(function()
 		end,
 		Tooltip = 'Automatically buys items when you go near the shop'
 	})
-	OpenShop = vape.Categories.Inventory:CreateModule({
-		Name = 'OpenShop',
-		Function = function(callback)
-			if not callback then return end
-			local opened, reason = activateShop(nearestItemShop())
-			if not opened then
-				notif('OpenShop', reason == 'InteractExtender is disabled' and 'Enable InteractExtender first' or 'No item-shop prompt found', 4, 'alert')
-			end
-			task.defer(function()
-				if OpenShop.Enabled then OpenShop:Toggle() end
-			end)
-		end,
-		Tooltip = 'Opens the nearest item shop through InteractExtender'
-	})
+
 	AutoBuy:CreateButton({Name = 'Purchase preferences', Function = openPreferences})
 	ShopAnywhere = AutoBuy:CreateToggle({
 		Name = 'Shop anywhere',
@@ -27567,6 +27548,30 @@ run(function()
 				end
 			end
 		end
+	})
+	local shopApi = {activateShop = activateShop, nearestItemShop = nearestItemShop}
+	shared.AetherShopRuntime = shopApi
+	vape:Clean(function() if shared.AetherShopRuntime == shopApi then shared.AetherShopRuntime = nil end end)
+
+end)
+
+run(function()
+	local runtime = shared.AetherShopRuntime
+	if not runtime then warn('[AetherV2] OpenShop requires AutoBuy shop runtime'); return end
+	local OpenShop
+	OpenShop = vape.Categories.Inventory:CreateModule({
+		Name = 'OpenShop',
+		Function = function(callback)
+			if not callback then return end
+			local opened, reason = runtime.activateShop(runtime.nearestItemShop())
+			if not opened then
+				notif('OpenShop', reason == 'InteractExtender is disabled' and 'Enable InteractExtender first' or 'No item-shop prompt found', 4, 'alert')
+			end
+			task.defer(function()
+				if OpenShop.Enabled then OpenShop:Toggle() end
+			end)
+		end,
+		Tooltip = 'Opens the nearest item shop through InteractExtender'
 	})
 end)
 
@@ -28709,7 +28714,7 @@ run(function()
         honoring = false
     end
 
-    AutoHonor = vape.Categories.Minigames:CreateModule({
+    AutoHonor = vape.Categories.Utility:CreateModule({
         Name = 'AutoHonor',
         Function = function(callback)
             if callback then
@@ -28896,7 +28901,7 @@ run(function()
 	end
     end
 
-    BedPlates = vape.Categories.Minigames:CreateModule({
+    BedPlates = vape.Categories.Render:CreateModule({
 	Name = 'BedPlates',
 	Function = function(callback)
 		if callback then
@@ -29318,7 +29323,7 @@ run(function()
         return false
     end
 
-    Breaker = vape.Categories.Minigames:CreateModule({
+    Breaker = vape.Categories.World:CreateModule({
         Name = 'Breaker',
         Function = function(callback)
             if callback then

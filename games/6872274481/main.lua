@@ -70,9 +70,6 @@ if vape.Categories and not vape.Categories.Exploits then
 	vape.Categories.Exploits = vape.Categories.Blatant
 end
 
-if vape.Categories and not vape.Categories.Visuals then
-	vape.Categories.Visuals = vape.Categories.Render
-end
 local entitylib = vape.Libraries.entity
 local targetinfo = vape.Libraries.targetinfo
 local sessioninfo = vape.Libraries.sessioninfo
@@ -201,10 +198,7 @@ local AetherMatchRuntime
 -- Every kit module registers here instead of into a category tab. On the default GUI this
 -- is the Kits window opened by the friends icon beside the search bar; GUIs that do not
 -- implement that window fall back to the Minigames tab so nothing is lost on them.
-local kits = vape.Categories.Kits or vape.Categories.Minigames
-if vape.Categories and not vape.Categories.Minigames then
-    vape.Categories.Minigames = vape.Categories.World or vape.Categories.Utility
-end
+local kits = vape.Categories.Kits
 
 local function addBlur(parent)
 	local blur = Instance.new('ImageLabel')
@@ -2453,7 +2447,9 @@ end
 
 --[[AETHER_MODULE:combat/NoClickDelay.lua]]
 
---[[AETHER_MODULE:mixed/HitregAdjuster__group1.lua]]
+--[[AETHER_MODULE:combat/HitregAdjuster.lua]]
+--[[AETHER_MODULE:blatant/DeathAdderAimbot.lua]]
+--[[AETHER_MODULE:combat/Reach.lua]]
 
 --[[AETHER_MODULE:combat/ShopClicker.lua]]
 
@@ -2472,7 +2468,7 @@ end
 --[[AETHER_MODULE:blatant/AntiDeath.lua]]
 
 
---[[AETHER_MODULE:visuals/ChillLighting.lua]]
+--[[AETHER_MODULE:render/ChillLighting.lua]]
 
 -- Water: fills the void with real Roblox water, at exactly the height AntiFall puts its barrier.
 --
@@ -2934,7 +2930,8 @@ end)
 --[[AETHER_MODULE:blatant/Killaura.lua]]
 -- JadeInstaKill V2 is registered by AetherMatchRuntime above.
 
---[[AETHER_MODULE:mixed/LongJump__group2.lua]]
+--[[AETHER_MODULE:blatant/LongJump.lua]]
+--[[AETHER_MODULE:exploits/LongJumpBypass.lua]]
 
 --[[
     Kit extenders
@@ -3077,6 +3074,23 @@ end)
 
 --[[AETHER_MODULE:render/BedESP.lua]]
 
+--[[AETHER_MODULE:render/BeehiveESP.lua]]
+--[[AETHER_MODULE:render/CustomTags.lua]]
+--[[AETHER_MODULE:render/GeneratorESP.lua]]
+--[[AETHER_MODULE:render/Health.lua]]
+--[[AETHER_MODULE:render/ItemESP.lua]]
+--[[AETHER_MODULE:kits/KitDisplay.lua]]
+--[[AETHER_MODULE:kits/KitESP.lua]]
+--[[AETHER_MODULE:render/NameTags.lua]]
+--[[AETHER_MODULE:render/ProjectileLanding.lua]]
+--[[AETHER_MODULE:render/ProjectileTracers.lua]]
+--[[AETHER_MODULE:render/SkinChanger.lua]]
+--[[AETHER_MODULE:render/StorageESP.lua]]
+--[[AETHER_MODULE:utility/ClaimRewards.lua]]
+--[[AETHER_MODULE:inventory/AutoEnchant.lua]]
+--[[AETHER_MODULE:render/StreamRemover.lua]]
+--[[AETHER_MODULE:render/TrapESP.lua]]
+--[[AETHER_MODULE:render/ViewmodelVisuals.lua]]
 --[[AETHER_MODULE:utility/MP3Player.lua]]
 
 --[[AETHER_MODULE:utility/AntiSuffocate.lua]]
@@ -3169,7 +3183,8 @@ end)
 ]]
 --[[AETHER_MODULE:inventory/AutoBank.lua]]
 
---[[AETHER_MODULE:inventory/AutoBuy__group4.lua]]
+--[[AETHER_MODULE:inventory/AutoBuy.lua]]
+--[[AETHER_MODULE:inventory/OpenShop.lua]]
 
 --[[AETHER_MODULE:inventory/AutoConsume.lua]]
 
@@ -3187,11 +3202,11 @@ end)
     Minigames
 ]]
 
---[[AETHER_MODULE:minigames/AutoHonor.lua]]
+--[[AETHER_MODULE:utility/AutoHonor.lua]]
 
---[[AETHER_MODULE:minigames/BedPlates.lua]]
+--[[AETHER_MODULE:render/BedPlates.lua]]
 
---[[AETHER_MODULE:minigames/Breaker.lua]]
+--[[AETHER_MODULE:world/Breaker.lua]]
 
 --[[
     Legit

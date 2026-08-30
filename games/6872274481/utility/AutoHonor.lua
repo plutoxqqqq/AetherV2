@@ -70,7 +70,7 @@ run(function()
         honoring = false
     end
 
-    AutoHonor = vape.Categories.Minigames:CreateModule({
+    AutoHonor = vape.Categories.Utility:CreateModule({
         Name = 'AutoHonor',
         Function = function(callback)
             if callback then

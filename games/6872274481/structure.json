@@ -10,10 +10,9 @@
     "inventory",
     "kits",
     "legit",
-    "minigames",
     "render",
     "utility",
-    "visuals",
     "world"
-  ]
+  ],
+  "layout": "one-module-per-file"
 }
