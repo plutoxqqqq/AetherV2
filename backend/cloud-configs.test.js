@@ -5,6 +5,8 @@ const assert = require('node:assert/strict');
 
 process.env.GITHUB_TOKEN = 'test-token';
 process.env.GITHUB_REPO = 'plutoxqqqq/AetherV2';
+process.env.PREMIUM_GITHUB_REPO = 'plutoxqqqq/AetherV2Premium';
+process.env.PREMIUM_GITHUB_BRANCH = 'main';
 process.env.AETHER_REGISTRY_BRANCH = 'aether-key-registry';
 
 const cloud = require('./cloud-configs');
