@@ -261,6 +261,53 @@ patchExact('home free premium tier uptime', [=[
 				sessionRow.Detail.Text = 'v'..tostring(mainapi.Version)..' • '..aetherHomeTier()..' • '..math.floor((os.clock() - (mainapi.StartedAt or os.clock())) / 60)..'m'
 ]=], "sessionRow.Detail.Text = 'v'..tostring(mainapi.Version)..' • '..aetherHomeTier()")
 
+-- Cloud Configs reuses the existing JSON import path. The optional skipLoad flag is
+-- only used for background Sync to Copy updates so an inactive local copy can be
+-- refreshed without switching the player's current config.
+patchExact('cloud import skip-load signature', [=[
+local function importJsonConfig(text, requestedName)
+]=], [=[
+local function importJsonConfig(text, requestedName, skipLoad)
+]=], 'local function importJsonConfig(text, requestedName, skipLoad)')
+
+patchExact('cloud import preserve active profile', [=[
+	guidata.Profile = configName
+	writefile(guiPath, httpService:JSONEncode(guidata))
+]=], [=[
+	if not skipLoad then guidata.Profile = configName end
+	writefile(guiPath, httpService:JSONEncode(guidata))
+]=], 'if not skipLoad then guidata.Profile = configName end')
+
+patchExact('cloud import background load guard', [=[
+	refreshConfigProfiles()
+	mainapi:Load(true, configName)
+	mainapi:Save(configName)
+	return true, configName
+end
+]=], [=[
+	refreshConfigProfiles()
+	if not skipLoad then
+		mainapi:Load(true, configName)
+		mainapi:Save(configName)
+	end
+	return true, configName
+end
+]=], 'if not skipLoad then\n\t\tmainapi:Load(true, configName)')
+
+patchExact('cloud config serializer bridge', [=[
+local importNameBox
+local importJsonBox = profiles:CreateTextBox({
+]=], [=[
+mainapi.CloudConfigInternals = {
+	ImportJson = importJsonConfig,
+	RefreshProfiles = refreshConfigProfiles,
+	ConfigPath = getConfigPath
+}
+
+local importNameBox
+local importJsonBox = profiles:CreateTextBox({
+]=], 'mainapi.CloudConfigInternals = {')
+
 local cache = type(shared.AetherCompileCache) == 'table' and shared.AetherCompileCache or nil
 local compiled, compileError = cache and cache[source] or nil
 if not compiled then
@@ -269,4 +316,29 @@ if not compiled then
 	if cache then cache[source] = compiled end
 end
 
-return compiled(license)
+local mainapi = compiled(license)
+
+-- Cloud Configs is intentionally a small public client layer. Failure to fetch or
+-- initialise it must never prevent normal/local Aether configs from working.
+local cloudSource, cloudError
+if isfile and isfile('aetherv2/libraries/cloud-configs.lua') then
+	local ok, cached = pcall(readfile, 'aetherv2/libraries/cloud-configs.lua')
+	if ok and validSource(cached) then cloudSource = cached end
+end
+if not cloudSource then
+	cloudSource, cloudError = fetch(currentRef(), 'libraries/cloud-configs.lua')
+	if not cloudSource and currentRef() ~= 'main' then cloudSource, cloudError = fetch('main', 'libraries/cloud-configs.lua') end
+end
+if cloudSource then
+	local cloudChunk, cloudCompileError = loadstring(cloudSource, 'libraries/cloud-configs.lua')
+	if cloudChunk then
+		local ok, err = pcall(cloudChunk, mainapi, license)
+		if not ok then warn('[AetherV2] Cloud Configs failed to initialise: '..tostring(err)) end
+	else
+		warn('[AetherV2] Cloud Configs did not compile: '..tostring(cloudCompileError))
+	end
+elseif cloudError then
+	warn('[AetherV2] Cloud Configs could not be fetched: '..tostring(cloudError))
+end
+
+return mainapi
