@@ -8,6 +8,7 @@ on:
       - .github/workflows/bedwars-structure.yml
       - tools/apply-bedwars-refactor.py
       - tools/apply-aug30-unfinished.py
+      - tools/fix-aug30-verification.py
       - tools/patch-refactor-standalone.py
       - tools/patch-refactor-discord.py
       - tools/build-bedwars-bundle.py
@@ -40,6 +41,8 @@ jobs:
         run: python tools/apply-bedwars-refactor.py
       - name: Apply remaining Aug 30 requests
         run: python tools/apply-aug30-unfinished.py
+      - name: Apply verification fixes
+        run: python tools/fix-aug30-verification.py
       - name: Rebuild BedWars runtime bundle
         run: python tools/build-bedwars-bundle.py
       - name: Validate backend JavaScript
