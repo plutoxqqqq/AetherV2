@@ -57,37 +57,14 @@ jobs:
           : > /tmp/luau-diagnostics/results.txt
           check_file() {
             local file="$1"
-            echo "Checking $file"
             if ! /tmp/luau/luau-compile "$file" >/tmp/luau.out 2>/tmp/luau.err; then
               failures=$((failures + 1))
-              {
-                echo "=== $file ==="
-                cat /tmp/luau.out
-                cat /tmp/luau.err
-                echo
-              } | tee -a /tmp/luau-diagnostics/results.txt
+              { echo "=== $file ==="; cat /tmp/luau.out; cat /tmp/luau.err; echo; } | tee -a /tmp/luau-diagnostics/results.txt
             fi
           }
-          while IFS= read -r -d '' file; do
-            check_file "$file"
-          done < <(find . -type f -name '*.lua' -not -path './.git/*' -not -path './guis/liquidglass/*' -print0)
+          while IFS= read -r -d '' file; do check_file "$file"; done < <(find . -type f -name '*.lua' -not -path './.git/*' -not -path './guis/liquidglass/*' -print0)
           echo "failures=$failures" | tee -a /tmp/luau-diagnostics/results.txt
           if [ "$failures" -ne 0 ]; then exit 1; fi
-
-      - name: Run backend tests
-        if: success()
-        working-directory: backend
-        run: |
-          npm ci
-          npm run check
-          npm test
-
-      - name: Upload Luau diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: luau-diagnostics
-          path: /tmp/luau-diagnostics
 
       - name: Commit repaired sources
         if: success() && github.event_name == 'push'
@@ -99,6 +76,24 @@ jobs:
           git add backend/execution-stats.js backend/discord-bot.js backend/execution-stats-v2.test.js init.lua games/6872274481/main.lua games/6872274481/bundle.lua
           git commit -m 'Fix BedWars runtime and execution details telemetry'
           git push origin HEAD:${{ github.ref_name }}
+
+      - name: Run backend tests
+        if: success()
+        working-directory: backend
+        shell: bash
+        run: |
+          mkdir -p /tmp/backend-diagnostics
+          set -o pipefail
+          (npm ci && npm run check && npm test) 2>&1 | tee /tmp/backend-diagnostics/results.txt
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: validation-diagnostics
+          path: |
+            /tmp/luau-diagnostics
+            /tmp/backend-diagnostics
 
       - name: Ensure bundle is current
         if: success()
