@@ -6,8 +6,8 @@ run(function()
 	local profiles = {
 		Quality = {},
 		Balanced = {'Particles', 'Bloom', 'Weather'},
-		Performance = {'Particles', 'Bloom', 'Weather', 'Shadows', 'Kill effects', 'Projectile effects'},
-		Potato = {'Particles', 'Bloom', 'Weather', 'Shadows', 'Kill effects', 'Projectile effects', 'Textures', 'Materials', 'Lighting'},
+		Performance = {'Particles', 'Bloom', 'Weather', 'Shadows', 'Kill effects', 'Projectile effects', 'Lights', 'Atmosphere'},
+		Potato = {'Particles', 'Bloom', 'Weather', 'Shadows', 'Kill effects', 'Projectile effects', 'Textures', 'Materials', 'Lighting', 'Lights', 'Atmosphere'},
 		-- Config aliases from the previous four-profile UI.
 		Minimal = {'Particles'}, Competitive = {'Particles', 'Bloom', 'Weather', 'Shadows', 'Kill effects', 'Projectile effects'}, Max = {'Particles', 'Bloom', 'Weather', 'Shadows', 'Kill effects', 'Projectile effects', 'Textures', 'Materials', 'Lighting'}
     }
@@ -26,10 +26,17 @@ run(function()
     end
 
     local function applyObject(object)
+        if object:IsDescendantOf(coreGui) or (lplr.PlayerGui and object:IsDescendantOf(lplr.PlayerGui)) then return end
         if selected('Particles') and (object:IsA('ParticleEmitter') or object:IsA('Trail') or object:IsA('Beam')) then
             setProperty(object, 'Enabled', false)
         elseif selected('Bloom') and object:IsA('PostEffect') then
             setProperty(object, 'Enabled', false)
+        end
+        if selected('Lights') and object:IsA('Light') then setProperty(object, 'Enabled', false) end
+        if selected('Atmosphere') and object:IsA('Atmosphere') then
+            setProperty(object, 'Density', 0)
+            setProperty(object, 'Haze', 0)
+            setProperty(object, 'Glare', 0)
         end
         if selected('Weather') and (object:GetAttribute('WeatherEffect') or object.Name:lower():find('weather')) then
             if object:IsA('ParticleEmitter') or object:IsA('Trail') or object:IsA('Beam') then setProperty(object, 'Enabled', false) end

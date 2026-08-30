@@ -140,6 +140,7 @@ local store = {
 		hotbar = {}
 	},
 	selfProjectiles = {},
+	hitchance = {},
 	inventories = {},
 	kitReady = false,
 	matchState = 0,
@@ -354,6 +355,26 @@ local function getProjectiles(enabled, useSophia, useWhim)
 		end
 	end
 	return projectiles
+end
+
+local hitMotion = setmetatable({}, {__mode = 'k'})
+local function getHitChance(ent, flight)
+	flight = tonumber(flight)
+	local root = ent and ent.RootPart
+	if not root or not root.Parent or not flight or flight <= 0 or flight ~= flight then return 0 end
+	local now = tick()
+	local velocity = root.AssemblyLinearVelocity
+	local horizontal = (velocity * Vector3.new(1, 0, 1)).Magnitude
+	local last = hitMotion[root]
+	local acceleration = 0
+	if last and now > last.Clock then
+		acceleration = ((velocity - last.Velocity) / math.max(now - last.Clock, 1 / 240)).Magnitude
+	end
+	hitMotion[root] = {Velocity = velocity, Clock = now}
+	local airborne = ent.Humanoid and ent.Humanoid.FloorMaterial == Enum.Material.Air
+	local errorBudget = (horizontal * flight * 0.28) + (acceleration * flight * flight * 0.12)
+	if airborne then errorBudget += math.abs(velocity.Y) * flight * 0.12 end
+	return math.clamp(math.round(100 - errorBudget), 0, 100)
 end
 
 local function projectileAcceleration(gravity)
@@ -973,6 +994,34 @@ local sortmethods, breakmethods = {
 		return (pos - Vector3.new(a.Position.X, pos.Y, a.Position.Z)).Magnitude
 	end
 }
+
+local function screenPriorityDistance(entry, origin)
+	local ent = entry and entry.Entity
+	local root = ent and ent.RootPart
+	if not root then return math.huge end
+	local point, visible = gameCamera:WorldToViewportPoint(root.Position)
+	if not visible then return math.huge end
+	return (Vector2.new(point.X, point.Y) - origin).Magnitude
+end
+sortmethods.None = function() return false end
+sortmethods.Closest = function(a, b) return (a.Magnitude or math.huge) < (b.Magnitude or math.huge) end
+sortmethods.Farthest = function(a, b) return (a.Magnitude or 0) > (b.Magnitude or 0) end
+sortmethods['Lowest health'] = function(a, b) return (a.Entity.Health or math.huge) < (b.Entity.Health or math.huge) end
+sortmethods['Highest health'] = function(a, b) return (a.Entity.Health or 0) > (b.Entity.Health or 0) end
+sortmethods.Mouse = function(a, b)
+	local origin = inputService:GetMouseLocation()
+	return screenPriorityDistance(a, origin) < screenPriorityDistance(b, origin)
+end
+sortmethods.Crosshair = function(a, b)
+	local origin = gameCamera.ViewportSize / 2
+	return screenPriorityDistance(a, origin) < screenPriorityDistance(b, origin)
+end
+shared.AetherScreenSorts = {[sortmethods.Mouse] = 'Mouse', [sortmethods.Crosshair] = 'Crosshair'}
+local sortlist = {}
+for name in sortmethods do table.insert(sortlist, name) end
+table.sort(sortlist)
+getgenv().sortlist = sortlist
+
 
 run(function()
 	local oldstart = entitylib.start
@@ -2393,6 +2442,9 @@ end
     Combat
 ]]
 
+--[[AETHER_MODULE:render/HitAccuracy.lua]]
+--[[AETHER_MODULE:utility/MemoryFixer.lua]]
+--[[AETHER_MODULE:utility/AntiEffect.lua]]
 --[[AETHER_MODULE:combat/AimAssist.lua]]
 
 --[[AETHER_MODULE:combat/AutoClicker.lua]]

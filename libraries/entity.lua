@@ -167,11 +167,16 @@ entitylib.EntityPosition = function(entitysettings)
 	if entitylib.isAlive then
 		local localPosition, sortingTable = entitysettings.Origin or entitylib.character.HumanoidRootPart.Position, {}
 		local range, customSort = entitysettings.Range, entitysettings.Sort or entitysettings.Priority
+		local screenSort = shared.AetherScreenSorts and shared.AetherScreenSorts[entitysettings.Sort]
 		local rangeSquared = range * range
 		for _, v in entitylib.List do
 			if not entitysettings.Players and v.Player then continue end
 			if not entitysettings.NPCs and v.NPC then continue end
 			if not v.Targetable then continue end
+			if screenSort then
+				local _, visible = gameCamera:WorldToViewportPoint(v[entitysettings.Part].Position)
+				if not visible then continue end
+			end
 			local delta = v[entitysettings.Part].Position - localPosition
 			local mag = delta:Dot(delta)
 			if mag > rangeSquared then continue end

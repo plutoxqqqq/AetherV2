@@ -115,7 +115,7 @@ run(function()
 	})
 	Targets = AutoKaida:CreateTargets({Players = true})
 	local methods = {'Distance', 'Damage'}
-	for i in sortmethods do
+	for _, i in sortlist do
 		if not table.find(methods, i) then
 			table.insert(methods, i)
 		end

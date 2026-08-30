@@ -12,6 +12,7 @@ run(function()
     local JadeHammerClutch
     local VoidAxeClutch
     local HealthCheck
+    local DamagePercent
     local Zephyr
     local rayCheck = RaycastParams.new()
     rayCheck.RespectCanCollide = true
@@ -211,7 +212,7 @@ run(function()
         local health = (lplr.Character and lplr.Character:GetAttribute('Health')) or humanoid.Health
         local fallBlocks = math.max(0, ((fallAnchorY or root.Position.Y) - ground.Position.Y) / 3)
         local estimatedDamage = math.max(0, fallBlocks - 6) * 5
-        return estimatedDamage >= health
+        return estimatedDamage >= (health * ((DamagePercent and DamagePercent.Value or 100) / 100))
     end
 
     local function abilityClutch(item, ability, callback)
@@ -679,6 +680,14 @@ run(function()
     HealthCheck = NoFall:CreateToggle({
         Name = 'Health check',
         Tooltip = 'Only clutches when the estimated fall damage would be lethal'
+    })
+    DamagePercent = NoFall:CreateSlider({
+        Name = 'Damage threshold',
+        Min = 1,
+        Max = 100,
+        Default = 100,
+        Suffix = '%',
+        Tooltip = 'With Health check on, only clutches when estimated fall damage reaches this percentage of current health'
     })
     Zephyr = NoFall:CreateToggle({
         Name = 'Zephyr',

@@ -48,7 +48,7 @@ run(function()
 	})
 	Targets = AutoHannah:CreateTargets({Players = true})
 	local methods = {'Health', 'Distance'}
-	for i in sortmethods do
+	for _, i in sortlist do
 		if not table.find(methods, i) then
 			table.insert(methods, i)
 		end

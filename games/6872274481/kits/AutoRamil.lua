@@ -42,7 +42,7 @@ run(function()
 		NPCs = false
 	})
 	local methods = {'Damage', 'Distance'}
-	for i in sortmethods do
+	for _, i in sortlist do
 		if not table.find(methods, i) then
 			table.insert(methods, i)
 		end
