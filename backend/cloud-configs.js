@@ -2,10 +2,11 @@
 
 const crypto = require('node:crypto');
 
-const REPOSITORY = process.env.GITHUB_REPO || '';
-const TOKEN = process.env.GITHUB_TOKEN || '';
-const BRANCH = process.env.AETHER_CLOUD_BRANCH || process.env.AETHER_REGISTRY_BRANCH || 'aether-key-registry';
-const CLOUD_FILE = process.env.AETHER_CLOUD_FILE || 'backend/cloud-configs.json';
+const REPOSITORY = process.env.AETHER_CLOUD_REPO || process.env.PREMIUM_GITHUB_REPO || '';
+const TOKEN = process.env.AETHER_CLOUD_GITHUB_TOKEN || process.env.GITHUB_TOKEN || '';
+const BASE_BRANCH = process.env.AETHER_CLOUD_BASE_BRANCH || process.env.PREMIUM_GITHUB_BRANCH || 'main';
+const BRANCH = process.env.AETHER_CLOUD_BRANCH || 'aether-cloud-configs';
+const CLOUD_FILE = process.env.AETHER_CLOUD_FILE || 'cloud-configs.json';
 const STORE_VERSION = 1;
 const MAX_CONFIGS_PER_KEY = 5;
 const MAX_PAYLOAD_BYTES = 1024 * 1024;
@@ -21,10 +22,20 @@ const REQUEST_RETRIES = boundedNumber(process.env.AETHER_GITHUB_RETRIES, 3, 0, 6
 const MUTATION_ATTEMPTS = boundedNumber(process.env.AETHER_GITHUB_CONFLICT_RETRIES, 4, 1, 8);
 const RETRY_BASE_MS = boundedNumber(process.env.AETHER_RETRY_BASE_MS, 150, 0, 5000);
 let storeQueue = Promise.resolve();
+let branchReady;
 
-if (!TOKEN) throw new Error('GITHUB_TOKEN is required');
-if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(REPOSITORY)) throw new Error('GITHUB_REPO must be configured as owner/repository');
-if (!BRANCH || BRANCH.length > 200) throw new Error('AETHER_CLOUD_BRANCH is invalid');
+const validRef = value => typeof value === 'string' && value.length > 0 && value.length <= 200 &&
+  !value.includes('..') && !value.includes('\\') && !value.includes('?') && !value.includes('#') && !/\s/.test(value);
+
+if (!TOKEN) throw new Error('AETHER_CLOUD_GITHUB_TOKEN or GITHUB_TOKEN is required');
+if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(REPOSITORY)) {
+  throw new Error('AETHER_CLOUD_REPO or PREMIUM_GITHUB_REPO must be configured as owner/repository');
+}
+if (!validRef(BASE_BRANCH)) throw new Error('AETHER_CLOUD_BASE_BRANCH is invalid');
+if (!validRef(BRANCH)) throw new Error('AETHER_CLOUD_BRANCH is invalid');
+if (typeof CLOUD_FILE !== 'string' || !CLOUD_FILE || CLOUD_FILE.startsWith('/') || CLOUD_FILE.includes('..') || CLOUD_FILE.includes('\\')) {
+  throw new Error('AETHER_CLOUD_FILE is invalid');
+}
 
 const headers = {
   authorization: 'Bearer ' + TOKEN,
@@ -130,7 +141,42 @@ const githubRequest = async (endpoint, options = {}, retries = REQUEST_RETRIES) 
   throw lastError || problem('GitHub request failed', 502);
 };
 
+const branchEndpoint = ref => 'git/ref/heads/' + ref.split('/').map(encodeURIComponent).join('/');
+const ensureBranch = async () => {
+  if (branchReady) return branchReady;
+  branchReady = (async () => {
+    const existing = await githubRequest(branchEndpoint(BRANCH));
+    if (existing.ok) return;
+    if (existing.status !== 404) throw problem('Could not check Cloud Config storage branch (HTTP ' + existing.status + ')', 502);
+
+    const base = await githubRequest(branchEndpoint(BASE_BRANCH));
+    if (!base.ok) throw problem('Could not read Cloud Config base branch (HTTP ' + base.status + ')', 502);
+    let baseRef;
+    try { baseRef = await base.json(); }
+    catch (error) { throw problem('GitHub returned an invalid Cloud Config base branch', 502, {cause: error}); }
+    const sha = baseRef && baseRef.object && baseRef.object.sha;
+    if (typeof sha !== 'string' || !/^[a-f0-9]{40}$/i.test(sha)) throw problem('GitHub returned an invalid Cloud Config base SHA', 502);
+
+    const created = await githubRequest('git/refs', {
+      method: 'POST',
+      headers: {'content-type': 'application/json'},
+      body: JSON.stringify({ref: 'refs/heads/' + BRANCH, sha})
+    }, 0);
+    if (created.ok) return;
+    if (created.status === 422) {
+      const raced = await githubRequest(branchEndpoint(BRANCH), {}, 0);
+      if (raced.ok) return;
+    }
+    throw problem('Could not create Cloud Config storage branch (HTTP ' + created.status + ')', 502);
+  })().catch(error => {
+    branchReady = null;
+    throw error;
+  });
+  return branchReady;
+};
+
 const readStore = async () => {
+  await ensureBranch();
   const response = await githubRequest('contents/' + CLOUD_FILE + '?ref=' + encodeURIComponent(BRANCH));
   if (response.status === 404) return {data: emptyStore(), sha: null};
   if (!response.ok) throw problem('Could not read cloud configs (HTTP ' + response.status + ')', 502);
@@ -446,5 +492,6 @@ module.exports = {
   resolveShare,
   importShare,
   restoreBackup,
-  readStore
+  readStore,
+  ensureBranch
 };
