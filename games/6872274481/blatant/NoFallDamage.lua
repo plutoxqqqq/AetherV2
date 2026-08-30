@@ -521,7 +521,6 @@ run(function()
     end
 
     local cvStateConnections = {}
-    local v2Busy = false
     local modeGeneration = 0
 
     local function restoreCvStateConnections()
@@ -590,40 +589,6 @@ run(function()
         end))
     end
 
-    local function startV2(generation)
-        v2Busy = false
-        NoFall:Clean(runService.PostSimulation:Connect(function()
-            if v2Busy or generation ~= modeGeneration or not NoFall.Enabled or Mode.Value ~= 'V2' then return end
-            if not entitylib.isAlive or store.matchState ~= 1 or store.infinitefly then return end
-            local highJump = vape.Modules and vape.Modules.HighJump
-            if highJump and highJump.Enabled then return end
-
-            local root = entitylib.character.RootPart
-            local humanoid = entitylib.character.Humanoid
-            local velocity = root.AssemblyLinearVelocity
-            if velocity.Y >= -45 then return end
-
-            v2Busy = true
-            task.spawn(function()
-                local oldY = velocity.Y
-                if generation ~= modeGeneration or not NoFall.Enabled or Mode.Value ~= 'V2' or not root.Parent then
-                    v2Busy = false
-                    return
-                end
-
-                root.AssemblyLinearVelocity = Vector3.new(root.AssemblyLinearVelocity.X, 44, root.AssemblyLinearVelocity.Z)
-                pcall(humanoid.ChangeState, humanoid, Enum.HumanoidStateType.Landed)
-                runService.PreSimulation:Wait()
-
-                if generation == modeGeneration and NoFall.Enabled and Mode.Value == 'V2' and root.Parent then
-                    local current = root.AssemblyLinearVelocity
-                    root.AssemblyLinearVelocity = Vector3.new(current.X, oldY, current.Z)
-                end
-                v2Busy = false
-            end)
-        end))
-    end
-
     local function setSettingsVisible()
         local legit = Mode and Mode.Value == 'Legit'
         if MinVelocity and MinVelocity.Object then MinVelocity.Object.Visible = legit end
@@ -647,12 +612,8 @@ run(function()
 
             if callback then
                 restoreCvStateConnections()
-                v2Busy = false
-
                 if Mode.Value == 'Blatant' then
                     startCvBlatant(generation)
-                elseif Mode.Value == 'V2' then
-                    startV2(generation)
                 end
 
                 repeat
@@ -676,7 +637,6 @@ run(function()
                 until not NoFall.Enabled or generation ~= modeGeneration
             else
                 restoreCvStateConnections()
-                v2Busy = false
                 usedPearl = false
                 lastAnchor = 0
                 lastLegitUse = 0
@@ -689,11 +649,11 @@ run(function()
                 removeRakHook()
             end
         end,
-        Tooltip = 'Prevents fall damage. Blatant uses cv; V2 preserves the previous landed-state method; Legit keeps Aether clutch logic.'
+        Tooltip = 'Prevents fall damage. Blatant uses cv NoFallDamage behavior; Legit keeps Aether clutch logic.'
     })
 	Mode = NoFall:CreateDropdown({
 		Name = 'Mode',
-		List = {'Blatant', 'V2', 'Legit'},
+		List = {'Blatant', 'Legit'},
         Function = function()
             setSettingsVisible()
             if NoFall.Enabled then
@@ -701,14 +661,14 @@ run(function()
                 NoFall:Toggle()
             end
         end,
-		Tooltip = 'Blatant - cv landed/GroundHit behaviour\nV2 - previous Aether landed-state velocity method\nLegit - Aether clutch logic'
+		Tooltip = 'Blatant - cv NoFallDamage behavior\nLegit - Aether clutch logic'
     })
     MinVelocity = NoFall:CreateSlider({
         Name = 'Minimum Velocity',
         Min = 35,
         Max = 120,
         Default = 60,
-        Tooltip = 'How fast the drop has to be before Legit uses a clutch. Blatant and V2 ignore it'
+        Tooltip = 'How fast the drop has to be before Legit uses a clutch. Blatant ignores it'
     })
     FallThreshold = NoFall:CreateSlider({
         Name = 'Fall threshold',
