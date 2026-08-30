@@ -3,6 +3,7 @@
 const http = require('node:http');
 const crypto = require('node:crypto');
 const registry = require('./key-registry');
+const cloud = require('./cloud-configs');
 require('./key-conflicts');
 
 const boundedNumber = (value, fallback, min, max) => {
@@ -25,6 +26,8 @@ const RETRY_BASE_MS = boundedNumber(process.env.AETHER_RETRY_BASE_MS, 150, 0, 50
 const RATE_WINDOW_MS = boundedNumber(process.env.AETHER_RATE_WINDOW_MS, 60000, 1000, 3600000);
 const RATE_LIMIT = boundedNumber(process.env.AETHER_RATE_LIMIT, 180, 10, 10000);
 const AUTH_RATE_LIMIT = boundedNumber(process.env.AETHER_AUTH_RATE_LIMIT, 20, 2, 1000);
+const CLOUD_RATE_LIMIT = boundedNumber(process.env.AETHER_CLOUD_RATE_LIMIT, 120, 10, 10000);
+const CLOUD_MAX_BODY = cloud.MAX_PAYLOAD_BYTES + (64 * 1024);
 const TRUST_PROXY = process.env.AETHER_TRUST_PROXY === 'true';
 const sessions = new Map();
 const rateBuckets = new Map();
@@ -76,7 +79,7 @@ const json = (res, status, value, extraHeaders = {}) => {
     'content-type': 'application/json; charset=utf-8',
     'cache-control': 'no-store',
     'access-control-allow-origin': '*',
-    'access-control-allow-methods': 'GET,OPTIONS',
+    'access-control-allow-methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS',
     'access-control-allow-headers': 'content-type',
     ...extraHeaders
   });
@@ -87,14 +90,45 @@ const text = (res, status, value, contentType = 'text/plain; charset=utf-8') => 
   res.end(value);
 };
 
+const readCloudBody = req => new Promise((resolve, reject) => {
+  let size = 0;
+  let settled = false;
+  const chunks = [];
+  req.on('data', chunk => {
+    if (settled) return;
+    const value = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    size += value.length;
+    if (size > CLOUD_MAX_BODY) {
+      settled = true;
+      reject(problem('Request body is too large', 413));
+      return;
+    }
+    chunks.push(value);
+  });
+  req.on('end', () => {
+    if (settled) return;
+    settled = true;
+    try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}')); }
+    catch { reject(problem('Invalid JSON body', 400)); }
+  });
+  req.on('error', error => {
+    if (!settled) {
+      settled = true;
+      reject(error);
+    }
+  });
+});
+
 const requestIp = req => String(TRUST_PROXY && req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown')
   .split(',')[0].trim().slice(0, 100);
 const consumeRateLimit = (req, pathname) => {
   const now = Date.now();
   if (rateBuckets.size > 10000) for (const [key, value] of rateBuckets) if (value.resetAt <= now) rateBuckets.delete(key);
   const authRoute = pathname === '/premium/authorize';
-  const limit = authRoute ? AUTH_RATE_LIMIT : RATE_LIMIT;
-  const key = requestIp(req) + ':' + (authRoute ? 'auth' : 'premium-source');
+  const cloudRoute = pathname.startsWith('/cloud/');
+  const limit = authRoute ? AUTH_RATE_LIMIT : cloudRoute ? CLOUD_RATE_LIMIT : RATE_LIMIT;
+  const group = authRoute ? 'auth' : cloudRoute ? 'cloud' : 'premium-source';
+  const key = requestIp(req) + ':' + group;
   let bucket = rateBuckets.get(key);
   if (!bucket || bucket.resetAt <= now) bucket = {count: 0, resetAt: now + RATE_WINDOW_MS};
   bucket.count += 1;
@@ -189,6 +223,13 @@ const requireSession = async value => {
   return session;
 };
 
+// A cloud owner is the current Premium key + Roblox account. If a key is unlinked
+// and later rebound to another account, that new account cannot inherit old configs.
+const cloudOwnerSession = session => ({
+  ...session,
+  keyId: crypto.createHash('sha256').update(String(session.keyId) + '\0' + String(session.userId)).digest('hex')
+});
+
 const verifyRobloxIdentity = async person => {
   const response = await fetchWithRetry('https://users.roblox.com/v1/users/' + encodeURIComponent(person.userId));
   if (response.status === 404) return false;
@@ -213,15 +254,83 @@ const premiumTree = async () => {
   return JSON.stringify({sha: body.sha, truncated: false, tree});
 };
 
+const routeCloud = async (req, res, url) => {
+  const shareMatch = url.pathname.match(/^\/cloud\/share\/([^/]+)$/);
+  if (req.method === 'GET' && shareMatch) {
+    const config = await cloud.resolveShare(decodeURIComponent(shareMatch[1]));
+    return json(res, 200, {success: true, config});
+  }
+
+  if (req.method === 'POST' && url.pathname === '/cloud/import') {
+    const session = cloudOwnerSession(await requireSession(url));
+    const config = await cloud.importShare(session, await readCloudBody(req));
+    return json(res, 201, {success: true, config});
+  }
+
+  if (url.pathname === '/cloud/configs') {
+    const session = cloudOwnerSession(await requireSession(url));
+    if (req.method === 'GET') {
+      const configs = await cloud.list(session, url.searchParams.get('placeId'));
+      return json(res, 200, {success: true, limit: cloud.MAX_CONFIGS_PER_KEY, configs});
+    }
+    if (req.method === 'POST') {
+      const config = await cloud.create(session, await readCloudBody(req));
+      return json(res, 201, {success: true, limit: cloud.MAX_CONFIGS_PER_KEY, config});
+    }
+  }
+
+  const configMatch = url.pathname.match(/^\/cloud\/configs\/([a-f0-9-]{16,64})$/i);
+  if (configMatch) {
+    const session = cloudOwnerSession(await requireSession(url));
+    const id = configMatch[1];
+    if (req.method === 'GET') {
+      return json(res, 200, {success: true, config: await cloud.get(session, id)});
+    }
+    if (req.method === 'PUT') {
+      return json(res, 200, {success: true, config: await cloud.save(session, id, await readCloudBody(req))});
+    }
+    if (req.method === 'DELETE') {
+      await cloud.remove(session, id);
+      return json(res, 200, {success: true, id});
+    }
+    if (req.method === 'PATCH') {
+      const input = await readCloudBody(req);
+      let config;
+      if (input.action === 'rename') config = await cloud.rename(session, id, input.name);
+      else if (input.action === 'sharing') config = await cloud.sharing(session, id, input.mode);
+      else if (input.action === 'sync') config = await cloud.setSync(session, id, input.enabled);
+      else if (input.action === 'restore-backup') config = await cloud.restoreBackup(session, id);
+      else throw problem('Unknown cloud config action', 400);
+      return json(res, 200, {success: true, config});
+    }
+  }
+
+  return json(res, 404, {success: false, error: 'Cloud config endpoint not found'});
+};
+
 const server = http.createServer(async (req, res) => {
   try {
-    if (req.method === 'OPTIONS') return res.writeHead(204).end();
+    if (req.method === 'OPTIONS') return res.writeHead(204, {
+      'access-control-allow-origin': '*',
+      'access-control-allow-methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS',
+      'access-control-allow-headers': 'content-type'
+    }).end();
     const url = new URL(req.url, 'http://localhost');
     const retryAfter = consumeRateLimit(req, url.pathname);
     if (retryAfter) return json(res, 429, {success: false, error: 'Too many requests; try again shortly'}, {'retry-after': String(retryAfter)});
 
+    if (url.pathname.startsWith('/cloud/')) return await routeCloud(req, res, url);
+
     if (req.method === 'GET' && url.pathname === '/health') {
-      return json(res, 200, {success: true, service: 'aetherv2-premium-source', normalSource: 'public-github', premiumEnabled, discordBot: Boolean(process.env.DISCORD_TOKEN)});
+      return json(res, 200, {
+        success: true,
+        service: 'aetherv2-premium-source',
+        normalSource: 'public-github',
+        premiumEnabled,
+        cloudConfigs: true,
+        cloudConfigLimit: cloud.MAX_CONFIGS_PER_KEY,
+        discordBot: Boolean(process.env.DISCORD_TOKEN)
+      });
     }
 
     if (req.method === 'GET' && url.pathname === '/premium/authorize') {
@@ -276,6 +385,9 @@ module.exports = {
   premiumSessionLoader,
   createSession,
   requireSession,
+  cloudOwnerSession,
+  routeCloud,
+  readCloudBody,
   invalidateSessionsForKey,
   sessions,
   premiumSourceFile,
