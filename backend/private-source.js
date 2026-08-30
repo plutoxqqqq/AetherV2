@@ -31,6 +31,7 @@ const CLOUD_MAX_BODY = cloud.MAX_PAYLOAD_BYTES + (64 * 1024);
 const TRUST_PROXY = process.env.AETHER_TRUST_PROXY === 'true';
 const sessions = new Map();
 const rateBuckets = new Map();
+const cloudRootCache = new Map();
 
 if (!TOKEN) throw new Error('GITHUB_TOKEN is required');
 try {
@@ -194,7 +195,8 @@ const createSession = binding => {
     expiresAt: createdAt + SESSION_TTL,
     keyId: binding.id,
     username: binding.binding.username,
-    userId: String(binding.binding.userId)
+    userId: String(binding.binding.userId),
+    keyRecord: binding.record || null
   };
   sessions.set(token, session);
   return session;
@@ -220,15 +222,39 @@ const requireSession = async value => {
     sessions.delete(token);
     throw problem('The premium key was revoked, expired, rotated, or unlinked', 401);
   }
+  session.keyRecord = info.record || null;
   return session;
 };
 
-// A cloud owner is the current Premium key + Roblox account. If a key is unlinked
-// and later rebound to another account, that new account cannot inherit old configs.
-const cloudOwnerSession = session => ({
-  ...session,
-  keyId: crypto.createHash('sha256').update(String(session.keyId) + '\0' + String(session.userId)).digest('hex')
-});
+// Cloud ownership follows the root of a rotated key lineage plus the Roblox account.
+// Rotation therefore keeps the same cloud data, while unlinking/rebinding the lineage to
+// another Roblox UserId produces a different owner ID and cannot expose the previous data.
+const cloudOwnerSession = async session => {
+  let rootId = cloudRootCache.get(session.keyId);
+  if (!rootId) {
+    let currentId = session.keyId;
+    let record = session.keyRecord;
+    const seen = new Set([currentId]);
+    for (let depth = 0; depth < 32; depth += 1) {
+      const previous = record && record.rotatedFrom;
+      if (!previous) {
+        rootId = currentId;
+        break;
+      }
+      if (seen.has(previous)) throw problem('Premium key rotation chain is invalid', 502);
+      seen.add(previous);
+      const info = await registry.getKeyInfo(previous);
+      currentId = info.keyId;
+      record = info.record;
+    }
+    if (!rootId) throw problem('Premium key rotation chain is too deep', 502);
+    cloudRootCache.set(session.keyId, rootId);
+  }
+  return {
+    ...session,
+    keyId: crypto.createHash('sha256').update(String(rootId) + '\0' + String(session.userId)).digest('hex')
+  };
+};
 
 const verifyRobloxIdentity = async person => {
   const response = await fetchWithRetry('https://users.roblox.com/v1/users/' + encodeURIComponent(person.userId));
@@ -262,13 +288,13 @@ const routeCloud = async (req, res, url) => {
   }
 
   if (req.method === 'POST' && url.pathname === '/cloud/import') {
-    const session = cloudOwnerSession(await requireSession(url));
+    const session = await cloudOwnerSession(await requireSession(url));
     const config = await cloud.importShare(session, await readCloudBody(req));
     return json(res, 201, {success: true, config});
   }
 
   if (url.pathname === '/cloud/configs') {
-    const session = cloudOwnerSession(await requireSession(url));
+    const session = await cloudOwnerSession(await requireSession(url));
     if (req.method === 'GET') {
       const configs = await cloud.list(session, url.searchParams.get('placeId'));
       return json(res, 200, {success: true, limit: cloud.MAX_CONFIGS_PER_KEY, configs});
@@ -281,7 +307,7 @@ const routeCloud = async (req, res, url) => {
 
   const configMatch = url.pathname.match(/^\/cloud\/configs\/([a-f0-9-]{16,64})$/i);
   if (configMatch) {
-    const session = cloudOwnerSession(await requireSession(url));
+    const session = await cloudOwnerSession(await requireSession(url));
     const id = configMatch[1];
     if (req.method === 'GET') {
       return json(res, 200, {success: true, config: await cloud.get(session, id)});
