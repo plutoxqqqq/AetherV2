@@ -51,6 +51,8 @@ jobs:
         run: python tools/normalize-bedwars-layout.py
       - name: Finalize split layout
         run: python tools/finalize-split-layout.py
+      - name: Merge NoFallDamage modes
+        run: python tools/merge-nofall-modes.py
       - name: Audit one-module-per-file structure
         run: python tools/audit-bedwars-modules.py
       - name: Rebuild BedWars runtime bundle
@@ -69,5 +71,5 @@ jobs:
             echo "No generated changes"
             exit 0
           fi
-          git commit -m "Finish original update fixes and split AutoWin runtime"
+          git commit -m "Merge NoFallDamage implementations"
           git push origin HEAD:${{ github.ref_name }}
