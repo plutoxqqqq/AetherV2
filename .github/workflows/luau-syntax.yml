@@ -26,6 +26,7 @@ jobs:
         shell: bash
         run: |
           python3 tools/apply-stats-details-fixes.py
+          python3 tools/fix-stats-regression-test.py
           python3 - <<'PY'
           from pathlib import Path
           path = Path('games/6872274481/main.lua')
@@ -73,7 +74,7 @@ jobs:
           if git diff --quiet; then exit 0; fi
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add backend/execution-stats.js backend/discord-bot.js backend/execution-stats-v2.test.js init.lua games/6872274481/main.lua games/6872274481/bundle.lua
+          git add backend/execution-stats.js backend/discord-bot.js backend/execution-stats-v2.test.js backend/private-execution-regression.test.js init.lua games/6872274481/main.lua games/6872274481/bundle.lua
           git commit -m 'Fix BedWars runtime and execution details telemetry'
           git push origin HEAD:${{ github.ref_name }}
 
