@@ -6812,73 +6812,155 @@ end)
 
 
 run(function()
-    local BalloonDisabler
-    local AutoDisable
-    local autoConn
-    local old_hook, old_enablePhysics, old_deflate
+    local Runtime = assert(AetherMatchRuntime, 'Aether BedWars runtime is unavailable')
+    local ctx = AetherRuntimeContext
+    local Ports = AetherPortContext
+    local safe = aetherPortSafe
+    local notify = aetherPortNotify
+    local rootOfLocal = aetherPortRoot
+    local matchRunning = aetherPortMatchRunning
+    local equippedKit = aetherPortEquippedKit
+    local horizontalUnit = aetherPortHorizontalUnit
+    local moduleByName = aetherPortModule
+    local register = aetherPortRegister
+    local abilityController = aetherPortAbilityController
+    local canUseAbility = aetherPortCanUseAbility
+    local useAbility = aetherPortUseAbility
+    local nearestTarget = aetherPortNearestTarget
+    local waitCancelable = aetherPortWait
+    local addMovementOwner = aetherPortAddMovementOwner
+    local createDecoy = aetherPortCreateDecoy
+    local workspaceService = workspace
+local BalloonDisabler, BalloonAutoDisable
+local balloonControllerState
+local balloonAutoConnection
 
-    local function restore()
-        pcall(function()
-            if old_hook then bedwars.BalloonController.hookBalloon = old_hook end
-            if old_enablePhysics then bedwars.BalloonController.enableBalloonPhysics = old_enablePhysics end
-            if old_deflate then bedwars.BalloonController.deflateBalloon = old_deflate end
-        end)
-        old_hook, old_enablePhysics, old_deflate = nil, nil, nil
+local function stopBalloonAutoDisable()
+    if balloonAutoConnection then
+        pcall(balloonAutoConnection.Disconnect, balloonAutoConnection)
+        balloonAutoConnection = nil
     end
+end
 
-    BalloonDisabler = vape.Categories.Exploits:CreateModule({
-        Name = 'BalloonDisabler',
+local function restoreBalloonController()
+    local state = balloonControllerState
+    balloonControllerState = nil
+    if not state or not state.Controller then return end
+    pcall(function()
+        if state.Controller.hookBalloon == state.Hook then
+            state.Controller.hookBalloon = state.HookOriginal
+        end
+        if state.Controller.enableBalloonPhysics == state.Physics then
+            state.Controller.enableBalloonPhysics = state.PhysicsOriginal
+        end
+        if state.Controller.deflateBalloon == state.Deflate then
+            state.Controller.deflateBalloon = state.DeflateOriginal
+        end
+    end)
+end
+
+BalloonDisabler = (function()
+    local module, created = register('Exploits', 'BalloonDisabler', {
+        Tooltip = 'Disables the local balloon anticheat controller while a balloon is equipped.',
         Function = function(callback)
-            if callback then
-                if not getItem('balloon') then
-                    notif('BalloonDisabler', 'No balloon in inventory', 5, 'alert')
+            restoreBalloonController()
+            if not callback then return end
+
+            local controller = bedwars.BalloonController
+            local item = safe('balloon.inventory', getItem, 'balloon')
+            if not item then
+                notify('BalloonDisabler: no balloon is available.', 5, 'alert')
+                return
+            end
+            if not controller or type(controller.hookBalloon) ~= 'function' then
+                notify('BalloonDisabler: balloon controller is unavailable.', 5, 'warning')
+                return
+            end
+
+            local state = {
+                Controller = controller,
+                HookOriginal = controller.hookBalloon,
+                PhysicsOriginal = controller.enableBalloonPhysics,
+                DeflateOriginal = controller.deflateBalloon
+            }
+            balloonControllerState = state
+
+            state.Hook = function(self, player, attachment, balloon)
+                if tostring(player) ~= lplr.Name then
+                    if state.HookOriginal then
+                        return state.HookOriginal(self, player, attachment, balloon)
+                    end
                     return
                 end
-                old_hook = bedwars.BalloonController.hookBalloon
-                old_enablePhysics = bedwars.BalloonController.enableBalloonPhysics
-                old_deflate = bedwars.BalloonController.deflateBalloon
-                pcall(function() bedwars.BalloonController:inflateBalloon() end)
-                bedwars.BalloonController.enableBalloonPhysics = function() end
-                bedwars.BalloonController.deflateBalloon = function() end
-                bedwars.BalloonController.hookBalloon = function(self, plr, attachment, balloon)
-                    if tostring(plr) == lplr.Name then
-                        pcall(function()
-                            balloon:WaitForChild('Balloon').CFrame = CFrame.new(0, -1995, 0)
-                            balloon.Balloon:ClearAllChildren()
-                        end)
-                        task.delay(0.5, function()
-                            notif('BalloonDisabler', 'Disabled Anticheat!', 5)
-                        end)
-                        bedwars.BalloonController.hookBalloon = old_hook
-                        bedwars.BalloonController.enableBalloonPhysics = old_enablePhysics
-                    end
-                end
-            else
-                restore()
-            end
-        end,
-        Tooltip = 'Anticheat-bypass exploit via the balloon controller'
-    })
-    AutoDisable = BalloonDisabler:CreateToggle({
-        Name = 'AutoDisable',
-        Function = function(callback)
-            if callback then
-                autoConn = replicatedStorage.Inventories.DescendantAdded:Connect(function(p3)
-                    if p3.Parent and p3.Parent.Name == lplr.Name and p3.Name == 'balloon' then
-                        repeat task.wait() until getItem('balloon') or (not AutoDisable.Enabled)
-                        if AutoDisable.Enabled and not BalloonDisabler.Enabled then
-                            BalloonDisabler:Toggle()
-                        end
+
+                safe('balloon.hide', function()
+                    if not balloon then return end
+                    local visual = balloon:FindFirstChild('Balloon') or balloon:WaitForChild('Balloon', 1)
+                    if visual then
+                        visual.CFrame = CFrame.new(0, -1995, 0)
+                        visual:ClearAllChildren()
                     end
                 end)
-            else
-                if autoConn then
-                    autoConn:Disconnect()
-                    autoConn = nil
+                restoreBalloonController()
+                task.delay(0.5, function()
+                    if module.Enabled then
+                        notify('BalloonDisabler: local balloon controller disabled.', 5)
+                    end
+                end)
+            end
+            state.Physics = function() end
+            state.Deflate = function() end
+
+            local installed, errorMessage = pcall(function()
+                if type(controller.inflateBalloon) == 'function' then
+                    controller:inflateBalloon()
                 end
+                controller.enableBalloonPhysics = state.Physics
+                controller.deflateBalloon = state.Deflate
+                controller.hookBalloon = state.Hook
+            end)
+            if not installed then
+                restoreBalloonController()
+                notify('BalloonDisabler: controller setup failed.', 5, 'warning')
+                Ports.Diagnostics.BalloonDisabler = {At = tick(), Error = tostring(errorMessage)}
             end
         end
     })
+    if created then
+        BalloonAutoDisable = module:CreateToggle({
+            Name = 'AutoDisable',
+            Default = false,
+            Function = function(enabled)
+                stopBalloonAutoDisable()
+                if not enabled then return end
+                local inventories = ctx.replicatedStorage and ctx.replicatedStorage:FindFirstChild('Inventories')
+                if not inventories then
+                    notify('BalloonDisabler: inventory controller is unavailable.', 5, 'warning')
+                    return
+                end
+                local connected, connection = pcall(inventories.DescendantAdded.Connect, inventories.DescendantAdded, function(object)
+                    if object.Parent and object.Parent.Name == lplr.Name and object.Name == 'balloon' then
+                        task.spawn(function()
+                            repeat task.wait() until getItem('balloon') or not BalloonAutoDisable.Enabled
+                            if BalloonAutoDisable.Enabled and not module.Enabled then
+                                module:Toggle()
+                            end
+                        end)
+                    end
+                end)
+                if connected then
+                    balloonAutoConnection = connection
+                    BalloonAutoDisable:Clean(connection)
+                end
+            end
+        })
+        module:Clean(function()
+            stopBalloonAutoDisable()
+            restoreBalloonController()
+        end)
+    end
+    return module
+end)()
 end)
 
 
@@ -6975,68 +7057,98 @@ end)
 
 
 run(function()
-    local MultiAction, AllowedActions, ActiveContexts
-	local previousCleanup = shared.AetherMultiActionCleanup
-    local hooks, activeCalls, lastBypass = {}, {}, {}
-    local controllerCache = {}
-    local actionNames = {'Hotbar switching', 'Melee attacking', 'Block placement'}
-    local contextNames = {'Projectile charging', 'Consuming', 'Ability aiming'}
+    local Runtime = assert(AetherMatchRuntime, 'Aether BedWars runtime is unavailable')
+    local ctx = AetherRuntimeContext
+    local Ports = AetherPortContext
+    local safe = aetherPortSafe
+    local notify = aetherPortNotify
+    local rootOfLocal = aetherPortRoot
+    local matchRunning = aetherPortMatchRunning
+    local equippedKit = aetherPortEquippedKit
+    local horizontalUnit = aetherPortHorizontalUnit
+    local moduleByName = aetherPortModule
+    local register = aetherPortRegister
+    local abilityController = aetherPortAbilityController
+    local canUseAbility = aetherPortCanUseAbility
+    local useAbility = aetherPortUseAbility
+    local nearestTarget = aetherPortNearestTarget
+    local waitCancelable = aetherPortWait
+    local addMovementOwner = aetherPortAddMovementOwner
+    local createDecoy = aetherPortCreateDecoy
+    local workspaceService = workspace
+local MultiAction, MultiActionActions, MultiActionContexts
+local multiActionHooks, multiActionCalls, multiActionLast = {}, {}, {}
+local multiActionControllers = {}
+local multiActionActionNames = {'Hotbar switching', 'Melee attacking', 'Block placement'}
+local multiActionContextNames = {'Projectile charging', 'Consuming', 'Ability aiming'}
 
-    local function selected(option, name)
-        return option and table.find(option.ListEnabled, name) ~= nil
+local function multiActionSelected(option, name)
+    return option and table.find(option.ListEnabled, name) ~= nil
+end
+
+local function refreshMultiActionControllers()
+    local result, seen = {}, {}
+    local function add(name, controller)
+        if type(controller) == 'table' and not seen[controller] then
+            seen[controller] = true
+            table.insert(result, {Name = tostring(name):lower(), Value = controller})
+        end
     end
+    if bedwars.Knit and bedwars.Knit.Controllers then
+        for name, controller in pairs(bedwars.Knit.Controllers) do add(name, controller) end
+    end
+    for name, controller in pairs(bedwars) do
+        if type(name) == 'string' and name:find('Controller') then add(name, controller) end
+    end
+    add('blockplacer', store.blockPlacer)
+    local placement = bedwars.BlockPlacementController
+    add('blockplacementcontroller', placement)
+    add('blockplacementplacer', placement and placement.blockPlacer)
+    multiActionControllers = result
+end
 
-    local function refreshControllerEntries()
-        local result, seen = {}, {}
-        local function add(name, controller)
-            if type(controller) == 'table' and not seen[controller] then
-                seen[controller] = true
-                table.insert(result, {Name = tostring(name):lower(), Value = controller})
+local multiActionPatterns = {
+    ['Projectile charging'] = {'charg', 'draw', 'projectile'},
+    Consuming = {'consum', 'eat', 'drink'},
+    ['Ability aiming'] = {'aim', 'targeting'}
+}
+
+local function multiActionContextMatches(controllerName, key, context)
+    local lower = tostring(key):lower()
+    for _, pattern in ipairs(multiActionPatterns[context] or {}) do
+        if lower:find(pattern, 1, true) then
+            if context ~= 'Projectile charging'
+                or controllerName:find('projectile')
+                or controllerName:find('bow')
+                or controllerName:find('crossbow')
+                or lower:find('projectile')
+                or lower:find('charg')
+                or lower:find('draw') then
+                return true
             end
         end
-        if bedwars.Knit and bedwars.Knit.Controllers then
-            for name, controller in bedwars.Knit.Controllers do add(name, controller) end
-        end
-        for name, controller in bedwars do
-            if type(name) == 'string' and name:find('Controller') then add(name, controller) end
-        end
-        add('blockplacer', store.blockPlacer)
-        local placement = bedwars.BlockPlacementController
-        add('blockplacementcontroller', placement)
-        add('blockplacementplacer', placement and placement.blockPlacer)
-        controllerCache = result
     end
+    return false
+end
 
-    local contextPatterns = {
-        ['Projectile charging'] = {'charg', 'draw', 'projectile'},
-        Consuming = {'consum', 'eat', 'drink'},
-        ['Ability aiming'] = {'aim', 'targeting'}
-    }
-    local function contextMatches(controllerName, key, context)
-        local lower = tostring(key):lower()
-        for _, pattern in contextPatterns[context] do
-            if lower:find(pattern, 1, true) then
-                if context ~= 'Projectile charging' or controllerName:find('projectile') or controllerName:find('bow') or controllerName:find('crossbow') or lower:find('projectile') or lower:find('charg') or lower:find('draw') then
-                    return true
-                end
-            end
-        end
-        return false
-    end
-    local function activeValue(value, key)
-        if type(value) == 'boolean' then return value end
-        if type(value) == 'table' or typeof(value) == 'Instance' then return value ~= nil end
-        -- Some consume controllers expose a start timestamp rather than a boolean.
-        return type(value) == 'number' and tostring(key):lower():find('consum', 1, true) and value > 0 and tick() - value < 30
-    end
+local function multiActionValueActive(value, key)
+    if type(value) == 'boolean' then return value end
+    if type(value) == 'table' or typeof(value) == 'Instance' then return value ~= nil end
+    return type(value) == 'number'
+        and tostring(key):lower():find('consum', 1, true)
+        and value > 0
+        and tick() - value < 30
+end
 
-    local function collectBypasses(action)
-        local bypasses, found = {}, {}
-        for _, entry in controllerCache do
-            for key, value in entry.Value do
-                if type(key) ~= 'string' then continue end
-                for _, context in contextNames do
-                    if selected(ActiveContexts, context) and contextMatches(entry.Name, key, context) and activeValue(value, key) then
+local function collectMultiActionBypasses(action)
+    local bypasses, found = {}, {}
+    for _, entry in ipairs(multiActionControllers) do
+        for key, value in pairs(entry.Value) do
+            if type(key) == 'string' then
+                for _, context in ipairs(multiActionContextNames) do
+                    if multiActionSelected(MultiActionContexts, context)
+                        and multiActionContextMatches(entry.Name, key, context)
+                        and multiActionValueActive(value, key) then
                         found[entry.Value] = found[entry.Value] or {}
                         table.insert(found[entry.Value], {Key = key, Value = value})
                         break
@@ -7044,120 +7156,157 @@ run(function()
                 end
             end
         end
-        for controller, contextStates in found do
-            -- Hide the active-state marker only for the duration of the requested action. This
-            -- bypasses the local guard without advancing or completing the underlying action.
-			-- Hotbar changes are different: equipping another tool can genuinely cancel a draw,
-			-- consume, or kit aim. Leave its progress marker visible so the native equip path can
-			-- perform that cancellation, and clear only a separate generic busy gate below.
-			if action ~= 'Hotbar switching' then
-				for _, state in contextStates do
-					table.insert(bypasses, {
-						Object = controller,
-						Key = state.Key,
-						Value = state.Value,
-						Temporary = if type(state.Value) == 'boolean' then false else nil
-					})
-				end
-			end
-            -- Builds that split `isCharging` from `busy` check the latter in block/melee methods.
-            for key, value in controller do
-                local lower = type(key) == 'string' and key:lower() or ''
-                if type(value) == 'boolean' and value and (lower == 'busy' or lower == 'locked' or lower == 'actionblocked' or lower == 'isbusy') then
-                    table.insert(bypasses, {Object = controller, Key = key, Value = value, Temporary = false})
-                end
+    end
+
+    for controller, contextStates in pairs(found) do
+        if action ~= 'Hotbar switching' then
+            for _, state in ipairs(contextStates) do
+                table.insert(bypasses, {
+                    Object = controller,
+                    Key = state.Key,
+                    Value = state.Value,
+                    Temporary = type(state.Value) == 'boolean' and false or nil
+                })
             end
         end
-        return bypasses
+        for key, value in pairs(controller) do
+            local lower = type(key) == 'string' and key:lower() or ''
+            if type(value) == 'boolean' and value
+                and (lower == 'busy' or lower == 'locked' or lower == 'actionblocked' or lower == 'isbusy') then
+                table.insert(bypasses, {Object = controller, Key = key, Value = value, Temporary = false})
+            end
+        end
+    end
+    return bypasses
+end
+
+local function restoreMultiActionHooks()
+    for _, hook in ipairs(multiActionHooks) do
+        if hook.Object and hook.Object[hook.Key] == hook.Wrapper then
+            hook.Object[hook.Key] = hook.Original
+        end
+    end
+    table.clear(multiActionHooks)
+    table.clear(multiActionCalls)
+    table.clear(multiActionLast)
+end
+
+local function multiActionWithBypass(action, original, ...)
+    if not MultiAction.Enabled
+        or not multiActionSelected(MultiActionActions, action)
+        or multiActionCalls[action] then
+        return original(...)
+    end
+    local currentTime = os.clock()
+    if currentTime - (multiActionLast[action] or 0) < 1 / 240 then
+        return original(...)
+    end
+    multiActionLast[action], multiActionCalls[action] = currentTime, true
+
+    local states = collectMultiActionBypasses(action)
+    for _, state in ipairs(states) do
+        if state.Object[state.Key] == state.Value then
+            state.Object[state.Key] = state.Temporary
+        end
     end
 
-    local function withBypass(action, original, ...)
-        if not MultiAction.Enabled or not selected(AllowedActions, action) or activeCalls[action] then
-            return original(...)
+    local results = table.pack(pcall(original, ...))
+    for index = #states, 1, -1 do
+        local state = states[index]
+        if state.Object[state.Key] == state.Temporary then
+            state.Object[state.Key] = state.Value
         end
-        -- Do not turn repeated engine probes into a queue of delayed actions. Calls inside the
-        -- same scheduler slice simply use the game's normal path.
-        local now = os.clock()
-        if now - (lastBypass[action] or 0) < 1 / 240 then return original(...) end
-        lastBypass[action], activeCalls[action] = now, true
-        local states = collectBypasses(action)
-        for _, state in states do
-            if state.Object[state.Key] == state.Value then state.Object[state.Key] = state.Temporary end
-        end
-        local results = table.pack(pcall(original, ...))
-        for index = #states, 1, -1 do
-            local state = states[index]
-            -- If the real action/controller changed the field, that is a genuine cancellation;
-            -- never overwrite it. Otherwise restore the exact object/value that held progress.
-            if state.Object[state.Key] == state.Temporary then state.Object[state.Key] = state.Value end
-        end
-        activeCalls[action] = nil
-        if not results[1] then error(results[2], 0) end
-        return table.unpack(results, 2, results.n)
     end
+    multiActionCalls[action] = nil
+    if not results[1] then error(results[2], 0) end
+    return table.unpack(results, 2, results.n)
+end
 
-    local function restoreHooks()
-        for _, hook in hooks do
-            if hook.Object and hook.Object[hook.Key] == hook.Wrapper then hook.Object[hook.Key] = hook.Original end
-        end
-        table.clear(hooks)
-        table.clear(activeCalls)
-        table.clear(lastBypass)
+local function hookMultiAction(object, key, action, predicate)
+    if type(object) ~= 'table' or type(object[key]) ~= 'function' then return end
+    for _, existing in ipairs(multiActionHooks) do
+        if existing.Object == object and existing.Key == key then return end
     end
-	if type(previousCleanup) == 'function' then pcall(previousCleanup) end
-	shared.AetherMultiActionCleanup = restoreHooks
-    local function hook(object, key, action, predicate)
-        if type(object) ~= 'table' or type(object[key]) ~= 'function' then return end
-        for _, existing in hooks do if existing.Object == object and existing.Key == key then return end end
-        local original = object[key]
-        local wrapper
-        wrapper = function(...)
-            if predicate and not predicate(...) then return original(...) end
-            return withBypass(action, original, ...)
-        end
-        table.insert(hooks, {Object = object, Key = key, Original = original, Wrapper = wrapper})
-        object[key] = wrapper
+    local original = object[key]
+    local wrapper
+    wrapper = function(...)
+        if predicate and not predicate(...) then return original(...) end
+        return multiActionWithBypass(action, original, ...)
     end
-    local function installHooks()
-        refreshControllerEntries()
-        local sword = bedwars.SwordController
-        hook(sword, 'swingSwordAtMouse', 'Melee attacking')
-        hook(sword, 'swingSwordInRegion', 'Melee attacking')
-        hook(sword, 'attackEntity', 'Melee attacking')
+    table.insert(multiActionHooks, {Object = object, Key = key, Original = original, Wrapper = wrapper})
+    object[key] = wrapper
+end
 
-        local placement = bedwars.BlockPlacementController
-        hook(placement, 'placeBlock', 'Block placement')
-        hook(placement and placement.blockPlacer, 'placeBlock', 'Block placement')
-        hook(store.blockPlacer, 'placeBlock', 'Block placement')
+local function installMultiActionHooks()
+    refreshMultiActionControllers()
+    local sword = bedwars.SwordController
+    hookMultiAction(sword, 'swingSwordAtMouse', 'Melee attacking')
+    hookMultiAction(sword, 'swingSwordInRegion', 'Melee attacking')
+    hookMultiAction(sword, 'attackEntity', 'Melee attacking')
 
-        local storeController = bedwars.Store
-        hook(storeController, 'dispatch', 'Hotbar switching', function(_, action)
-            return type(action) == 'table' and action.type == 'InventorySelectHotbarSlot'
+    local placement = bedwars.BlockPlacementController
+    hookMultiAction(placement, 'placeBlock', 'Block placement')
+    hookMultiAction(placement and placement.blockPlacer, 'placeBlock', 'Block placement')
+    hookMultiAction(store.blockPlacer, 'placeBlock', 'Block placement')
+
+    local storeController = bedwars.Store
+    hookMultiAction(storeController, 'dispatch', 'Hotbar switching', function(_, action)
+        return type(action) == 'table' and action.type == 'InventorySelectHotbarSlot'
+    end)
+end
+
+MultiAction = (function()
+    local module, created = register('Exploits', 'MultiAction', {
+        Tooltip = 'Separates compatible local action locks without changing progress, speed, cooldowns, inputs, or remotes.',
+        Function = function(enabled)
+            restoreMultiActionHooks()
+            if not enabled then return end
+            safe('multiaction.install', installMultiActionHooks)
+
+            local nextRefresh = 0
+            module:Clean(runService.Heartbeat:Connect(function()
+                if tick() >= nextRefresh then
+                    nextRefresh = tick() + 1
+                    safe('multiaction.refresh', installMultiActionHooks)
+                end
+            end))
+            module:Clean(lplr.CharacterAdded:Connect(function()
+                task.defer(function()
+                    if module.Enabled then safe('multiaction.character', installMultiActionHooks) end
+                end)
+            end))
+        end
+    })
+    if created then
+        MultiActionActions = module:CreateTextList({
+            Name = 'Allowed actions',
+            Default = multiActionActionNames,
+            Tooltip = 'Enable only Hotbar switching, Melee attacking, or Block placement.'
+        })
+        MultiActionContexts = module:CreateTextList({
+            Name = 'Active contexts',
+            Default = multiActionContextNames,
+            Tooltip = 'Enable Projectile charging, Consuming, or Ability aiming.'
+        })
+        module:Clean(function()
+            restoreMultiActionHooks()
         end)
     end
+    return module
+end)()
 
-    MultiAction = vape.Categories.Exploits:CreateModule({
-        Name = 'MultiAction',
-        Function = function(enabled)
-            restoreHooks()
-            if not enabled then return end
-            installHooks()
-            -- Controllers and block placers are recreated on respawn and some kit changes. Rehook
-            -- only local entry points; no inputs or remotes are replayed by this watcher.
-            local nextRefresh = 0
-            MultiAction:Clean(runService.Heartbeat:Connect(function()
-                if tick() >= nextRefresh then nextRefresh = tick() + 1; installHooks() end
-            end))
-            MultiAction:Clean(lplr.CharacterAdded:Connect(function() task.defer(installHooks) end))
-			MultiAction:Clean(function()
-				restoreHooks()
-				if shared.AetherMultiActionCleanup == restoreHooks then shared.AetherMultiActionCleanup = nil end
-			end)
-        end,
-        Tooltip = 'Separates compatible local action locks without changing progress, speed, cooldowns, inputs, or remotes'
-    })
-    AllowedActions = MultiAction:CreateTextList({Name = 'Allowed actions', Default = actionNames, Tooltip = 'Enable only these exact entries: Hotbar switching, Melee attacking, Block placement'})
-    ActiveContexts = MultiAction:CreateTextList({Name = 'Active contexts', Default = contextNames, Tooltip = 'Enable only these exact entries: Projectile charging, Consuming, Ability aiming'})
+if type(shared.AetherMultiActionCleanup) == 'function' then
+    pcall(shared.AetherMultiActionCleanup)
+end
+shared.AetherMultiActionCleanup = restoreMultiActionHooks
+vape:Clean(function()
+    restoreMultiActionHooks()
+    if shared.AetherMultiActionCleanup == restoreMultiActionHooks then
+        shared.AetherMultiActionCleanup = nil
+    end
+end)
+
+--------------------------------------------------------------------------------
 end)
 
 
@@ -9778,7 +9927,6 @@ local function createKitExtender(spec)
         end,
         Tooltip = spec.Tooltip
     })
-
 
     Multiplier = Extender:CreateSlider({
         Name = 'Multiplier',
@@ -18258,43 +18406,44 @@ run(function()
 end)
 
 
-run(function()
-    local context = {
-        vape = vape,
-        vapeEvents = vapeEvents,
-        entitylib = entitylib,
-        bedwars = bedwars,
-        store = store,
-        lplr = lplr,
-        playersService = playersService,
-        runService = runService,
-        collectionService = collectionService,
-        replicatedStorage = replicatedStorage,
-        httpService = httpService,
-        guiService = guiService,
-        coreGui = coreGui,
-        gameCamera = gameCamera,
-        inputService = inputService,
-        remotes = remotes,
-        sortmethods = sortmethods,
-        breakmethods = breakmethods,
-        frictionTable = frictionTable,
-        updateVelocity = updateVelocity,
-        getItem = getItem,
-        getWool = getWool,
-        getBestArmor = getBestArmor,
-        getPlacedBlock = getPlacedBlock,
-        switchItem = switchItem,
-        isnetworkowner = isnetworkowner,
-        notif = notif,
-        placeBlock = bedwars.placeBlock,
-        breakBlock = bedwars.breakBlock,
-        debug = debug,
-		Knit = bedwars.Knit,
-		kits = kits,
-        canDebug = canDebug
-    }
+local AetherRuntimeContext = {
+    vape = vape,
+    vapeEvents = vapeEvents,
+    entitylib = entitylib,
+    bedwars = bedwars,
+    store = store,
+    lplr = lplr,
+    playersService = playersService,
+    runService = runService,
+    collectionService = collectionService,
+    replicatedStorage = replicatedStorage,
+    httpService = httpService,
+    guiService = guiService,
+    coreGui = coreGui,
+    gameCamera = gameCamera,
+    inputService = inputService,
+    remotes = remotes,
+    sortmethods = sortmethods,
+    breakmethods = breakmethods,
+    frictionTable = frictionTable,
+    updateVelocity = updateVelocity,
+    getItem = getItem,
+    getWool = getWool,
+    getBestArmor = getBestArmor,
+    getPlacedBlock = getPlacedBlock,
+    switchItem = switchItem,
+    isnetworkowner = isnetworkowner,
+    notif = notif,
+    placeBlock = bedwars.placeBlock,
+    breakBlock = bedwars.breakBlock,
+    debug = debug,
+    Knit = bedwars.Knit,
+    kits = kits,
+    canDebug = canDebug
+}
 
+run(function()
+    local context = AetherRuntimeContext
     ----------------------------------------------------------------------------------------------
     -- TrixieExploit (direct implementation)
     ----------------------------------------------------------------------------------------------
@@ -18533,10 +18682,10 @@ end
     end, debug and debug.traceback or tostring)
     if not trixieLoaded then warn('[AetherV2] TrixieExploit failed to load: '..tostring(trixieResult)) end
 
-    ----------------------------------------------------------------------------------------------
-    -- AutoWin/Jade reactive runtime (direct implementation)
-    ----------------------------------------------------------------------------------------------
-local function registerAetherRuntime(context)
+
+end)
+
+local function registerAetherRuntimeBase(context)
 -- AetherV2 BedWars reactive runtime
 -- Compiled directly in games/6872274481.lua with the live match-file context.
 -- The dependency dump in libraries/bedwars is a reference only; this runtime deliberately
@@ -19944,6 +20093,27 @@ function MatchDirector:Start()
 end
 
 --------------------------------------------------------------------------------
+Runtime.MatchDirector = MatchDirector
+Runtime.Safe = safe
+Runtime.Now = now
+Runtime.RootOfLocal = rootOfLocal
+Runtime.ModuleByName = moduleByName
+Runtime.CopyTable = copyTable
+Runtime.Context = ctx
+shared.AetherBedWarsRuntime = Runtime
+return Runtime
+end
+local runtimeLoaded, runtimeResult = xpcall(function()
+    return registerAetherRuntimeBase(AetherRuntimeContext)
+end, debug and debug.traceback or tostring)
+if not runtimeLoaded or type(runtimeResult) ~= 'table' then
+    error('[AetherV2] AutoWin/Jade runtime failed: '..tostring(runtimeResult))
+end
+AetherMatchRuntime = runtimeResult
+
+run(function()
+    local Runtime = assert(AetherMatchRuntime, 'Aether runtime missing')
+    local MatchDirector = assert(Runtime.MatchDirector, 'AutoWin director missing')
 -- AutoWin HUD V2
 --------------------------------------------------------------------------------
 local function makeHUD(module,debugOption)
@@ -20006,6 +20176,19 @@ AutoOptions.Notify=AutoWin:CreateToggle({Name='Notifications'})
 AutoOptions.Debug=AutoWin:CreateToggle({Name='Debug',Tooltip='Shows objective/action diagnostics without notification spam'})
 
 --------------------------------------------------------------------------------
+
+end)
+
+run(function()
+    local Runtime = assert(AetherMatchRuntime, 'Aether runtime missing')
+    local Jade = assert(Runtime.Jade, 'Jade adapter missing')
+    local Movement = assert(Runtime.Movement, 'movement coordinator missing')
+    local ModuleLeases = assert(Runtime.ModuleLeases, 'module leases missing')
+    local safe = Runtime.Safe
+    local now = Runtime.Now
+    local rootOfLocal = Runtime.RootOfLocal
+    local moduleByName = Runtime.ModuleByName
+    local copyTable = Runtime.CopyTable
 -- JadeInstaKill V2 state machine
 --------------------------------------------------------------------------------
 local JIKState={IDLE='IDLE',ACQUIRE_TARGET='ACQUIRE_TARGET',VALIDATE='VALIDATE',ACQUIRE_MOVEMENT='ACQUIRE_MOVEMENT',EQUIP='EQUIP',REQUEST_CAST='REQUEST_CAST',CONFIRM_CAST='CONFIRM_CAST',ACTIVE='ACTIVE',OUTCOME='LANDING/OUTCOME',RECOVERY='RECOVERY',COOLDOWN='COOLDOWN'}
@@ -20213,6 +20396,11 @@ JadeInstaKill.ExtraText=function() return JIK.State end
 function Runtime:GetJIKDiagnostics() return copyTable(JIK.Diagnostics) end
 
 --------------------------------------------------------------------------------
+
+end)
+
+do
+local Runtime = AetherMatchRuntime
 -- LongJump Jade integration marker. games/6872274481.lua installs the adapter inside LongJump's
 -- own method table, where its private JumpTick/JumpSpeed/Direction state can be updated. Wrapping
 -- the module callback here used to activate Jade and return before those private values were set,
@@ -20225,23 +20413,9 @@ end
 
 Runtime:InstallLongJumpJadeHook(moduleByName('LongJump'))
 
-shared.AetherBedWarsRuntime=Runtime
-return Runtime
 
 end
-    local loaded, result = xpcall(function()
-        return registerAetherRuntime(context)
-    end, debug and debug.traceback or tostring)
-    if not loaded or type(result) ~= 'table' then
-        warn('[AetherV2] AutoWin/JIK runtime failed: '..tostring(result))
-        notif('AetherV2', 'AutoWin/Jade runtime failed to start. Check the console.', 8, 'warning')
-        return
-    end
-    AetherMatchRuntime = result
 
-    ----------------------------------------------------------------------------------------------
-    -- AutoWin/Jade integration hardening (direct implementation)
-    ----------------------------------------------------------------------------------------------
 local function patchAetherRuntime(Runtime, ctx)
 -- AutoWin/Jade hardening layer, compiled directly beside the reactive runtime.
 
@@ -20733,100 +20907,63 @@ end
     end, debug and debug.traceback or tostring)
     if not patched then warn('[AetherV2] AutoWin/JIK integration patch failed: '..tostring(patchResult)) end
 
-    ----------------------------------------------------------------------------------------------
-    -- Additional BedWars modules (direct implementation)
-    ----------------------------------------------------------------------------------------------
-local function registerAetherPorts(Runtime, ctx)
--- AetherV2 BedWars ports derived from the AlSploit implementations requested for PR #144.
--- The original behaviours are adapted to Aether's module lifecycle, entitylib targeting,
--- movement leases, live BedWars controllers and cleanup rules.
 
-assert(type(Runtime) == 'table', 'AlSploit ports require AetherMatchRuntime')
-assert(type(ctx) == 'table', 'AlSploit ports require match context')
 
-local vape = assert(ctx.vape, 'missing vape')
-local entitylib = assert(ctx.entitylib, 'missing entitylib')
-local bedwars = assert(ctx.bedwars, 'missing bedwars')
-local store = assert(ctx.store, 'missing store')
-local lplr = assert(ctx.lplr, 'missing local player')
-local runService = assert(ctx.runService, 'missing RunService')
-local gameCamera = ctx.gameCamera or workspace.CurrentCamera
-local getItem = assert(ctx.getItem, 'missing getItem')
-local notif = ctx.notif or function() end
-local workspaceService = game:GetService('Workspace')
+local AetherPortContext = {Version = 2, Runtime = AetherMatchRuntime, Context = AetherRuntimeContext, Modules = {}, Diagnostics = {}}
+AetherMatchRuntime.AlSploitPorts = AetherPortContext
+AetherMatchRuntime.AlSploitPortsV2 = AetherPortContext
 
-local Ports = {Version = 1, Modules = {}, Diagnostics = {}}
-Runtime.AlSploitPorts = Ports
-
-local function safe(label, fn, ...)
+local function aetherPortSafe(label, fn, ...)
     if type(fn) ~= 'function' then return false, 'missing function' end
     local ok, result = pcall(fn, ...)
     if not ok then
-        Ports.Diagnostics[label] = {At = tick(), Error = tostring(result)}
+        AetherPortContext.Diagnostics[label] = {At = tick(), Error = tostring(result)}
         return false, result
     end
     return true, result
 end
-
-local function notify(text, duration, kind)
-    safe('notify', notif, 'AetherV2', text, duration or 3, kind)
+local function aetherPortNotify(text, duration, kind)
+    aetherPortSafe('notify', notif, 'AetherV2', text, duration or 3, kind)
 end
-
-local function rootOfLocal()
+local function aetherPortRoot()
     local char = entitylib.character
-    if entitylib.isAlive and char and char.RootPart and char.RootPart.Parent then
-        return char.RootPart, char, char.Humanoid
-    end
+    if entitylib.isAlive and char and char.RootPart and char.RootPart.Parent then return char.RootPart, char, char.Humanoid end
     local character = lplr.Character
     local root = character and (character.PrimaryPart or character:FindFirstChild('HumanoidRootPart'))
     local humanoid = character and character:FindFirstChildOfClass('Humanoid')
     if root and humanoid and humanoid.Health > 0 then return root, character, humanoid end
 end
-
-local function matchRunning()
-    local match = Runtime.BedWarsAPI and Runtime.BedWarsAPI.Match
+local function aetherPortMatchRunning()
+    local match = AetherMatchRuntime.BedWarsAPI and AetherMatchRuntime.BedWarsAPI.Match
     if not match then return store.matchState ~= 0 end
-    local state = match:GetState()
-    return state == match.States.RUNNING
+    return match:GetState() == match.States.RUNNING
 end
-
-local function equippedKit()
-    local kits = Runtime.BedWarsAPI and Runtime.BedWarsAPI.Kits
-    if kits then return select(1, kits:GetEquipped()) end
+local function aetherPortEquippedKit()
+    local api = AetherMatchRuntime.BedWarsAPI and AetherMatchRuntime.BedWarsAPI.Kits
+    if api then return select(1, api:GetEquipped()) end
     return store.equippedKit or lplr:GetAttribute('PlayingAsKit')
 end
-
-local function horizontalUnit(vector)
+local function aetherPortHorizontalUnit(vector)
     if not vector then return nil end
     local flat = Vector3.new(vector.X, 0, vector.Z)
     return flat.Magnitude > 0.01 and flat.Unit or nil
 end
-
-local function moduleByName(name)
-    return vape.Modules and vape.Modules[name] or nil
-end
-
-local function register(categoryName, name, definition)
-    local existing = moduleByName(name)
-    if existing then
-        Ports.Modules[name] = existing
-        Ports.Diagnostics['duplicate.'..name] = {At = tick(), Existing = true}
-        return existing, false
-    end
+local function aetherPortModule(name) return vape.Modules and vape.Modules[name] or nil end
+local function aetherPortRegister(categoryName, name, definition)
+    local existing = aetherPortModule(name)
+    if existing then AetherPortContext.Modules[name] = existing; return existing, false end
     local category = vape.Categories and vape.Categories[categoryName]
     assert(category and type(category.CreateModule) == 'function', 'missing Aether category '..categoryName)
     definition.Name = name
     local module = category:CreateModule(definition)
-    Ports.Modules[name] = module
+    AetherPortContext.Modules[name] = module
     return module, true
 end
-
-local function abilityController()
+local function aetherPortAbilityController()
     return bedwars.AbilityController or (bedwars.Knit and bedwars.Knit.Controllers and bedwars.Knit.Controllers.AbilityController)
 end
-
-local function canUseAbility(name)
-    local controller = abilityController()
+local function aetherPortCanUseAbility(name)
+    local controller = aetherPortAbilityController()
     if not controller then return false end
     if type(controller.canUseAbility) == 'function' then
         local ok, result = pcall(controller.canUseAbility, controller, name, {disableBlockedAbilityAlert = true})
@@ -20834,45 +20971,76 @@ local function canUseAbility(name)
     end
     return true
 end
-
-local function useAbility(name)
-    local controller = abilityController()
+local function aetherPortUseAbility(name)
+    local controller = aetherPortAbilityController()
     if not controller or type(controller.useAbility) ~= 'function' then return false, 'missing AbilityController' end
     local ok, result = pcall(controller.useAbility, controller, name)
     return ok and result ~= false, result
 end
-
-local function nearestTarget(range, includeNPCs)
-    local root = rootOfLocal()
-    if not root then return nil end
-    local ok, target = pcall(entitylib.EntityPosition, {
-        Origin = root.Position,
-        Range = range,
-        Part = 'RootPart',
-        Players = true,
-        NPCs = includeNPCs and true or false
-    })
+local function aetherPortNearestTarget(range, includeNPCs)
+    local root = aetherPortRoot(); if not root then return nil end
+    local ok, target = pcall(entitylib.EntityPosition, {Origin = root.Position, Range = range, Part = 'RootPart', Players = true, NPCs = includeNPCs and true or false})
     return ok and target or nil
 end
-
-local function waitCancelable(seconds, cancelled, step)
+local function aetherPortWait(seconds, cancelled, step)
     local deadline = tick() + seconds
-    repeat
-        if cancelled and cancelled() then return false end
-        task.wait(step or 0.03)
-    until tick() >= deadline
+    repeat if cancelled and cancelled() then return false end; task.wait(step or 0.03) until tick() >= deadline
     return true
 end
-
-local function addMovementOwner(name)
-    local movement = Runtime.Movement
-    if not movement or not movement.ExternalNames then return end
-    if not table.find(movement.ExternalNames, name) then table.insert(movement.ExternalNames, name) end
+local function aetherPortAddMovementOwner(name)
+    local movement = AetherMatchRuntime.Movement
+    if movement and movement.ExternalNames and not table.find(movement.ExternalNames, name) then table.insert(movement.ExternalNames, name) end
+end
+local function aetherPortCreateDecoy(followHorizontal)
+    local root, character, humanoid = aetherPortRoot(); if not root or not character or not humanoid then return nil end
+    local oldArchivable = character.Archivable; character.Archivable = true
+    local ok, clone = pcall(character.Clone, character); character.Archivable = oldArchivable
+    if not ok or not clone then return nil end
+    for _, object in clone:GetDescendants() do
+        if object:IsA('Script') or object:IsA('LocalScript') then object:Destroy()
+        elseif object:IsA('BasePart') then object.CanCollide = false; if object.Name == 'Cape' then object:Destroy() end end
+    end
+    clone.Name = 'AetherMovementDecoy'; clone.Parent = workspace
+    local cloneRoot = clone.PrimaryPart or clone:FindFirstChild('HumanoidRootPart')
+    local cloneHumanoid = clone:FindFirstChildOfClass('Humanoid')
+    if not cloneRoot or not cloneHumanoid then clone:Destroy(); return nil end
+    clone.PrimaryPart = cloneRoot; cloneRoot.Anchored = true; clone:PivotTo(character:GetPivot())
+    local originalSubject = gameCamera.CameraSubject; gameCamera.CameraSubject = cloneHumanoid
+    local decoy = {Model = clone, Root = cloneRoot, Humanoid = cloneHumanoid, OriginalSubject = originalSubject}
+    if followHorizontal then
+        decoy.Connection = runService.RenderStepped:Connect(function()
+            local liveRoot = aetherPortRoot()
+            if clone.Parent and liveRoot then cloneRoot.CFrame = CFrame.new(liveRoot.Position.X, cloneRoot.Position.Y, liveRoot.Position.Z) * liveRoot.CFrame.Rotation end
+        end)
+    end
+    function decoy:Destroy()
+        if self.Connection then self.Connection:Disconnect(); self.Connection = nil end
+        if gameCamera.CameraSubject == self.Humanoid then local _, _, liveHumanoid = aetherPortRoot(); gameCamera.CameraSubject = (self.OriginalSubject and self.OriginalSubject.Parent and self.OriginalSubject) or liveHumanoid end
+        if self.Model and self.Model.Parent then self.Model:Destroy() end
+    end
+    return decoy
 end
 
-for _, name in ipairs({'JadeExploit', 'AntiHitBETA'}) do addMovementOwner(name) end
-
---------------------------------------------------------------------------------
+run(function()
+    local Runtime = assert(AetherMatchRuntime, 'Aether BedWars runtime is unavailable')
+    local ctx = AetherRuntimeContext
+    local Ports = AetherPortContext
+    local safe = aetherPortSafe
+    local notify = aetherPortNotify
+    local rootOfLocal = aetherPortRoot
+    local matchRunning = aetherPortMatchRunning
+    local equippedKit = aetherPortEquippedKit
+    local horizontalUnit = aetherPortHorizontalUnit
+    local moduleByName = aetherPortModule
+    local register = aetherPortRegister
+    local abilityController = aetherPortAbilityController
+    local canUseAbility = aetherPortCanUseAbility
+    local useAbility = aetherPortUseAbility
+    local nearestTarget = aetherPortNearestTarget
+    local waitCancelable = aetherPortWait
+    local addMovementOwner = aetherPortAddMovementOwner
+    local createDecoy = aetherPortCreateDecoy
+    local workspaceService = workspace
 -- YaminiExploit
 --------------------------------------------------------------------------------
 local YaminiExploit
@@ -20906,6 +21074,29 @@ if yaminiCreated then
 end
 
 --------------------------------------------------------------------------------
+end)
+
+run(function()
+    local Runtime = assert(AetherMatchRuntime, 'Aether BedWars runtime is unavailable')
+    local ctx = AetherRuntimeContext
+    local Ports = AetherPortContext
+    local safe = aetherPortSafe
+    local notify = aetherPortNotify
+    local rootOfLocal = aetherPortRoot
+    local matchRunning = aetherPortMatchRunning
+    local equippedKit = aetherPortEquippedKit
+    local horizontalUnit = aetherPortHorizontalUnit
+    local moduleByName = aetherPortModule
+    local register = aetherPortRegister
+    local abilityController = aetherPortAbilityController
+    local canUseAbility = aetherPortCanUseAbility
+    local useAbility = aetherPortUseAbility
+    local nearestTarget = aetherPortNearestTarget
+    local waitCancelable = aetherPortWait
+    local addMovementOwner = aetherPortAddMovementOwner
+    local createDecoy = aetherPortCreateDecoy
+    local workspaceService = workspace
+    addMovementOwner('JadeExploit')
 -- JadeExploit
 --------------------------------------------------------------------------------
 local JadeExploit
@@ -21003,953 +21194,191 @@ if jadeCreated then
 end
 
 --------------------------------------------------------------------------------
--- Shared visual decoy used by AntiHitBETA.
---------------------------------------------------------------------------------
-local function createDecoy(followHorizontal)
-    local root, character, humanoid = rootOfLocal()
-    if not root or not character or not humanoid then return nil end
-    local oldArchivable = character.Archivable
-    character.Archivable = true
-    local ok, clone = pcall(character.Clone, character)
-    character.Archivable = oldArchivable
-    if not ok or not clone then return nil end
-
-    for _, object in ipairs(clone:GetDescendants()) do
-        if object:IsA('Script') or object:IsA('LocalScript') then object:Destroy() end
-        if object:IsA('BasePart') then object.CanCollide = false end
-        if object:IsA('BasePart') and object.Name == 'Cape' then object:Destroy() end
-    end
-    clone.Name = 'AetherMovementDecoy'
-    clone.Parent = workspaceService
-    local cloneRoot = clone.PrimaryPart or clone:FindFirstChild('HumanoidRootPart')
-    local cloneHumanoid = clone:FindFirstChildOfClass('Humanoid')
-    if not cloneRoot or not cloneHumanoid then clone:Destroy(); return nil end
-    clone.PrimaryPart = cloneRoot
-    cloneRoot.Anchored = true
-    clone:PivotTo(character:GetPivot())
-    local originalSubject = gameCamera.CameraSubject
-    gameCamera.CameraSubject = cloneHumanoid
-
-    local decoy = {Model = clone, Root = cloneRoot, Humanoid = cloneHumanoid, OriginalSubject = originalSubject, Connection = nil}
-    if followHorizontal then
-        decoy.Connection = runService.RenderStepped:Connect(function()
-            local liveRoot = rootOfLocal()
-            if not clone.Parent or not liveRoot then return end
-            cloneRoot.CFrame = CFrame.new(liveRoot.Position.X, cloneRoot.Position.Y, liveRoot.Position.Z) * liveRoot.CFrame.Rotation
-        end)
-    end
-    function decoy:Destroy()
-        if self.Connection then self.Connection:Disconnect(); self.Connection = nil end
-        if gameCamera.CameraSubject == self.Humanoid then
-            local _, _, liveHumanoid = rootOfLocal()
-            gameCamera.CameraSubject = (self.OriginalSubject and self.OriginalSubject.Parent and self.OriginalSubject) or liveHumanoid
-        end
-        if self.Model and self.Model.Parent then self.Model:Destroy() end
-        self.Model = nil
-    end
-    return decoy
-end
-
---------------------------------------------------------------------------------
--- AntiHitBETA
---------------------------------------------------------------------------------
-local AntiHitBETA
-local antiHitCreated
-local AntiHitOptions = {}
-local antiHitGeneration = 0
-local antiHitBusy = false
-local antiHitDecoy
-
-local function currentAttackDelay()
-    local held = store.hand
-    local meta = held and held.itemType and bedwars.ItemMeta and bedwars.ItemMeta[held.itemType]
-    local sword = meta and meta.sword
-    return sword and tonumber(sword.attackSpeed) or 0.3
-end
-
-local function antiHitCleanup()
-    if antiHitDecoy then antiHitDecoy:Destroy(); antiHitDecoy = nil end
-    antiHitBusy = false
-    local movement = Runtime.Movement
-    local current = movement and movement.Current
-    if current and current.Owner == 'AntiHitBETA' then current:Release() end
-end
-
-local function executeAntiHit(generation)
-    if antiHitBusy then return end
-    local root = rootOfLocal()
-    if not root then return end
-    antiHitBusy = true
-    local movement = Runtime.Movement
-    local lease = movement and movement:Acquire('AntiHitBETA', movement.Priorities.Emergency, 1.5, antiHitCleanup, true) or nil
-    if movement and not lease then antiHitBusy = false; return end
-    local originalY = root.Position.Y
-    antiHitDecoy = createDecoy(true)
-    local delay = currentAttackDelay()
-    local ok, err = xpcall(function()
-        if generation ~= antiHitGeneration or not AntiHitBETA.Enabled then return end
-        root = rootOfLocal()
-        if not root then return end
-        if (not movement or movement:CanWrite('AntiHitBETA')) and isnetworkowner(root) then
-            root.CFrame = CFrame.new(root.Position + Vector3.new(0, 25, 0)) * root.CFrame.Rotation
-        end
-        if not waitCancelable(delay, function() return generation ~= antiHitGeneration or not AntiHitBETA.Enabled end) then return end
-        root = rootOfLocal()
-        if root and (not movement or movement:CanWrite('AntiHitBETA')) and isnetworkowner(root) then
-            root.CFrame = CFrame.new(root.Position.X, originalY + 5, root.Position.Z) * root.CFrame.Rotation
-        end
-        waitCancelable(delay, function() return generation ~= antiHitGeneration or not AntiHitBETA.Enabled end)
-    end, debug and debug.traceback or tostring)
-    if not ok then Ports.Diagnostics.AntiHitBETA = {At = tick(), Error = tostring(err)} end
-    if antiHitDecoy then antiHitDecoy:Destroy(); antiHitDecoy = nil end
-    if lease then lease:Release() end
-    antiHitBusy = false
-end
-
-AntiHitBETA, antiHitCreated = register('Blatant', 'AntiHitBETA', {
-    Tooltip = 'BETA dodge port of AlSploit AntiHit using a short vertical displacement and decoy camera.',
-    Function = function(callback)
-        antiHitGeneration = antiHitGeneration + 1
-        local generation = antiHitGeneration
-        if not callback then antiHitCleanup(); return end
-        AntiHitBETA:Clean(antiHitCleanup)
-        task.spawn(function()
-            while AntiHitBETA.Enabled and generation == antiHitGeneration do
-                if entitylib.isAlive and matchRunning() and not antiHitBusy then
-                    local target = nearestTarget(AntiHitOptions.Range.Value, AntiHitOptions.Entities.Enabled)
-                    if target then task.spawn(executeAntiHit, generation) end
-                end
-                task.wait(0.04)
-            end
-        end)
-    end
-})
-if antiHitCreated then
-    AntiHitOptions.Entities = AntiHitBETA:CreateToggle({Name = 'Entities', Default = false})
-    AntiHitOptions.Range = AntiHitBETA:CreateSlider({Name = 'Range', Min = 1, Max = 20, Default = 20, Suffix = ' studs'})
-end
-
---------------------------------------------------------------------------------
--- NoFallDamageV2
---------------------------------------------------------------------------------
-local NoFallDamageV2
-local noFallCreated
-local noFallGeneration = 0
-local noFallBusy = false
-NoFallDamageV2, noFallCreated = register('Blatant', 'NoFallDamageV2', {
-    Tooltip = 'AlSploit-style fall-damage prevention: briefly reports a landed state while preserving downward velocity.',
-    Function = function(callback)
-        noFallGeneration = noFallGeneration + 1
-        local generation = noFallGeneration
-        noFallBusy = false
-        if not callback then return end
-        local connection = runService.PostSimulation:Connect(function()
-            if noFallBusy or generation ~= noFallGeneration or not NoFallDamageV2.Enabled then return end
-            local highJump = moduleByName('HighJump')
-            if highJump and highJump.Enabled then return end
-            local root, _, humanoid = rootOfLocal()
-            if not root or not humanoid then return end
-            local velocity = root.AssemblyLinearVelocity
-            if velocity.Y >= -45 then return end
-            noFallBusy = true
-            task.spawn(function()
-                local oldY = velocity.Y
-                root = rootOfLocal()
-                if not root or generation ~= noFallGeneration or not NoFallDamageV2.Enabled then noFallBusy = false; return end
-                root.AssemblyLinearVelocity = Vector3.new(root.AssemblyLinearVelocity.X, 44, root.AssemblyLinearVelocity.Z)
-                safe('nofall.landed', humanoid.ChangeState, humanoid, Enum.HumanoidStateType.Landed)
-                runService.PreSimulation:Wait()
-                root = rootOfLocal()
-                if root and generation == noFallGeneration and NoFallDamageV2.Enabled then
-                    root.AssemblyLinearVelocity = Vector3.new(root.AssemblyLinearVelocity.X, oldY, root.AssemblyLinearVelocity.Z)
-                end
-                noFallBusy = false
-            end)
-        end)
-        NoFallDamageV2:Clean(connection)
-    end
-})
-
-return Ports
-
-end
-local function registerAetherPortsV2(Runtime, ctx)
--- AetherV2 BedWars ports derived from the AlSploit implementations requested for PR #144.
--- The original behaviours are adapted to Aether's module lifecycle, entitylib targeting,
--- movement leases, live BedWars controllers and cleanup rules.
-
-assert(type(Runtime) == 'table', 'AlSploit ports require AetherMatchRuntime')
-assert(type(ctx) == 'table', 'AlSploit ports require match context')
-
-local vape = assert(ctx.vape, 'missing vape')
-local entitylib = assert(ctx.entitylib, 'missing entitylib')
-local bedwars = assert(ctx.bedwars, 'missing bedwars')
-local store = assert(ctx.store, 'missing store')
-local lplr = assert(ctx.lplr, 'missing local player')
-local runService = assert(ctx.runService, 'missing RunService')
-local gameCamera = ctx.gameCamera or workspace.CurrentCamera
-local getItem = assert(ctx.getItem, 'missing getItem')
-local notif = ctx.notif or function() end
-local workspaceService = game:GetService('Workspace')
-
-local Ports = {Version = 1, Modules = {}, Diagnostics = {}}
-Runtime.AlSploitPortsV2 = Ports
-
-local function safe(label, fn, ...)
-    if type(fn) ~= 'function' then return false, 'missing function' end
-    local ok, result = pcall(fn, ...)
-    if not ok then
-        Ports.Diagnostics[label] = {At = tick(), Error = tostring(result)}
-        return false, result
-    end
-    return true, result
-end
-
-local function notify(text, duration, kind)
-    safe('notify', notif, 'AetherV2', text, duration or 3, kind)
-end
-
-local function rootOfLocal()
-    local char = entitylib.character
-    if entitylib.isAlive and char and char.RootPart and char.RootPart.Parent then
-        return char.RootPart, char, char.Humanoid
-    end
-    local character = lplr.Character
-    local root = character and (character.PrimaryPart or character:FindFirstChild('HumanoidRootPart'))
-    local humanoid = character and character:FindFirstChildOfClass('Humanoid')
-    if root and humanoid and humanoid.Health > 0 then return root, character, humanoid end
-end
-
-local function matchRunning()
-    local match = Runtime.BedWarsAPI and Runtime.BedWarsAPI.Match
-    if not match then return store.matchState ~= 0 end
-    local state = match:GetState()
-    return state == match.States.RUNNING
-end
-
-local function equippedKit()
-    local kits = Runtime.BedWarsAPI and Runtime.BedWarsAPI.Kits
-    if kits then return select(1, kits:GetEquipped()) end
-    return store.equippedKit or lplr:GetAttribute('PlayingAsKit')
-end
-
-local function horizontalUnit(vector)
-    if not vector then return nil end
-    local flat = Vector3.new(vector.X, 0, vector.Z)
-    return flat.Magnitude > 0.01 and flat.Unit or nil
-end
-
-local function moduleByName(name)
-    return vape.Modules and vape.Modules[name] or nil
-end
-
-local function register(categoryName, name, definition)
-    local existing = moduleByName(name)
-    if existing then
-        Ports.Modules[name] = existing
-        Ports.Diagnostics['duplicate.'..name] = {At = tick(), Existing = true}
-        return existing, false
-    end
-    local category = vape.Categories and vape.Categories[categoryName]
-    if not category and categoryName == 'Kits' then
-        category = vape.Categories and (vape.Categories.Kits or vape.Categories.Minigames)
-    elseif not category and categoryName == 'Exploits' then
-        category = vape.Categories and (vape.Categories.Exploits or vape.Categories.Exploit)
-    end
-    assert(category and type(category.CreateModule) == 'function', 'missing Aether category '..categoryName)
-    definition.Name = name
-    local module = category:CreateModule(definition)
-    Ports.Modules[name] = module
-    return module, true
-end
-
-local function abilityController()
-    return bedwars.AbilityController or (bedwars.Knit and bedwars.Knit.Controllers and bedwars.Knit.Controllers.AbilityController)
-end
-
-local function canUseAbility(name)
-    local controller = abilityController()
-    if not controller then return false end
-    if type(controller.canUseAbility) == 'function' then
-        local ok, result = pcall(controller.canUseAbility, controller, name, {disableBlockedAbilityAlert = true})
-        if ok then return result ~= false end
-    end
-    return true
-end
-
-local function useAbility(name)
-    local controller = abilityController()
-    if not controller or type(controller.useAbility) ~= 'function' then return false, 'missing AbilityController' end
-    local ok, result = pcall(controller.useAbility, controller, name)
-    return ok and result ~= false, result
-end
-
-local function nearestTarget(range, includeNPCs)
-    local root = rootOfLocal()
-    if not root then return nil end
-    local ok, target = pcall(entitylib.EntityPosition, {
-        Origin = root.Position,
-        Range = range,
-        Part = 'RootPart',
-        Players = true,
-        NPCs = includeNPCs and true or false
-    })
-    return ok and target or nil
-end
-
-local function waitCancelable(seconds, cancelled, step)
-    local deadline = tick() + seconds
-    repeat
-        if cancelled and cancelled() then return false end
-        task.wait(step or 0.03)
-    until tick() >= deadline
-    return true
-end
-
---------------------------------------------------------------------------------
--- Shared visual decoy used by AntiHitBETA.
---------------------------------------------------------------------------------
-local function createDecoy(followHorizontal)
-    local root, character, humanoid = rootOfLocal()
-    if not root or not character or not humanoid then return nil end
-    local oldArchivable = character.Archivable
-    character.Archivable = true
-    local ok, clone = pcall(character.Clone, character)
-    character.Archivable = oldArchivable
-    if not ok or not clone then return nil end
-
-    for _, object in ipairs(clone:GetDescendants()) do
-        if object:IsA('Script') or object:IsA('LocalScript') then object:Destroy() end
-        if object:IsA('BasePart') then object.CanCollide = false end
-        if object:IsA('BasePart') and object.Name == 'Cape' then object:Destroy() end
-    end
-    clone.Name = 'AetherMovementDecoy'
-    clone.Parent = workspaceService
-    local cloneRoot = clone.PrimaryPart or clone:FindFirstChild('HumanoidRootPart')
-    local cloneHumanoid = clone:FindFirstChildOfClass('Humanoid')
-    if not cloneRoot or not cloneHumanoid then clone:Destroy(); return nil end
-    clone.PrimaryPart = cloneRoot
-    cloneRoot.Anchored = true
-    clone:PivotTo(character:GetPivot())
-    local originalSubject = gameCamera.CameraSubject
-    gameCamera.CameraSubject = cloneHumanoid
-
-    local decoy = {Model = clone, Root = cloneRoot, Humanoid = cloneHumanoid, OriginalSubject = originalSubject, Connection = nil}
-    if followHorizontal then
-        decoy.Connection = runService.RenderStepped:Connect(function()
-            local liveRoot = rootOfLocal()
-            if not clone.Parent or not liveRoot then return end
-            cloneRoot.CFrame = CFrame.new(liveRoot.Position.X, cloneRoot.Position.Y, liveRoot.Position.Z) * liveRoot.CFrame.Rotation
-        end)
-    end
-    function decoy:Destroy()
-        if self.Connection then self.Connection:Disconnect(); self.Connection = nil end
-        if gameCamera.CameraSubject == self.Humanoid then
-            local _, _, liveHumanoid = rootOfLocal()
-            gameCamera.CameraSubject = (self.OriginalSubject and self.OriginalSubject.Parent and self.OriginalSubject) or liveHumanoid
-        end
-        if self.Model and self.Model.Parent then self.Model:Destroy() end
-        self.Model = nil
-    end
-    return decoy
-end
-
---------------------------------------------------------------------------------
--- AntiHitBETA
---------------------------------------------------------------------------------
-local AntiHitBETA
-local antiHitCreated
-local AntiHitOptions = {}
-local antiHitGeneration = 0
-local antiHitBusy = false
-local antiHitDecoy
-
-local function currentAttackDelay()
-    local held = store.hand
-    local meta = held and held.itemType and bedwars.ItemMeta and bedwars.ItemMeta[held.itemType]
-    local sword = meta and meta.sword
-    return sword and tonumber(sword.attackSpeed) or 0.3
-end
-
-local function antiHitCleanup()
-    if antiHitDecoy then antiHitDecoy:Destroy(); antiHitDecoy = nil end
-    antiHitBusy = false
-    local movement = Runtime.Movement
-    local current = movement and movement.Current
-    if current and current.Owner == 'AntiHitBETA' then current:Release() end
-end
-
-local function executeAntiHit(generation)
-    if antiHitBusy then return end
-    local root = rootOfLocal()
-    if not root then return end
-    antiHitBusy = true
-    local movement = Runtime.Movement
-    local lease = movement and movement:Acquire('AntiHitBETA', movement.Priorities.Emergency, 1.5, antiHitCleanup, true) or nil
-    if movement and not lease then antiHitBusy = false; return end
-    local originalY = root.Position.Y
-    antiHitDecoy = createDecoy(true)
-    local delay = currentAttackDelay()
-    local ok, err = xpcall(function()
-        if generation ~= antiHitGeneration or not AntiHitBETA.Enabled then return end
-        root = rootOfLocal()
-        if not root then return end
-        if (not movement or movement:CanWrite('AntiHitBETA')) and isnetworkowner(root) then
-            root.CFrame = CFrame.new(root.Position + Vector3.new(0, 25, 0)) * root.CFrame.Rotation
-        end
-        if not waitCancelable(delay, function() return generation ~= antiHitGeneration or not AntiHitBETA.Enabled end) then return end
-        root = rootOfLocal()
-        if root and (not movement or movement:CanWrite('AntiHitBETA')) and isnetworkowner(root) then
-            root.CFrame = CFrame.new(root.Position.X, originalY + 5, root.Position.Z) * root.CFrame.Rotation
-        end
-        waitCancelable(delay, function() return generation ~= antiHitGeneration or not AntiHitBETA.Enabled end)
-    end, debug and debug.traceback or tostring)
-    if not ok then Ports.Diagnostics.AntiHitBETA = {At = tick(), Error = tostring(err)} end
-    if antiHitDecoy then antiHitDecoy:Destroy(); antiHitDecoy = nil end
-    if lease then lease:Release() end
-    antiHitBusy = false
-end
-
-AntiHitBETA, antiHitCreated = register('Blatant', 'AntiHitBETA', {
-    Tooltip = 'BETA dodge port of AlSploit AntiHit using a short vertical displacement and decoy camera.',
-    Function = function(callback)
-        antiHitGeneration = antiHitGeneration + 1
-        local generation = antiHitGeneration
-        if not callback then antiHitCleanup(); return end
-        AntiHitBETA:Clean(antiHitCleanup)
-        task.spawn(function()
-            while AntiHitBETA.Enabled and generation == antiHitGeneration do
-                if entitylib.isAlive and matchRunning() and not antiHitBusy then
-                    local target = nearestTarget(AntiHitOptions.Range.Value, AntiHitOptions.Entities.Enabled)
-                    if target then task.spawn(executeAntiHit, generation) end
-                end
-                task.wait(0.04)
-            end
-        end)
-    end
-})
-if antiHitCreated then
-    AntiHitOptions.Entities = AntiHitBETA:CreateToggle({Name = 'Entities', Default = false})
-    AntiHitOptions.Range = AntiHitBETA:CreateSlider({Name = 'Range', Min = 1, Max = 20, Default = 20, Suffix = ' studs'})
-end
-
---------------------------------------------------------------------------------
--- NoFallDamageV2
---------------------------------------------------------------------------------
-local NoFallDamageV2
-local noFallCreated
-local noFallGeneration = 0
-local noFallBusy = false
-NoFallDamageV2, noFallCreated = register('Blatant', 'NoFallDamageV2', {
-    Tooltip = 'AlSploit-style fall-damage prevention: briefly reports a landed state while preserving downward velocity.',
-    Function = function(callback)
-        noFallGeneration = noFallGeneration + 1
-        local generation = noFallGeneration
-        noFallBusy = false
-        if not callback then return end
-        local connection = runService.PostSimulation:Connect(function()
-            if noFallBusy or generation ~= noFallGeneration or not NoFallDamageV2.Enabled then return end
-            local highJump = moduleByName('HighJump')
-            if highJump and highJump.Enabled then return end
-            local root, _, humanoid = rootOfLocal()
-            if not root or not humanoid then return end
-            local velocity = root.AssemblyLinearVelocity
-            if velocity.Y >= -45 then return end
-            noFallBusy = true
-            task.spawn(function()
-                local oldY = velocity.Y
-                root = rootOfLocal()
-                if not root or generation ~= noFallGeneration or not NoFallDamageV2.Enabled then noFallBusy = false; return end
-                root.AssemblyLinearVelocity = Vector3.new(root.AssemblyLinearVelocity.X, 44, root.AssemblyLinearVelocity.Z)
-                safe('nofall.landed', humanoid.ChangeState, humanoid, Enum.HumanoidStateType.Landed)
-                runService.PreSimulation:Wait()
-                root = rootOfLocal()
-                if root and generation == noFallGeneration and NoFallDamageV2.Enabled then
-                    root.AssemblyLinearVelocity = Vector3.new(root.AssemblyLinearVelocity.X, oldY, root.AssemblyLinearVelocity.Z)
-                end
-                noFallBusy = false
-            end)
-        end)
-        NoFallDamageV2:Clean(connection)
-    end
-})
-
-
-run(function()
-    local Value
-    local CameraDir
-    local LimitItems
-    local ChangeDir
-    local LongJumpBypass
-    local BypassBoost
-    local start
-    local JumpTick, JumpSpeed, Direction = tick(), 0
-    local jumpWasActive = false
-	local function horizontalDirection(direction)
-		local flat = direction and Vector3.new(direction.X, 0, direction.Z) or Vector3.zero
-		if flat.Magnitude > 0.001 then return flat.Unit end
-		local look = entitylib.isAlive and entitylib.character.RootPart.CFrame.LookVector or Vector3.zAxis
-		flat = Vector3.new(look.X, 0, look.Z)
-		return flat.Magnitude > 0.001 and flat.Unit or Vector3.zAxis
-	end
-    local projectileRemote = {InvokeServer = function() end}
-    task.spawn(function()
-        safe('longjump.projectile.remote', function()
-            if bedwars.Client and remotes.FireProjectile then
-                projectileRemote = bedwars.Client:Get(remotes.FireProjectile).instance
-            end
-        end)
-    end)
-
-    local function launchProjectile(item, pos, proj, speed, dir)
-        if not pos then return end
-
-        pos = pos - dir * 0.1
-        local shootPosition = (CFrame.lookAlong(pos, Vector3.new(0, -speed, 0)) * CFrame.new(Vector3.new(-bedwars.BowConstantsTable.RelX, -bedwars.BowConstantsTable.RelY, -bedwars.BowConstantsTable.RelZ)))
-        switchItem(item.tool, 0)
-        task.wait(0.1)
-        bedwars.ProjectileController:createLocalProjectile(bedwars.ProjectileMeta[proj], proj, proj, shootPosition.Position, '', shootPosition.LookVector * speed, {drawDurationSeconds = 1})
-        if projectileRemote:InvokeServer(item.tool, proj, proj, shootPosition.Position, pos, shootPosition.LookVector * speed, httpService:GenerateGUID(true), {drawDurationSeconds = 1}, workspace:GetServerTimeNow() - 0.045) then
-			local itemMeta = bedwars.ItemMeta[item.itemType]
-			local source = itemMeta and itemMeta.projectileSource
-			local shoot = source and type(source.launchSound) == 'table' and #source.launchSound > 0 and source.launchSound or nil
-			shoot = shoot and shoot[math.random(1, #shoot)] or nil
-            if shoot then
-                bedwars.SoundManager:playSound(shoot)
-            end
-        end
-    end
-
-    local LongJumpMethods = {
-        cannon = function(_, pos, dir)
-            pos = pos - Vector3.new(0, (entitylib.character.HipHeight + (entitylib.character.RootPart.Size.Y / 2)) - 3, 0)
-            local rounded = Vector3.new(math.round(pos.X / 3) * 3, math.round(pos.Y / 3) * 3, math.round(pos.Z / 3) * 3)
-            bedwars.placeBlock(rounded, 'cannon', false)
-
-            task.delay(0, function()
-                local block, blockpos = getPlacedBlock(rounded)
-                if block and block.Name == 'cannon' and (entitylib.character.RootPart.Position - block.Position).Magnitude < 20 then
-                    local breaktype = bedwars.ItemMeta[block.Name].block.breakType
-                    local tool = getBreakTool(breaktype)
-                    if tool then
-                        switchItem(tool.tool)
-                    end
-
-                    bedwars.Client:Get(remotes.CannonAim):SendToServer({
-                        cannonBlockPos = blockpos,
-                        lookVector = dir
-                    })
-
-                    local broken = 0.1
-                    if bedwars.BlockController:calculateBlockDamage(lplr, {blockPosition = blockpos}) < block:GetAttribute('Health') then
-                        broken = 0.4
-                        bedwars.breakBlock(block, true, true)
-                    end
-
-                    task.delay(broken, function()
-                        for _ = 1, 3 do
-                            local call = bedwars.Client:Get(remotes.CannonLaunch):CallServer({cannonBlockPos = blockpos})
-                            if call then
-                                bedwars.breakBlock(block, true, true)
-                                JumpSpeed = 5.25 * Value.Value
-                                JumpTick = tick() + 2.3
-								Direction = horizontalDirection(dir)
-                                break
-                            end
-                            task.wait(0.1)
-                        end
-                    end)
-                end
-            end)
-        end,
-        cat = function(_, _, dir)
-            LongJump:Clean(vapeEvents.CatPounce.Event:Connect(function()
-                JumpSpeed = 4 * Value.Value
-                JumpTick = tick() + 2.5
-				Direction = horizontalDirection(dir)
-                entitylib.character.RootPart.Velocity = Vector3.zero
-            end))
-
-            -- The pounce has to be timed off the frame the game actually leaps, and the only
-            -- way to know that is the controller itself. This used to be fired by AutoKit's cat
-            -- routine, so cat LongJumps silently did nothing unless that module happened to be
-            -- on with the cat toggle ticked; the hook lives here now and is put back on cleanup.
-            if bedwars.CatController and typeof(bedwars.CatController.leap) == 'function' then
-                local controller = bedwars.CatController
-                local original = controller.leap
-                local hook
-                hook = function(...)
-                    vapeEvents.CatPounce:Fire()
-                    return original(...)
-                end
-                controller.leap = hook
-                LongJump:Clean(function()
-                    if controller.leap == hook then
-                        controller.leap = original
-                    end
-                end)
-            end
-
-            if not bedwars.AbilityController:canUseAbility('CAT_POUNCE') then
-                repeat task.wait() until bedwars.AbilityController:canUseAbility('CAT_POUNCE') or not LongJump.Enabled
-            end
-
-            if bedwars.AbilityController:canUseAbility('CAT_POUNCE') and LongJump.Enabled then
-                bedwars.AbilityController:useAbility('CAT_POUNCE')
-            end
-        end,
-        fireball = function(item, pos, dir)
-            launchProjectile(item, pos, 'fireball', 60, dir)
-        end,
-        grappling_hook = function(item, pos, dir)
-            launchProjectile(item, pos, 'grappling_hook_projectile', 140, dir)
-        end,
-        jadeHammer = function(item, _, dir)
-            local jade = AetherMatchRuntime and AetherMatchRuntime.Jade
-            if jade then
-                local result = jade:ActivateForTraversal('LongJump', dir, function()
-                    return not LongJump.Enabled
-                end)
-                if not result.confirmed or not LongJump.Enabled then return end
-                JumpSpeed = 1.4 * Value.Value
-                JumpTick = tick() + 2.5
-				Direction = horizontalDirection(dir)
-                return
-            end
-
-            local ability = getJadeAbility(item)
-            if not bedwars.AbilityController:canUseAbility(ability) then
-                repeat
-                    task.wait()
-                    ability = getJadeAbility(item)
-                until bedwars.AbilityController:canUseAbility(ability) or not LongJump.Enabled
-            end
-            if bedwars.AbilityController:canUseAbility(ability) and LongJump.Enabled then
-                if not activateJadeTool(item) then bedwars.AbilityController:useAbility(ability) end
-                local deadline = tick() + 0.75
-                repeat
-                    task.wait()
-                until not bedwars.AbilityController:canUseAbility(ability) or tick() >= deadline or not LongJump.Enabled
-                if not LongJump.Enabled or bedwars.AbilityController:canUseAbility(ability) then return end
-                JumpSpeed = 1.4 * Value.Value
-                JumpTick = tick() + 2.5
-				Direction = horizontalDirection(dir)
-            end
-        end,
-        tnt = function(item, pos, dir)
-            pos = pos - Vector3.new(0, (entitylib.character.HipHeight + (entitylib.character.RootPart.Size.Y / 2)) - 3, 0)
-            local rounded = Vector3.new(math.round(pos.X / 3) * 3, math.round(pos.Y / 3) * 3, math.round(pos.Z / 3) * 3)
-            start = Vector3.new(rounded.X, start.Y, rounded.Z) + (dir * (item.itemType == 'pirate_gunpowder_barrel' and 2.6 or 0.2))
-            bedwars.placeBlock(rounded, item.itemType, false)
-        end,
-        wood_dao = function(item, pos, dir)
-            if (lplr.Character:GetAttribute('CanDashNext') or 0) > workspace:GetServerTimeNow() or not bedwars.AbilityController:canUseAbility('dash') then
-                repeat task.wait() until (lplr.Character:GetAttribute('CanDashNext') or 0) < workspace:GetServerTimeNow() and bedwars.AbilityController:canUseAbility('dash') or not LongJump.Enabled
-            end
-
-            if LongJump.Enabled then
-                bedwars.SwordController.lastAttack = workspace:GetServerTimeNow()
-                switchItem(item.tool, 0.1)
-                replicatedStorage['events-@easy-games/game-core:shared/game-core-networking@getEvents.Events'].useAbility:FireServer('dash', {
-                    direction = dir,
-                    origin = pos,
-                    weapon = item.itemType
-                })
-                JumpSpeed = 4.5 * Value.Value
-                JumpTick = tick() + 2.4
-				Direction = horizontalDirection(dir)
-            end
-        end
-    }
-    for _, v in {'stone_dao', 'iron_dao', 'diamond_dao', 'emerald_dao'} do
-        LongJumpMethods[v] = LongJumpMethods.wood_dao
-    end
-    for _, hammer in jadeHammerNames do
-        LongJumpMethods[hammer] = LongJumpMethods.jadeHammer
-    end
-    LongJumpMethods.void_axe = LongJumpMethods.jadeHammer
-    LongJumpMethods.siege_tnt = LongJumpMethods.tnt
-    LongJumpMethods.pirate_gunpowder_barrel = LongJumpMethods.tnt
-
-	local function heldLongJumpMethod()
-		local hand = store.hand
-		local tool = hand and hand.tool
-		if not tool then return nil end
-		local raw = hand.itemType or tool.Name
-		local normalized = tostring(raw):lower():gsub('[%s%-]+', '_')
-		local method = LongJumpMethods[raw] or LongJumpMethods[normalized]
-		local jadeName = isJadeHammerName(normalized)
-		if jadeName then method = LongJumpMethods.jadeHammer end
-		if not method then return nil end
-		local item = getItem(raw) or getItem(normalized)
-		if jadeName and AetherMatchRuntime and AetherMatchRuntime.Jade then
-			item = AetherMatchRuntime.Jade:GetBestHammer() or item
-		end
-		item = item or {itemType = normalized, tool = tool, amount = hand.amount or 1}
-		return method, item, normalized
-	end
-
-    local LongJumpCreated
-    LongJump, LongJumpCreated = register('Blatant', 'LongJump', {
-        Name = 'LongJump',
-        Function = function(callback)
-            frictionTable.LongJump = callback or nil
-            updateVelocity()
-            if callback then
-                -- Limit to items: only engage from a long-jump item you're HOLDING. Without one
-                -- the driver below would hold you frozen in place waiting for a jump that can never
-                -- come (the module's idle state pins your velocity), so turn straight back off.
-				if LimitItems and LimitItems.Enabled and not heldLongJumpMethod() then
-                    frictionTable.LongJump = nil
-                    updateVelocity()
-                    notif('LongJump', 'Hold a long-jump item to use it (Limit to items is on).', 4)
-                    return task.spawn(function() if LongJump.Enabled then LongJump:Toggle() end end)
-                end
-                LongJump:Clean(vapeEvents.EntityDamageEvent.Event:Connect(function(damageTable)
-                    -- Limit to items: the knockback (Heatseeker) boost isn't item-driven, so skip it.
-                    if LimitItems and LimitItems.Enabled then return end
-                    if damageTable.entityInstance == lplr.Character and damageTable.fromEntity == lplr.Character and (not damageTable.knockbackMultiplier or not damageTable.knockbackMultiplier.disabled) then
-                        local knockbackBoost = bedwars.KnockbackUtil.calculateKnockbackVelocity(Vector3.one, 1, {
-                            vertical = 0,
-                            horizontal = (damageTable.knockbackMultiplier and damageTable.knockbackMultiplier.horizontal or 1)
-                        }).Magnitude * 1.1
-
-                        if knockbackBoost >= JumpSpeed then
-                            local pos = damageTable.fromPosition and Vector3.new(damageTable.fromPosition.X, damageTable.fromPosition.Y, damageTable.fromPosition.Z) or damageTable.fromEntity and damageTable.fromEntity.PrimaryPart.Position
-                            if not pos then return end
-                            local vec = (entitylib.character.RootPart.Position - pos)
-                            JumpSpeed = knockbackBoost
-                            JumpTick = tick() + 2.5
-                            Direction = Vector3.new(vec.X, 0, vec.Z).Unit
-                        end
-                    end
-                end))
-                LongJump:Clean(vapeEvents.GrapplingHookFunctions.Event:Connect(function(dataTable)
-                    if dataTable.hookFunction == 'PLAYER_IN_TRANSIT' then
-                        local vec = entitylib.character.RootPart.CFrame.LookVector
-                        JumpSpeed = 2.5 * Value.Value
-                        JumpTick = tick() + 2.5
-                        Direction = Vector3.new(vec.X, 0, vec.Z).Unit
-                    end
-                end))
-
-                start = entitylib.isAlive and entitylib.character.RootPart.Position or nil
-                LongJump:Clean(runService.PreSimulation:Connect(function(dt)
-                    local root = entitylib.isAlive and entitylib.character.RootPart or nil
-
-                    if root and isnetworkowner(root) then
-                        if JumpTick > tick() then
-                            if not jumpWasActive then
-                                jumpWasActive = true
-                                longJumpActivation:Fire(root.AssemblyLinearVelocity)
-                            end
-                            -- Change direction mid-air: while the boost is running, steer it with
-                            -- your movement keys (or where the camera looks) instead of riding the
-                            -- fixed line it launched on. MoveDirection is already camera-relative, so
-                            -- W/A/S/D bends the boost; with no keys down it holds its current heading.
-                            if ChangeDir and ChangeDir.Enabled and Direction then
-                                local steer = entitylib.character.Humanoid.MoveDirection
-                                steer = Vector3.new(steer.X, 0, steer.Z)
-                                if steer.Magnitude < 0.1 and CameraDir and CameraDir.Enabled then
-                                    local look = gameCamera.CFrame.LookVector
-                                    steer = Vector3.new(look.X, 0, look.Z)
-                                end
-                                if steer.Magnitude > 0.1 then
-                                    Direction = steer.Unit
-                                end
-                            end
-                            root.AssemblyLinearVelocity = Direction * (getSpeed() + ((JumpTick - tick()) > 1.1 and JumpSpeed or 0)) + Vector3.new(0, root.AssemblyLinearVelocity.Y, 0)
-                            if entitylib.character.Humanoid.FloorMaterial == Enum.Material.Air and not start then
-                                root.AssemblyLinearVelocity += Vector3.new(0, dt * (workspace.Gravity - 23), 0)
-                            else
-                                root.AssemblyLinearVelocity = Vector3.new(root.AssemblyLinearVelocity.X, 15, root.AssemblyLinearVelocity.Z)
-                            end
-                            start = nil
-                        else
-                            jumpWasActive = false
-                            if start then
-                                root.CFrame = CFrame.lookAlong(start, root.CFrame.LookVector)
-                            end
-                            root.AssemblyLinearVelocity = Vector3.zero
-                            JumpSpeed = 0
-                        end
-                    else
-                        start = nil
-                    end
-                end))
-
-				local heldMethod, heldItem = heldLongJumpMethod()
-				if heldMethod then
-					task.spawn(heldMethod, heldItem, start, (CameraDir.Enabled and gameCamera or entitylib.character.RootPart).CFrame.LookVector)
-                    return
-                end
-
-                -- Limit to items: a held item was already required above, so never fall through to
-                -- the inventory/kit scan (which is what would otherwise fire a kit-based jump).
-                if LimitItems and LimitItems.Enabled then return end
-
-                for i, v in LongJumpMethods do
-                    local item = getItem(i)
-                    if item or store.equippedKit == i then
-                        task.spawn(v, item, start, (CameraDir.Enabled and gameCamera or entitylib.character.RootPart).CFrame.LookVector)
-                        break
-                    end
-                end
-            else
-                JumpTick = tick()
-                jumpWasActive = false
-                Direction = nil
-                JumpSpeed = 0
-            end
-        end,
-        ExtraText = function()
-            return 'Heatseeker'
-        end,
-        Tooltip = 'Lets you jump farther'
-    })
-    if LongJumpCreated then
-        Value = LongJump:CreateSlider({
-        Name = 'Speed',
-        Min = 1,
-        Max = 37,
-        Default = 37,
-        Suffix = function(val)
-            return val == 1 and 'stud' or 'studs'
-        end
-    })
-    CameraDir = LongJump:CreateToggle({
-        Name = 'Camera Direction'
-    })
-    LimitItems = LongJump:CreateToggle({
-        Name = 'Limit to items',
-        Tooltip = 'Only long-jumps from a held item. Without one LongJump turns itself back off instead of freezing you'
-    })
-        ChangeDir = LongJump:CreateToggle({
-            Name = 'Change direction mid-air',
-            Tooltip = 'Steer the boost with your movement keys instead of flying in a straight line'
-        })
-    end
-
-    -- LongJumpBypass: reuses two built-in behaviours back to back. On key it activates a compatible
-    -- tool the way LongJump does - by switching LongJump on, so the launch, arc and speed are
-    -- LongJump's own - and while that boost carries you it applies BoostAirJump's push (upward
-    -- velocity to beat the jump-height check) for you automatically, lifting you up without a held
-    -- jump. When LongJump's boost is spent it hands control back: LongJump is put back how it found
-    -- it and the maneuver ends. Lives in the same block as LongJump so it can watch the shared boost
-    -- window (JumpTick) and reuse LongJumpMethods to check you actually have a compatible tool.
-    local function findBypassTool()
-		local method, item, name = heldLongJumpMethod()
-		if method then return name, item end
-        for name in LongJumpMethods do
-            local item = getItem(name)
-            if item or store.equippedKit == name then
-                return name, item
-            end
-        end
-    end
-
-    local LongJumpBypassCreated
-    LongJumpBypass, LongJumpBypassCreated = register('Exploits', 'LongJumpBypass', {
-        Name = 'LongJumpBypass',
-        Function = function(callback)
-            if callback then
-                repeat task.wait() until (store.matchState ~= 0 and store.map and entitylib.isAlive) or not LongJumpBypass.Enabled
-                if not LongJumpBypass.Enabled then return end
-
-                -- A compatible tool has to exist first: switched on with nothing to launch off,
-                -- LongJump just pins you in place waiting for a jump that never comes.
-                local toolName, item = findBypassTool()
-                if not toolName then
-                    notif('LongJumpBypass', 'Hold or carry a compatible tool (dao, jade hammer, void axe, cannon, tnt, grappling hook).', 5)
-                    return task.spawn(function() if LongJumpBypass.Enabled then LongJumpBypass:Toggle() end end)
-                end
-
-                -- Put the tool in hand before LongJump switches on: it picks its launch method from
-                -- store.hand first, so this makes the launch the tool we found rather than whatever an
-                -- unordered inventory scan lands on (and lets it work under 'Limit to items'). store.hand
-                -- catches up a beat later, so wait for it. Kit launches (cat) carry no tool - skip.
-                if item and item.tool and not (store.hand and store.hand.tool == item.tool) then
-                    switchItem(item.tool, 0.1)
-                    local handDeadline = tick() + 0.6
-                    repeat task.wait(0.05) until (store.hand and store.hand.tool == item.tool) or tick() > handDeadline or not LongJumpBypass.Enabled
-                    if not LongJumpBypass.Enabled then return end
-                end
-
-                -- 1. Activate the compatible tool with LongJump's own behaviour. Switching the module
-                --    on fires the launch and runs its boost driver, exactly as using LongJump yourself.
-                local longWasOn = LongJump.Enabled
-                if not LongJump.Enabled then LongJump:Toggle() end
-                -- 'Limit to items' with nothing in hand makes LongJump switch straight back off.
-                if not LongJump.Enabled then
-                    return task.spawn(function() if LongJumpBypass.Enabled then LongJumpBypass:Toggle() end end)
-                end
-
-                -- 2. While that boost carries you, lift yourself with BoostAirJump's behaviour - the
-                --    same upward-velocity push that beats the jump-height check - only applied for you
-                --    automatically instead of while you hold jump. JumpTick (shared with LongJump
-                --    above) is the boost window: it goes into the future when the tool fires and lapses
-                --    when the boost is spent. Left on past that LongJump pins your velocity in place,
-                --    so hand control back the moment it lapses.
-                local bypassStart = tick()
-                local boostStart
-                local launchY = entitylib.character.RootPart.Position.Y
-                local launched = false
-                local direction
-                repeat
-                    runService.PreSimulation:Wait()
-                    local boosting = JumpTick > tick()
-                    if boosting and not launched then
-                        launched = true
-                        boostStart = tick()
-                        launchY = entitylib.character.RootPart.Position.Y
-                    end
-                    if entitylib.isAlive and (boosting or launched) then
-                        local root = entitylib.character.RootPart
-                        if root then
-                            local velocity = root.AssemblyLinearVelocity
-                            local flat = Vector3.new(velocity.X, 0, velocity.Z)
-                            local look = Vector3.new(root.CFrame.LookVector.X, 0, root.CFrame.LookVector.Z)
-                            direction = direction or (flat.Magnitude > 1 and flat.Unit) or (look.Magnitude > 0 and look.Unit) or Vector3.zAxis
-                            -- Keep the complete two-second flight moving forward at exactly 37.
-                            -- Stop climbing after 65 studs so a high Boost value cannot cross the
-                            -- game's vertical kill/check band, but continue the forward boost.
-                            local lift = root.Position.Y - launchY < 65 and BypassBoost.Value or 0
-                            root.AssemblyLinearVelocity = Vector3.new(direction.X * 37, lift, direction.Z * 37)
-                        end
-                    end
-                until not LongJumpBypass.Enabled or (launched and tick() - boostStart >= 2) or tick() - bypassStart > 8
-
-                -- Put LongJump back how we found it, then end the maneuver as asked.
-                if LongJump.Enabled and not longWasOn then LongJump:Toggle() end
-                -- Cancel every component only after LongJump's driver has been stopped. Gravity
-                -- owns the next simulation frame, producing a true unpowered free-fall.
-                if launched and entitylib.isAlive then
-                    entitylib.character.RootPart.AssemblyLinearVelocity = Vector3.zero
-                end
-                return task.spawn(function() if LongJumpBypass.Enabled then LongJumpBypass:Toggle() end end)
-            end
-        end,
-        Tooltip = 'Fires a compatible tool, flies forward and climbs briefly, then cancels velocity and free-falls'
-    })
-    if LongJumpBypassCreated then
-            BypassBoost = LongJumpBypass:CreateSlider({
-            Name = 'Boost',
-            Min = 5,
-            Max = 42,
-            Default = 30,
-            Suffix = ' studs/s',
-            Tooltip = 'Maximum upward speed maintained while LongJump boosts you'
-        })
-    end
 end)
 
+run(function()
+    local Runtime = assert(AetherMatchRuntime, 'Aether BedWars runtime is unavailable')
+    local ctx = AetherRuntimeContext
+    local Ports = AetherPortContext
+    local safe = aetherPortSafe
+    local notify = aetherPortNotify
+    local rootOfLocal = aetherPortRoot
+    local matchRunning = aetherPortMatchRunning
+    local equippedKit = aetherPortEquippedKit
+    local horizontalUnit = aetherPortHorizontalUnit
+    local moduleByName = aetherPortModule
+    local register = aetherPortRegister
+    local abilityController = aetherPortAbilityController
+    local canUseAbility = aetherPortCanUseAbility
+    local useAbility = aetherPortUseAbility
+    local nearestTarget = aetherPortNearestTarget
+    local waitCancelable = aetherPortWait
+    local addMovementOwner = aetherPortAddMovementOwner
+    local createDecoy = aetherPortCreateDecoy
+    local workspaceService = workspace
+    addMovementOwner('AntiHitBETA')
+-- AntiHitBETA
+--------------------------------------------------------------------------------
+local AntiHitBETA
+local antiHitCreated
+local AntiHitOptions = {}
+local antiHitGeneration = 0
+local antiHitBusy = false
+local antiHitDecoy
+
+local function currentAttackDelay()
+    local held = store.hand
+    local meta = held and held.itemType and bedwars.ItemMeta and bedwars.ItemMeta[held.itemType]
+    local sword = meta and meta.sword
+    return sword and tonumber(sword.attackSpeed) or 0.3
+end
+
+local function antiHitCleanup()
+    if antiHitDecoy then antiHitDecoy:Destroy(); antiHitDecoy = nil end
+    antiHitBusy = false
+    local movement = Runtime.Movement
+    local current = movement and movement.Current
+    if current and current.Owner == 'AntiHitBETA' then current:Release() end
+end
+
+local function executeAntiHit(generation)
+    if antiHitBusy then return end
+    local root = rootOfLocal()
+    if not root then return end
+    antiHitBusy = true
+    local movement = Runtime.Movement
+    local lease = movement and movement:Acquire('AntiHitBETA', movement.Priorities.Emergency, 1.5, antiHitCleanup, true) or nil
+    if movement and not lease then antiHitBusy = false; return end
+    local originalY = root.Position.Y
+    antiHitDecoy = createDecoy(true)
+    local delay = currentAttackDelay()
+    local ok, err = xpcall(function()
+        if generation ~= antiHitGeneration or not AntiHitBETA.Enabled then return end
+        root = rootOfLocal()
+        if not root then return end
+        if (not movement or movement:CanWrite('AntiHitBETA')) and isnetworkowner(root) then
+            root.CFrame = CFrame.new(root.Position + Vector3.new(0, 25, 0)) * root.CFrame.Rotation
+        end
+        if not waitCancelable(delay, function() return generation ~= antiHitGeneration or not AntiHitBETA.Enabled end) then return end
+        root = rootOfLocal()
+        if root and (not movement or movement:CanWrite('AntiHitBETA')) and isnetworkowner(root) then
+            root.CFrame = CFrame.new(root.Position.X, originalY + 5, root.Position.Z) * root.CFrame.Rotation
+        end
+        waitCancelable(delay, function() return generation ~= antiHitGeneration or not AntiHitBETA.Enabled end)
+    end, debug and debug.traceback or tostring)
+    if not ok then Ports.Diagnostics.AntiHitBETA = {At = tick(), Error = tostring(err)} end
+    if antiHitDecoy then antiHitDecoy:Destroy(); antiHitDecoy = nil end
+    if lease then lease:Release() end
+    antiHitBusy = false
+end
+
+AntiHitBETA, antiHitCreated = register('Blatant', 'AntiHitBETA', {
+    Tooltip = 'BETA dodge port of AlSploit AntiHit using a short vertical displacement and decoy camera.',
+    Function = function(callback)
+        antiHitGeneration = antiHitGeneration + 1
+        local generation = antiHitGeneration
+        if not callback then antiHitCleanup(); return end
+        AntiHitBETA:Clean(antiHitCleanup)
+        task.spawn(function()
+            while AntiHitBETA.Enabled and generation == antiHitGeneration do
+                if entitylib.isAlive and matchRunning() and not antiHitBusy then
+                    local target = nearestTarget(AntiHitOptions.Range.Value, AntiHitOptions.Entities.Enabled)
+                    if target then task.spawn(executeAntiHit, generation) end
+                end
+                task.wait(0.04)
+            end
+        end)
+    end
+})
+if antiHitCreated then
+    AntiHitOptions.Entities = AntiHitBETA:CreateToggle({Name = 'Entities', Default = false})
+    AntiHitOptions.Range = AntiHitBETA:CreateSlider({Name = 'Range', Min = 1, Max = 20, Default = 20, Suffix = ' studs'})
+end
 
 --------------------------------------------------------------------------------
--- Restored Exploits modules
--- These were removed from the branch even though their module names did not say
--- "Exploit". They use the same port registration and cleanup boundaries as the
--- Jade module below.
+end)
 
+run(function()
+    local Runtime = assert(AetherMatchRuntime, 'Aether BedWars runtime is unavailable')
+    local ctx = AetherRuntimeContext
+    local Ports = AetherPortContext
+    local safe = aetherPortSafe
+    local notify = aetherPortNotify
+    local rootOfLocal = aetherPortRoot
+    local matchRunning = aetherPortMatchRunning
+    local equippedKit = aetherPortEquippedKit
+    local horizontalUnit = aetherPortHorizontalUnit
+    local moduleByName = aetherPortModule
+    local register = aetherPortRegister
+    local abilityController = aetherPortAbilityController
+    local canUseAbility = aetherPortCanUseAbility
+    local useAbility = aetherPortUseAbility
+    local nearestTarget = aetherPortNearestTarget
+    local waitCancelable = aetherPortWait
+    local addMovementOwner = aetherPortAddMovementOwner
+    local createDecoy = aetherPortCreateDecoy
+    local workspaceService = workspace
+-- NoFallDamageV2
+--------------------------------------------------------------------------------
+local NoFallDamageV2
+local noFallCreated
+local noFallGeneration = 0
+local noFallBusy = false
+NoFallDamageV2, noFallCreated = register('Blatant', 'NoFallDamageV2', {
+    Tooltip = 'AlSploit-style fall-damage prevention: briefly reports a landed state while preserving downward velocity.',
+    Function = function(callback)
+        noFallGeneration = noFallGeneration + 1
+        local generation = noFallGeneration
+        noFallBusy = false
+        if not callback then return end
+        local connection = runService.PostSimulation:Connect(function()
+            if noFallBusy or generation ~= noFallGeneration or not NoFallDamageV2.Enabled then return end
+            local highJump = moduleByName('HighJump')
+            if highJump and highJump.Enabled then return end
+            local root, _, humanoid = rootOfLocal()
+            if not root or not humanoid then return end
+            local velocity = root.AssemblyLinearVelocity
+            if velocity.Y >= -45 then return end
+            noFallBusy = true
+            task.spawn(function()
+                local oldY = velocity.Y
+                root = rootOfLocal()
+                if not root or generation ~= noFallGeneration or not NoFallDamageV2.Enabled then noFallBusy = false; return end
+                root.AssemblyLinearVelocity = Vector3.new(root.AssemblyLinearVelocity.X, 44, root.AssemblyLinearVelocity.Z)
+                safe('nofall.landed', humanoid.ChangeState, humanoid, Enum.HumanoidStateType.Landed)
+                runService.PreSimulation:Wait()
+                root = rootOfLocal()
+                if root and generation == noFallGeneration and NoFallDamageV2.Enabled then
+                    root.AssemblyLinearVelocity = Vector3.new(root.AssemblyLinearVelocity.X, oldY, root.AssemblyLinearVelocity.Z)
+                end
+                noFallBusy = false
+            end)
+        end)
+        NoFallDamageV2:Clean(connection)
+    end
+})
+end)
+
+run(function()
+    local Runtime = assert(AetherMatchRuntime, 'Aether BedWars runtime is unavailable')
+    local ctx = AetherRuntimeContext
+    local Ports = AetherPortContext
+    local safe = aetherPortSafe
+    local notify = aetherPortNotify
+    local rootOfLocal = aetherPortRoot
+    local matchRunning = aetherPortMatchRunning
+    local equippedKit = aetherPortEquippedKit
+    local horizontalUnit = aetherPortHorizontalUnit
+    local moduleByName = aetherPortModule
+    local register = aetherPortRegister
+    local abilityController = aetherPortAbilityController
+    local canUseAbility = aetherPortCanUseAbility
+    local useAbility = aetherPortUseAbility
+    local nearestTarget = aetherPortNearestTarget
+    local waitCancelable = aetherPortWait
+    local addMovementOwner = aetherPortAddMovementOwner
+    local createDecoy = aetherPortCreateDecoy
+    local workspaceService = workspace
 local BalloonDisabler, BalloonAutoDisable
 local balloonControllerState
 local balloonAutoConnection
@@ -22080,7 +21509,28 @@ BalloonDisabler = (function()
     end
     return module
 end)()
+end)
 
+run(function()
+    local Runtime = assert(AetherMatchRuntime, 'Aether BedWars runtime is unavailable')
+    local ctx = AetherRuntimeContext
+    local Ports = AetherPortContext
+    local safe = aetherPortSafe
+    local notify = aetherPortNotify
+    local rootOfLocal = aetherPortRoot
+    local matchRunning = aetherPortMatchRunning
+    local equippedKit = aetherPortEquippedKit
+    local horizontalUnit = aetherPortHorizontalUnit
+    local moduleByName = aetherPortModule
+    local register = aetherPortRegister
+    local abilityController = aetherPortAbilityController
+    local canUseAbility = aetherPortCanUseAbility
+    local useAbility = aetherPortUseAbility
+    local nearestTarget = aetherPortNearestTarget
+    local waitCancelable = aetherPortWait
+    local addMovementOwner = aetherPortAddMovementOwner
+    local createDecoy = aetherPortCreateDecoy
+    local workspaceService = workspace
 local MultiAction, MultiActionActions, MultiActionContexts
 local multiActionHooks, multiActionCalls, multiActionLast = {}, {}, {}
 local multiActionControllers = {}
@@ -22312,6 +21762,28 @@ vape:Clean(function()
 end)
 
 --------------------------------------------------------------------------------
+end)
+
+run(function()
+    local Runtime = assert(AetherMatchRuntime, 'Aether BedWars runtime is unavailable')
+    local ctx = AetherRuntimeContext
+    local Ports = AetherPortContext
+    local safe = aetherPortSafe
+    local notify = aetherPortNotify
+    local rootOfLocal = aetherPortRoot
+    local matchRunning = aetherPortMatchRunning
+    local equippedKit = aetherPortEquippedKit
+    local horizontalUnit = aetherPortHorizontalUnit
+    local moduleByName = aetherPortModule
+    local register = aetherPortRegister
+    local abilityController = aetherPortAbilityController
+    local canUseAbility = aetherPortCanUseAbility
+    local useAbility = aetherPortUseAbility
+    local nearestTarget = aetherPortNearestTarget
+    local waitCancelable = aetherPortWait
+    local addMovementOwner = aetherPortAddMovementOwner
+    local createDecoy = aetherPortCreateDecoy
+    local workspaceService = workspace
 -- InfiniteSigrid
 -- This module was removed even though its name did not identify it as an exploit.
 -- Keep it in the Kits window and use the live Elk controller when available.
@@ -22353,6 +21825,28 @@ InfiniteSigrid = (function()
 end)()
 
 --------------------------------------------------------------------------------
+end)
+
+run(function()
+    local Runtime = assert(AetherMatchRuntime, 'Aether BedWars runtime is unavailable')
+    local ctx = AetherRuntimeContext
+    local Ports = AetherPortContext
+    local safe = aetherPortSafe
+    local notify = aetherPortNotify
+    local rootOfLocal = aetherPortRoot
+    local matchRunning = aetherPortMatchRunning
+    local equippedKit = aetherPortEquippedKit
+    local horizontalUnit = aetherPortHorizontalUnit
+    local moduleByName = aetherPortModule
+    local register = aetherPortRegister
+    local abilityController = aetherPortAbilityController
+    local canUseAbility = aetherPortCanUseAbility
+    local useAbility = aetherPortUseAbility
+    local nearestTarget = aetherPortNearestTarget
+    local waitCancelable = aetherPortWait
+    local addMovementOwner = aetherPortAddMovementOwner
+    local createDecoy = aetherPortCreateDecoy
+    local workspaceService = workspace
 -- JadeHammerExploit
 -- The old reference teleport path is intentionally not reused. This module uses
 -- Aether's shared Jade adapter for inventory, cooldown, ability resolution and
@@ -22627,32 +22121,9 @@ JadeHammerExploit = (function()
     end
     return module
 end)()
-
--- Compatibility exports for older JIK callers without registering a duplicate UI module.
-Ports.Modules.JadeInstaKill = JadeHammerExploit
-Runtime.JadeHammerExploit = JadeHammerExploit
-Runtime.JadeInstaKill = JadeHammerExploit
-
-return Ports
-
-end
-
-    local portsLoaded, portsResult = xpcall(function()
-        return registerAetherPorts(AetherMatchRuntime, context)
-    end, debug and debug.traceback or tostring)
-    if not portsLoaded then
-        warn('[AetherV2] BedWars ports failed to load: '..tostring(portsResult))
-        notif('AetherV2', 'BedWars port modules failed to load. Check the console.', 8, 'warning')
-    end
-
-    local portsV2Loaded, portsV2Result = xpcall(function()
-        return registerAetherPortsV2(AetherMatchRuntime, context)
-    end, debug and debug.traceback or tostring)
-    if not portsV2Loaded then
-        warn('[AetherV2] Newer BedWars ports failed to load: '..tostring(portsV2Result))
-        notif('AetherV2', 'Newer BedWars port modules failed to load. Check the console.', 8, 'warning')
-    end
 end)
+
+AetherMatchRuntime.JadeHammerExploit = vape.Modules and vape.Modules.JadeHammerExploit or nil
 
 
 

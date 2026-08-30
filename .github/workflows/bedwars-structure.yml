@@ -5,12 +5,16 @@ on:
     branches:
       - codex/split-bedwars-modules-analytics
       - codex/one-module-per-file-cleanup
+      - codex/pr172-final-reconcile
     paths:
       - .github/workflows/bedwars-structure.yml
       - tools/**
       - games/6872274481/**
       - games/universal.lua
       - libraries/entity.lua
+      - init.lua
+      - main.lua
+      - guis/new.lua
   workflow_dispatch:
 
 permissions:
@@ -39,25 +43,16 @@ jobs:
         run: python tools/apply-aug30-unfinished.py
       - name: Apply verification fixes
         run: python tools/fix-aug30-verification.py
-      - name: Inspect coupled AutoWin runtime
-        run: python tools/report-group3-layout.py
-      - name: Patch normalizer parser and same-path handling
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          path = Path('tools/normalize-bedwars-layout.py')
-          text = path.read_text()
-          text = text.replace("if c in ('\\'', '\"'):", "if c in ('\\'', '\"', '`'):")
-          old = '''    entries = []\n    for start, end in top_level_runs(source):\n        block = source[start:end]\n        mods = modules(block)\n        if len(mods) != 1:\n            raise RuntimeError(f'{relative}: expected one module per top-level run, got {mods}')\n        name, category = mods[0]\n        target = f'{category}/{safe_name(name)}.lua'\n        write(BED / target, block.rstrip() + '\\n')\n        entries.append(target)\n    if not entries:\n        raise RuntimeError(f'{relative}: no top-level module runs')\n    replace_marker(relative, entries)\n    path.unlink()\n'''
-          new = '''    entries, generated = [], []\n    for start, end in top_level_runs(source):\n        block = source[start:end]\n        mods = modules(block)\n        if len(mods) != 1:\n            raise RuntimeError(f'{relative}: expected one module per top-level run, got {mods}')\n        name, category = mods[0]\n        target = f'{category}/{safe_name(name)}.lua'\n        generated.append((target, block.rstrip() + '\\n'))\n        entries.append(target)\n    if not entries:\n        raise RuntimeError(f'{relative}: no top-level module runs')\n    replace_marker(relative, entries)\n    for target, block in generated:\n        if target != relative:\n            write(BED / target, block)\n    same = next((block for target, block in generated if target == relative), None)\n    if same is not None:\n        write(path, same)\n    elif path.exists():\n        path.unlink()\n'''
-          if old not in text:
-              raise SystemExit('same-path normalizer block not found')
-          path.write_text(text.replace(old, new, 1))
-          PY
+      - name: Finish original movement/bootstrap fixes
+        run: python tools/finish-original-batch.py
+      - name: Split final coupled runtime
+        run: python tools/split-final-coupled-runtime.py
       - name: Normalize BedWars module layout
         run: python tools/normalize-bedwars-layout.py
-      - name: Report module-file audit
-        run: python tools/audit-bedwars-modules.py --report-only
+      - name: Finalize split layout
+        run: python tools/finalize-split-layout.py
+      - name: Audit one-module-per-file structure
+        run: python tools/audit-bedwars-modules.py
       - name: Rebuild BedWars runtime bundle
         run: python tools/build-bedwars-bundle.py
       - name: Validate backend JavaScript
@@ -69,10 +64,10 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add games/6872274481.lua games/6872274481 games/universal.lua libraries/entity.lua backend init.lua guis/new.core.lua tools backend/README.md backend/package.json
+          git add games/6872274481.lua games/6872274481 games/universal.lua libraries/entity.lua backend init.lua main.lua guis/new.lua guis/new.core.lua tools backend/README.md backend/package.json
           if git diff --cached --quiet; then
             echo "No generated changes"
             exit 0
           fi
-          git commit -m "Normalize BedWars module file layout"
+          git commit -m "Finish original update fixes and split AutoWin runtime"
           git push origin HEAD:${{ github.ref_name }}

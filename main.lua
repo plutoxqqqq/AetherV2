@@ -384,6 +384,9 @@ local function runWatchedChunk(source, chunkName, label, timeout, optional, ...)
 end
 
 local function loadPremiumModules()
+	-- Never trust closures left by a previous injection. init.lua must have validated
+	-- this execution before private modules can be fetched.
+	if shared.AetherV2PremiumAuthorized ~= true then return end
 	local fetchSource = shared.AetherV2PremiumFetchSource
 	local fetchTree = shared.AetherV2PremiumFetchTree
 	if type(fetchSource) ~= 'function' or type(fetchTree) ~= 'function' then return end

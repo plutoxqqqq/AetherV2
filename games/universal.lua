@@ -2058,743 +2058,117 @@ run(function()
 end)
 
 run(function()
-    local Options = { TPTiming = tick() }
-    local Mode
-    local FloatMode
-    local State
-    local MoveMethod
-    local Keys
-    local VerticalValue
-    local BounceLength
-    local BounceDelay
-    local FloatTPGround
-    local FloatTPAir
-    local CustomProperties
-    local WallCheck
-    local PlatformStanding
-    local Platform, YLevel, OldYLevel
-    local w, s, a, d, up, down = 0, 0, 0, 0, 0, 0
-    local rayCheck = RaycastParams.new()
-    rayCheck.RespectCanCollide = true
-    Options.rayCheck = rayCheck
-
-    local Functions
-    Functions = {
-	Velocity = function()
-		entitylib.character.RootPart.Velocity = (entitylib.character.RootPart.Velocity * Vector3.new(1, 0, 1))
-			+ Vector3.new(0, 2.25 + ((up + down) * VerticalValue.Value), 0)
-	end,
-	Impulse = function(options, moveDirection)
-		local root = entitylib.character.RootPart
-		local diff = (Vector3.new(0, 2.25 + ((up + down) * VerticalValue.Value), 0) - root.AssemblyLinearVelocity)
-			* Vector3.new(0, 1, 0)
-		if diff.Magnitude > 2 then
-			root:ApplyImpulse(diff * root.AssemblyMass)
-		end
-	end,
-	CFrame = function(dt)
-		local root = entitylib.character.RootPart
-		if not YLevel then
-			YLevel = root.Position.Y
-		end
-		YLevel = YLevel + ((up + down) * VerticalValue.Value * dt)
-		if WallCheck.Enabled then
-			rayCheck.FilterDescendantsInstances = { lplr.Character, gameCamera }
-			rayCheck.CollisionGroup = root.CollisionGroup
-			local ray = workspace:Raycast(root.Position, Vector3.new(0, YLevel - root.Position.Y, 0), rayCheck)
-			if ray then
-				YLevel = ray.Position.Y + entitylib.character.HipHeight
-			end
-		end
-		root.Velocity *= Vector3.new(1, 0, 1)
-		root.CFrame += Vector3.new(0, YLevel - root.Position.Y, 0)
-	end,
-	Bounce = function()
-		Functions.Velocity()
-		entitylib.character.RootPart.Velocity += Vector3.new(
-			0,
-			((tick() % BounceDelay.Value) / BounceDelay.Value > 0.5 and 1 or -1) * BounceLength.Value,
-			0
-		)
-	end,
-	Floor = function()
-		Platform.CFrame = down ~= 0 and CFrame.identity
-			or entitylib.character.RootPart.CFrame + Vector3.new(0, -(entitylib.character.HipHeight + 0.5), 0)
-	end,
-	TP = function(dt)
-		Functions.CFrame(dt)
-		if tick() % (FloatTPAir.Value + FloatTPGround.Value) > FloatTPAir.Value then
-			OldYLevel = OldYLevel or YLevel
-			rayCheck.FilterDescendantsInstances = { lplr.Character, gameCamera }
-			rayCheck.CollisionGroup = entitylib.character.RootPart.CollisionGroup
-			local ray = workspace:Raycast(entitylib.character.RootPart.Position, Vector3.new(0, -1000, 0), rayCheck)
-			if ray then
-				YLevel = ray.Position.Y + entitylib.character.HipHeight
-			end
-		else
-			if OldYLevel then
-				YLevel = OldYLevel
-				OldYLevel = nil
-			end
-		end
-	end,
-	Jump = function(dt)
-		local root = entitylib.character.RootPart
-		if not YLevel then
-			YLevel = root.Position.Y
-		end
-		YLevel = YLevel + ((up + down) * VerticalValue.Value * dt)
-		if root.Position.Y < YLevel then
-			entitylib.character.Humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-		end
-	end,
-    }
-
-    ------------------------------------------------------------------------
-    -- Shared visual-clone helper used by InfiniteFly. The real character is
-    -- kept away from the map while the anchored clone remains camera-visible.
-    ------------------------------------------------------------------------
-    local function createVisualClone(sourceCharacter)
-        if not sourceCharacter or not sourceCharacter.Parent then return nil end
-
-        local oldArchivable = sourceCharacter.Archivable
-        sourceCharacter.Archivable = true
-        local cloned, clone = pcall(function()
-            return sourceCharacter:Clone()
-        end)
-        sourceCharacter.Archivable = oldArchivable
-        if not cloned or not clone then return nil end
-
-        for _, object in ipairs(clone:GetDescendants()) do
-            if object:IsA('Script') or object:IsA('LocalScript') then
-                object:Destroy()
-            elseif object:IsA('BasePart') then
-                object.CanCollide = false
-                object.CanTouch = false
-                object.CanQuery = false
-            end
-        end
-
-        clone.Name = 'AetherInfiniteFlyClone'
-        clone.Parent = workspace
-        local cloneRoot = clone.PrimaryPart or clone:FindFirstChild('HumanoidRootPart')
-        local cloneHumanoid = clone:FindFirstChildOfClass('Humanoid')
-        if not cloneRoot or not cloneHumanoid then
-            pcall(clone.Destroy, clone)
-            return nil
-        end
-        clone.PrimaryPart = cloneRoot
-        cloneRoot.Anchored = true
-        clone:PivotTo(sourceCharacter:GetPivot())
-
-        local cloneAnimator = cloneHumanoid:FindFirstChildOfClass('Animator')
-        if not cloneAnimator then
-            cloneAnimator = Instance.new('Animator')
-            cloneAnimator.Parent = cloneHumanoid
-        end
-
-        local visual = {
-            Model = clone,
-            Root = cloneRoot,
-            Humanoid = cloneHumanoid,
-            Animator = cloneAnimator,
-            Connections = {},
-            Tracks = {},
-            Destroyed = false
-        }
-
-        function visual:Connect(signal, callback)
-            if self.Destroyed or not signal then return nil end
-            local ok, connection = pcall(signal.Connect, signal, callback)
-            if ok and connection then
-                table.insert(self.Connections, connection)
-                return connection
-            end
-        end
-
-        function visual:RemoveTrack(sourceTrack)
-            local entry = self.Tracks[sourceTrack]
-            if not entry then return end
-            self.Tracks[sourceTrack] = nil
-            if entry.Connection then pcall(entry.Connection.Disconnect, entry.Connection) end
-            if entry.Track then
-                pcall(entry.Track.Stop, entry.Track, 0)
-                pcall(entry.Track.Destroy, entry.Track)
-            end
-        end
-
-        function visual:Mirror(sourceTrack)
-            if self.Destroyed or not sourceTrack then return end
-            local ok, animation = pcall(function() return sourceTrack.Animation end)
-            if not ok or not animation then return end
-            self:RemoveTrack(sourceTrack)
-
-            local okLoad, mirrored = pcall(self.Animator.LoadAnimation, self.Animator, animation)
-            if not okLoad or not mirrored then return end
-            local priority = pcall(function() return sourceTrack.Priority end)
-            local looped = pcall(function() return sourceTrack.Looped end)
-            if priority then pcall(function() mirrored.Priority = sourceTrack.Priority end) end
-            if looped then pcall(function() mirrored.Looped = sourceTrack.Looped end) end
-
-            local weight = 1
-            local speed = 1
-            local timePosition = 0
-            pcall(function() weight = math.max(tonumber(sourceTrack.WeightCurrent) or 1, 0.01) end)
-            pcall(function() speed = tonumber(sourceTrack.Speed) or 1 end)
-            pcall(function() timePosition = sourceTrack.TimePosition end)
-            pcall(mirrored.Play, mirrored, 0, weight, speed)
-            pcall(function() mirrored.TimePosition = timePosition end)
-
-            local entry = {Track = mirrored, Connection = nil}
-            self.Tracks[sourceTrack] = entry
-            entry.Connection = self:Connect(sourceTrack.Stopped, function()
-                self:RemoveTrack(sourceTrack)
-            end)
-        end
-
-        function visual:Update()
-            if self.Destroyed then return end
-            for sourceTrack, entry in pairs(self.Tracks) do
-                local mirrored = entry.Track
-                local okPlaying, playing = pcall(function() return sourceTrack.IsPlaying end)
-                if not okPlaying then
-                    self:RemoveTrack(sourceTrack)
-                elseif playing then
-                    pcall(function() mirrored.TimePosition = sourceTrack.TimePosition end)
-                    pcall(mirrored.AdjustSpeed, mirrored, sourceTrack.Speed)
-                    pcall(mirrored.AdjustWeight, mirrored, sourceTrack.WeightCurrent, 0)
-                end
-            end
-        end
-
-        function visual:Destroy()
-            if self.Destroyed then return end
-            self.Destroyed = true
-            for _, connection in ipairs(self.Connections) do
-                pcall(connection.Disconnect, connection)
-            end
-            table.clear(self.Connections)
-            for sourceTrack in pairs(self.Tracks) do
-                self:RemoveTrack(sourceTrack)
-            end
-            if self.Model and self.Model.Parent then
-                pcall(self.Model.Destroy, self.Model)
-            end
-            self.Model = nil
-        end
-
-        local sourceAnimator = sourceCharacter:FindFirstChildOfClass('Humanoid')
-            and sourceCharacter:FindFirstChildOfClass('Humanoid'):FindFirstChildOfClass('Animator')
-        if sourceAnimator then
-            for _, track in ipairs(sourceAnimator:GetPlayingAnimationTracks()) do
-                visual:Mirror(track)
-            end
-            visual:Connect(sourceAnimator.AnimationPlayed, function(track)
-                visual:Mirror(track)
-            end)
-        end
-        return visual
-    end
-
     local InfiniteFly
-    local infiniteFlyGeneration = 0
-    local infiniteFlyState
-    local InfiniteFlyUpSpeed
-    local InfiniteFlyDownSpeed
+    local UpSpeed
+    local DownSpeed
+    local HorizontalSpeed
+    local state
+    local generation = 0
 
-    local function findCharacterRoot(character)
-        return character and (character.PrimaryPart or character:FindFirstChild('HumanoidRootPart'))
-    end
-
-    local function cleanupInfiniteFly()
-        local state = infiniteFlyState
-        if not state then return end
-        infiniteFlyState = nil
-
-        local finalCFrame = state.OriginalCFrame
-        if state.Visual and state.Visual.Root and state.Visual.Root.Parent then
-            local read, cloneCFrame = pcall(function()
-                return state.Visual.Root.CFrame
-            end)
-            if read and cloneCFrame then finalCFrame = cloneCFrame end
-        end
-
-        if state.Visual then
-            pcall(state.Visual.Destroy, state.Visual)
-            state.Visual = nil
-        end
-
-        local liveCharacter = lplr.Character
-        local liveRoot = findCharacterRoot(liveCharacter)
-        local liveHumanoid = liveCharacter and liveCharacter:FindFirstChildOfClass('Humanoid')
-        local camera = workspace.CurrentCamera or gameCamera
-        if camera then
-            pcall(function()
-                camera.CameraSubject = liveHumanoid or state.OriginalSubject
-            end)
-        end
-
-        if liveRoot and finalCFrame then
-            pcall(function()
-                liveRoot.CFrame = finalCFrame
-                liveRoot.AssemblyLinearVelocity = Vector3.zero
-                liveRoot.AssemblyAngularVelocity = Vector3.zero
-            end)
-            if liveHumanoid then
-                local humanoidState = Enum.HumanoidStateType.Freefall
-                local grounded = false
-                pcall(function()
-                    local params = RaycastParams.new()
-                    params.FilterType = Enum.RaycastFilterType.Exclude
-                    params.FilterDescendantsInstances = {liveCharacter}
-                    grounded = workspace:Raycast(
-                        finalCFrame.Position + Vector3.new(0, 2, 0),
-                        Vector3.new(0, -8, 0),
-                        params
-                    ) ~= nil
-                end)
-                if grounded then humanoidState = Enum.HumanoidStateType.Landed end
-                pcall(liveHumanoid.ChangeState, liveHumanoid, humanoidState)
+    local function cleanup(restorePosition)
+        local current = state
+        state = nil
+        if not current then return end
+        if current.Connection then current.Connection:Disconnect() end
+        if current.DiedConnection then current.DiedConnection:Disconnect() end
+        if current.CharacterConnection then current.CharacterConnection:Disconnect() end
+        if current.Clone and current.Clone.Parent then current.Clone:Destroy() end
+        if current.Character and current.Character.Parent then
+            local humanoid = current.Character:FindFirstChildOfClass('Humanoid')
+            local root = current.Character:FindFirstChild('HumanoidRootPart') or current.Character.PrimaryPart
+            if humanoid then humanoid.PlatformStand = false; humanoid.AutoRotate = true end
+            if root then
+                root.Anchored = false
+                root.AssemblyAngularVelocity = Vector3.zero
+                if restorePosition and current.SafeCFrame then root.CFrame = current.SafeCFrame end
+                root.AssemblyLinearVelocity = Vector3.zero
             end
         end
+        if gameCamera and current.CameraSubject and current.CameraSubject.Parent then gameCamera.CameraSubject = current.CameraSubject end
     end
 
-    -- The module callback handles normal toggles; this hook covers uninject and any
-    -- framework-level cleanup path that bypasses module callbacks.
-    vape:Clean(function()
-        infiniteFlyGeneration += 1
-        cleanupInfiniteFly()
-    end)
+    local function disable()
+        task.defer(function() if InfiniteFly.Enabled then InfiniteFly:Toggle() end end)
+    end
+
+    local function start()
+        if not entitylib.isAlive or not entitylib.character then disable(); return end
+        cleanup(false)
+        generation += 1
+        local myGeneration = generation
+        local character = entitylib.character.Character
+        local root = entitylib.character.RootPart
+        local humanoid = entitylib.character.Humanoid
+        if not character or not root or not humanoid then disable(); return end
+
+        local safe = root.CFrame
+        local clone
+        local oldArchivable = character.Archivable
+        character.Archivable = true
+        local ok, result = pcall(character.Clone, character)
+        character.Archivable = oldArchivable
+        if ok then clone = result end
+        if clone then
+            clone.Name = 'AetherInfiniteFlyVisual'
+            for _, object in clone:GetDescendants() do
+                if object:IsA('Script') or object:IsA('LocalScript') then object:Destroy()
+                elseif object:IsA('BasePart') then object.CanCollide = false; object.CanTouch = false; object.CanQuery = false end
+            end
+            clone.Parent = workspace
+            clone:PivotTo(character:GetPivot())
+        end
+
+        state = {Character = character, Root = root, Humanoid = humanoid, Clone = clone, SafeCFrame = safe, CameraSubject = gameCamera.CameraSubject}
+        humanoid.PlatformStand = false
+        humanoid.AutoRotate = true
+
+        state.DiedConnection = humanoid.Died:Connect(function()
+            -- Never leave the render/fly loop holding destroyed character references.
+            generation += 1
+            cleanup(false)
+        end)
+        state.CharacterConnection = lplr.CharacterAdded:Connect(function()
+            generation += 1
+            cleanup(false)
+            if InfiniteFly.Enabled then task.delay(0.35, function() if InfiniteFly.Enabled then start() end end) end
+        end)
+
+        state.Connection = runService.Heartbeat:Connect(function(dt)
+            if myGeneration ~= generation or not InfiniteFly.Enabled then return end
+            if not root.Parent or humanoid.Health <= 0 then generation += 1; cleanup(false); return end
+            if not isnetworkowner(root) then return end
+
+            local move = humanoid.MoveDirection
+            local vertical = 0
+            if inputService:IsKeyDown(Enum.KeyCode.Space) then vertical += UpSpeed.Value end
+            if inputService:IsKeyDown(Enum.KeyCode.LeftShift) or inputService:IsKeyDown(Enum.KeyCode.LeftControl) then vertical -= DownSpeed.Value end
+            local horizontal = move.Magnitude > 0 and move.Unit * HorizontalSpeed.Value or Vector3.zero
+
+            -- Drive velocity once per physics heartbeat. The previous implementation fought
+            -- several movement writers and decelerated itself, which caused immediate lagbacks.
+            root.AssemblyLinearVelocity = Vector3.new(horizontal.X, vertical, horizontal.Z)
+            root.AssemblyAngularVelocity = Vector3.zero
+
+            -- Keep a recent grounded position. On disable/death this is the only position we may
+            -- restore to; never teleport to stale clone coordinates.
+            local floor = workspace:Raycast(root.Position, Vector3.new(0, -5, 0), RaycastParams.new())
+            if floor and floor.Instance and floor.Instance.CanCollide then state.SafeCFrame = root.CFrame end
+            if clone and clone.Parent then clone:PivotTo(root.CFrame) end
+        end)
+    end
 
     InfiniteFly = vape.Categories.Blatant:CreateModule({
         Name = 'InfiniteFly',
-        Tooltip = 'Separates the visible clone from the real character for sustained vertical flight.',
+        Tooltip = 'Sustained flight with death-safe cleanup and a single physics velocity writer.',
         Function = function(callback)
-            infiniteFlyGeneration += 1
-            local generation = infiniteFlyGeneration
-            if not callback then
-                cleanupInfiniteFly()
-                return
-            end
-
-            cleanupInfiniteFly()
-            local character = lplr.Character
-            local sourceRoot = findCharacterRoot(character)
-            local sourceHumanoid = character and character:FindFirstChildOfClass('Humanoid')
-            if not character or not sourceRoot or not sourceHumanoid or sourceHumanoid.Health <= 0 then
-                return
-            end
-
-            local state = {
-                OriginalCFrame = sourceRoot.CFrame,
-                OriginalVelocity = sourceRoot.AssemblyLinearVelocity,
-                OriginalAngularVelocity = sourceRoot.AssemblyAngularVelocity,
-                OriginalSubject = gameCamera.CameraSubject,
-                CloneHumanoid = nil,
-                Visual = nil,
-                Up = false,
-                Down = false,
-                Offset = 1000000
-            }
-            infiniteFlyState = state
-
-            local ok, err = xpcall(function()
-                state.Visual = createVisualClone(character)
-                if not state.Visual then error('visual clone unavailable') end
-                state.CloneHumanoid = state.Visual.Humanoid
-                gameCamera.CameraSubject = state.CloneHumanoid
-
-                sourceRoot.CFrame = CFrame.new(
-                    sourceRoot.Position + Vector3.new(0, state.Offset, 0)
-                ) * sourceRoot.CFrame.Rotation
-                sourceRoot.AssemblyLinearVelocity = Vector3.zero
-                sourceRoot.AssemblyAngularVelocity = Vector3.zero
-
-                state.Visual:Connect(sourceHumanoid.Died, function()
-                    if InfiniteFly.Enabled and infiniteFlyState == state then
-                        task.defer(function()
-                            if InfiniteFly.Enabled then InfiniteFly:Toggle() end
-                        end)
-                    end
-                end)
-                state.Visual:Connect(lplr.CharacterRemoving, function(removing)
-                    if removing == character and InfiniteFly.Enabled and infiniteFlyState == state then
-                        task.defer(function()
-                            if InfiniteFly.Enabled then InfiniteFly:Toggle() end
-                        end)
-                    end
-                end)
-                state.Visual:Connect(lplr.CharacterAdded, function()
-                    if InfiniteFly.Enabled and infiniteFlyState == state then
-                        task.defer(function()
-                            if InfiniteFly.Enabled then InfiniteFly:Toggle() end
-                        end)
-                    end
-                end)
-
-                local globalEvents = getgenv and getgenv().vapeEvents
-                if globalEvents and globalEvents.MatchEndEvent then
-                    state.Visual:Connect(globalEvents.MatchEndEvent.Event, function()
-                        if InfiniteFly.Enabled and infiniteFlyState == state then
-                            task.defer(function()
-                                if InfiniteFly.Enabled then InfiniteFly:Toggle() end
-                            end)
-                        end
-                    end)
-                end
-
-                state.Visual:Connect(inputService.InputBegan, function(input, processed)
-                    if processed or inputService:GetFocusedTextBox() then return end
-                    if input.KeyCode == Enum.KeyCode.Space then
-                        state.Up = true
-                    elseif input.KeyCode == Enum.KeyCode.LeftShift then
-                        state.Down = true
-                    end
-                end)
-                state.Visual:Connect(inputService.InputEnded, function(input)
-                    if input.KeyCode == Enum.KeyCode.Space then
-                        state.Up = false
-                    elseif input.KeyCode == Enum.KeyCode.LeftShift then
-                        state.Down = false
-                    end
-                end)
-
-                state.Visual:Connect(runService.RenderStepped, function(dt)
-                    if infiniteFlyState ~= state or generation ~= infiniteFlyGeneration
-                        or not InfiniteFly.Enabled then return end
-
-                    local liveCharacter = lplr.Character
-                    local liveRoot = findCharacterRoot(liveCharacter)
-                    local liveHumanoid = liveCharacter and liveCharacter:FindFirstChildOfClass('Humanoid')
-                    if not liveCharacter or not liveRoot or not liveHumanoid or liveHumanoid.Health <= 0
-                        or not state.Visual or not state.Visual.Root or not state.Visual.Root.Parent then
-                        task.defer(function()
-                            if InfiniteFly.Enabled and infiniteFlyState == state then InfiniteFly:Toggle() end
-                        end)
-                        return
-                    end
-
-                    local delta = math.clamp(tonumber(dt) or 0.016, 0, 0.1)
-                    local vertical = (state.Up and 1 or 0) - (state.Down and 1 or 0)
-                    local cloneRoot = state.Visual.Root
-                    local nextY = cloneRoot.Position.Y + vertical * (
-                        vertical >= 0 and InfiniteFlyUpSpeed.Value or InfiniteFlyDownSpeed.Value
-                    ) * delta
-                    local rotation = liveRoot.CFrame.Rotation
-
-                    -- X/Z follow the real character; Y stays on the clone except while a
-                    -- direction key is held.
-                    cloneRoot.CFrame = CFrame.new(
-                        liveRoot.Position.X,
-                        nextY,
-                        liveRoot.Position.Z
-                    ) * rotation
-
-                    -- Keep the real character at the protected offset without changing its
-                    -- horizontal movement source.
-                    if math.abs(liveRoot.Position.Y - (nextY + state.Offset)) > 2 then
-                        liveRoot.CFrame = CFrame.new(
-                            liveRoot.Position.X,
-                            nextY + state.Offset,
-                            liveRoot.Position.Z
-                        ) * rotation
-                    end
-                    liveRoot.AssemblyLinearVelocity = Vector3.zero
-                    liveRoot.AssemblyAngularVelocity = Vector3.zero
-                    state.Visual:Update()
-                end)
-            end, debug and debug.traceback or tostring)
-
-            if not ok then
-                warn('[AetherV2] InfiniteFly setup failed: '..tostring(err))
-                cleanupInfiniteFly()
-                task.defer(function()
-                    if InfiniteFly.Enabled then InfiniteFly:Toggle() end
-                end)
-            end
+            generation += 1
+            if callback then start() else cleanup(false) end
         end
     })
-
-    InfiniteFlyUpSpeed = InfiniteFly:CreateSlider({
-        Name = 'Fly up speed',
-        Min = 1,
-        Max = 150,
-        Default = 50,
-        Suffix = ' studs/s'
-    })
-    InfiniteFlyDownSpeed = InfiniteFly:CreateSlider({
-        Name = 'Fly down speed',
-        Min = 1,
-        Max = 150,
-        Default = 50,
-        Suffix = ' studs/s'
-    })
-
-    Fly = vape.Categories.Blatant:CreateModule({
-	Name = 'Fly',
-	Function = function(callback)
-		if Platform then
-			Platform.Parent = callback and gameCamera or nil
-		end
-		frictionTable.Fly = callback and CustomProperties.Enabled or nil
-		updateVelocity()
-		if callback then
-			Fly:Clean(runService.PreSimulation:Connect(function(dt)
-				if entitylib.isAlive then
-					if PlatformStanding.Enabled then
-						entitylib.character.Humanoid.PlatformStand = true
-						entitylib.character.RootPart.RotVelocity = Vector3.zero
-						entitylib.character.RootPart.CFrame =
-							CFrame.lookAlong(entitylib.character.RootPart.CFrame.Position, gameCamera.CFrame.LookVector)
-					end
-					if State.Value ~= 'None' then
-						entitylib.character.Humanoid:ChangeState(Enum.HumanoidStateType[State.Value])
-					end
-					SpeedMethods[Mode.Value](
-						Options,
-						TargetStrafeVector
-							or MoveMethod.Value == 'Direct' and calculateMoveVector(Vector3.new(a + d, 0, w + s))
-							or entitylib.character.Humanoid.MoveDirection,
-						dt
-					)
-					Functions[FloatMode.Value](dt)
-				else
-					YLevel = nil
-					OldYLevel = nil
-				end
-			end))
-
-			w, s, a, d =
-				inputService:IsKeyDown(Enum.KeyCode.W) and -1 or 0,
-				inputService:IsKeyDown(Enum.KeyCode.S) and 1 or 0,
-				inputService:IsKeyDown(Enum.KeyCode.A) and -1 or 0,
-				inputService:IsKeyDown(Enum.KeyCode.D) and 1 or 0
-			up, down = 0, 0
-			for _, v in { 'InputBegan', 'InputEnded' } do
-				Fly:Clean(inputService[v]:Connect(function(input)
-					if not inputService:GetFocusedTextBox() then
-						local divided = Keys.Value:split('/')
-						if input.KeyCode == Enum.KeyCode.W then
-							w = v == 'InputBegan' and -1 or 0
-						elseif input.KeyCode == Enum.KeyCode.S then
-							s = v == 'InputBegan' and 1 or 0
-						elseif input.KeyCode == Enum.KeyCode.A then
-							a = v == 'InputBegan' and -1 or 0
-						elseif input.KeyCode == Enum.KeyCode.D then
-							d = v == 'InputBegan' and 1 or 0
-						elseif input.KeyCode == Enum.KeyCode[divided[1]] then
-							up = v == 'InputBegan' and 1 or 0
-						elseif input.KeyCode == Enum.KeyCode[divided[2]] then
-							down = v == 'InputBegan' and -1 or 0
-						end
-					end
-				end))
-			end
-			if inputService.TouchEnabled then
-				pcall(function()
-					local jumpButton = lplr.PlayerGui.TouchGui.TouchControlFrame.JumpButton
-					Fly:Clean(jumpButton:GetPropertyChangedSignal('ImageRectOffset'):Connect(function()
-						up = jumpButton.ImageRectOffset.X == 146 and 1 or 0
-					end))
-				end)
-			end
-		else
-			YLevel, OldYLevel = nil, nil
-			if entitylib.isAlive and PlatformStanding.Enabled then
-				entitylib.character.Humanoid.PlatformStand = false
-			end
-		end
-	end,
-	ExtraText = function()
-		return Mode.Value
-	end,
-	Tooltip = 'Makes you go zoom',
-    })
-    Mode = Fly:CreateDropdown({
-	Name = 'Speed Mode',
-	List = SpeedMethodList,
-	Function = function(val)
-		WallCheck.Object.Visible = FloatMode.Value == 'CFrame'
-			or FloatMode.Value == 'TP'
-			or val == 'CFrame'
-			or val == 'TP'
-		Options.TPFrequency.Object.Visible = val == 'TP'
-		Options.PulseLength.Object.Visible = val == 'Pulse'
-		Options.PulseDelay.Object.Visible = val == 'Pulse'
-		if Fly.Enabled then
-			Fly:Toggle()
-			Fly:Toggle()
-		end
-	end,
-	Tooltip = 'Velocity/Impulse - physics\nCFrame - root\nTP - large teleports\nPulse - speed bursts\nWalkSpeed - classic, detected',
-    })
-    FloatMode = Fly:CreateDropdown({
-	Name = 'Float Mode',
-	List = { 'Velocity', 'Impulse', 'CFrame', 'Bounce', 'Floor', 'Jump', 'TP' },
-	Function = function(val)
-		WallCheck.Object.Visible = Mode.Value == 'CFrame' or Mode.Value == 'TP' or val == 'CFrame' or val == 'TP'
-		BounceLength.Object.Visible = val == 'Bounce'
-		BounceDelay.Object.Visible = val == 'Bounce'
-		VerticalValue.Object.Visible = val ~= 'Floor'
-		FloatTPGround.Object.Visible = val == 'TP'
-		FloatTPAir.Object.Visible = val == 'TP'
-		if Platform then
-			Platform:Destroy()
-			Platform = nil
-		end
-		if val == 'Floor' then
-			Platform = Instance.new('Part')
-			Platform.CanQuery = false
-			Platform.Anchored = true
-			Platform.Size = Vector3.one
-			Platform.Transparency = 1
-			Platform.Parent = Fly.Enabled and gameCamera or nil
-		end
-	end,
-	Tooltip = 'Velocity/Impulse - physics\nCFrame - root\nTP - teleport\nFloor - part under you\nJump - hop at a Y level\nBounce - bouncing',
-    })
-    local states = { 'None' }
-    for _, v in Enum.HumanoidStateType:GetEnumItems() do
-	if v.Name ~= 'Dead' and v.Name ~= 'None' then
-		table.insert(states, v.Name)
-	end
-    end
-    State = Fly:CreateDropdown({
-	Name = 'Humanoid State',
-	List = states,
-    })
-    MoveMethod = Fly:CreateDropdown({
-	Name = 'Move Mode',
-	List = { 'MoveDirection', 'Direct' },
-	Tooltip = 'MoveDirection - Uses the games input vector for movement\nDirect - Directly calculate our own input vector',
-    })
-    Keys = Fly:CreateDropdown({
-	Name = 'Keys',
-	List = { 'Space/LeftControl', 'Space/LeftShift', 'E/Q', 'Space/Q', 'ButtonA/ButtonL2' },
-	Tooltip = 'The key combination for going up & down',
-    })
-    Options.Value = Fly:CreateSlider({
-	Name = 'Speed',
-	Min = 1,
-	Max = 150,
-	Default = 50,
-	Suffix = function(val)
-		return val == 1 and 'stud' or 'studs'
-	end,
-    })
-    VerticalValue = Fly:CreateSlider({
-	Name = 'Vertical Speed',
-	Min = 1,
-	Max = 150,
-	Default = 50,
-	Suffix = function(val)
-		return val == 1 and 'stud' or 'studs'
-	end,
-    })
-    Options.TPFrequency = Fly:CreateSlider({
-	Name = 'TP Frequency',
-	Min = 0,
-	Max = 1,
-	Decimal = 100,
-	Darker = true,
-	Visible = false,
-	Suffix = function(val)
-		return val == 1 and 'second' or 'seconds'
-	end,
-    })
-    Options.PulseLength = Fly:CreateSlider({
-	Name = 'Pulse Length',
-	Min = 0,
-	Max = 1,
-	Decimal = 100,
-	Darker = true,
-	Visible = false,
-	Suffix = function(val)
-		return val == 1 and 'second' or 'seconds'
-	end,
-    })
-    Options.PulseDelay = Fly:CreateSlider({
-	Name = 'Pulse Delay',
-	Min = 0,
-	Max = 1,
-	Decimal = 100,
-	Darker = true,
-	Visible = false,
-	Suffix = function(val)
-		return val == 1 and 'second' or 'seconds'
-	end,
-    })
-    BounceLength = Fly:CreateSlider({
-	Name = 'Bounce Length',
-	Min = 0,
-	Max = 30,
-	Darker = true,
-	Visible = false,
-	Suffix = function(val)
-		return val == 1 and 'stud' or 'studs'
-	end,
-    })
-    BounceDelay = Fly:CreateSlider({
-	Name = 'Bounce Delay',
-	Min = 0,
-	Max = 1,
-	Decimal = 100,
-	Darker = true,
-	Visible = false,
-	Suffix = function(val)
-		return val == 1 and 'second' or 'seconds'
-	end,
-    })
-    FloatTPGround = Fly:CreateSlider({
-	Name = 'Ground',
-	Min = 0,
-	Max = 1,
-	Decimal = 10,
-	Default = 0.1,
-	Darker = true,
-	Visible = false,
-	Suffix = function(val)
-		return val == 1 and 'second' or 'seconds'
-	end,
-    })
-    FloatTPAir = Fly:CreateSlider({
-	Name = 'Air',
-	Min = 0,
-	Max = 5,
-	Decimal = 10,
-	Default = 2,
-	Darker = true,
-	Visible = false,
-	Suffix = function(val)
-		return val == 1 and 'second' or 'seconds'
-	end,
-    })
-    WallCheck = Fly:CreateToggle({
-	Name = 'Wall Check',
-	Default = true,
-	Darker = true,
-	Visible = false,
-    })
-    Options.WallCheck = WallCheck
-    PlatformStanding = Fly:CreateToggle({
-	Name = 'PlatformStand',
-	Function = function(callback)
-		if Fly.Enabled then
-			entitylib.character.Humanoid.PlatformStand = callback
-		end
-	end,
-	Tooltip = 'Forces the character to look infront of the camera',
-    })
-    CustomProperties = Fly:CreateToggle({
-	Name = 'Custom Properties',
-	Function = function()
-		if Fly.Enabled then
-			Fly:Toggle()
-			Fly:Toggle()
-		end
-	end,
-	Default = true,
-    })
+    HorizontalSpeed = InfiniteFly:CreateSlider({Name = 'Speed', Min = 10, Max = 100, Default = 28, Suffix = ' studs/s'})
+    UpSpeed = InfiniteFly:CreateSlider({Name = 'Up speed', Min = 5, Max = 100, Default = 28, Suffix = ' studs/s'})
+    DownSpeed = InfiniteFly:CreateSlider({Name = 'Down speed', Min = 5, Max = 100, Default = 28, Suffix = ' studs/s'})
+    InfiniteFly:Clean(function() generation += 1; cleanup(false) end)
 end)
 
 run(function()
@@ -3715,1396 +3089,234 @@ run(function()
     local Mode
     local Target
     local TravelGaps
-
-    local rayCheck = RaycastParams.new()
-    rayCheck.FilterType = Enum.RaycastFilterType.Exclude
-    rayCheck.RespectCanCollide = true
-
-    local overlapCheck = OverlapParams.new()
-    overlapCheck.FilterType = Enum.RaycastFilterType.Exclude
-    overlapCheck.RespectCanCollide = true
-    overlapCheck.MaxParts = 64
-
-    local bridgeApi = {}
     local navigation
-    local controls
-    local controlsRestored = true
+    local generation = 0
+    local markers = {}
+    local ray = RaycastParams.new()
+    ray.FilterType = Enum.RaycastFilterType.Exclude
+    ray.RespectCanCollide = true
 
-    local BLOCK_STEP = 2.75
-    local MAX_PREVIEW_NODES = 220
-    local MAX_ROUTE_WAYPOINTS = 96
-    local ARRIVAL_RADIUS = 1.25
-    local MAX_STEER_DISTANCE = 4.5
-    local ROUTE_CHECK_INTERVAL = 0.12
-    local TARGET_UPDATE_INTERVAL = 0.12
-    local WAYPOINT_GROUND_TOLERANCE = 1.6
-
-    local function isFiniteVector(value)
-        return value
-            and value.X == value.X
-            and value.Y == value.Y
-            and value.Z == value.Z
-            and math.abs(value.X) < 100000
-            and math.abs(value.Y) < 100000
-            and math.abs(value.Z) < 100000
+    local function alive()
+        return entitylib.isAlive and entitylib.character and entitylib.character.RootPart and entitylib.character.Humanoid
     end
 
-    local function isAlive()
-        return entitylib.isAlive
-            and entitylib.character
-            and entitylib.character.RootPart
-            and entitylib.character.Humanoid
-            and entitylib.character.Character
-    end
-
-    local function standClearance(character)
-        character = character or (entitylib.isAlive and entitylib.character)
-        if not character then return 3 end
-        return character.HipHeight
-            or ((character.Humanoid and character.Humanoid.HipHeight or 2) + (character.RootPart.Size.Y * 0.5))
-    end
-
-    local function setRayFilter(root, extra)
-        local filter = {}
-        if lplr.Character then table.insert(filter, lplr.Character) end
-        if gameCamera then table.insert(filter, gameCamera) end
-        for _, entity in entitylib.List do
-            if entity.Character then table.insert(filter, entity.Character) end
-        end
-        if type(extra) == 'table' then
-            for _, object in extra do
-                if object then table.insert(filter, object) end
-            end
-        elseif extra then
-            table.insert(filter, extra)
-        end
-        rayCheck.FilterDescendantsInstances = filter
-        if root then
-            pcall(function()
-                rayCheck.CollisionGroup = root.CollisionGroup
-            end)
-        end
-    end
-
-    local function setOverlapFilter(root, extra)
-        local filter = {}
-        if lplr.Character then table.insert(filter, lplr.Character) end
-        if gameCamera then table.insert(filter, gameCamera) end
-        for _, entity in entitylib.List do
-            if entity.Character then table.insert(filter, entity.Character) end
-        end
-        if type(extra) == 'table' then
-            for _, object in extra do
-                if object then table.insert(filter, object) end
-            end
-        elseif extra then
-            table.insert(filter, extra)
-        end
-        overlapCheck.FilterDescendantsInstances = filter
-        if root then
-            pcall(function()
-                overlapCheck.CollisionGroup = root.CollisionGroup
-            end)
-        end
-    end
-
-    local function castDown(position, originY, depth, root, extra)
-        local skipped = {}
-        local currentOriginY = originY
-        local remaining = depth
-
-        for _ = 1, 8 do
-            local filters = {}
-            if type(extra) == 'table' then
-                for _, object in extra do
-                    if object then table.insert(filters, object) end
-                end
-            elseif extra then
-                table.insert(filters, extra)
-            end
-            for _, object in skipped do
-                table.insert(filters, object)
-            end
-
-            setRayFilter(root, filters)
-            local result = workspace:Raycast(
-                Vector3.new(position.X, currentOriginY, position.Z),
-                Vector3.new(0, -remaining, 0),
-                rayCheck
-            )
-            if not result then return nil end
-            if result.Normal.Y > 0.15 then return result end
-            if not result.Instance then return nil end
-
-            local nextOriginY = result.Position.Y - 0.05
-            remaining -= math.max(currentOriginY - nextOriginY, 0.05)
-            if remaining <= 0 then return nil end
-            currentOriginY = nextOriginY
-            table.insert(skipped, result.Instance)
-        end
-
-        return nil
-    end
-
-    local function getProfile(root, humanoid)
-        local gravity = math.max(workspace.Gravity, 1)
-        local apex = 7
-
-        pcall(function()
-            if humanoid.UseJumpPower and humanoid.JumpPower > 0 then
-                apex = (humanoid.JumpPower * humanoid.JumpPower) / (2 * gravity)
-            elseif humanoid.JumpHeight > 0 then
-                apex = humanoid.JumpHeight
-            end
-        end)
-
-        apex = math.clamp(apex, 4, 12)
-
-        local flightTime = 2 * math.sqrt((2 * apex) / gravity)
-        local jumpDistance = math.clamp((humanoid.WalkSpeed * flightTime * 0.7) + 1, 4.25, 8)
-        local clearance = standClearance(entitylib.character)
-
-        return {
-            clearance = clearance,
-            supportTolerance = math.clamp(clearance * 0.82, 2.75, 3.35),
-            apex = apex,
-            maxRise = apex + 0.75,
-            maxFall = math.clamp(apex + 4, 8, 14),
-            agentHeight = math.max(root.Size.Y + 2.5, 5),
-            maxJumpDistance = jumpDistance,
-            castSize = Vector3.new(
-                math.max(root.Size.X + 0.35, 1.6),
-                math.max(root.Size.Y + 0.25, 2),
-                math.max(root.Size.Z + 0.35, 1.6)
-            ),
-            supportSize = Vector3.new(
-                math.max(root.Size.X + 1.4, 4.5),
-                0.35,
-                math.max(root.Size.Z + 1.4, 4.5)
-            )
-        }
-    end
-
-    local function floorAt(position, referenceY, root, profile, extra)
-        if not isFiniteVector(position) then return nil end
-
-        local originY = math.max(position.Y, referenceY or position.Y) + profile.maxRise + 5
-        local depth = profile.maxFall + profile.maxRise + profile.clearance + 10
-        return castDown(position, originY, depth, root, extra)
-    end
-
-    local function floorBelow(position, referenceY, root, profile, extra)
-        if not isFiniteVector(position) then return nil end
-
-        local originY = (referenceY or position.Y) + 2
-        local depth = math.max(profile.maxFall + profile.clearance + 6, 24)
-        return castDown(position, originY, depth, root, extra)
-    end
-
-    local function hasStandingSpace(position, root, profile, extra)
-        if not isFiniteVector(position) then return false end
-
-        setOverlapFilter(root, extra)
-
-        local extraHeight = math.max(profile.agentHeight - root.Size.Y, 0)
-        local boxCenter = position + Vector3.new(0, extraHeight * 0.5, 0)
-        local parts = workspace:GetPartBoundsInBox(
-            CFrame.new(boxCenter),
-            Vector3.new(
-                math.max(root.Size.X + 0.15, 1.6),
-                profile.agentHeight,
-                math.max(root.Size.Z + 0.15, 1.6)
-            ),
-            overlapCheck
-        )
-
-        for _, part in parts do
-            if part.CanCollide then
-                return false
-            end
-        end
-
-        return true
-    end
-
-    local function snapToGround(position, root, normal, referenceY)
-        local clearance = standClearance(entitylib.character)
-        local profile = {
-            clearance = clearance,
-            maxRise = 8,
-            maxFall = 22
-        }
-        local candidate = position
-
-        if normal and normal.Y <= 0.25 then
-            local horizontal = normal * Vector3.new(1, 0, 1)
-            if horizontal.Magnitude > 0.1 then
-                candidate += horizontal.Unit * math.max(root.Size.X, root.Size.Z) * 0.75
-            end
-        end
-
-        local floor = floorBelow(candidate, referenceY or position.Y, root, profile)
-            or floorAt(candidate, referenceY or position.Y, root, profile)
-
-        return floor
-            and Vector3.new(candidate.X, floor.Position.Y + clearance, candidate.Z)
-            or candidate
-    end
-
-    local function getWaypointInMouse()
-        if not WaypointFolder then return nil end
-
-        local returned
-        local distance = math.huge
-        local mouseLocation = inputService:GetMouseLocation()
-
-        for _, value in WaypointFolder:GetChildren() do
-            local position, visible = gameCamera:WorldToViewportPoint(value.StudsOffsetWorldSpace)
-            if not visible then continue end
-
-            local magnitude = (mouseLocation - Vector2.new(position.X, position.Y)).Magnitude
-            if magnitude < distance then
-                returned = value
-                distance = magnitude
-            end
-        end
-
-        return returned
-    end
-
-    local function selectedPosition()
-        if not isAlive() then return nil end
-
-        local root = entitylib.character.RootPart
-
-        if Target.Value == 'Mouse' then
-            local ray = cloneref(lplr:GetMouse()).UnitRay
-            setRayFilter(root)
-
-            local result = workspace:Raycast(ray.Origin, ray.Direction * 10000, rayCheck)
-            return result
-                and snapToGround(result.Position, root, result.Normal, result.Position.Y)
-                or nil,
-                nil
-        elseif Target.Value == 'Waypoint' then
-            local waypoint = getWaypointInMouse()
-            return waypoint
-                and snapToGround(waypoint.StudsOffsetWorldSpace, root, nil, waypoint.StudsOffsetWorldSpace.Y)
-                or nil,
-                nil
-        end
-
-        local entity = entitylib.EntityMouse({
-            Range = math.huge,
-            Part = 'RootPart',
-            Players = true
-        })
-        if not entity then return nil, nil end
-
-        return snapToGround(entity.RootPart.Position, root, nil, entity.RootPart.Position.Y), entity
-    end
-
-    local function planarDistance(a, b)
-        return ((a - b) * Vector3.new(1, 0, 1)).Magnitude
-    end
-
-    local function isJumpAction(action)
-        return action == Enum.PathWaypointAction.Jump
-    end
-
-    local function topAtWall(hit, from, root, profile)
-        local normal = hit.Normal * Vector3.new(1, 0, 1)
-        if normal.Magnitude < 0.1 then return nil end
-
-        normal = normal.Unit
-        local sample = hit.Position - normal * 0.8
-        local top = floorAt(
-            Vector3.new(sample.X, from.Y + profile.maxRise, sample.Z),
-            from.Y + profile.maxRise,
-            root,
-            profile
-        )
-
-        if not top then return nil end
-
-        local startingFloor = from.Y - profile.clearance
-        local rise = top.Position.Y - startingFloor
-        return rise > 0 and rise or nil
-    end
-
-    local function castDistance(hit, origin)
-        return hit.Distance or (hit.Position - origin).Magnitude
-    end
-
-    local function inspectSegment(from, to, root, profile, fromAction, toAction, allowArtificialGaps)
-        if not isFiniteVector(from) or not isFiniteVector(to) then
-            return {valid = false, reason = 'invalid waypoint'}
-        end
-
-        local flat = (to - from) * Vector3.new(1, 0, 1)
-        local distance = flat.Magnitude
-        local pathMarkedJump = isJumpAction(fromAction) or isJumpAction(toAction)
-        local jumpSegment = pathMarkedJump
-        local jumpAt
-
-        if to.Y - from.Y > profile.maxRise + 1.25 then
-            return {valid = false, reason = 'vertical rise is too high'}
-        end
-
-        if from.Y - to.Y > profile.maxFall + 2 then
-            return {valid = false, reason = 'drop is too deep'}
-        end
-
-        if distance > 0.1 then
-            setRayFilter(root)
-
-            local castFrame = CFrame.new(from) * root.CFrame.Rotation
-            local hit = workspace:Blockcast(castFrame, profile.castSize, flat, rayCheck)
-
-            if hit and castDistance(hit, from) < math.max(distance - 1.05, 0) then
-                local obstacleDistance = castDistance(hit, from)
-                local rise = topAtWall(hit, from, root, profile)
-
-                -- Pathfinding does not consistently mark short ledges and block stairs as Jump.
-                -- Promote a blocked walk segment to a jump only when the obstacle is actually
-                -- within the character's measured jump height. Taller walls still fail here.
-                if not rise or rise > profile.maxRise + 0.1 then
-                    return {
-                        valid = false,
-                        reason = jumpSegment and 'wall is too high to jump' or 'solid wall blocks the segment'
-                    }
-                end
-
-                jumpSegment = true
-                jumpAt = obstacleDistance
-            end
-        end
-
-        local startFloor = floorAt(from, from.Y, root, profile)
-        local endFloor = floorAt(to, to.Y, root, profile)
-        local startFloorY = startFloor and startFloor.Position.Y or (from.Y - profile.clearance)
-        local endFloorY = endFloor and endFloor.Position.Y or (to.Y - profile.clearance)
-
-        if startFloor and endFloor then
-            if endFloorY - startFloorY > profile.maxRise + 0.75 then
-                return {valid = false, reason = 'floor rise is too high'}
-            end
-            if startFloorY - endFloorY > profile.maxFall + 0.75 then
-                return {valid = false, reason = 'drop is too deep'}
-            end
-        end
-
-        local steps = math.max(1, math.ceil(distance / 1.5))
-        local gapStart
-        local maximumGap = 0
-        local maximumGapStart
-        local maximumGapEnd
-
-        for step = 0, steps do
-            local alpha = step / steps
-            local sample = from:Lerp(to, alpha)
-            local expectedFloorY = (from.Y - profile.clearance)
-                + ((to.Y - from.Y) * alpha)
-
-            if not jumpSegment and not hasStandingSpace(sample, root, profile) then
-                return {valid = false, reason = 'clearance is blocked'}
-            end
-
-            local floor = floorAt(sample, math.max(from.Y, to.Y), root, profile)
-            local supported = floor
-                and floor.Position.Y >= expectedFloorY - profile.supportTolerance
-
-            if not supported then
-                if not gapStart then
-                    gapStart = distance * alpha
-                end
-            elseif gapStart then
-                local currentDistance = distance * alpha
-                local currentGap = currentDistance - gapStart
-                if currentGap > maximumGap then
-                    maximumGap = currentGap
-                    maximumGapStart = gapStart
-                    maximumGapEnd = currentDistance
-                end
-                gapStart = nil
-            end
-        end
-
-        if gapStart then
-            local currentGap = distance - gapStart
-            if currentGap > maximumGap then
-                maximumGap = currentGap
-                maximumGapStart = gapStart
-                maximumGapEnd = distance
-            end
-        end
-
-        local hasGap = maximumGap > 0.75
-        if distance > 0.1 and (jumpSegment or (hasGap and not allowArtificialGaps)) then
-            local arcSteps = math.max(2, math.ceil(distance / 1.5))
-            -- Endpoints are validated separately. Excluding them prevents the takeoff/landing
-            -- floor itself from being mistaken for an obstruction while preserving mid-air checks.
-            for step = 1, arcSteps - 1 do
-                local alpha = step / arcSteps
-                local arcHeight = profile.apex * 4 * alpha * (1 - alpha)
-                local arcPosition = from:Lerp(to, alpha) + Vector3.new(0, arcHeight, 0)
-                if not hasStandingSpace(arcPosition, root, profile) then
-                    return {valid = false, reason = 'jump clearance is blocked'}
-                end
-            end
-        end
-
-        if hasGap and maximumGap > profile.maxJumpDistance + 0.5 and not allowArtificialGaps then
-            return {valid = false, reason = 'gap is too wide'}
-        end
-
-        return {
-            valid = true,
-            gap = hasGap,
-            maximumGap = maximumGap,
-            gapStart = maximumGapStart,
-            gapEnd = maximumGapEnd,
-            startFloorY = startFloorY,
-            endFloorY = endFloorY,
-            needsBridge = hasGap and allowArtificialGaps,
-            requiresJump = jumpSegment,
-            implicitJump = jumpSegment and not pathMarkedJump,
-            jumpAt = jumpAt
-        }
-    end
-
-    local function floorForWaypoint(position, root, profile, lowerTolerance)
-        lowerTolerance = lowerTolerance or WAYPOINT_GROUND_TOLERANCE
-        local expectedFloorY = position.Y - profile.clearance
-        local floor = floorBelow(position, position.Y, root, profile)
-        local delta = floor and (expectedFloorY - floor.Position.Y)
-
-        if not floor
-            or delta < -WAYPOINT_GROUND_TOLERANCE
-            or delta > lowerTolerance then
-            floor = floorAt(position, position.Y, root, profile)
-            delta = floor and (expectedFloorY - floor.Position.Y)
-        end
-
-        -- Be tolerant of a nearby lower step, but never accept a floor substantially above
-        -- the waypoint (which would place the character inside solid geometry).
-        return floor
-            and delta >= -WAYPOINT_GROUND_TOLERANCE
-            and delta <= lowerTolerance
-            and floor
-            or nil
-    end
-
-    local function copyWaypoints(waypoints)
-        if not waypoints or #waypoints > MAX_ROUTE_WAYPOINTS then return nil end
-
-        local returned = {}
-        for _, waypoint in ipairs(waypoints) do
-            if not waypoint or not isFiniteVector(waypoint.Position) then
-                return nil
-            end
-
-            table.insert(returned, {
-                Position = waypoint.Position,
-                Action = waypoint.Action or Enum.PathWaypointAction.Walk
-            })
-        end
-
-        return #returned >= 2 and returned or nil
-    end
-
-    local function containsJump(waypoints, first, last)
-        for index = first + 1, last do
-            if isJumpAction(waypoints[index].Action) then
-                return true
-            end
-        end
-        return false
-    end
-
-    local function smoothWaypoints(waypoints, root, profile, allowArtificialGaps)
-        if #waypoints <= 2 then return waypoints end
-
-        local returned = {waypoints[1]}
-        local index = 1
-
-        while index < #waypoints do
-            local farthest = index + 1
-            local firstCheck = math.min(#waypoints, index + 18)
-
-            for candidate = firstCheck, index + 1, -1 do
-                if candidate > index + 1 and containsJump(waypoints, index, candidate) then
-                    continue
-                end
-
-                local inspected = inspectSegment(
-                    waypoints[index].Position,
-                    waypoints[candidate].Position,
-                    root,
-                    profile,
-                    waypoints[index].Action,
-                    waypoints[candidate].Action,
-                    allowArtificialGaps
-                )
-
-                if inspected.valid then
-                    farthest = candidate
-                    break
-                end
-            end
-
-            table.insert(returned, waypoints[farthest])
-            index = farthest
-        end
-
-        return returned
-    end
-
-    local function validateRoute(waypoints, root, profile, allowArtificialGaps)
-        if not waypoints or #waypoints < 2 then return nil end
-
-        local goalFloor = floorForWaypoint(waypoints[#waypoints].Position, root, profile)
-        if not goalFloor
-            or not hasStandingSpace(waypoints[#waypoints].Position, root, profile) then
-            return nil
-        end
-
-        for index, waypoint in ipairs(waypoints) do
-            if not hasStandingSpace(waypoint.Position, root, profile) then
-                return nil
-            end
-
-            local jumpPoint = isJumpAction(waypoint.Action)
-                or (index > 1 and isJumpAction(waypoints[index - 1].Action))
-                or (index < #waypoints and isJumpAction(waypoints[index + 1].Action))
-
-            local tolerance = WAYPOINT_GROUND_TOLERANCE
-            if index > 1 and index < #waypoints then
-                tolerance = math.max(
-                    tolerance,
-                    profile.supportTolerance + (jumpPoint and 0.75 or 0.35)
-                )
-            end
-
-            -- Jump waypoints can legitimately sit on the edge of a ledge/navmesh transition.
-            -- Segment validation below still verifies the actual wall height, gap width and arc.
-            if not floorForWaypoint(waypoint.Position, root, profile, tolerance) and not jumpPoint then
-                return nil
-            end
-        end
-
-        local segments = {}
-        local length = 0
-        local requiresBridge = false
-
-        for index = 2, #waypoints do
-            local previous = waypoints[index - 1]
-            local current = waypoints[index]
-            local inspected = inspectSegment(
-                previous.Position,
-                current.Position,
-                root,
-                profile,
-                previous.Action,
-                current.Action,
-                allowArtificialGaps
-            )
-
-            if not inspected.valid then return nil end
-
-            table.insert(segments, inspected)
-            length += (current.Position - previous.Position).Magnitude
-            requiresBridge = requiresBridge or inspected.needsBridge
-        end
-
-        return {
-            waypoints = waypoints,
-            segments = segments,
-            length = length,
-            score = length + (#waypoints * 0.2),
-            requiresBridge = requiresBridge
-        }
-    end
-
-    local function computePath(startPosition, destination, root, profile, canJump)
-        local created, path = pcall(function()
-            return pathfindingService:CreatePath({
-                AgentRadius = math.clamp(math.max(root.Size.X, root.Size.Z) * 0.5 + 0.2, 1.5, 3),
-                AgentHeight = math.max(root.Size.Y + 2.5, 5),
-                AgentCanJump = canJump,
-                AgentCanClimb = false,
-                WaypointSpacing = 3
-            })
-        end)
-
-        if not created or not path then return nil end
-
-        local computed = pcall(function()
-            path:ComputeAsync(startPosition, destination)
-        end)
-
-        if not computed or path.Status ~= Enum.PathStatus.Success then
-            return nil
-        end
-
-        return path, copyWaypoints(path:GetWaypoints())
-    end
-
-    local function considerCandidate(candidates, path, waypoints, root, profile, allowArtificialGaps)
-        local copied = copyWaypoints(waypoints)
-        if not copied then return end
-
-        local smoothed = smoothWaypoints(copied, root, profile, allowArtificialGaps)
-        local validated = validateRoute(smoothed, root, profile, allowArtificialGaps)
-
-        if validated then
-            validated.path = path
-            table.insert(candidates, validated)
-        end
-    end
-
-    local function shortestCandidate(candidates)
-        table.sort(candidates, function(a, b)
-            return a.score < b.score
-        end)
-        return candidates[1]
-    end
-
-    local function findRoute(startPosition, destination, root, profile)
-        local direct = {
-            {Position = startPosition, Action = Enum.PathWaypointAction.Walk},
-            {Position = destination, Action = Enum.PathWaypointAction.Walk}
-        }
-
-        local groundedCandidates = {}
-        considerCandidate(groundedCandidates, nil, direct, root, profile, false)
-        if groundedCandidates[1] then
-            return groundedCandidates[1]
-        end
-
-        local jumpingPath, jumpingWaypoints = computePath(startPosition, destination, root, profile, true)
-        considerCandidate(groundedCandidates, jumpingPath, jumpingWaypoints, root, profile, false)
-
-        local walkingPath, walkingWaypoints = computePath(startPosition, destination, root, profile, false)
-        considerCandidate(groundedCandidates, walkingPath, walkingWaypoints, root, profile, false)
-
-        local best = shortestCandidate(groundedCandidates)
-        if best then return best end
-        if not TravelGaps or not TravelGaps.Enabled then return nil end
-
-        -- Artificial support is a fallback only. Solid, walkable, or naturally
-        -- jumpable routes above are always selected first.
-        local gapCandidates = {}
-        considerCandidate(gapCandidates, nil, direct, root, profile, true)
-        considerCandidate(gapCandidates, jumpingPath, jumpingWaypoints, root, profile, true)
-        considerCandidate(gapCandidates, walkingPath, walkingWaypoints, root, profile, true)
-
-        return shortestCandidate(gapCandidates)
-    end
-
-    local function showPath(route, root, profile)
-        local folder = Instance.new('Folder')
-        folder.Name = 'AetherMouseTPPath'
-        folder.Parent = workspace
-
-        local guiColor = vape.GUIColor
-        local pathColor = guiColor
-            and Color3.fromHSV(guiColor.Hue, guiColor.Sat, guiColor.Value)
-            or Color3.fromRGB(135, 90, 255)
-
-        local seen = {}
-        local nodeCount = 0
-
-        local function addMarker(position, floorY, isGap)
-            if nodeCount >= MAX_PREVIEW_NODES then return end
-
-            local key = table.concat({
-                math.floor(position.X / BLOCK_STEP + 0.5),
-                math.floor(position.Y / BLOCK_STEP + 0.5),
-                math.floor(position.Z / BLOCK_STEP + 0.5)
-            }, ':')
-
-            if seen[key] then return end
-            seen[key] = true
-            nodeCount += 1
-
-            local marker = Instance.new('Part')
-            marker.Name = isGap and 'AetherPathGap' or 'AetherPathBlock'
-            marker.Anchored = true
-            marker.CanCollide = false
-            marker.CanQuery = false
-            marker.CanTouch = false
-            marker.Transparency = 1
-            marker.Size = Vector3.new(2.7, 0.12, 2.7)
-            marker.CFrame = CFrame.new(position.X, floorY + 0.06, position.Z)
-            marker:SetAttribute('AetherBlockSelection', true)
-            marker.Parent = folder
-
-            local selection = Instance.new('SelectionBox')
-            selection.Name = 'AetherPathSelection'
-            selection.Adornee = marker
-            selection.Color3 = pathColor
-            selection.SurfaceColor3 = pathColor
-            selection.LineThickness = 0.035
-            selection.Transparency = isGap and 0.22 or 0.08
-            selection.SurfaceTransparency = isGap and 0.88 or 0.78
-            selection.Parent = marker
-        end
-
-        for index = 1, #route.waypoints - 1 do
-            local from = route.waypoints[index].Position
-            local to = route.waypoints[index + 1].Position
-            local segment = route.segments[index]
-            local distance = planarDistance(from, to)
-            local steps = math.max(1, math.ceil(distance / BLOCK_STEP))
-
-            for step = 0, steps do
-                local alpha = step / steps
-                local sample = from:Lerp(to, alpha)
-                local floor = floorBelow(sample, sample.Y, root, profile, folder)
-                if floor and math.abs(floor.Position.Y - (sample.Y - profile.clearance)) > WAYPOINT_GROUND_TOLERANCE then
-                    floor = nil
-                end
-                local floorY = floor and floor.Position.Y or (sample.Y - profile.clearance)
-                addMarker(sample, floorY, segment and segment.gap or false)
-            end
-        end
-
-        return folder
-    end
-
-    local function disableControls()
-        controls = nil
-        controlsRestored = false
-
-        pcall(function()
-            local playerModule = lplr.PlayerScripts:FindFirstChild('PlayerModule')
-            if not playerModule then return end
-
-            local controller = require(playerModule)
-            controls = controller.GetControls and controller:GetControls() or controller.controls
-
-            if controls and controls.Disable then
-                controls:Disable()
-            end
-        end)
-    end
-
-    local function restoreControls()
-        if controls and not controlsRestored then
-            pcall(function()
-                controls:Enable()
-            end)
-        end
-
-        controls = nil
-        controlsRestored = true
-
-        if isAlive() then
-            pcall(function()
-                entitylib.character.Humanoid:Move(Vector3.zero, false)
-            end)
-        end
-    end
-
-    local function ensureSupport(state, root)
-        if state.support and state.support.Parent then return state.support end
-
-        local support = Instance.new('Part')
-        support.Name = 'AetherMouseTPAirWalk'
-        support.Anchored = true
-        support.CanCollide = true
-        support.CanQuery = false
-        support.CanTouch = false
-        support.Transparency = 1
-        support.Size = state.profile.supportSize
-
-        support.Parent = workspace
-        state.support = support
-        return support
-    end
-
-    local function hideSupport(state)
-        if state.support then
-            state.support.CFrame = CFrame.new(0, -10000, 0)
-        end
-        state.supportFloorY = nil
-        state.supportSegment = nil
-    end
-
-    local function updateSupport(state, root, segmentIndex, segment, dt)
-        if not state.useBridge or not segment or not segment.gap then
-            hideSupport(state)
-            return
-        end
-
-        local support = ensureSupport(state, root)
-        if state.supportSegment ~= segmentIndex then
-            state.supportSegment = segmentIndex
-            state.supportFloorY = segment.startFloorY or (root.Position.Y - state.profile.clearance)
-        end
-
-        local from = state.waypoints[segmentIndex].Position
-        local to = state.waypoints[segmentIndex + 1].Position
-        local length = planarDistance(from, to)
-        local progress = length > 0.1
-            and math.clamp(planarDistance(root.Position, from) / length, 0, 1)
-            or 1
-
-        local wantedFloorY = state.supportFloorY
-        if progress > 0.82 and segment.endFloorY then
-            local alpha = math.clamp((progress - 0.82) / 0.18, 0, 1)
-            local startY = segment.startFloorY or state.supportFloorY
-            wantedFloorY = startY + ((segment.endFloorY - startY) * alpha)
-        end
-
-        state.supportFloorY += math.clamp(wantedFloorY - state.supportFloorY, -12 * dt, 12 * dt)
-        support.CFrame = CFrame.new(
-            root.Position.X,
-            state.supportFloorY - (support.Size.Y * 0.5),
-            root.Position.Z
-        )
-    end
-
-    local function destroyPreview(state)
-        if state.preview then
-            state.preview:Destroy()
-            state.preview = nil
-        end
-    end
-
-    local function bindPath(state)
-        if state.blockedConnection then
-            state.blockedConnection:Disconnect()
-            state.blockedConnection = nil
-        end
-
-        if state.path then
-            state.blockedConnection = state.path.Blocked:Connect(function()
-                state.repathRequested = true
-                state.nextRepath = 0
-            end)
-        end
-    end
-
-    local function installRoute(state, route)
-        state.path = route.path
-        state.waypoints = route.waypoints
-        state.segments = route.segments
-        state.useBridge = route.requiresBridge
-        state.index = 2
-        state.supportFloorY = nil
-        state.supportSegment = nil
-        state.lastProgress = tick()
-        state.lastDistance = planarDistance(state.character.RootPart.Position, state.waypoints[2].Position)
-        state.repathRequested = false
-        state.retargetRequested = false
-        state.preservePreview = false
-
-        bindPath(state)
-        destroyPreview(state)
-
-        local displayed, folder = pcall(showPath, route, state.character.RootPart, state.profile)
-        state.preview = displayed and folder or nil
+    local function cleanupMarkers()
+        for _, marker in markers do pcall(marker.Destroy, marker) end
+        table.clear(markers)
     end
 
     local function stopNavigation()
-        local state = navigation
+        generation += 1
         navigation = nil
-
-        if state then
-            state.active = false
-
-            if state.blockedConnection then
-                state.blockedConnection:Disconnect()
-                state.blockedConnection = nil
-            end
-
-            if state.moveConnection then
-                state.moveConnection:Disconnect()
-                state.moveConnection = nil
-            end
-
-            if state.preview then
-                if state.preservePreview then
-                    local preview = state.preview
-                    state.preview = nil
-                    task.delay(4, function()
-                        if preview then preview:Destroy() end
-                    end)
-                else
-                    destroyPreview(state)
-                end
-            end
-
-            if state.support then
-                state.support:Destroy()
-                state.support = nil
-            end
-        end
-
-        restoreControls()
-    end
-
-    local function disableSoon(message, warningTime, preservePreview)
-        if navigation and preservePreview then
-            navigation.preservePreview = true
-        end
-        stopNavigation()
-        if message then
-            notif('MouseTP', message, warningTime or 5, 'warning')
-        end
-
-        task.defer(function()
-            if MouseTP and MouseTP.Enabled then
-                MouseTP:Toggle()
-            end
-        end)
-    end
-
-    local function finishNavigation()
-        stopNavigation()
-        task.defer(function()
-            if MouseTP and MouseTP.Enabled then
-                MouseTP:Toggle()
-            end
-        end)
-    end
-
-    local function requestRepath(state)
-        state.repathRequested = true
-        state.nextRepath = math.min(state.nextRepath or math.huge, tick() + 0.05)
-    end
-
-    local function tryRepath(state)
-        if not state.active or state.replanning or tick() < (state.nextRepath or 0) then
-            return
-        end
-
-        state.replanning = true
-        state.repaths += 1
-
-        if state.repaths > 5 then
-            state.replanning = false
-            disableSoon('The route stayed blocked after several retries.', 5, true)
-            return
-        end
-
-        local character = entitylib.character
-        local root = character.RootPart
-        local ok, route = pcall(findRoute, root.Position, state.destination, root, state.profile)
-
-        state.replanning = false
-        if not ok or not route then
-            state.nextRepath = tick() + 0.35
-            state.repathRequested = true
-            return
-        end
-
-        state.character = character
-        installRoute(state, route)
-    end
-
-    local function updateTrackedTarget(state)
-        if not state.trackPlayer or tick() < (state.nextTargetUpdate or 0) then
-            return
-        end
-
-        state.nextTargetUpdate = tick() + TARGET_UPDATE_INTERVAL
-
-        local target = state.targetEntity
-        if not target or not target.RootPart or not target.RootPart.Parent then
-            state.retargetRequested = true
-            return
-        end
-
-        local destination = snapToGround(
-            target.RootPart.Position,
-            entitylib.character.RootPart,
-            nil,
-            target.RootPart.Position.Y
-        )
-
-        if planarDistance(destination, state.destination) > 1.5
-            or math.abs(destination.Y - state.destination.Y) > 1.5 then
-            state.destination = destination
-            state.retargetRequested = true
+        cleanupMarkers()
+        if entitylib.isAlive and entitylib.character.Humanoid then
+            pcall(entitylib.character.Humanoid.MoveTo, entitylib.character.Humanoid, entitylib.character.RootPart.Position)
         end
     end
 
-    local function updateRouteTarget(state)
-        if not state.retargetRequested then return true end
-        state.retargetRequested = false
-
-        local destination, targetEntity
-        local tracked = state.trackPlayer
-            and not state.forceTargetSelection
-            and Target.Value == 'Player'
-
-        if tracked then
-            targetEntity = state.targetEntity
-            if not targetEntity or not targetEntity.RootPart or not targetEntity.RootPart.Parent then
-                disableSoon('The selected player is no longer available.', 5, true)
-                return false
-            end
-            destination = snapToGround(
-                targetEntity.RootPart.Position,
-                entitylib.character.RootPart,
-                nil,
-                targetEntity.RootPart.Position.Y
-            )
-        else
-            destination, targetEntity = selectedPosition()
-        end
-
-        state.forceTargetSelection = false
-        if not destination then
-            disableSoon('The selected target is no longer reachable.', 5, true)
-            return false
-        end
-
-        local character = entitylib.character
-        local root = character.RootPart
-        local ok, route = pcall(findRoute, root.Position, destination, root, state.profile)
-        if not ok or not route then
-            disableSoon('The target has no safe reachable route.', 5, true)
-            return false
-        end
-
-        state.destination = destination
-        state.targetEntity = targetEntity
-        state.trackPlayer = Target.Value == 'Player' and targetEntity ~= nil
-        state.repaths = 0
-        installRoute(state, route)
-        return true
+    local function disableSoon(message)
+        if message then notif('MouseTP', message, 4, 'warning') end
+        task.defer(function() if MouseTP.Enabled then MouseTP:Toggle() end end)
     end
 
-    local function waypointReached(state, waypoint, finalWaypoint, root, humanoid, flatDistance)
-        if flatDistance > ARRIVAL_RADIUS then return false end
-        if waypoint.Action == Enum.PathWaypointAction.Jump then
-            return not finalWaypoint
-                or (
-                    math.abs(root.Position.Y - waypoint.Position.Y) <= 1.8
-                    and humanoid.FloorMaterial ~= Enum.Material.Air
-                )
-        end
-
-        local verticalDistance = math.abs(root.Position.Y - waypoint.Position.Y)
-        if not finalWaypoint and verticalDistance <= 1.8 then
-            return true
-        end
-
-        if finalWaypoint then
-            return verticalDistance <= 1.8
-                and humanoid.FloorMaterial ~= Enum.Material.Air
-        end
-
-        return root.Position.Y > waypoint.Position.Y
-            and root.Position.Y - waypoint.Position.Y <= state.profile.maxFall
-            and humanoid.FloorMaterial == Enum.Material.Air
+    local function floorAt(position, root)
+        ray.FilterDescendantsInstances = {lplr.Character, gameCamera}
+        local result = workspace:Raycast(position + Vector3.new(0, 2.5, 0), Vector3.new(0, -9, 0), ray)
+        return result and result.Instance.CanCollide and result or nil
     end
 
-    local function issueJump(state, humanoid, root)
-        local currentState = humanoid:GetState()
-        if humanoid.FloorMaterial == Enum.Material.Air
-            or tick() < state.nextJump
-            or currentState == Enum.HumanoidStateType.Jumping
-            or currentState == Enum.HumanoidStateType.Freefall
-            or currentState == Enum.HumanoidStateType.FallingDown then
-            return false
-        end
-
-        if state.lastJumpPosition
-            and planarDistance(root.Position, state.lastJumpPosition) < 1.5
-            and tick() - state.lastJumpTime < 0.8 then
-            return false
-        end
-
-        humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-        humanoid.Jump = true
-        state.nextJump = tick() + 0.55
-        state.lastJumpPosition = root.Position
-        state.lastJumpTime = tick()
-        return true
+    local function standingSpace(position, root)
+        ray.FilterDescendantsInstances = {lplr.Character, gameCamera}
+        return workspace:Raycast(position + Vector3.new(0, 1.2, 0), Vector3.new(0, 4.3, 0), ray) == nil
     end
 
-    local function movementDirection(state, root, waypoint, distance)
-        if distance <= 0.12 then return Vector3.zero end
-
-        local direction = ((waypoint.Position - root.Position) * Vector3.new(1, 0, 1)).Unit
-        local nextWaypoint = state.waypoints[state.index + 1]
-        if nextWaypoint and distance < MAX_STEER_DISTANCE then
-            local nextFlat = (nextWaypoint.Position - waypoint.Position) * Vector3.new(1, 0, 1)
-            if nextFlat.Magnitude > 0.05 then
-                local blend = math.clamp(
-                    ((MAX_STEER_DISTANCE - distance) / MAX_STEER_DISTANCE) * 0.35,
-                    0,
-                    0.35
-                )
-                local blended = direction * (1 - blend) + nextFlat.Unit * blend
-                if blended.Magnitude > 0.05 then
-                    direction = blended.Unit
-                end
-            end
-        end
-
-        return direction
+    local function segmentClear(a, b)
+        ray.FilterDescendantsInstances = {lplr.Character, gameCamera}
+        local delta = b - a
+        if delta.Magnitude < 0.05 then return true end
+        local chest = a + Vector3.new(0, 1.6, 0)
+        local hit = workspace:Raycast(chest, Vector3.new(delta.X, math.min(delta.Y, 1.5), delta.Z), ray)
+        return hit == nil
     end
 
-    local function stepNavigation(dt)
-        local state = navigation
-        if not state or not state.active or not MouseTP.Enabled then return end
-
-        if not isAlive() or entitylib.character ~= state.character then
-            disableSoon('Character changed while navigating.', 5, true)
-            return
+    local function copyWaypoints(path)
+        local out = {}
+        for _, waypoint in path:GetWaypoints() do
+            table.insert(out, {Position = waypoint.Position, Action = waypoint.Action})
         end
-
-        local character = entitylib.character
-        local root, humanoid = character.RootPart, character.Humanoid
-
-        updateTrackedTarget(state)
-        if state.retargetRequested then
-            if not updateRouteTarget(state) then return end
-        end
-
-        if state.repathRequested then
-            tryRepath(state)
-            if not state.active or not navigation then return end
-        end
-
-        local waypoint = state.waypoints[state.index]
-        if not waypoint then
-            finishNavigation()
-            return
-        end
-
-        local segmentIndex = math.max(state.index - 1, 1)
-        local segment = state.segments[segmentIndex]
-        updateSupport(state, root, segmentIndex, segment, dt)
-
-        local flat = (waypoint.Position - root.Position) * Vector3.new(1, 0, 1)
-        local distance = flat.Magnitude
-        local now = tick()
-
-        if now >= (state.nextRouteCheck or 0) and not state.replanning then
-            state.nextRouteCheck = now + ROUTE_CHECK_INTERVAL
-            local inspected = inspectSegment(
-                root.Position,
-                waypoint.Position,
-                root,
-                state.profile,
-                state.waypoints[segmentIndex].Action,
-                waypoint.Action,
-                state.useBridge
-            )
-            if not inspected.valid then
-                requestRepath(state)
-            end
-        end
-
-        local travelled = planarDistance(root.Position, state.waypoints[segmentIndex].Position)
-        if segment and segment.gap
-            and not state.useBridge
-            and segment.gapStart
-            and travelled >= segment.gapStart - 1.75
-            and travelled <= segment.gapStart + 1.25 then
-            issueJump(state, humanoid, root)
-        elseif segment and segment.requiresJump
-            and segment.jumpAt
-            and travelled >= math.max(segment.jumpAt - 2.75, 0)
-            and travelled <= segment.jumpAt + 1.25
-            and humanoid.FloorMaterial ~= Enum.Material.Air then
-            issueJump(state, humanoid, root)
-        elseif waypoint.Action == Enum.PathWaypointAction.Jump
-            and distance <= 4.2
-            and humanoid.FloorMaterial ~= Enum.Material.Air then
-            issueJump(state, humanoid, root)
-        elseif waypoint.Position.Y - root.Position.Y > 1.1
-            and waypoint.Position.Y - root.Position.Y <= state.profile.maxRise
-            and distance <= 4.5 then
-            issueJump(state, humanoid, root)
-        end
-
-        humanoid:Move(movementDirection(state, root, waypoint, distance), false)
-
-        if distance < state.lastDistance - 0.08 then
-            state.lastDistance = distance
-            state.lastProgress = now
-        else
-            local airborne = humanoid.FloorMaterial == Enum.Material.Air
-            local stallLimit = airborne and 1.05 or 0.72
-            if now - state.lastProgress > stallLimit and not state.replanning then
-                requestRepath(state)
-            end
-        end
-
-        if waypointReached(state, waypoint, state.index == #state.waypoints, root, humanoid, distance) then
-            state.index += 1
-            state.lastDistance = math.huge
-            state.lastProgress = now
-        end
-
-        if state.index > #state.waypoints then
-            finishNavigation()
-        elseif planarDistance(root.Position, state.destination) <= ARRIVAL_RADIUS
-            and math.abs(root.Position.Y - state.destination.Y) <= 1.8
-            and humanoid.FloorMaterial ~= Enum.Material.Air then
-            finishNavigation()
-        end
+        return out
     end
 
-    local function startLegit(destination, targetEntity)
-        if not isAlive() then
-            disableSoon('Character missing.')
-            return
+    local function routeTime(points)
+        local total = 0
+        for i = 2, #points do
+            local delta = points[i].Position - points[i - 1].Position
+            total += Vector3.new(delta.X, 0, delta.Z).Magnitude / 16
+            if delta.Y > 2.6 or points[i].Action == Enum.PathWaypointAction.Jump then total += 0.22 end
+            if delta.Y < -4 then total += math.min(math.abs(delta.Y) / 45, 0.45) end
         end
+        return total
+    end
 
-        local character = entitylib.character
-        local root, humanoid = character.RootPart, character.Humanoid
-        local profile = getProfile(root, humanoid)
-        local ok, route = pcall(findRoute, root.Position, destination, root, profile)
-
-        if not ok or not route then
-            disableSoon(TravelGaps and TravelGaps.Enabled
-                and 'No safe route was found to that point.'
-                or 'No gapless route was found. Enable Travel over gaps to cross an unavoidable gap.')
-            return
+    local function normalizeRoute(points, allowGap)
+        if not points or #points < 2 then return nil end
+        local cleaned = {points[1]}
+        for i = 2, #points do
+            local previous = cleaned[#cleaned]
+            local current = points[i]
+            local delta = current.Position - previous.Position
+            local horizontal = Vector3.new(delta.X, 0, delta.Z).Magnitude
+            -- Reject only genuinely impossible vertical moves. Ordinary stairs, one/two-block
+            -- jumps and natural drops are left to the Humanoid instead of being over-validated.
+            if delta.Y > 7.4 and horizontal < 4.5 then return nil end
+            local floor = floorAt(current.Position, entitylib.character.RootPart)
+            if not floor and not allowGap and i < #points then return nil end
+            if not standingSpace(current.Position, entitylib.character.RootPart) and i < #points then return nil end
+            table.insert(cleaned, current)
         end
+        return cleaned
+    end
 
-        local state = {
-            active = true,
-            character = character,
-            destination = destination,
-            targetEntity = targetEntity,
-            trackPlayer = Target.Value == 'Player' and targetEntity ~= nil,
-            profile = profile,
-            repaths = 0,
-            nextRepath = 0,
-            nextJump = 0,
-            lastJumpTime = 0,
-            nextRouteCheck = 0,
-            nextTargetUpdate = 0,
-            forceTargetSelection = false
+    local function computeCandidate(startPos, destination, params, allowGap)
+        local path = pathfindingService:CreatePath(params)
+        local ok = pcall(path.ComputeAsync, path, startPos, destination)
+        if not ok or path.Status ~= Enum.PathStatus.Success then return nil end
+        local points = normalizeRoute(copyWaypoints(path), allowGap)
+        if not points then return nil end
+        return {Waypoints = points, Time = routeTime(points)}
+    end
+
+    local function directCandidate(startPos, destination, allowGap)
+        if not segmentClear(startPos, destination) then return nil end
+        local points = normalizeRoute({
+            {Position = startPos, Action = Enum.PathWaypointAction.Walk},
+            {Position = destination, Action = Enum.PathWaypointAction.Walk}
+        }, allowGap)
+        return points and {Waypoints = points, Time = routeTime(points)} or nil
+    end
+
+    local function findRoute(startPos, destination)
+        local candidates = {}
+        local function add(candidate) if candidate then table.insert(candidates, candidate) end end
+        -- Try direct movement first because it is frequently faster than Roblox's conservative path.
+        add(directCandidate(startPos, destination, false))
+        local profiles = {
+            {AgentRadius = 2, AgentHeight = 5, AgentCanJump = true, AgentCanClimb = true, WaypointSpacing = 3},
+            {AgentRadius = 1.6, AgentHeight = 4.5, AgentCanJump = true, AgentCanClimb = true, WaypointSpacing = 2},
+            {AgentRadius = 1.2, AgentHeight = 4, AgentCanJump = true, AgentCanClimb = true, WaypointSpacing = 2}
         }
+        for _, profile in profiles do add(computeCandidate(startPos, destination, profile, false)) end
+        if #candidates == 0 and TravelGaps.Enabled then
+            add(directCandidate(startPos, destination, true))
+            for _, profile in profiles do add(computeCandidate(startPos, destination, profile, true)) end
+        end
+        table.sort(candidates, function(a, b) return a.Time < b.Time end)
+        return candidates[1]
+    end
 
-        navigation = state
-        MouseTP:Clean(stopNavigation)
-        disableControls()
-        installRoute(state, route)
+    local function drawRoute(points)
+        cleanupMarkers()
+        for index = 2, #points do
+            local part = Instance.new('Part')
+            part.Name = 'AetherMouseTPPath'
+            part.Anchored = true
+            part.CanCollide = false
+            part.CanQuery = false
+            part.CanTouch = false
+            part.Material = Enum.Material.Neon
+            part.Transparency = 0.45
+            part.Size = Vector3.new(1.8, 0.08, 1.8)
+            part.CFrame = CFrame.new(points[index].Position - Vector3.new(0, 2.65, 0))
+            part.Parent = workspace
+            table.insert(markers, part)
+        end
+    end
 
-        state.moveConnection = runService.PreSimulation:Connect(function(dt)
-            local worked, errorMessage = pcall(stepNavigation, dt)
-            if not worked and navigation == state then
-                disableSoon('Legit navigation failed: ' .. tostring(errorMessage):sub(1, 150), 5, true)
+    local function gapSupport(root, target)
+        if floorAt(root.Position, root) then return end
+        -- Built-in AirWalk style support: hold vertical velocity while keeping horizontal
+        -- Humanoid movement intact. No permanent platform/part is created.
+        local velocity = root.AssemblyLinearVelocity
+        root.AssemblyLinearVelocity = Vector3.new(velocity.X, math.max(velocity.Y, -0.5), velocity.Z)
+        if target and target.Y > root.Position.Y + 1.5 then
+            root.AssemblyLinearVelocity = Vector3.new(velocity.X, math.max(root.AssemblyLinearVelocity.Y, 18), velocity.Z)
+        end
+    end
+
+    local function travel(destination)
+        if not alive() then disableSoon('You must be alive to use MouseTP.'); return end
+        generation += 1
+        local myGeneration = generation
+        local root, humanoid = entitylib.character.RootPart, entitylib.character.Humanoid
+        local route = findRoute(root.Position, destination)
+        if not route then
+            disableSoon(TravelGaps.Enabled and 'No viable route was found.' or 'No grounded route was found. Enable Travel over gaps if needed.')
+            return
+        end
+        navigation = {Destination = destination, Waypoints = route.Waypoints, Index = 2, LastProgress = tick(), LastDistance = math.huge, LastRepath = 0}
+        drawRoute(route.Waypoints)
+
+        MouseTP:Clean(runService.Heartbeat:Connect(function()
+            if myGeneration ~= generation or not MouseTP.Enabled or not alive() or not navigation then return end
+            root, humanoid = entitylib.character.RootPart, entitylib.character.Humanoid
+            local dest = navigation.Destination
+            if (root.Position - dest).Magnitude <= 2.6 then
+                root.CFrame = CFrame.new(dest) * root.CFrame.Rotation
+                stopNavigation(); disableSoon(); return
             end
-        end)
-        MouseTP:Clean(state.moveConnection)
+            local point = navigation.Waypoints[navigation.Index]
+            if not point then
+                if tick() - navigation.LastRepath > 0.25 then
+                    navigation.LastRepath = tick()
+                    local replanned = findRoute(root.Position, dest)
+                    if replanned then navigation.Waypoints, navigation.Index = replanned.Waypoints, 2; drawRoute(replanned.Waypoints) end
+                end
+                return
+            end
+            local delta = point.Position - root.Position
+            local distance = delta.Magnitude
+            if distance <= 2.4 then
+                navigation.Index += 1
+                navigation.LastProgress, navigation.LastDistance = tick(), math.huge
+                return
+            end
+            if distance < navigation.LastDistance - 0.08 then
+                navigation.LastDistance, navigation.LastProgress = distance, tick()
+            elseif tick() - navigation.LastProgress > 0.85 and tick() - navigation.LastRepath > 0.35 then
+                navigation.LastRepath = tick()
+                local replanned = findRoute(root.Position, dest)
+                if replanned then navigation.Waypoints, navigation.Index = replanned.Waypoints, 2; navigation.LastProgress = tick(); drawRoute(replanned.Waypoints) end
+            end
+            if point.Action == Enum.PathWaypointAction.Jump or point.Position.Y > root.Position.Y + 2.2 then
+                humanoid.Jump = true
+            end
+            if TravelGaps.Enabled then gapSupport(root, point.Position) end
+            humanoid:MoveTo(Vector3.new(point.Position.X, root.Position.Y, point.Position.Z))
+        end))
     end
 
     MouseTP = vape.Categories.Blatant:CreateModule({
         Name = 'MouseTP',
         Function = function(callback)
-            if not callback then
-                stopNavigation()
-                return
+            if not callback then stopNavigation(); return end
+            if not alive() then disableSoon('You must be alive to use MouseTP.'); return end
+            local mouse = lplr:GetMouse()
+            local hit = mouse and mouse.Hit
+            if not hit then disableSoon('No target position found.'); return end
+            local destination = hit.Position
+            if Mode.Value == 'TP' then
+                entitylib.character.RootPart.CFrame = CFrame.new(destination + Vector3.new(0, 3, 0)) * entitylib.character.RootPart.CFrame.Rotation
+                disableSoon(); return
             end
-
-            if not isAlive() then
-                disableSoon('Character missing.')
-                return
-            end
-
-            local position, targetEntity = selectedPosition()
-            if not position then
-                disableSoon('No position found.')
-                return
-            end
-
-            if Mode.Value == 'Legit' then
-                startLegit(position, targetEntity)
-                return
-            elseif Mode.Value == 'BedWars' then
-                local called, success, reason = pcall(function()
-                    if type(bridgeApi.BedWars) ~= 'function' then
-                        return false, 'No supported BedWars travel item is available.'
-                    end
-                    return bridgeApi.BedWars(position)
-                end)
-
-                if not called or not success then
-                    notif('MouseTP', tostring(reason or success or 'BedWars travel failed.'), 5, 'warning')
-                end
-            else
-                local root = entitylib.character.RootPart
-                root.CFrame = CFrame.lookAlong(position, root.CFrame.LookVector)
-            end
-
-            if MouseTP.Enabled then
-                MouseTP:Toggle()
-            end
+            travel(destination + Vector3.new(0, 2.8, 0))
         end,
-        ExtraText = function()
-            return Mode.Value
-        end,
-        Tooltip = 'Travels to the selected mouse, player, or waypoint position'
+        Tooltip = 'Moves to the clicked point. Legit chooses the fastest viable path and only rejects genuinely impossible routes.'
     })
-
-    Mode = MouseTP:CreateDropdown({
-        Name = 'Mode',
-        List = {'Legit', 'TP'},
-        Default = 'TP',
-        Function = function(value)
-            if TravelGaps and TravelGaps.Object then
-                TravelGaps.Object.Visible = value == 'Legit'
-            end
-            if navigation and MouseTP and MouseTP.Enabled and value ~= 'Legit' then
-                disableSoon('Mode changed while travelling.')
-            end
-        end
-    })
-
-    Target = MouseTP:CreateDropdown({
-        Name = 'Target',
-        List = {'Mouse', 'Player', 'Waypoint'},
-        Default = 'Mouse',
-        Function = function()
-            if navigation and MouseTP and MouseTP.Enabled and Mode.Value == 'Legit' then
-                navigation.forceTargetSelection = true
-                navigation.retargetRequested = true
-            end
-        end
-    })
-
-    TravelGaps = MouseTP:CreateToggle({
-        Name = 'Travel over gaps',
-        Darker = true,
-        Visible = function()
-            return Mode and Mode.Value == 'Legit'
-        end,
-        Tooltip = 'Uses built-in AirWalk support only when no solid or jumpable route exists',
-        Function = function()
-            if navigation and MouseTP and MouseTP.Enabled and Mode.Value == 'Legit' then
-                navigation.retargetRequested = true
-            end
-        end
-    })
-
-    function bridgeApi:SetBedWars(callback)
-        local bedWarsSelected = Mode.Value == 'BedWars'
-        self.BedWars = callback
-        Mode:Change(callback and {'Legit', 'TP', 'BedWars'} or {'Legit', 'TP'})
-        if not callback and bedWarsSelected then
-            Mode:SetValue('TP')
-        end
-    end
-
-    vape.Libraries.MouseTPBridge = bridgeApi
-    vape:Clean(function()
-        if vape.Libraries.MouseTPBridge == bridgeApi then
-            vape.Libraries.MouseTPBridge = nil
-        end
-    end)
+    Mode = MouseTP:CreateDropdown({Name = 'Mode', List = {'Legit', 'TP'}, Default = 'TP', Function = function(value)
+        if TravelGaps and TravelGaps.Object then TravelGaps.Object.Visible = value == 'Legit' end
+        if navigation and value ~= 'Legit' then stopNavigation() end
+    end})
+    TravelGaps = MouseTP:CreateToggle({Name = 'Travel over gaps', Darker = true, Visible = function() return Mode and Mode.Value == 'Legit' end, Tooltip = 'Uses temporary vertical support only when a grounded route is unavailable.'})
 end)
 
 run(function()

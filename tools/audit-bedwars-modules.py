@@ -8,9 +8,11 @@ GAME_DIR = ROOT / 'games' / '6872274481'
 IGNORE = {'main.lua', 'bundle.lua'}
 OBSOLETE_DIRS = {'mixed', 'visuals', 'minigames'}
 
-# Accept any local/category variable calling CreateModule. The original audit only recognised
-# `vape.Categories.X` and `kits`, which missed valid modules such as AutoEnchant's `category:CreateModule`.
+# Accept ordinary `receiver:CreateModule({...})`, register(category, name, {...}), and
+# protected `pcall(receiver.CreateModule, receiver, {...})` forms. The latter is used by
+# TrixieExploit so a missing kit API cannot abort the whole BedWars file.
 CREATE = re.compile(r'([A-Za-z_][A-Za-z0-9_\.]*)\s*:\s*CreateModule\s*\(\s*\{', re.M)
+PCALL_CREATE = re.compile(r'pcall\s*\(\s*([A-Za-z_][A-Za-z0-9_\.]*)\.CreateModule\s*,\s*\1\s*,\s*\{', re.M)
 REGISTER = re.compile(r'\bregister\s*\(\s*([\'\"])([^\'\"]+)\1\s*,\s*([\'\"])([^\'\"]+)\3\s*,\s*\{', re.M)
 OVERLAY = re.compile(r'([A-Za-z_][A-Za-z0-9_\.]*)\s*:\s*CreateOverlay\s*\(\s*\{', re.M)
 NAME = re.compile(r'\bName\s*=\s*([\'\"])(.*?)\1', re.S)
@@ -26,11 +28,12 @@ def logical_modules(source):
     found = []
     for match in REGISTER.finditer(source):
         found.append((match.group(4).strip(), match.group(2).strip()))
-    for match in CREATE.finditer(source):
-        snippet = source[match.end():match.end() + 1800]
-        name_match = NAME.search(snippet)
-        if name_match:
-            found.append((name_match.group(2).strip(), receiver_category(match.group(1))))
+    for regex in (CREATE, PCALL_CREATE):
+        for match in regex.finditer(source):
+            snippet = source[match.end():match.end() + 1800]
+            name_match = NAME.search(snippet)
+            if name_match:
+                found.append((name_match.group(2).strip(), receiver_category(match.group(1))))
     unique = []
     seen = set()
     for name, category in found:
@@ -67,7 +70,6 @@ def main():
         overlays = logical_overlays(source)
         if rel.parts[0].lower() in OBSOLETE_DIRS:
             problems.append((str(rel), 'obsolete directory', modules, overlays))
-        # Overlay files are first-class split units too. They must contain one overlay and no module.
         if modules and overlays:
             problems.append((str(rel), 'mixes module and overlay registrations', modules, overlays))
         elif len(modules) > 1:
@@ -79,7 +81,6 @@ def main():
         elif modules and path.stem.lower() != safe_stem(modules[0][0]):
             problems.append((str(rel), f'filename does not match module {modules[0][0]}', modules, overlays))
         elif overlays and path.stem.lower() != safe_stem(overlays[0]).replace(' ', '_'):
-            # Hit Accuracy intentionally maps to HitAccuracy.lua, so compare without separators too.
             if re.sub(r'[^a-z0-9]', '', path.stem.lower()) != re.sub(r'[^a-z0-9]', '', overlays[0].lower()):
                 problems.append((str(rel), f'filename does not match overlay {overlays[0]}', modules, overlays))
 
