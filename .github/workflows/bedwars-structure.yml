@@ -4,12 +4,13 @@ on:
   push:
     branches:
       - codex/split-bedwars-modules-analytics
+      - codex/one-module-per-file-cleanup
     paths:
-      - tools/apply-bedwars-refactor.py
-      - tools/patch-refactor-standalone.py
-      - tools/patch-refactor-discord.py
-      - tools/build-bedwars-bundle.py
+      - .github/workflows/bedwars-structure.yml
+      - tools/**
       - games/6872274481/**
+      - games/universal.lua
+      - libraries/entity.lua
   workflow_dispatch:
 
 permissions:
@@ -22,7 +23,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: codex/split-bedwars-modules-analytics
+          ref: ${{ github.ref_name }}
           fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
@@ -34,6 +35,29 @@ jobs:
       - name: Apply one-time structural refactor
         if: hashFiles('tools/apply-bedwars-refactor.py') != ''
         run: python tools/apply-bedwars-refactor.py
+      - name: Apply remaining Aug 30 requests
+        run: python tools/apply-aug30-unfinished.py
+      - name: Apply verification fixes
+        run: python tools/fix-aug30-verification.py
+      - name: Inspect coupled AutoWin runtime
+        run: python tools/report-group3-layout.py
+      - name: Patch normalizer parser and same-path handling
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('tools/normalize-bedwars-layout.py')
+          text = path.read_text()
+          text = text.replace("if c in ('\\'', '\"'):", "if c in ('\\'', '\"', '`'):")
+          old = '''    entries = []\n    for start, end in top_level_runs(source):\n        block = source[start:end]\n        mods = modules(block)\n        if len(mods) != 1:\n            raise RuntimeError(f'{relative}: expected one module per top-level run, got {mods}')\n        name, category = mods[0]\n        target = f'{category}/{safe_name(name)}.lua'\n        write(BED / target, block.rstrip() + '\\n')\n        entries.append(target)\n    if not entries:\n        raise RuntimeError(f'{relative}: no top-level module runs')\n    replace_marker(relative, entries)\n    path.unlink()\n'''
+          new = '''    entries, generated = [], []\n    for start, end in top_level_runs(source):\n        block = source[start:end]\n        mods = modules(block)\n        if len(mods) != 1:\n            raise RuntimeError(f'{relative}: expected one module per top-level run, got {mods}')\n        name, category = mods[0]\n        target = f'{category}/{safe_name(name)}.lua'\n        generated.append((target, block.rstrip() + '\\n'))\n        entries.append(target)\n    if not entries:\n        raise RuntimeError(f'{relative}: no top-level module runs')\n    replace_marker(relative, entries)\n    for target, block in generated:\n        if target != relative:\n            write(BED / target, block)\n    same = next((block for target, block in generated if target == relative), None)\n    if same is not None:\n        write(path, same)\n    elif path.exists():\n        path.unlink()\n'''
+          if old not in text:
+              raise SystemExit('same-path normalizer block not found')
+          path.write_text(text.replace(old, new, 1))
+          PY
+      - name: Normalize BedWars module layout
+        run: python tools/normalize-bedwars-layout.py
+      - name: Report module-file audit
+        run: python tools/audit-bedwars-modules.py --report-only
       - name: Rebuild BedWars runtime bundle
         run: python tools/build-bedwars-bundle.py
       - name: Validate backend JavaScript
@@ -45,10 +69,10 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add games/6872274481.lua games/6872274481 backend init.lua guis/new.core.lua tools backend/README.md backend/package.json
+          git add games/6872274481.lua games/6872274481 games/universal.lua libraries/entity.lua backend init.lua guis/new.core.lua tools backend/README.md backend/package.json
           if git diff --cached --quiet; then
             echo "No generated changes"
             exit 0
           fi
-          git commit -m "Refactor BedWars modules and add execution analytics"
-          git push origin HEAD:codex/split-bedwars-modules-analytics
+          git commit -m "Normalize BedWars module file layout"
+          git push origin HEAD:${{ github.ref_name }}

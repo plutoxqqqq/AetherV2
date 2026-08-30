@@ -70,9 +70,6 @@ if vape.Categories and not vape.Categories.Exploits then
 	vape.Categories.Exploits = vape.Categories.Blatant
 end
 
-if vape.Categories and not vape.Categories.Visuals then
-	vape.Categories.Visuals = vape.Categories.Render
-end
 local entitylib = vape.Libraries.entity
 local targetinfo = vape.Libraries.targetinfo
 local sessioninfo = vape.Libraries.sessioninfo
@@ -140,6 +137,7 @@ local store = {
 		hotbar = {}
 	},
 	selfProjectiles = {},
+	hitchance = {},
 	inventories = {},
 	kitReady = false,
 	matchState = 0,
@@ -200,10 +198,7 @@ local AetherMatchRuntime
 -- Every kit module registers here instead of into a category tab. On the default GUI this
 -- is the Kits window opened by the friends icon beside the search bar; GUIs that do not
 -- implement that window fall back to the Minigames tab so nothing is lost on them.
-local kits = vape.Categories.Kits or vape.Categories.Minigames
-if vape.Categories and not vape.Categories.Minigames then
-    vape.Categories.Minigames = vape.Categories.World or vape.Categories.Utility
-end
+local kits = vape.Categories.Kits
 
 local function addBlur(parent)
 	local blur = Instance.new('ImageLabel')
@@ -354,6 +349,26 @@ local function getProjectiles(enabled, useSophia, useWhim)
 		end
 	end
 	return projectiles
+end
+
+local hitMotion = setmetatable({}, {__mode = 'k'})
+local function getHitChance(ent, flight)
+	flight = tonumber(flight)
+	local root = ent and ent.RootPart
+	if not root or not root.Parent or not flight or flight <= 0 or flight ~= flight then return 0 end
+	local now = tick()
+	local velocity = root.AssemblyLinearVelocity
+	local horizontal = (velocity * Vector3.new(1, 0, 1)).Magnitude
+	local last = hitMotion[root]
+	local acceleration = 0
+	if last and now > last.Clock then
+		acceleration = ((velocity - last.Velocity) / math.max(now - last.Clock, 1 / 240)).Magnitude
+	end
+	hitMotion[root] = {Velocity = velocity, Clock = now}
+	local airborne = ent.Humanoid and ent.Humanoid.FloorMaterial == Enum.Material.Air
+	local errorBudget = (horizontal * flight * 0.28) + (acceleration * flight * flight * 0.12)
+	if airborne then errorBudget += math.abs(velocity.Y) * flight * 0.12 end
+	return math.clamp((100 - errorBudget) / 100, 0, 1)
 end
 
 local function projectileAcceleration(gravity)
@@ -973,6 +988,34 @@ local sortmethods, breakmethods = {
 		return (pos - Vector3.new(a.Position.X, pos.Y, a.Position.Z)).Magnitude
 	end
 }
+
+local function screenPriorityDistance(entry, origin)
+	local ent = entry and entry.Entity
+	local root = ent and ent.RootPart
+	if not root then return math.huge end
+	local point, visible = gameCamera:WorldToViewportPoint(root.Position)
+	if not visible then return math.huge end
+	return (Vector2.new(point.X, point.Y) - origin).Magnitude
+end
+sortmethods.None = function() return false end
+sortmethods.Closest = function(a, b) return (a.Magnitude or math.huge) < (b.Magnitude or math.huge) end
+sortmethods.Farthest = function(a, b) return (a.Magnitude or 0) > (b.Magnitude or 0) end
+sortmethods['Lowest health'] = function(a, b) return (a.Entity.Health or math.huge) < (b.Entity.Health or math.huge) end
+sortmethods['Highest health'] = function(a, b) return (a.Entity.Health or 0) > (b.Entity.Health or 0) end
+sortmethods.Mouse = function(a, b)
+	local origin = inputService:GetMouseLocation()
+	return screenPriorityDistance(a, origin) < screenPriorityDistance(b, origin)
+end
+sortmethods.Crosshair = function(a, b)
+	local origin = gameCamera.ViewportSize / 2
+	return screenPriorityDistance(a, origin) < screenPriorityDistance(b, origin)
+end
+shared.AetherScreenSorts = {[sortmethods.Mouse] = 'Mouse', [sortmethods.Crosshair] = 'Crosshair'}
+local sortlist = {}
+for name in sortmethods do table.insert(sortlist, name) end
+table.sort(sortlist)
+getgenv().sortlist = sortlist
+
 
 run(function()
 	local oldstart = entitylib.start
@@ -2393,6 +2436,9 @@ end
     Combat
 ]]
 
+--[[AETHER_MODULE:render/HitAccuracy.lua]]
+--[[AETHER_MODULE:utility/MemoryFixer.lua]]
+--[[AETHER_MODULE:utility/AntiEffect.lua]]
 --[[AETHER_MODULE:combat/AimAssist.lua]]
 
 --[[AETHER_MODULE:combat/AutoClicker.lua]]
@@ -2401,7 +2447,9 @@ end
 
 --[[AETHER_MODULE:combat/NoClickDelay.lua]]
 
---[[AETHER_MODULE:mixed/HitregAdjuster__group1.lua]]
+--[[AETHER_MODULE:combat/HitregAdjuster.lua]]
+--[[AETHER_MODULE:blatant/DeathAdderAimbot.lua]]
+--[[AETHER_MODULE:combat/Reach.lua]]
 
 --[[AETHER_MODULE:combat/ShopClicker.lua]]
 
@@ -2420,7 +2468,7 @@ end
 --[[AETHER_MODULE:blatant/AntiDeath.lua]]
 
 
---[[AETHER_MODULE:visuals/ChillLighting.lua]]
+--[[AETHER_MODULE:render/ChillLighting.lua]]
 
 -- Water: fills the void with real Roblox water, at exactly the height AntiFall puts its barrier.
 --
@@ -2882,7 +2930,8 @@ end)
 --[[AETHER_MODULE:blatant/Killaura.lua]]
 -- JadeInstaKill V2 is registered by AetherMatchRuntime above.
 
---[[AETHER_MODULE:mixed/LongJump__group2.lua]]
+--[[AETHER_MODULE:blatant/LongJump.lua]]
+--[[AETHER_MODULE:exploits/LongJumpBypass.lua]]
 
 --[[
     Kit extenders
@@ -3025,6 +3074,23 @@ end)
 
 --[[AETHER_MODULE:render/BedESP.lua]]
 
+--[[AETHER_MODULE:render/BeehiveESP.lua]]
+--[[AETHER_MODULE:render/CustomTags.lua]]
+--[[AETHER_MODULE:render/GeneratorESP.lua]]
+--[[AETHER_MODULE:render/Health.lua]]
+--[[AETHER_MODULE:render/ItemESP.lua]]
+--[[AETHER_MODULE:kits/KitDisplay.lua]]
+--[[AETHER_MODULE:kits/KitESP.lua]]
+--[[AETHER_MODULE:render/NameTags.lua]]
+--[[AETHER_MODULE:render/ProjectileLanding.lua]]
+--[[AETHER_MODULE:render/ProjectileTracers.lua]]
+--[[AETHER_MODULE:render/SkinChanger.lua]]
+--[[AETHER_MODULE:render/StorageESP.lua]]
+--[[AETHER_MODULE:utility/ClaimRewards.lua]]
+--[[AETHER_MODULE:inventory/AutoEnchant.lua]]
+--[[AETHER_MODULE:render/StreamRemover.lua]]
+--[[AETHER_MODULE:render/TrapESP.lua]]
+--[[AETHER_MODULE:render/ViewmodelVisuals.lua]]
 --[[AETHER_MODULE:utility/MP3Player.lua]]
 
 --[[AETHER_MODULE:utility/AntiSuffocate.lua]]
@@ -3117,7 +3183,8 @@ end)
 ]]
 --[[AETHER_MODULE:inventory/AutoBank.lua]]
 
---[[AETHER_MODULE:inventory/AutoBuy__group4.lua]]
+--[[AETHER_MODULE:inventory/AutoBuy.lua]]
+--[[AETHER_MODULE:inventory/OpenShop.lua]]
 
 --[[AETHER_MODULE:inventory/AutoConsume.lua]]
 
@@ -3135,11 +3202,11 @@ end)
     Minigames
 ]]
 
---[[AETHER_MODULE:minigames/AutoHonor.lua]]
+--[[AETHER_MODULE:utility/AutoHonor.lua]]
 
---[[AETHER_MODULE:minigames/BedPlates.lua]]
+--[[AETHER_MODULE:render/BedPlates.lua]]
 
---[[AETHER_MODULE:minigames/Breaker.lua]]
+--[[AETHER_MODULE:world/Breaker.lua]]
 
 --[[
     Legit

@@ -15,6 +15,36 @@ run(function()
 	rayCheck.FilterDescendantsInstances = {workspace:FindFirstChild('Map')}
 	local launchHook
 
+	local function resolveProjectileAimbotPart(ent, requested, projectileType)
+		local character = ent and ent.Character
+		local root = ent and (ent.RootPart or ent.HumanoidRootPart) or character and character.PrimaryPart
+		if not character then return root end
+		local function first(...)
+			for index = 1, select('#', ...) do
+				local partName = select(index, ...)
+				local part = partName and character:FindFirstChild(partName)
+				if part and part:IsA('BasePart') then return part end
+			end
+			return root
+		end
+		if requested == 'Dynamic' then
+			requested = tostring(projectileType or ''):lower():find('headhunter', 1, true) and 'Head' or 'RootPart'
+		end
+		if requested == 'Head' then return first('Head') end
+		if requested == 'Torso' then return first('UpperTorso', 'Torso', 'LowerTorso') end
+		if requested == 'Left arm' then return first('LeftHand', 'LeftLowerArm', 'LeftUpperArm', 'Left Arm') end
+		if requested == 'Right arm' then return first('RightHand', 'RightLowerArm', 'RightUpperArm', 'Right Arm') end
+		if requested == 'Left leg' then return first('LeftFoot', 'LeftLowerLeg', 'LeftUpperLeg', 'Left Leg') end
+		if requested == 'Right leg' then return first('RightFoot', 'RightLowerLeg', 'RightUpperLeg', 'Right Leg') end
+		if requested == 'Random' then
+			local available = {first('Head'), first('UpperTorso', 'Torso'), first('LeftHand', 'Left Arm'), first('RightHand', 'Right Arm'), first('LeftFoot', 'Left Leg'), first('RightFoot', 'Right Leg')}
+			local filtered = {}
+			for _, part in available do if part and part ~= root then table.insert(filtered, part) end end
+			return #filtered > 0 and filtered[math.random(1, #filtered)] or root
+		end
+		return root
+	end
+
 	local ProjectileAimbot = vape.Categories.Blatant:CreateModule({
 		Name = 'ProjectileAimbot',
 		Function = function(callback)
@@ -41,7 +71,7 @@ run(function()
 						Sort = sortmethods[Sort.Value]
 					})
 					if plr then
-						local targetPart = plr[TargetPart.Value]
+						local targetPart = resolveProjectileAimbotPart(plr, TargetPart.Value, projectileType)
 						if not targetPart or not targetPart.Parent then return launch end
 						local ok, meta = pcall(projmeta.getProjectileMeta, projmeta)
 						meta = ok and meta or bedwars.ProjectileMeta[projectileType]
@@ -57,6 +87,7 @@ run(function()
 							RaycastParams = rayCheck
 						})
 						if solution then
+							store.hitchance.ProjectileAimbot = {Value = getHitChance(plr, (targetPart.Position - origin).Magnitude / math.max(speed, 1)), Clock = tick()}
 							targetinfo.Targets[plr] = tick() + 1
 							launch.initialVelocity = solution.Velocity
 							launch.positionFrom = origin
@@ -82,7 +113,7 @@ run(function()
 		Walls = true
 	})
 	local methods = {'Distance', 'Damage'}
-	for i in sortmethods do
+	for _, i in sortlist do
 		if not table.find(methods, i) then
 			table.insert(methods, i)
 		end
@@ -94,7 +125,7 @@ run(function()
 	})
 	TargetPart = ProjectileAimbot:CreateDropdown({
 		Name = 'Part',
-		List = {'RootPart', 'Head'}
+		List = {'RootPart', 'Head', 'Torso', 'Left arm', 'Right arm', 'Left leg', 'Right leg', 'Random', 'Dynamic'}
 	})
 	MaxAccuracy = ProjectileAimbot:CreateToggle({
 		Name = 'Max accuracy',

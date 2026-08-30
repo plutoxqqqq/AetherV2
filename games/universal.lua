@@ -8976,146 +8976,95 @@ end)
 
 
 run(function()
-    local InteractExtender
-    local Distance
-    local Sight
-    local modified = setmetatable({}, {__mode = 'k'})
-    local environment = (getgenv and getgenv()) or _G
-    local api = environment.AetherInteractExtender or {}
+	local PromptEditor
+	local Range
+	local Hold
+	local Instant
+	local ThroughWalls
+	local originals = setmetatable({}, {__mode = 'k'})
+	local applying = setmetatable({}, {__mode = 'k'})
+	local environment = (getgenv and getgenv()) or _G
+	local api = environment.AetherInteractExtender or {}
 
-    local function extendPrompt(prompt)
-        if typeof(prompt) ~= 'Instance' or not prompt:IsA('ProximityPrompt') then return false end
-        if not modified[prompt] then
-            local ok, original = pcall(function()
-                return {Distance = prompt.MaxActivationDistance, Sight = prompt.RequiresLineOfSight}
-            end)
-            if not ok then return false end
-            modified[prompt] = original
-        end
-        local ok = pcall(function()
-            prompt.MaxActivationDistance = Distance.Value
-            prompt.RequiresLineOfSight = not Sight.Enabled
-        end)
-        return ok
-    end
+	local function remember(prompt)
+		if originals[prompt] then return true end
+		local ok, state = pcall(function()
+			return {
+				Distance = prompt.MaxActivationDistance,
+				Duration = prompt.HoldDuration,
+				Sight = prompt.RequiresLineOfSight
+			}
+		end)
+		if ok then originals[prompt] = state end
+		return ok
+	end
 
-    local function restorePrompt(prompt, original)
-        if original then
-            pcall(function()
-                prompt.MaxActivationDistance = original.Distance
-                prompt.RequiresLineOfSight = original.Sight
-            end)
-        end
-        modified[prompt] = nil
-    end
+	local function applyPrompt(prompt)
+		if typeof(prompt) ~= 'Instance' or not prompt:IsA('ProximityPrompt') or not remember(prompt) then return end
+		applying[prompt] = true
+		pcall(function()
+			prompt.MaxActivationDistance = Range.Value
+			prompt.HoldDuration = Instant.Enabled and 0 or Hold.Value
+			prompt.RequiresLineOfSight = not ThroughWalls.Enabled
+		end)
+		applying[prompt] = nil
+	end
 
-    -- BedWars helpers use this small public surface to activate a prompt after the user has
-    -- explicitly enabled InteractExtender. It avoids a second, competing prompt modifier.
-    api.IsEnabled = function()
-        return InteractExtender and InteractExtender.Enabled == true
-    end
-    api.Activate = function(prompt)
-        if not api.IsEnabled() then return false, 'InteractExtender is disabled' end
-        if not extendPrompt(prompt) then return false, 'invalid prompt' end
-        if type(fireproximityprompt) ~= 'function' then return false, 'fireproximityprompt unavailable' end
-        local ok, result = pcall(fireproximityprompt, prompt)
-        return ok and result ~= false, ok and nil or tostring(result)
-    end
-    environment.AetherInteractExtender = api
+	local function restorePrompt(prompt, original)
+		if not prompt or not prompt.Parent or not original then return end
+		applying[prompt] = true
+		pcall(function()
+			prompt.MaxActivationDistance = original.Distance
+			prompt.HoldDuration = original.Duration
+			prompt.RequiresLineOfSight = original.Sight
+		end)
+		applying[prompt] = nil
+	end
 
-    InteractExtender = vape.Categories.World:CreateModule({
-        Name = 'InteractExtender',
-        Function = function(callback)
-            if callback then
-                InteractExtender:Clean(workspace.DescendantAdded:Connect(extendPrompt))
-                for _, prompt in workspace:GetDescendants() do extendPrompt(prompt) end
-            else
-                for prompt, original in modified do restorePrompt(prompt, original) end
-                table.clear(modified)
-            end
-        end,
-        Tooltip = 'Lets you use proximity prompts from further away'
-    })
+	local function refresh()
+		if not PromptEditor.Enabled then return end
+		for prompt in originals do applyPrompt(prompt) end
+	end
 
-    Distance = InteractExtender:CreateSlider({
-        Name = 'Distance',
-        Min = 1,
-        Max = 500,
-        Default = 50,
-        Suffix = function(value) return value == 1 and 'stud' or 'studs' end,
-        Function = function(value)
-            if InteractExtender.Enabled then
-                for prompt in modified do pcall(function() prompt.MaxActivationDistance = value end) end
-            end
-        end
-    })
 
-    Sight = InteractExtender:CreateToggle({
-        Name = 'Through walls',
-        Function = function(callback)
-            if InteractExtender.Enabled then
-                for prompt in modified do pcall(function() prompt.RequiresLineOfSight = not callback end) end
-            end
-        end,
-        Tooltip = 'Also removes the line of sight requirement'
-    })
+	api.IsEnabled = function()
+		return PromptEditor and PromptEditor.Enabled == true
+	end
+	api.Activate = function(prompt)
+		if not api.IsEnabled() then return false, 'PromptEditor is disabled' end
+		if typeof(prompt) ~= 'Instance' or not prompt:IsA('ProximityPrompt') then return false, 'invalid prompt' end
+		applyPrompt(prompt)
+		if type(fireproximityprompt) ~= 'function' then return false, 'fireproximityprompt unavailable' end
+		local ok, result = pcall(fireproximityprompt, prompt)
+		return ok and result ~= false, ok and nil or tostring(result)
+	end
+	environment.AetherInteractExtender = api
+	vape:Clean(function()
+		if environment.AetherInteractExtender == api then environment.AetherInteractExtender = nil end
+	end)
+
+	PromptEditor = vape.Categories.World:CreateModule({
+		Name = 'PromptEditor',
+		Tooltip = 'Edits proximity prompt range, hold time and line-of-sight rules in one module',
+		Function = function(callback)
+			if callback then
+				PromptEditor:Clean(workspace.DescendantAdded:Connect(applyPrompt))
+				PromptEditor:Clean(proximityPromptService.PromptShown:Connect(applyPrompt))
+				for _, prompt in workspace:GetDescendants() do applyPrompt(prompt) end
+			else
+				for prompt, original in originals do restorePrompt(prompt, original) end
+				table.clear(originals)
+				table.clear(applying)
+			end
+		end
+	})
+	Range = PromptEditor:CreateSlider({Name = 'Range', Min = 1, Max = 100, Default = 32, Suffix = ' studs', Function = refresh})
+	Hold = PromptEditor:CreateSlider({Name = 'Hold duration', Min = 0, Max = 10, Default = 1, Decimal = 100, Suffix = 's', Function = refresh})
+	Instant = PromptEditor:CreateToggle({Name = 'Instant', Tooltip = 'Sets prompt hold duration to zero', Function = refresh})
+	ThroughWalls = PromptEditor:CreateToggle({Name = 'Through walls', Tooltip = 'Removes prompt line-of-sight checks', Function = refresh})
 end)
 
-run(function()
-    local ProximityPromptDuration
-    local Duration
-    local originals = {}
-    local applying = {}
 
-    local function applyPrompt(prompt)
-        if not prompt:IsA('ProximityPrompt') then return end
-        if originals[prompt] == nil then
-            originals[prompt] = prompt.HoldDuration
-            ProximityPromptDuration:Clean(prompt.AncestryChanged:Connect(function(_, parent)
-                if not parent then originals[prompt], applying[prompt] = nil, nil end
-            end))
-            ProximityPromptDuration:Clean(prompt:GetPropertyChangedSignal('HoldDuration'):Connect(function()
-                if applying[prompt] or not ProximityPromptDuration.Enabled then return end
-                originals[prompt] = prompt.HoldDuration
-                applying[prompt] = true
-                prompt.HoldDuration = Duration.Value
-                applying[prompt] = nil
-            end))
-        end
-        applying[prompt] = true
-        prompt.HoldDuration = Duration.Value
-        applying[prompt] = nil
-    end
-
-    ProximityPromptDuration = vape.Categories.World:CreateModule({
-        Name = 'ProximityPromptDuration',
-        Tooltip = 'Changes prompt hold duration and restores original durations when disabled',
-        Function = function(enabled)
-            if enabled then
-                ProximityPromptDuration:Clean(workspace.DescendantAdded:Connect(applyPrompt))
-                for _, prompt in workspace:GetDescendants() do applyPrompt(prompt) end
-            else
-                for prompt, original in originals do
-                    if prompt.Parent then
-                        applying[prompt] = true
-                        prompt.HoldDuration = original
-                        applying[prompt] = nil
-                    end
-                    originals[prompt] = nil
-                end
-                table.clear(applying)
-            end
-        end
-    })
-    Duration = ProximityPromptDuration:CreateSlider({
-        Name = 'Duration', Min = 0, Max = 10, Default = 1, Decimal = 100, Suffix = 's',
-        Function = function()
-            if ProximityPromptDuration.Enabled then
-                for prompt in originals do applyPrompt(prompt) end
-            end
-        end
-    })
-end)
 
 --[[
 	Freecam.

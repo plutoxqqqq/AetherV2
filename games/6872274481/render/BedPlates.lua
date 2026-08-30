@@ -137,7 +137,7 @@ run(function()
 	end
     end
 
-    BedPlates = vape.Categories.Minigames:CreateModule({
+    BedPlates = vape.Categories.Render:CreateModule({
 	Name = 'BedPlates',
 	Function = function(callback)
 		if callback then

@@ -14,6 +14,36 @@ run(function()
 
 	local launchHook
 
+	local function resolveSilentAimPart(ent, requested, projectileType)
+		local character = ent and ent.Character
+		local root = ent and (ent.RootPart or ent.HumanoidRootPart) or character and character.PrimaryPart
+		if not character then return root end
+		local function first(...)
+			for index = 1, select('#', ...) do
+				local partName = select(index, ...)
+				local part = partName and character:FindFirstChild(partName)
+				if part and part:IsA('BasePart') then return part end
+			end
+			return root
+		end
+		if requested == 'Dynamic' then
+			requested = tostring(projectileType or ''):lower():find('headhunter', 1, true) and 'Head' or 'RootPart'
+		end
+		if requested == 'Head' then return first('Head') end
+		if requested == 'Torso' then return first('UpperTorso', 'Torso', 'LowerTorso') end
+		if requested == 'Left arm' then return first('LeftHand', 'LeftLowerArm', 'LeftUpperArm', 'Left Arm') end
+		if requested == 'Right arm' then return first('RightHand', 'RightLowerArm', 'RightUpperArm', 'Right Arm') end
+		if requested == 'Left leg' then return first('LeftFoot', 'LeftLowerLeg', 'LeftUpperLeg', 'Left Leg') end
+		if requested == 'Right leg' then return first('RightFoot', 'RightLowerLeg', 'RightUpperLeg', 'Right Leg') end
+		if requested == 'Random' then
+			local available = {first('Head'), first('UpperTorso', 'Torso'), first('LeftHand', 'Left Arm'), first('RightHand', 'Right Arm'), first('LeftFoot', 'Left Leg'), first('RightFoot', 'Right Leg')}
+			local filtered = {}
+			for _, part in available do if part and part ~= root then table.insert(filtered, part) end end
+			return #filtered > 0 and filtered[math.random(1, #filtered)] or root
+		end
+		return root
+	end
+
 	local function getMousePosition()
 		if inputService.TouchEnabled then
 			return gameCamera.ViewportSize / 2
@@ -21,7 +51,7 @@ run(function()
 		return inputService.GetMouseLocation(inputService)
 	end
 
-	local function getPosition(ent)
+	local function getPosition(ent, projectileType)
 		if TargetPart.Value == 'Closest' then
 			local localPosition, magnitude, part = getMousePosition(), 9e9, nil
 			for _, v in ent:GetChildren() do
@@ -37,14 +67,10 @@ run(function()
 				end
 			end
 			return part and part.Position or ent.PrimaryPart and ent.PrimaryPart.Position
-		elseif TargetPart.Value == 'Dynamic' then
-			local tool = store.hand.tool
-			if tool and tool.Name:find('headhunter') and ent:FindFirstChild('Head') then
-				return ent.Head.Position
-			end
-			return ent.PrimaryPart and ent.PrimaryPart.Position
 		end
-		return
+		local wrapper = entitylib.getEntity and select(1, entitylib.getEntity(ent)) or nil
+		local part = resolveSilentAimPart(wrapper or {Character = ent, RootPart = ent.PrimaryPart}, TargetPart.Value, projectileType)
+		return part and part.Position or ent.PrimaryPart and ent.PrimaryPart.Position
 	end
 
 	local function solveSilent(launch, launchMeta)
@@ -82,7 +108,7 @@ run(function()
 		if not plr then return end
 
 		local targetpart = plr[TargetPart.Value]
-		local targetpos = getPosition(plr.Character) or targetpart and targetpart.Position
+		local targetpos = getPosition(plr.Character, projType) or targetpart and targetpart.Position
 		if not targetpos then return end
 		local pearl = projType == 'telepearl'
 		local solution = solveBedwarsProjectile(origin, speed, gravity, plr, targetpos, {
@@ -93,6 +119,7 @@ run(function()
 		})
 		if not solution then return end
 
+		store.hitchance.SilentAim = {Value = getHitChance(plr, (targetpos - origin).Magnitude / math.max(speed, 1)), Clock = tick()}
 		targetinfo.Targets[plr] = tick() + 1
 		return solution.Velocity
 	end
@@ -131,10 +158,10 @@ run(function()
 	})
 	TargetPart = SilentAim:CreateDropdown({
 		Name = 'Part',
-		List = {'RootPart', 'Head', 'Dynamic', 'Closest'},
+		List = {'RootPart', 'Head', 'Torso', 'Left arm', 'Right arm', 'Left leg', 'Right leg', 'Random', 'Dynamic', 'Closest'},
 	})
 	local methods = {'Damage', 'Distance'}
-	for i in sortmethods do
+	for _, i in sortlist do
 		if not table.find(methods, i) then
 			table.insert(methods, i)
 		end
