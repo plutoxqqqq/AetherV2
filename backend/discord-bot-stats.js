@@ -16,7 +16,7 @@ const {
   TextInputBuilder,
   TextInputStyle
 } = require('discord.js');
-const legacy = require('./discord-bot-core');
+const legacy = require('./discord-bot');
 const registry = require('./key-registry');
 const executionStats = require('./execution-stats');
 
@@ -29,7 +29,7 @@ const statsCommand = new SlashCommandBuilder()
   .setName('stats')
   .setDescription('View AetherV2 execution analytics')
   .setDMPermission(false)
-  .addSubcommand(sub => sub.setName('summary').setDescription('Show totals, access split, active users, and detailed players'))
+  .addSubcommand(sub => sub.setName('summary').setDescription('Show totals, active users, access split, and detailed players'))
   .addSubcommand(sub => sub
     .setName('graph')
     .setDescription('Render daily execution trends so peaks and dips stay visible')
@@ -54,7 +54,6 @@ const button = (customId, label, style = ButtonStyle.Secondary, disabled = false
   .setCustomId(customId).setLabel(label).setStyle(style).setDisabled(disabled);
 const safePayload = payload => ({...payload, allowedMentions: {parse: []}});
 const actorName = interaction => interaction.user.username + ' (' + interaction.user.id + ')';
-const accessText = value => value === 'premium' ? 'Premium' : value === 'free' ? 'Free' : 'Unclassified';
 const formatDuration = seconds => {
   const total = Math.max(0, Math.floor(Number(seconds) || 0));
   const days = Math.floor(total / 86400);
@@ -85,7 +84,7 @@ const summaryView = ownerId => {
   const embed = new EmbedBuilder()
     .setColor(0xbe73ff)
     .setTitle('📈 AetherV2 execution stats')
-    .setDescription('UTC totals. Detailed tracking is owner-only; use time comes from live heartbeats instead of being guessed from launch count.')
+    .setDescription('UTC totals. Detailed tracking is owner-only; usage time is measured from session heartbeats rather than guessed from launch count.')
     .addFields(
       {name: 'This hour', value: statValue(stats.hourly), inline: true},
       {name: 'Today', value: statValue(stats.daily), inline: true},
@@ -93,9 +92,8 @@ const summaryView = ownerId => {
       {name: 'This month', value: statValue(stats.monthly), inline: true},
       {name: 'All time', value: statValue(stats.allTime), inline: true},
       {name: 'Active now', value: inline(stats.activeUsers), inline: true},
-      {name: 'Free', value: inline(stats.freeExecutions), inline: true},
-      {name: 'Premium', value: inline(stats.premiumExecutions), inline: true},
-      {name: 'Unclassified', value: inline(stats.unknownExecutions), inline: true},
+      {name: 'Free executions', value: inline(stats.freeExecutions), inline: true},
+      {name: 'Premium executions', value: inline(stats.premiumExecutions), inline: true},
       {name: 'Tracked use time', value: inline(formatDuration(stats.trackedSeconds)), inline: true}
     )
     .setFooter({text: stats.lastSeenAt ? 'Last activity ' + stats.lastSeenAt : 'No executions recorded yet'});
@@ -113,14 +111,15 @@ const userListView = (ownerId, requestedPage = 0) => {
   const embed = new EmbedBuilder()
     .setColor(0xbe73ff)
     .setTitle('👥 AetherV2 execution details')
-    .setDescription(result.total ? 'Select a Roblox player for full execution, usage-time, and premium details.' : 'No identified players have been recorded yet. Anonymous fallback executions remain included in totals.')
+    .setDescription(result.total ? 'Select a Roblox player for full execution and premium details.' : 'No identified players have been recorded yet. Anonymous fallback executions remain included in totals.')
     .setFooter({text: 'Page ' + (result.page + 1) + ' of ' + result.pageCount + ' • ' + result.total + ' identified player' + (result.total === 1 ? '' : 's')})
     .setTimestamp();
   for (const profile of result.users) {
+    const access = profile.lastAccess === 'premium' ? 'Premium' : 'Free';
     embed.addFields({
       name: (profile.active ? '🟢 ' : '⚪ ') + (profile.username || ('UserId ' + profile.userId)),
       value: [
-        inline(accessText(profile.lastAccess)) + ' • ' + inline(profile.executions + ' uses') + ' • ' + inline(formatDuration(profile.trackedSeconds)),
+        inline(access) + ' • ' + inline(profile.executions + ' uses') + ' • ' + inline(formatDuration(profile.trackedSeconds)),
         'Premium/free ' + inline(profile.premiumExecutions + '/' + profile.freeExecutions) + ' • last ' + inline(dateText(profile.lastSeenAt))
       ].join('\n')
     });
@@ -137,7 +136,7 @@ const userListView = (ownerId, requestedPage = 0) => {
       .setPlaceholder('Select a player')
       .addOptions(result.users.map(profile => ({
         label: truncate(profile.username || ('UserId ' + profile.userId), 100),
-        description: truncate(accessText(profile.lastAccess) + ' • ' + profile.executions + ' uses • ' + formatDuration(profile.trackedSeconds), 100),
+        description: truncate((profile.lastAccess === 'premium' ? 'Premium' : 'Free') + ' • ' + profile.executions + ' uses • ' + formatDuration(profile.trackedSeconds), 100),
         value: profile.profileId
       })))))
   }
@@ -164,16 +163,16 @@ const userDetailView = async (ownerId, profileId, page = 0) => {
     .setDescription(profile.active ? '🟢 Active recently' : '⚪ Not active recently')
     .addFields(
       {name: 'Roblox identity', value: inline(profile.username || 'unknown') + '\n' + inline(profile.userId), inline: true},
-      {name: 'Latest access', value: inline(accessText(profile.lastAccess)) + '\n' + inline(keyState), inline: true},
+      {name: 'Latest access', value: inline(profile.lastAccess === 'premium' ? 'Premium' : 'Free') + '\n' + inline(keyState), inline: true},
       {name: 'Aether uses', value: inline(profile.executions), inline: true},
       {name: 'Tracked use time', value: inline(formatDuration(profile.trackedSeconds)), inline: true},
       {name: 'Premium / Free', value: inline(profile.premiumExecutions + ' / ' + profile.freeExecutions), inline: true},
-      {name: 'Sessions tracked', value: inline(profile.sessions), inline: true},
+      {name: 'Sessions', value: inline(profile.sessions), inline: true},
       {name: 'First seen', value: inline(dateText(profile.firstSeenAt)), inline: false},
       {name: 'Last seen', value: inline(dateText(profile.lastSeenAt)), inline: false},
       {name: 'Last PlaceId', value: inline(profile.lastPlaceId || 'unknown'), inline: true}
     )
-    .setFooter({text: 'Client telemetry is useful product analytics, not tamper-proof billing/security evidence.'});
+    .setFooter({text: 'Telemetry can be spoofed by a modified client; do not use it as billing/security proof.'});
   return {
     embeds: [embed],
     components: [new ActionRowBuilder().addComponents(
@@ -207,7 +206,7 @@ const handleStatsCommand = async interaction => {
   const embed = new EmbedBuilder()
     .setColor(0xbe73ff)
     .setTitle('📈 ' + (metric === 'unique' ? 'Unique players' : 'Executions') + ' · ' + rangeName(range))
-    .setDescription('One x-axis point per UTC day • ' + inline(first.key) + ' → ' + inline(last.key) + '\nPeak ' + inline(peak.value) + ' on ' + inline(peak.key))
+    .setDescription('One point per UTC day • ' + inline(first.key) + ' → ' + inline(last.key) + '\nPeak ' + inline(peak.value) + ' on ' + inline(peak.key))
     .setImage('attachment://' + fileName);
   return reply(interaction, {embeds: [embed], files: [attachment]});
 };
@@ -248,21 +247,23 @@ const handleGrant = async interaction => {
   }
   await interaction.deferReply({ephemeral: true});
   const result = await registry.createKey({label: 'Stats grant · ' + (profile.username || profile.userId), expiresAt, actor: actorName(interaction)});
-  const intended = '\nIntended Roblox user: ' + inline(profile.username || 'unknown') + ' (' + inline(profile.userId) + '). The key binds on first successful use.';
-  const delivery = legacy.generatedText(result) + intended;
+  const delivery = legacy.generatedText(result) + '\nIntended Roblox user: ' + inline(profile.username || 'unknown') + ' (' + inline(profile.userId) + '). The key binds to the first Roblox account that successfully uses it.';
+  let target;
   try {
-    const target = await interaction.client.users.fetch(discordUserId);
+    target = await interaction.client.users.fetch(discordUserId);
     if (!target || target.bot) throw new Error('Recipient is not a normal Discord user');
     await target.send({content: truncate(delivery, MESSAGE_LIMIT), allowedMentions: {parse: []}});
-    return interaction.editReply(safePayload({content: '✅ Premium key generated and DMed to ' + inline(target.username) + ' for Roblox user ' + inline(profile.username || profile.userId) + '.'}));
-  } catch {
-    return interaction.editReply(safePayload({content: truncate('⚠️ The key was generated, but the DM could not be delivered. This is the only recovery copy; send it manually to the intended user.\n\n' + delivery, MESSAGE_LIMIT)}));
+    return interaction.editReply(safePayload({content: '✅ Premium key generated and DMed to ' + inline(target.username) + '. It is labelled for Roblox user ' + inline(profile.username || profile.userId) + '.'}));
+  } catch (error) {
+    return interaction.editReply(safePayload({
+      content: truncate('⚠️ The premium key was generated, but the DM could not be delivered. This is the only recovery copy; send it manually to the intended user.\n\n' + delivery, MESSAGE_LIMIT)
+    }));
   }
 };
 
 const isStatsInteraction = interaction =>
-  Boolean(interaction.isChatInputCommand && interaction.isChatInputCommand() && interaction.commandName === 'stats') ||
-  Boolean(interaction.customId && interaction.customId.startsWith('aether:stats'));
+  interaction.isChatInputCommand && interaction.isChatInputCommand() && interaction.commandName === 'stats' ||
+  interaction.customId && interaction.customId.startsWith('aether:stats');
 
 const handleInteraction = async interaction => {
   if (!isStatsInteraction(interaction)) return legacy.handleInteraction(interaction);
@@ -301,4 +302,4 @@ const startDiscordBot = async () => {
 
 if (require.main === module) startDiscordBot().catch(error => { console.error(error); process.exitCode = 1; });
 
-module.exports = {...legacy, startDiscordBot, commands, handleInteraction, summaryView, userListView, userDetailView, statsCommand};
+module.exports = {startDiscordBot, commands, handleInteraction, summaryView, userListView, userDetailView, statsCommand};

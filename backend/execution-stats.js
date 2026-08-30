@@ -6,30 +6,99 @@ const crypto = require('node:crypto');
 const zlib = require('node:zlib');
 
 const STATS_FILE = process.env.AETHER_STATS_FILE || path.join(__dirname, 'execution-stats.json');
-const VERSION = 1;
-const SERIES_LENGTHS = Object.freeze({hourly: 24, daily: 30, weekly: 12, monthly: 12});
-const RETENTION = Object.freeze({hourly: 24 * 90, daily: 730, weekly: 260, monthly: 120});
-const PERIODS = new Set(Object.keys(SERIES_LENGTHS));
-const METRICS = new Set(['executions', 'unique']);
+const VERSION = 2;
+const ACTIVE_WINDOW_MS = 150000;
+const MAX_HEARTBEAT_DELTA_SECONDS = 90;
+const RETENTION = Object.freeze({hourly: 2160, daily: 3650, weekly: 520, monthly: 240});
+const PERIODS = ['hourly', 'daily', 'weekly', 'monthly'];
+const runtimeSessions = new Map();
+
+const isObject = value => value && typeof value === 'object' && !Array.isArray(value);
+const pad = value => String(value).padStart(2, '0');
+const dayKey = date => date.getUTCFullYear() + '-' + pad(date.getUTCMonth() + 1) + '-' + pad(date.getUTCDate());
+const hourKey = date => dayKey(date) + 'T' + pad(date.getUTCHours());
+const monthKey = date => date.getUTCFullYear() + '-' + pad(date.getUTCMonth() + 1);
+const weekStart = date => {
+  const value = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  const weekday = value.getUTCDay() || 7;
+  value.setUTCDate(value.getUTCDate() - weekday + 1);
+  return value;
+};
+const weekKey = date => 'W:' + dayKey(weekStart(date));
+const keyFor = (period, date) => period === 'hourly' ? hourKey(date) : period === 'daily' ? dayKey(date) : period === 'weekly' ? weekKey(date) : monthKey(date);
+const startOf = (period, date) => {
+  if (period === 'hourly') return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), date.getUTCHours()));
+  if (period === 'daily') return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  if (period === 'weekly') return weekStart(date);
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1));
+};
+const shift = (period, date, amount) => {
+  const value = new Date(date);
+  if (period === 'hourly') value.setUTCHours(value.getUTCHours() + amount);
+  else if (period === 'daily') value.setUTCDate(value.getUTCDate() + amount);
+  else if (period === 'weekly') value.setUTCDate(value.getUTCDate() + amount * 7);
+  else value.setUTCMonth(value.getUTCMonth() + amount);
+  return value;
+};
+const labelFor = (period, date) => period === 'hourly'
+  ? pad(date.getUTCHours()) + ':00'
+  : period === 'daily'
+    ? pad(date.getUTCDate()) + '/' + pad(date.getUTCMonth() + 1)
+    : period === 'weekly'
+      ? dayKey(date)
+      : monthKey(date);
+const userHash = value => /^\d{1,20}$/.test(String(value || ''))
+  ? crypto.createHash('sha256').update('aetherv2-user\0' + String(value)).digest('hex').slice(0, 32)
+  : null;
+const validUsername = value => /^[A-Za-z0-9_]{3,20}$/.test(String(value || '')) ? String(value) : null;
+const validPlaceId = value => /^\d{1,20}$/.test(String(value || '')) ? String(value) : null;
+const validSessionId = value => typeof value === 'string' && /^[A-Za-z0-9_-]{8,80}$/.test(value) ? value : null;
+const validAccess = value => value === 'premium' || value === 'free' ? value : 'unknown';
 
 const emptyState = () => ({
   version: VERSION,
   allTimeExecutions: 0,
   allUsers: {},
+  profiles: {},
+  access: {free: 0, premium: 0, unknown: 0},
   firstSeenAt: null,
   lastSeenAt: null,
   buckets: {hourly: {}, daily: {}, weekly: {}, monthly: {}}
 });
 
-const object = value => value && typeof value === 'object' && !Array.isArray(value);
-const validBucket = value => object(value) && Number.isSafeInteger(value.executions) && value.executions >= 0 && object(value.users);
-const validate = value => {
-  if (!object(value) || value.version !== VERSION || !Number.isSafeInteger(value.allTimeExecutions) || value.allTimeExecutions < 0 || !object(value.allUsers) || !object(value.buckets)) {
+const migrate = raw => {
+  if (!isObject(raw)) throw new Error('Execution analytics file has an invalid structure');
+  if (raw.version === VERSION) return raw;
+  if (raw.version !== 1) throw new Error('Unsupported execution analytics version');
+  const allTime = Number.isSafeInteger(raw.allTimeExecutions) && raw.allTimeExecutions >= 0 ? raw.allTimeExecutions : 0;
+  return {
+    version: VERSION,
+    allTimeExecutions: allTime,
+    allUsers: isObject(raw.allUsers) ? raw.allUsers : {},
+    profiles: {},
+    access: {free: 0, premium: 0, unknown: allTime},
+    firstSeenAt: raw.firstSeenAt || null,
+    lastSeenAt: raw.lastSeenAt || null,
+    buckets: isObject(raw.buckets) ? raw.buckets : {hourly: {}, daily: {}, weekly: {}, monthly: {}}
+  };
+};
+
+const validate = raw => {
+  const value = migrate(raw);
+  if (!isObject(value) || value.version !== VERSION || !Number.isSafeInteger(value.allTimeExecutions) || value.allTimeExecutions < 0 ||
+      !isObject(value.allUsers) || !isObject(value.profiles) || !isObject(value.access) || !isObject(value.buckets)) {
     throw new Error('Execution analytics file has an invalid structure');
   }
+  for (const name of ['free', 'premium', 'unknown']) {
+    if (!Number.isSafeInteger(value.access[name]) || value.access[name] < 0) throw new Error('Execution analytics access totals are invalid');
+  }
   for (const period of PERIODS) {
-    if (!object(value.buckets[period])) throw new Error('Execution analytics bucket is missing: ' + period);
-    for (const bucket of Object.values(value.buckets[period])) if (!validBucket(bucket)) throw new Error('Execution analytics bucket is invalid: ' + period);
+    if (!isObject(value.buckets[period])) throw new Error('Execution analytics bucket is missing: ' + period);
+    for (const bucket of Object.values(value.buckets[period])) {
+      if (!isObject(bucket) || !Number.isSafeInteger(bucket.executions) || bucket.executions < 0 || !isObject(bucket.users)) {
+        throw new Error('Execution analytics bucket is invalid: ' + period);
+      }
+    }
   }
   return value;
 };
@@ -43,8 +112,8 @@ const load = () => {
 };
 
 let state = load();
-let flushTimer = null;
 let dirty = false;
+let flushTimer = null;
 
 const writeNow = () => {
   if (!dirty) return;
@@ -54,7 +123,6 @@ const writeNow = () => {
   fs.renameSync(temp, STATS_FILE);
   dirty = false;
 };
-
 const scheduleWrite = () => {
   dirty = true;
   if (flushTimer) return;
@@ -66,93 +134,171 @@ const scheduleWrite = () => {
   if (typeof flushTimer.unref === 'function') flushTimer.unref();
 };
 
-const pad = value => String(value).padStart(2, '0');
-const hourKey = date => date.getUTCFullYear() + '-' + pad(date.getUTCMonth() + 1) + '-' + pad(date.getUTCDate()) + 'T' + pad(date.getUTCHours());
-const dayKey = date => date.getUTCFullYear() + '-' + pad(date.getUTCMonth() + 1) + '-' + pad(date.getUTCDate());
-const monthKey = date => date.getUTCFullYear() + '-' + pad(date.getUTCMonth() + 1);
-const weekStart = date => {
-  const result = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
-  const weekday = result.getUTCDay() || 7;
-  result.setUTCDate(result.getUTCDate() - weekday + 1);
-  return result;
-};
-const weekKey = date => 'W:' + dayKey(weekStart(date));
-const keyFor = (period, date) => period === 'hourly' ? hourKey(date) : period === 'daily' ? dayKey(date) : period === 'weekly' ? weekKey(date) : monthKey(date);
-
-const startOf = (period, date) => {
-  if (period === 'hourly') return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), date.getUTCHours()));
-  if (period === 'daily') return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
-  if (period === 'weekly') return weekStart(date);
-  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1));
-};
-const shift = (period, date, amount) => {
-  const result = new Date(date);
-  if (period === 'hourly') result.setUTCHours(result.getUTCHours() + amount);
-  else if (period === 'daily') result.setUTCDate(result.getUTCDate() + amount);
-  else if (period === 'weekly') result.setUTCDate(result.getUTCDate() + (amount * 7));
-  else result.setUTCMonth(result.getUTCMonth() + amount);
-  return result;
-};
-const labelFor = (period, date) => {
-  if (period === 'hourly') return pad(date.getUTCHours()) + ':00';
-  if (period === 'daily') return pad(date.getUTCDate()) + '/' + pad(date.getUTCMonth() + 1);
-  if (period === 'weekly') return dayKey(date);
-  return monthKey(date);
-};
-
-const userHash = value => /^\d{1,20}$/.test(String(value || ''))
-  ? crypto.createHash('sha256').update('aetherv2-user\0' + String(value)).digest('hex').slice(0, 32)
-  : null;
-
 const prune = period => {
-  const entries = Object.keys(state.buckets[period]).sort();
-  const remove = Math.max(0, entries.length - RETENTION[period]);
-  for (let index = 0; index < remove; index += 1) delete state.buckets[period][entries[index]];
+  const keys = Object.keys(state.buckets[period]).sort();
+  const count = Math.max(0, keys.length - RETENTION[period]);
+  for (let index = 0; index < count; index += 1) delete state.buckets[period][keys[index]];
 };
 
-const recordExecution = async input => {
+const profileFor = input => {
+  const id = userHash(input && input.userId);
+  if (!id) return {id: null, profile: null};
+  let profile = state.profiles[id];
+  if (!isObject(profile)) {
+    profile = {
+      userId: String(input.userId),
+      username: null,
+      executions: 0,
+      freeExecutions: 0,
+      premiumExecutions: 0,
+      unknownExecutions: 0,
+      sessions: 0,
+      trackedSeconds: 0,
+      firstSeenAt: null,
+      lastSeenAt: null,
+      lastHeartbeatAt: null,
+      lastAccess: 'unknown',
+      lastPlaceId: null
+    };
+    state.profiles[id] = profile;
+  }
+  const username = validUsername(input.username);
+  if (username) profile.username = username;
+  const placeId = validPlaceId(input.placeId);
+  if (placeId) profile.lastPlaceId = placeId;
+  return {id, profile};
+};
+
+const addLaunch = input => {
   const now = new Date();
-  const hashedUser = userHash(input && input.userId);
+  const access = validAccess(input && input.access);
+  const {id, profile} = profileFor(input || {});
   state.allTimeExecutions += 1;
+  state.access[access] += 1;
   state.firstSeenAt ||= now.toISOString();
   state.lastSeenAt = now.toISOString();
-  if (hashedUser) state.allUsers[hashedUser] = true;
-
+  if (id) state.allUsers[id] = true;
+  if (profile) {
+    profile.executions += 1;
+    if (access === 'premium') profile.premiumExecutions += 1;
+    else if (access === 'free') profile.freeExecutions += 1;
+    else profile.unknownExecutions += 1;
+    profile.firstSeenAt ||= now.toISOString();
+    profile.lastSeenAt = now.toISOString();
+    if (access !== 'unknown') profile.lastAccess = access;
+  }
   for (const period of PERIODS) {
     const key = keyFor(period, now);
     const bucket = state.buckets[period][key] || {executions: 0, users: {}};
     bucket.executions += 1;
-    if (hashedUser) bucket.users[hashedUser] = true;
+    if (id) bucket.users[id] = true;
     state.buckets[period][key] = bucket;
     prune(period);
   }
   scheduleWrite();
-  return {accepted: true, uniqueKnown: Boolean(hashedUser)};
+  return {accepted: true, event: 'execution', profileId: id, uniqueKnown: Boolean(id)};
 };
 
-const bucketCount = bucket => ({
-  executions: bucket ? bucket.executions : 0,
-  unique: bucket ? Object.keys(bucket.users).length : 0
+const classifyPending = (profile, access) => {
+  if (!profile || access === 'unknown' || profile.unknownExecutions <= 0 || state.access.unknown <= 0) return false;
+  profile.unknownExecutions -= 1;
+  state.access.unknown -= 1;
+  if (access === 'premium') profile.premiumExecutions += 1;
+  else profile.freeExecutions += 1;
+  state.access[access] += 1;
+  return true;
+};
+
+const addHeartbeat = input => {
+  const now = Date.now();
+  const sessionId = validSessionId(input && input.sessionId);
+  const access = validAccess(input && input.access) === 'premium' ? 'premium' : 'free';
+  const {id, profile} = profileFor(input || {});
+  if (!id || !profile || !sessionId) return {accepted: false, event: 'heartbeat', reason: 'identity-or-session-missing'};
+  const runtimeKey = id + ':' + sessionId;
+  let session = runtimeSessions.get(runtimeKey);
+  if (!session) {
+    session = {lastAt: now, access};
+    runtimeSessions.set(runtimeKey, session);
+    profile.sessions += 1;
+    classifyPending(profile, access);
+  } else {
+    const delta = Math.max(0, Math.min(MAX_HEARTBEAT_DELTA_SECONDS, (now - session.lastAt) / 1000));
+    if (delta > 0) profile.trackedSeconds += delta;
+    session.lastAt = now;
+    session.access = access;
+  }
+  profile.lastAccess = access;
+  profile.lastHeartbeatAt = new Date(now).toISOString();
+  profile.lastSeenAt = profile.lastHeartbeatAt;
+  state.lastSeenAt = profile.lastHeartbeatAt;
+  if (runtimeSessions.size > 10000) {
+    const cutoff = now - ACTIVE_WINDOW_MS * 4;
+    for (const [key, value] of runtimeSessions) if (value.lastAt < cutoff) runtimeSessions.delete(key);
+  }
+  scheduleWrite();
+  return {accepted: true, event: 'heartbeat', profileId: id};
+};
+
+const recordExecution = async input => String(input && input.event || 'execution').toLowerCase() === 'heartbeat'
+  ? addHeartbeat(input || {})
+  : addLaunch(input || {});
+
+const bucketCount = bucket => ({executions: bucket ? bucket.executions : 0, unique: bucket ? Object.keys(bucket.users).length : 0});
+const publicProfile = (id, profile) => ({
+  profileId: id,
+  userId: String(profile.userId),
+  username: validUsername(profile.username),
+  executions: Number(profile.executions) || 0,
+  freeExecutions: Number(profile.freeExecutions) || 0,
+  premiumExecutions: Number(profile.premiumExecutions) || 0,
+  unknownExecutions: Number(profile.unknownExecutions) || 0,
+  sessions: Number(profile.sessions) || 0,
+  trackedSeconds: Math.max(0, Math.round(Number(profile.trackedSeconds) || 0)),
+  firstSeenAt: profile.firstSeenAt || null,
+  lastSeenAt: profile.lastSeenAt || null,
+  lastHeartbeatAt: profile.lastHeartbeatAt || null,
+  lastAccess: validAccess(profile.lastAccess),
+  lastPlaceId: validPlaceId(profile.lastPlaceId),
+  active: Boolean(profile.lastHeartbeatAt && Date.now() - Date.parse(profile.lastHeartbeatAt) <= ACTIVE_WINDOW_MS)
 });
 
 const summary = () => {
   const now = new Date();
+  const profiles = Object.entries(state.profiles).map(([id, profile]) => publicProfile(id, profile));
   return {
     hourly: bucketCount(state.buckets.hourly[keyFor('hourly', now)]),
     daily: bucketCount(state.buckets.daily[keyFor('daily', now)]),
     weekly: bucketCount(state.buckets.weekly[keyFor('weekly', now)]),
     monthly: bucketCount(state.buckets.monthly[keyFor('monthly', now)]),
     allTime: {executions: state.allTimeExecutions, unique: Object.keys(state.allUsers).length},
+    freeExecutions: state.access.free,
+    premiumExecutions: state.access.premium,
+    unknownExecutions: state.access.unknown,
+    activeUsers: profiles.filter(profile => profile.active).length,
+    trackedSeconds: profiles.reduce((sum, profile) => sum + profile.trackedSeconds, 0),
     firstSeenAt: state.firstSeenAt,
     lastSeenAt: state.lastSeenAt,
     timezone: 'UTC'
   };
 };
 
-const series = (period, metric = 'executions') => {
-  if (!PERIODS.has(period)) throw new Error('Unknown analytics period');
-  if (!METRICS.has(metric)) throw new Error('Unknown analytics metric');
-  const count = SERIES_LENGTHS[period];
+const listUsers = ({page = 0, pageSize = 8} = {}) => {
+  const size = Math.max(1, Math.min(25, Number(pageSize) || 8));
+  const users = Object.entries(state.profiles)
+    .map(([id, profile]) => publicProfile(id, profile))
+    .sort((left, right) => Date.parse(right.lastSeenAt || 0) - Date.parse(left.lastSeenAt || 0) || right.executions - left.executions);
+  const pageCount = Math.max(1, Math.ceil(users.length / size));
+  const selected = Math.max(0, Math.min(Number(page) || 0, pageCount - 1));
+  return {users: users.slice(selected * size, (selected + 1) * size), total: users.length, page: selected, pageCount};
+};
+const getUser = id => /^[a-f0-9]{32}$/.test(String(id || '')) && state.profiles[id] ? publicProfile(id, state.profiles[id]) : null;
+
+const normalSeries = (period, metric) => {
+  const lengths = {hourly: 24, daily: 30, weekly: 12, monthly: 12};
+  if (!Object.hasOwn(lengths, period)) throw new Error('Unknown analytics period');
+  if (!['executions', 'unique'].includes(metric)) throw new Error('Unknown analytics metric');
+  const count = lengths[period];
   const end = startOf(period, new Date());
   const values = [];
   for (let index = count - 1; index >= 0; index -= 1) {
@@ -166,6 +312,33 @@ const series = (period, metric = 'executions') => {
   }
   return values;
 };
+
+const dailySeries = (range, metric) => {
+  if (!['executions', 'unique'].includes(metric)) throw new Error('Unknown analytics metric');
+  const today = startOf('daily', new Date());
+  let days = range === 'all' ? null : Number(String(range).replace(/d$/, ''));
+  if (range !== 'all' && ![7, 30, 90].includes(days)) throw new Error('Unknown daily graph range');
+  if (range === 'all') {
+    const earliestBucket = Object.keys(state.buckets.daily).sort()[0];
+    const start = earliestBucket
+      ? new Date(earliestBucket + 'T00:00:00Z')
+      : state.firstSeenAt
+        ? startOf('daily', new Date(state.firstSeenAt))
+        : today;
+    days = Math.max(1, Math.floor((today - start) / 86400000) + 1);
+  }
+  const values = [];
+  for (let index = days - 1; index >= 0; index -= 1) {
+    const date = shift('daily', today, -index);
+    const key = dayKey(date);
+    const bucket = state.buckets.daily[key];
+    values.push({key, label: labelFor('daily', date), value: metric === 'executions' ? (bucket ? bucket.executions : 0) : (bucket ? Object.keys(bucket.users).length : 0)});
+  }
+  return values;
+};
+const series = (period, metric = 'executions') => ['7d', '30d', '90d', 'all'].includes(period)
+  ? dailySeries(period, metric)
+  : normalSeries(period, metric);
 
 const crcTable = (() => {
   const table = new Uint32Array(256);
@@ -214,7 +387,8 @@ const renderGraph = (period, metric = 'executions') => {
     }
   };
   fill([24, 25, 31, 255]);
-  const chartWidth = width - left - right, chartHeight = height - top - bottom;
+  const chartWidth = width - left - right;
+  const chartHeight = height - top - bottom;
   for (let grid = 0; grid <= 4; grid += 1) {
     const y = Math.round(top + chartHeight * grid / 4);
     for (let x = left; x < width - right; x += 1) set(x, y, [55, 57, 68, 255]);
@@ -224,15 +398,20 @@ const renderGraph = (period, metric = 'executions') => {
     x: left + (points.length === 1 ? 0 : chartWidth * index / (points.length - 1)),
     y: top + chartHeight - (point.value / maxValue) * chartHeight,
     value: point.value,
+    key: point.key,
     label: point.label
   }));
   for (let index = 1; index < coordinates.length; index += 1) {
     line(coordinates[index - 1].x, coordinates[index - 1].y, coordinates[index].x, coordinates[index].y, [190, 115, 255, 255]);
   }
-  for (const point of coordinates) {
-    for (let oy = -2; oy <= 2; oy += 1) for (let ox = -2; ox <= 2; ox += 1) if ((ox * ox) + (oy * oy) <= 5) set(Math.round(point.x) + ox, Math.round(point.y) + oy, [238, 222, 255, 255]);
+  const markerStride = Math.max(1, Math.ceil(coordinates.length / 180));
+  for (let index = 0; index < coordinates.length; index += markerStride) {
+    const point = coordinates[index];
+    for (let oy = -2; oy <= 2; oy += 1) for (let ox = -2; ox <= 2; ox += 1) {
+      if (ox * ox + oy * oy <= 5) set(Math.round(point.x) + ox, Math.round(point.y) + oy, [238, 222, 255, 255]);
+    }
+    for (let y = height - bottom + 2; y < height - bottom + 7; y += 1) set(Math.round(point.x), y, [105, 107, 124, 255]);
   }
-
   const raw = Buffer.alloc((width * 4 + 1) * height);
   for (let y = 0; y < height; y += 1) {
     const row = y * (width * 4 + 1);
@@ -241,18 +420,21 @@ const renderGraph = (period, metric = 'executions') => {
   }
   const ihdr = Buffer.alloc(13);
   ihdr.writeUInt32BE(width, 0); ihdr.writeUInt32BE(height, 4);
-  ihdr[8] = 8; ihdr[9] = 6; ihdr[10] = 0; ihdr[11] = 0; ihdr[12] = 0;
-  const buffer = Buffer.concat([
-    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
-    pngChunk('IHDR', ihdr),
-    pngChunk('IDAT', zlib.deflateSync(raw, {level: 9})),
-    pngChunk('IEND', Buffer.alloc(0))
-  ]);
-  return {buffer, points, maxValue};
+  ihdr[8] = 8; ihdr[9] = 6;
+  return {
+    buffer: Buffer.concat([
+      Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+      pngChunk('IHDR', ihdr),
+      pngChunk('IDAT', zlib.deflateSync(raw, {level: 9})),
+      pngChunk('IEND', Buffer.alloc(0))
+    ]),
+    points,
+    maxValue
+  };
 };
 
 const flush = () => writeNow();
 process.once('beforeExit', flush);
 process.once('SIGTERM', () => { try { flush(); } finally { process.exit(0); } });
 
-module.exports = {recordExecution, summary, series, renderGraph, flush, STATS_FILE, SERIES_LENGTHS};
+module.exports = {recordExecution, summary, series, renderGraph, listUsers, getUser, flush, STATS_FILE, ACTIVE_WINDOW_MS};
