@@ -1127,6 +1127,9 @@ function vape:BlurCheck()
 		blurfocus.Name = randomString()
 		blurfocus.NearIntensity = 1
 		blurfocus.Parent = lighting
+		self.BlurEffects = self.BlurEffects or {}
+		table.insert(self.BlurEffects, blureffect)
+		table.insert(self.BlurEffects, blurfocus)
 	end
 
 	blureffect.Enabled = true
@@ -1675,7 +1678,7 @@ function vape:LoadGUI()
 	toolblur = addBlur(tooltip)
 	addCorner(tooltip)
 	scale = Instance.new('UIScale')
-	scale.Scale = math.max(gui.AbsoluteSize.X / 1920, 0.4)
+	scale.Scale = math.max(gui.AbsoluteSize.X / 1920, inputService:GetPlatform() == Enum.Platform.OSX and 1 or 0.4)
 	scale.Parent = scaledgui
 	vape.guiscale = scale
 	scaledgui.Size = UDim2.fromScale(1 / scale.Scale, 1 / scale.Scale)
@@ -1710,6 +1713,11 @@ function vape:LoadGUI()
 		Name = 'Inventory',
 		Icon = getvapeasset('catsix/assets/new/inventory.png'),
 		Size = UDim2.fromOffset(15, 14)
+	})
+	vape:CreateCategory({
+		Name = 'Kits',
+		Icon = getvapeasset('catsix/assets/new/friends.png'),
+		Size = UDim2.fromOffset(17, 16)
 	})
 	vape.Categories.Main:CreateDivider({
 		Text = 'misc'
@@ -1844,19 +1852,6 @@ function vape:LoadGUI()
 		NoButton = true
 	})
 	vape.Categories.Favorites.Paint = vape.PaintFavorites
-	
-	--[[
-		Kits
-	]]
-	vape:CreateCategory({
-		Name = 'Kits',
-		Icon = getvapeasset('catsix/assets/new/friends.png'),
-		Size = UDim2.fromOffset(17, 16),
-		Position = UDim2.fromOffset(1180, 42),
-		Expanded = true,
-		NoButton = true
-	})
-	vape.Categories.Kits.Paint = vape.PaintKits
 	
 	--[[
 		Public Profiles
@@ -2067,7 +2062,7 @@ function vape:LoadGUI()
 		Function = function(callback)
 			ScaleSlider.Object.Visible = not callback
 			if callback then
-				scale.Scale = math.max(gui.AbsoluteSize.X / 1920, 0.4)
+				scale.Scale = math.max(gui.AbsoluteSize.X / 1920, inputService:GetPlatform() == Enum.Platform.OSX and 1 or 0.4)
 			else
 				scale.Scale = ScaleSlider.Value
 			end
@@ -3211,7 +3206,7 @@ function vape:LoadGUI()
 		end
 	
 		if vape.Scale.Enabled then
-			scale.Scale = math.max(gui.AbsoluteSize.X / 1920, 0.4)
+			scale.Scale = math.max(gui.AbsoluteSize.X / 1920, inputService:GetPlatform() == Enum.Platform.OSX and 1 or 0.4)
 		end
 	end))
 	
@@ -4090,8 +4085,12 @@ components = {
 				self:Expand()
 			end
 		
-			if self.Standalone ~= nil and data.Standalone then
-				self:SetStandalone(true)
+			if self.Standalone ~= nil then
+				if data.Standalone then
+					self:SetStandalone(true)
+				elseif data.StandaloneSet and self.Standalone then
+					self:SetStandalone(false)
+				end
 			end
 		
 			if data.Position then
@@ -4209,12 +4208,14 @@ components = {
 					X = window.Position.X.Offset,
 					Y = window.Position.Y.Offset
 				},
-				Standalone = self.Standalone
+				Standalone = self.Standalone,
+				StandaloneSet = self.StandaloneSet
 			}
 		end
 		
-		function component:SetStandalone(state)
+		function component:SetStandalone(state, byUser)
 			self.Standalone = state
+			self.StandaloneSet = self.StandaloneSet or byUser
 			window.Visible = state
 		
 			if self.Paint then
@@ -5331,7 +5332,7 @@ components = {
 				elseif opt.Type == 'TextList' then
 					return sameList(opt.List, opt.Default) and sameList(opt.ListEnabled, opt.Default)
 				elseif opt.Type == 'Targets' then
-					return opt.Players.Enabled == opt.Default.Players and opt.NPCs.Enabled == opt.Default.NPCs and opt.Invisible.Enabled == opt.Default.Invisible and opt.Walls.Enabled == opt.Default.Walls
+					return opt.Players.Enabled == opt.Default.Players and opt.NPCs.Enabled == opt.Default.NPCs and opt.Invisible.Enabled == opt.Default.Invisible and opt.Walls.Enabled == opt.Default.Walls and opt.Priority.Value == opt.Default.Priority
 				end
 		
 				return true
@@ -8375,6 +8376,7 @@ components = {
 		local dashholder
 		local editor
 		local editorpane
+		local connections = {}
 		local objectstroke
 		
 		local function addDash(x, y, width, height)
@@ -8766,6 +8768,18 @@ components = {
 		
 			editorpane.Size = UDim2.fromOffset(220, math.clamp(windowlist.AbsoluteContentSize.Y / scale.Scale, 0, 360) + 45)
 		end
+		function component:Destroy()
+			for _, connection in connections do
+				connection:Disconnect()
+			end
+			table.clear(connections)
+		
+			for _, object in {settingschildren, shadow} do
+				if typeof(object) == 'Instance' then
+					object:Destroy()
+				end
+			end
+		end
 		function component:Save(data)
 			data[props.Name] = {
 				Enabled = self.Enabled,
@@ -8865,7 +8879,16 @@ components = {
 			end
 		
 			vape:QueueSave()
-			task.spawn(props.Function, self.Enabled)
+			task.spawn(function()
+				local success, err = xpcall(props.Function, function(err)
+					return `{err}\n{debug.traceback(nil, 2)}`
+				end, self.Enabled)
+		
+				if not success then
+					warn(`[catvape] {props.Name} errored turning {self.Enabled and 'on' or 'off'} : {err}`)
+					vape:CreateNotification('Vape', `{props.Name} errored, check your console`, 10, 'alert')
+				end
+			end)
 		end
 		
 		for index, comp in components do
@@ -8874,11 +8897,11 @@ components = {
 			end
 		end
 		
-		api.Window:GetPropertyChangedSignal('Visible'):Connect(function()
+		table.insert(connections, api.Window:GetPropertyChangedSignal('Visible'):Connect(function()
 			if not api.Window.Visible then
 				component:Select(false)
 			end
-		end)
+		end))
 		
 		back.MouseEnter:Connect(function()
 			back.ImageColor3 = uipallet.Text
@@ -8979,14 +9002,15 @@ components = {
 			vape.LegitVisible = shadow.Visible
 		end)
 		
-		windowlist:GetPropertyChangedSignal('AbsoluteContentSize'):Connect(function()
+		table.insert(connections, windowlist:GetPropertyChangedSignal('AbsoluteContentSize'):Connect(function()
+			if not component.RefreshSettings then return end
 			if vape.ThreadFix then
 				setthreadidentity(8)
 			end
 		
 			settingschildren.CanvasSize = UDim2.fromOffset(0, windowlist.AbsoluteContentSize.Y / scale.Scale)
 			component:RefreshSettings()
-		end)
+		end))
 		
 		api.Modules[props.Name] = component
 		api:Refresh()
@@ -9388,17 +9412,17 @@ components = {
 			props.Tags[i] = v:lower()
 			local indicator = Instance.new('TextLabel')
 			indicator.BackgroundColor3 = Color3.new(1, 1, 1)
-			indicator.FontFace = uipallet.FontBold
+			indicator.FontFace = uipallet.FontSemiBold
 			indicator.LayoutOrder = i - 1
 			indicator.Name = v
-			indicator.Size = UDim2.fromOffset(getfontbounds(removeTags(v), 12, uipallet.FontBold).X + 8, 16)
+			indicator.Size = UDim2.fromOffset(getfontbounds(removeTags(v), 11, uipallet.FontSemiBold).X + 10, 15)
 			indicator.Text = v
 			indicator.TextColor3 = Color3.new()
-			indicator.TextSize = 12
+			indicator.TextSize = 11
 			indicator.TextTransparency = 1
 			indicator.Visible = v ~= 'MATCHED'
 			indicator.Parent = indicators
-			addCorner(indicator, UDim.new(0, 3))
+			addCorner(indicator, UDim.new(0, 4))
 			local text = indicator:Clone()
 			text.AnchorPoint = Vector2.new()
 			text.BackgroundTransparency = 1
@@ -9671,7 +9695,16 @@ components = {
 			end
 		
 			vape:QueueSave()
-			task.spawn(props.Function, self.Enabled)
+			task.spawn(function()
+				local success, err = xpcall(props.Function, function(err)
+					return `{err}\n{debug.traceback(nil, 2)}`
+				end, self.Enabled)
+		
+				if not success then
+					warn(`[catvape] {props.Name} errored turning {self.Enabled and 'on' or 'off'} : {err}`)
+					vape:CreateNotification('Vape', `{props.Name} errored, check your console`, 10, 'alert')
+				end
+			end)
 		end
 		
 		for index, comp in components do
@@ -10142,25 +10175,6 @@ components = {
 		favoritesicon.ScaleType = Enum.ScaleType.Fit
 		favoritesicon.Size = UDim2.fromOffset(12, 11)
 		favoritesicon.Parent = favorites
-		local kits = Instance.new('ImageButton')
-		kits.AutoButtonColor = false
-		kits.BackgroundTransparency = 1
-		kits.Name = 'Kits'
-		kits.Position = UDim2.fromOffset(6, 7)
-		kits.Size = UDim2.fromOffset(24, 24)
-		kits.Parent = bar
-		addCorner(kits, UDim.new(1, 0))
-		addTooltip(kits, 'Kits')
-		local kitsicon = Instance.new('ImageLabel')
-		kitsicon.AnchorPoint = Vector2.new(0.5, 0.5)
-		kitsicon.BackgroundTransparency = 1
-		kitsicon.Image = getvapeasset('catsix/assets/new/friends.png')
-		kitsicon.ImageColor3 = vapecolors.Icon
-		kitsicon.Name = 'Icon'
-		kitsicon.Position = UDim2.fromScale(0.5, 0.5)
-		kitsicon.ScaleType = Enum.ScaleType.Fit
-		kitsicon.Size = UDim2.fromOffset(13, 12)
-		kitsicon.Parent = kits
 		local shadow = Instance.new('TextButton')
 		shadow.AutoButtonColor = false
 		shadow.BackgroundColor3 = Color3.new()
@@ -10223,13 +10237,7 @@ components = {
 			favoritesicon.ImageColor3 = (category and category.Standalone) and vapecolors.Favorite or vapecolors.Icon
 		end
 		
-		local function paintKits()
-			local category = vape.Categories.Kits
-			kitsicon.ImageColor3 = (category and category.Standalone) and Color3.fromHSV(vape.GUIColor.Hue, vape.GUIColor.Sat, vape.GUIColor.Value) or vapecolors.Icon
-		end
-		
 		vape.PaintFavorites = paintFavorites
-		vape.PaintKits = paintKits
 		
 		button.MouseEnter:Connect(function()
 			button.ImageColor3 = uipallet.Text
@@ -10289,21 +10297,6 @@ components = {
 		end)
 		
 		favorites.MouseLeave:Connect(paintFavorites)
-		
-		kits.MouseButton1Click:Connect(function()
-			local category = vape.Categories.Kits
-			if not category then return end
-		
-			category:SetStandalone(not category.Standalone)
-			vape:QueueSave()
-		end)
-		
-		kits.MouseEnter:Connect(function()
-			local category = vape.Categories.Kits
-			kitsicon.ImageColor3 = (category and category.Standalone) and color.Light(Color3.fromHSV(vape.GUIColor.Hue, vape.GUIColor.Sat, vape.GUIColor.Value), 0.25) or vapecolors.IconHover
-		end)
-		
-		kits.MouseLeave:Connect(paintKits)
 		
 		shadow.MouseButton1Click:Connect(function()
 			tween:Tween(shadow, uipallet.Tween, {
@@ -12724,7 +12717,8 @@ components = {
 				Players = props.Players and true or false,
 				NPCs = props.NPCs and true or false,
 				Invisible = props.Invisible and true or false,
-				Walls = props.Walls and true or false
+				Walls = props.Walls and true or false,
+				Priority = 'Players'
 			},
 			Index = getTableSize(api.Options),
 			Type = 'Targets'
@@ -12862,6 +12856,10 @@ components = {
 			if self.Walls.Enabled ~= data.Walls then
 				self.Walls:Toggle()
 			end
+		
+			if data.Priority and self.Priority.Value ~= data.Priority then
+				self.Priority:SetValue(data.Priority)
+			end
 		end
 		
 		function component:Save(data)
@@ -12869,7 +12867,8 @@ components = {
 				Players = self.Players.Enabled,
 				NPCs = self.NPCs.Enabled,
 				Invisible = self.Invisible.Enabled,
-				Walls = self.Walls.Enabled
+				Walls = self.Walls.Enabled,
+				Priority = self.Priority.Value
 			}
 		end
 		
@@ -12945,6 +12944,19 @@ components = {
 			end
 		}, targetswindow, {Options = {}})
 		component.Walls.Object.Position = UDim2.fromOffset(0, 111)
+		
+		component.Priority = components.Dropdown({
+			Name = 'Priority',
+			List = {'Players', 'NPCs', 'None', 'Closest', 'Farthest', 'Lowest health', 'Highest health', 'Crosshair'},
+			Function = props.Function,
+			Tooltip = 'Which target gets picked first when more than one is in range\nPlayers / NPCs - that kind wins, the modules own sorting breaks the tie\nClosest / Farthest - by range\nLowest / Highest health - finish someone off, or go for the healthy one\nCrosshair - whoever is nearest the middle of your screen'
+		}, targetswindow, {Options = {}})
+		component.Priority.Object.Position = UDim2.fromOffset(0, 141)
+		targetswindow.Size = UDim2.fromOffset(220, 145 + component.Priority.Object.Size.Y.Offset)
+		
+		component.Priority.Object:GetPropertyChangedSignal('Size'):Connect(function()
+			targetswindow.Size = UDim2.fromOffset(220, 145 + component.Priority.Object.Size.Y.Offset)
+		end)
 		
 		if props.Players then
 			component.Players:Toggle()
@@ -13920,4 +13932,16 @@ vape.Components = setmetatable(components, {
 
 vape:LoadGUI()
 
-return vape, deferLoad
+local deferhandout = deferLoad
+local function runPremium(source, license)
+	local chunk, err = loadstring(source, 'premium')
+	if not chunk then
+		error(err or 'unknown')
+	end
+
+	local claim = deferhandout
+	deferhandout = nil
+	return chunk(license, claim)
+end
+
+return vape, runPremium
