@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Workflow helper for the pre-existing Discord selector syntax issue.
 from pathlib import Path
 
 path = Path(__file__).with_name('apply-bedwars-refactor.py')
