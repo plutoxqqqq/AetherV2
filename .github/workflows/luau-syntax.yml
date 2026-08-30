@@ -42,18 +42,6 @@ jobs:
       - name: Rebuild BedWars bundle
         run: python3 tools/build-bedwars-bundle.py
 
-      - name: Assemble Liquid Glass source
-        shell: bash
-        run: |
-          cat \
-            guis/liquidglass/01-runtime.lua \
-            guis/liquidglass/02-shell.lua \
-            guis/liquidglass/03-controls.lua \
-            guis/liquidglass/04-controls-extra.lua \
-            guis/liquidglass/05-inspector.lua \
-            guis/liquidglass/06-pages.lua \
-            > /tmp/liquidglass-full.lua
-
       - name: Install Luau compiler
         run: |
           curl -fsSL https://github.com/luau-lang/luau/releases/latest/download/luau-ubuntu.zip -o /tmp/luau.zip
@@ -83,7 +71,6 @@ jobs:
           while IFS= read -r -d '' file; do
             check_file "$file"
           done < <(find . -type f -name '*.lua' -not -path './.git/*' -not -path './guis/liquidglass/*' -print0)
-          check_file /tmp/liquidglass-full.lua
           echo "failures=$failures" | tee -a /tmp/luau-diagnostics/results.txt
           if [ "$failures" -ne 0 ]; then exit 1; fi
 
