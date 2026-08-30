@@ -55,8 +55,8 @@
       "username": "chadmcthundder",
       "userId": "11416977899",
       "firstUsedAt": "2026-08-30T20:51:07.194Z",
-      "lastUsedAt": "2026-08-30T20:51:07.194Z",
-      "uses": 1
+      "lastUsedAt": "2026-08-30T21:13:23.560Z",
+      "uses": 2
     }
   },
   "keys": {
@@ -924,6 +924,16 @@
       "username": "chadmcthundder",
       "userId": "11416977899",
       "uses": 1
+    },
+    {
+      "at": "2026-08-30T21:13:23.560Z",
+      "action": "use",
+      "keyId": "fdb0ab51fb4a30bcd59ca04b81e7e59683d007707990434f9e01c4e34ab2f1f2",
+      "actor": "loader",
+      "operationId": "01fdd40d-9d60-4887-a69b-b12274f3c8be",
+      "username": "chadmcthundder",
+      "userId": "11416977899",
+      "uses": 2
     }
   ]
 }
