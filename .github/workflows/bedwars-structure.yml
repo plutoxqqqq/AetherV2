@@ -12,6 +12,9 @@ on:
       - games/6872274481/**
       - games/universal.lua
       - libraries/entity.lua
+      - init.lua
+      - main.lua
+      - guis/new.lua
   workflow_dispatch:
 
 permissions:
@@ -40,10 +43,14 @@ jobs:
         run: python tools/apply-aug30-unfinished.py
       - name: Apply verification fixes
         run: python tools/fix-aug30-verification.py
+      - name: Finish original movement/bootstrap fixes
+        run: python tools/finish-original-batch.py
       - name: Split final coupled runtime
         run: python tools/split-final-coupled-runtime.py
       - name: Normalize BedWars module layout
         run: python tools/normalize-bedwars-layout.py
+      - name: Finalize split layout
+        run: python tools/finalize-split-layout.py
       - name: Audit one-module-per-file structure
         run: python tools/audit-bedwars-modules.py
       - name: Rebuild BedWars runtime bundle
@@ -57,10 +64,10 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add games/6872274481.lua games/6872274481 games/universal.lua libraries/entity.lua backend init.lua guis/new.core.lua tools backend/README.md backend/package.json
+          git add games/6872274481.lua games/6872274481 games/universal.lua libraries/entity.lua backend init.lua main.lua guis/new.lua guis/new.core.lua tools backend/README.md backend/package.json
           if git diff --cached --quiet; then
             echo "No generated changes"
             exit 0
           fi
-          git commit -m "Finalize PR 172 BedWars module layout"
+          git commit -m "Finish original update fixes and split AutoWin runtime"
           git push origin HEAD:${{ github.ref_name }}
