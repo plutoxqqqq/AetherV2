@@ -70,11 +70,7 @@ local state = loadState()
 local isPremium = shared.AetherV2PremiumAuthorized == true
 	and type(shared.AetherV2PremiumToken) == 'string'
 	and shared.AetherV2PremiumToken ~= ''
-if not isPremium then
-	state.mode = 'Local'
-	state.activeCloudId = nil
-	state.selectedCloudId = nil
-end
+if not isPremium then state.mode = 'Local' end
 
 local function saveState()
 	ensureStateFolder()
@@ -114,7 +110,7 @@ local function cloudRequest(method, path, body, premiumRequired)
 		local ok, response = pcall(requestFunction, requestData)
 		if not ok then return nil, tostring(response) end
 		if type(response) ~= 'table' then return nil, 'Executor returned an invalid HTTP response' end
-		status = tonumber(response.StatusCode or response.Status or response.status_code or 0) or 0
+		status = tonumber(response.StatusCode or response.Status or response.status_code or 200) or 200
 		responseBody = response.Body or response.body or ''
 	else
 		if method ~= 'GET' then return nil, 'This executor does not expose HTTP request support for Cloud Config writes' end
@@ -134,13 +130,14 @@ end
 
 local originalSave = mainapi.Save
 local originalUninject = mainapi.Uninject
+local running = true
 local suppressDirty = false
 local dirty = false
 local lastObservedPayload
 local lastChangedAt = 0
 local lastUploadedAt = os.clock()
-local activeCloudId = state.activeCloudId
-local selectedCloudId = state.selectedCloudId
+local activeCloudId = isPremium and state.activeCloudId or nil
+local selectedCloudId = isPremium and state.selectedCloudId or nil
 local cloudConfigs = {}
 local cloudById = {}
 local cloudRows = {}
@@ -242,7 +239,7 @@ local function importLocalShare(code, requestedName, syncEnabled)
 end
 
 local function syncLocalRecord(key, record)
-	if type(record) ~= 'table' or record.enabled ~= true or tostring(record.placeId) ~= tostring(mainapi.Place) then return end
+	if not running or type(record) ~= 'table' or record.enabled ~= true or tostring(record.placeId) ~= tostring(mainapi.Place) then return end
 	local config, err = resolveShare(record.code)
 	if not config then
 		record.enabled = false
@@ -310,7 +307,7 @@ local function loadCloudConfig(id, quiet)
 end
 
 local function saveCloudConfig(id, quiet)
-	if not isPremium then return false end
+	if not isPremium or not running then return false end
 	local payload, payloadErr = serializeCurrent(true)
 	if not payload then
 		if not quiet then notify(payloadErr, true) end
@@ -338,6 +335,7 @@ local function saveCloudConfig(id, quiet)
 end
 
 local function flushAutosave(force)
+	if not running and not force then return false end
 	if not isPremium or not state.autoSave or not activeCloudId or mainapi.Profile ~= SHADOW_PROFILE then return false end
 	local payload = serializeCurrent(force == true)
 	if type(payload) == 'string' and payload ~= lastObservedPayload then
@@ -609,7 +607,7 @@ local importButton = remember(profiles:CreateButton({
 }), sharedControlObjects)
 
 local localSyncToggle = remember(profiles:CreateToggle({
-	Name = 'Sync to Copy',
+	Name = 'Local Sync to Copy',
 	Function = function(enabled)
 		if applyingLocalSyncToggle or mode ~= 'Local' then return end
 		local record = currentLocalSync()
@@ -718,7 +716,7 @@ local function rebuildCloudRows()
 end
 
 local function fetchCloudList()
-	if not isPremium then return false end
+	if not isPremium or not running then return false end
 	local response, err = cloudRequest('GET', '/cloud/configs?placeId='..urlEncode(mainapi.Place), nil, true)
 	if not response then
 		notify(err, true)
@@ -748,7 +746,7 @@ end
 
 local cloudAddButton = cloudAdd and cloudAdd:FindFirstChild('AddButton', true)
 local function createCloudFromCurrent()
-	if not isPremium then return end
+	if not isPremium or not running then return end
 	local name = cloudAddText and cloudAddText.Text:gsub('^%s*(.-)%s*$', '%1') or ''
 	if name == '' then return notify('Enter a cloud config name first', true) end
 	local payload, payloadErr = serializeCurrent(true)
@@ -773,6 +771,7 @@ local originalProfileChangeValue = profiles.ChangeValue
 profiles.ChangeValue = function(self, ...)
 	local results = table.pack(originalProfileChangeValue(self, ...))
 	task.defer(function()
+		if not running then return end
 		if applyMode then applyMode() end
 		if refreshLocalSyncToggle then refreshLocalSyncToggle() end
 		if mode == 'Cloud' then rebuildCloudRows() end
@@ -781,6 +780,7 @@ profiles.ChangeValue = function(self, ...)
 end
 
 applyMode = function()
+	if not running then return end
 	if not isPremium then mode = 'Local' end
 	state.mode = mode
 	if headerTitle then headerTitle.Text = mode == 'Cloud' and 'Cloud Configs' or 'Configs' end
@@ -814,7 +814,7 @@ end
 
 mainapi.Save = function(self, ...)
 	local results = table.pack(originalSave(self, ...))
-	if not suppressDirty and isPremium and state.autoSave and activeCloudId and self.Profile == SHADOW_PROFILE then
+	if running and not suppressDirty and isPremium and state.autoSave and activeCloudId and self.Profile == SHADOW_PROFILE then
 		local payload = serializeCurrent(false)
 		if type(payload) == 'string' and payload ~= lastObservedPayload then
 			lastObservedPayload = payload
@@ -828,13 +828,14 @@ end
 if type(originalUninject) == 'function' then
 	mainapi.Uninject = function(self, ...)
 		pcall(flushAutosave, true)
+		running = false
 		return originalUninject(self, ...)
 	end
 end
 
-if mainapi.Profile == SHADOW_PROFILE and activeCloudId then
+if isPremium and mainapi.Profile == SHADOW_PROFILE and activeCloudId then
 	lastObservedPayload = serializeCurrent(false)
-else
+elseif isPremium then
 	activeCloudId = nil
 	state.activeCloudId = nil
 end
@@ -846,8 +847,9 @@ if isPremium and mode == 'Cloud' then task.spawn(fetchCloudList) end
 -- dirty or a copied config is due for its five-minute sync check.
 task.spawn(function()
 	local lastLocalSync = 0
-	while mainapi do
+	while running do
 		task.wait(5)
+		if not running then break end
 		pcall(flushAutosave, false)
 		local now = os.clock()
 		if now - lastLocalSync >= LOCAL_SYNC_INTERVAL then
