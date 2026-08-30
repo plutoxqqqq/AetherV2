@@ -50,8 +50,6 @@ jobs:
             guis/liquidglass/04-controls-extra.lua \
             guis/liquidglass/05-inspector.lua \
             guis/liquidglass/06-pages.lua \
-            guis/liquidglass/07-actions-input.lua \
-            guis/liquidglass/08-finalize.lua \
             > /tmp/liquidglass-full.lua
 
       - name: Install Luau compiler
