@@ -6,6 +6,7 @@ on:
       - codex/split-bedwars-modules-analytics
       - codex/one-module-per-file-cleanup
       - codex/pr172-final-reconcile
+      - codex/merge-nofall-implementations
     paths:
       - .github/workflows/bedwars-structure.yml
       - tools/**
@@ -51,6 +52,8 @@ jobs:
         run: python tools/normalize-bedwars-layout.py
       - name: Finalize split layout
         run: python tools/finalize-split-layout.py
+      - name: Sync cv NoFallDamage Blatant behavior
+        run: python tools/sync-cv-nofall-blatant.py
       - name: Audit one-module-per-file structure
         run: python tools/audit-bedwars-modules.py
       - name: Rebuild BedWars runtime bundle
@@ -69,5 +72,5 @@ jobs:
             echo "No generated changes"
             exit 0
           fi
-          git commit -m "Finish original update fixes and split AutoWin runtime"
+          git commit -m "Match cv NoFallDamage Blatant behavior"
           git push origin HEAD:${{ github.ref_name }}
