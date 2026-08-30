@@ -5240,7 +5240,6 @@ end
 --[[AETHER_MODULE:exploits/YaminiExploit.lua]]
 --[[AETHER_MODULE:exploits/JadeExploit.lua]]
 --[[AETHER_MODULE:blatant/AntiHitBETA.lua]]
---[[AETHER_MODULE:blatant/NoFallDamageV2.lua]]
 --[[AETHER_MODULE:exploits/BalloonDisabler.lua]]
 --[[AETHER_MODULE:exploits/MultiAction.lua]]
 --[[AETHER_MODULE:kits/InfiniteSigrid.lua]]

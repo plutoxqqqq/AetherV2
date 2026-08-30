@@ -5663,97 +5663,163 @@ run(function()
         rakHook = nil
     end
 
-	local function setSettingsVisible()
-		local legit = Mode and Mode.Value == 'Legit'
-		if AnchorAttempts and AnchorAttempts.Object then AnchorAttempts.Object.Visible = false end
-		for _, option in {BlockClutch, TelepearlClutch, DaoClutch, JadeHammerClutch, VoidAxeClutch, Zephyr} do
-            if option and option.Object then
-                option.Object.Visible = legit
+    local cvStateConnections = {}
+    local v2Busy = false
+    local modeGeneration = 0
+
+    local function restoreCvStateConnections()
+        for _, connection in cvStateConnections do
+            pcall(function()
+                if connection.Enable then connection:Enable() end
+            end)
+        end
+        table.clear(cvStateConnections)
+    end
+
+    local function disableCvStateConnections(humanoid)
+        restoreCvStateConnections()
+        if not humanoid or type(getconnections) ~= 'function' then return end
+        local ok, connections = pcall(getconnections, humanoid.StateChanged)
+        if not ok or type(connections) ~= 'table' then return end
+        for _, connection in connections do
+            if connection and connection.Disable then
+                local disabled = pcall(connection.Disable, connection)
+                if disabled then table.insert(cvStateConnections, connection) end
             end
         end
-		if MinVelocity and MinVelocity.Object then
-			MinVelocity.Object.Visible = false
-		end
-		if FallThreshold and FallThreshold.Object then
-			FallThreshold.Object.Visible = false
-		end
-		if SpoofState and SpoofState.Object then
-			SpoofState.Object.Visible = false
-		end
-		if GroundDistance and GroundDistance.Object then
-			GroundDistance.Object.Visible = legit
-		end
-	end
+    end
 
-	NoFall = vape.Categories.Blatant:CreateModule({
-		Name = 'NoFallDamage',
-		Function = function(callback)
-			if callback then
-				-- Exact cv Blatant path.  Legit keeps the Aether clutch loop below;
-				-- this path deliberately owns its own previous-frame velocity.
-				if entitylib.isAlive and getconnections then
-					for _, connection in getconnections(entitylib.character.Humanoid.StateChanged) do
-						connection:Disable()
-					end
-				end
-				local blatantTracked = 0
-				local groundHit = bedwars.Handler:Get('GroundHit')
-				NoFall:Clean(runService.PostSimulation:Connect(function()
-					if Mode.Value == 'Blatant' and entitylib.isAlive and store.matchState == 1 and not store.infinitefly then
-						local root = entitylib.character.RootPart
-						local velocity = root.Velocity
-						if blatantTracked < -45 then
-							root.Velocity = Vector3.new(0, 2.5, 0)
-							entitylib.character.Humanoid:ChangeState(Enum.HumanoidStateType.Landed)
-							runService.PreRender:Wait()
-							root.Velocity = velocity
-							groundHit:Fire('SendToServer', nil, Vector3.new(0, blatantTracked, 0), workspace:GetServerTimeNow())
-						end
-						blatantTracked = velocity.Y
-					end
-				end))
+    local function startCvBlatant(generation)
+        if entitylib.isAlive then
+            disableCvStateConnections(entitylib.character.Humanoid)
+        end
 
-				NoFall:Clean(entitylib.Events.LocalAdded:Connect(function(ent)
-					local animator = ent.Humanoid:WaitForChild('Animator', 5)
-					if animator and NoFall.Enabled then
-						task.wait(0.5)
-						NoFall:Toggle()
-						NoFall:Toggle()
-					end
-				end))
+        local trackedVelocity = 0
+        local groundHit
+        pcall(function()
+            groundHit = bedwars.Handler:Get('GroundHit')
+        end)
 
-				repeat
-					local waitDelay = 0.1
-					local character, root, humanoid = validCharacter()
-                    if not character then
-                        -- No character to read: never leave the packet hook rewriting state for
-                        -- a fall that is no longer happening.
-                        spoofFall = false
+        NoFall:Clean(runService.PostSimulation:Connect(function()
+            if generation ~= modeGeneration or not NoFall.Enabled or Mode.Value ~= 'Blatant' then return end
+            if not entitylib.isAlive or store.matchState ~= 1 or store.infinitefly then return end
+
+            local root = entitylib.character.RootPart
+            local humanoid = entitylib.character.Humanoid
+            local velocity = root.Velocity
+            if trackedVelocity < -45 then
+                -- cv behaviour: briefly report a landed state, preserve the fall's previous
+                -- velocity, and settle the GroundHit record immediately.
+                root.Velocity = Vector3.new(0, 2.5, 0)
+                humanoid:ChangeState(Enum.HumanoidStateType.Landed)
+                runService.PreRender:Wait()
+                if generation == modeGeneration and NoFall.Enabled and Mode.Value == 'Blatant' and root.Parent then
+                    root.Velocity = velocity
+                    if groundHit then
+                        pcall(groundHit.Fire, groundHit, 'SendToServer', nil, Vector3.new(0, trackedVelocity, 0), workspace:GetServerTimeNow())
                     end
+                end
+            end
+            trackedVelocity = velocity.Y
+        end))
+
+        NoFall:Clean(entitylib.Events.LocalAdded:Connect(function(ent)
+            if generation ~= modeGeneration or not NoFall.Enabled or Mode.Value ~= 'Blatant' then return end
+            task.defer(function()
+                if generation == modeGeneration and NoFall.Enabled and Mode.Value == 'Blatant' then
+                    disableCvStateConnections(ent.Humanoid)
+                end
+            end)
+        end))
+    end
+
+    local function startV2(generation)
+        v2Busy = false
+        NoFall:Clean(runService.PostSimulation:Connect(function()
+            if v2Busy or generation ~= modeGeneration or not NoFall.Enabled or Mode.Value ~= 'V2' then return end
+            if not entitylib.isAlive or store.matchState ~= 1 or store.infinitefly then return end
+            local highJump = vape.Modules and vape.Modules.HighJump
+            if highJump and highJump.Enabled then return end
+
+            local root = entitylib.character.RootPart
+            local humanoid = entitylib.character.Humanoid
+            local velocity = root.AssemblyLinearVelocity
+            if velocity.Y >= -45 then return end
+
+            v2Busy = true
+            task.spawn(function()
+                local oldY = velocity.Y
+                if generation ~= modeGeneration or not NoFall.Enabled or Mode.Value ~= 'V2' or not root.Parent then
+                    v2Busy = false
+                    return
+                end
+
+                root.AssemblyLinearVelocity = Vector3.new(root.AssemblyLinearVelocity.X, 44, root.AssemblyLinearVelocity.Z)
+                pcall(humanoid.ChangeState, humanoid, Enum.HumanoidStateType.Landed)
+                runService.PreSimulation:Wait()
+
+                if generation == modeGeneration and NoFall.Enabled and Mode.Value == 'V2' and root.Parent then
+                    local current = root.AssemblyLinearVelocity
+                    root.AssemblyLinearVelocity = Vector3.new(current.X, oldY, current.Z)
+                end
+                v2Busy = false
+            end)
+        end))
+    end
+
+    local function setSettingsVisible()
+        local legit = Mode and Mode.Value == 'Legit'
+        if MinVelocity and MinVelocity.Object then MinVelocity.Object.Visible = legit end
+        if GroundDistance and GroundDistance.Object then GroundDistance.Object.Visible = legit end
+        if HealthCheck and HealthCheck.Object then HealthCheck.Object.Visible = legit end
+        if DamagePercent and DamagePercent.Object then DamagePercent.Object.Visible = legit end
+        for _, option in {BlockClutch, TelepearlClutch, DaoClutch, JadeHammerClutch, VoidAxeClutch, Zephyr} do
+            if option and option.Object then option.Object.Visible = legit end
+        end
+        -- Legacy experimental controls are intentionally hidden after the merge.
+        for _, option in {AnchorAttempts, FallThreshold, SpoofState} do
+            if option and option.Object then option.Object.Visible = false end
+        end
+    end
+
+    NoFall = vape.Categories.Blatant:CreateModule({
+        Name = 'NoFallDamage',
+        Function = function(callback)
+            modeGeneration += 1
+            local generation = modeGeneration
+
+            if callback then
+                restoreCvStateConnections()
+                v2Busy = false
+
+                if Mode.Value == 'Blatant' then
+                    startCvBlatant(generation)
+                elseif Mode.Value == 'V2' then
+                    startV2(generation)
+                end
+
+                repeat
+                    local waitDelay = 0.1
+                    local character, root, humanoid = validCharacter()
                     if character then
-                        local fall = updateTrackedFall(root, humanoid)
-						if humanoid.FloorMaterial ~= Enum.Material.Air then
+                        updateTrackedFall(root, humanoid)
+                        if humanoid.FloorMaterial ~= Enum.Material.Air then
                             usedPearl = false
                         elseif Mode.Value == 'Legit' then
                             local ground = getGround(root, character, HealthCheck and HealthCheck.Enabled and 300 or (GroundDistance and GroundDistance.Value or 30))
-                            -- Zephyr is now a Legit sub-toggle: if it's on, try the
-                            -- jump-before-landing negate first; only fall back to the
-                            -- block/pearl/tool clutch order when it didn't fire.
                             local zephyred = false
                             if Zephyr and Zephyr.Enabled then
                                 zephyred = zephyrClutch(root, humanoid, ground)
-                                if zephyred then
-                                    waitDelay = 0.05
-                                end
+                                if zephyred then waitDelay = 0.05 end
                             end
-                            if not zephyred then
-                                legitClutch(root, humanoid, ground)
-                            end
-						end
+                            if not zephyred then legitClutch(root, humanoid, ground) end
+                        end
                     end
                     task.wait(waitDelay)
-                until not NoFall.Enabled
+                until not NoFall.Enabled or generation ~= modeGeneration
             else
+                restoreCvStateConnections()
+                v2Busy = false
                 usedPearl = false
                 lastAnchor = 0
                 lastLegitUse = 0
@@ -5766,11 +5832,11 @@ run(function()
                 removeRakHook()
             end
         end,
-		Tooltip = 'Prevents taking fall damage.\nBlatant uses idk\'s landed-state method; Legit keeps Aether\'s clutch logic'
-	})
+        Tooltip = 'Prevents fall damage. Blatant uses cv; V2 preserves the previous landed-state method; Legit keeps Aether clutch logic.'
+    })
 	Mode = NoFall:CreateDropdown({
 		Name = 'Mode',
-		List = {'Blatant', 'Legit'},
+		List = {'Blatant', 'V2', 'Legit'},
         Function = function()
             setSettingsVisible()
             if NoFall.Enabled then
@@ -5778,14 +5844,14 @@ run(function()
                 NoFall:Toggle()
             end
         end,
-		Tooltip = 'Blatant - uses idk\'s landed-state method\nLegit - clutches with blocks, telepearls, or tools'
+		Tooltip = 'Blatant - cv landed/GroundHit behaviour\nV2 - previous Aether landed-state velocity method\nLegit - Aether clutch logic'
     })
     MinVelocity = NoFall:CreateSlider({
         Name = 'Minimum Velocity',
         Min = 35,
         Max = 120,
         Default = 60,
-        Tooltip = 'How fast the drop has to be before Legit clutches or TP floors you. Blatant ignores it'
+        Tooltip = 'How fast the drop has to be before Legit uses a clutch. Blatant and V2 ignore it'
     })
     FallThreshold = NoFall:CreateSlider({
         Name = 'Fall threshold',
@@ -21296,67 +21362,6 @@ if antiHitCreated then
 end
 
 --------------------------------------------------------------------------------
-end)
-
-run(function()
-    local Runtime = assert(AetherMatchRuntime, 'Aether BedWars runtime is unavailable')
-    local ctx = AetherRuntimeContext
-    local Ports = AetherPortContext
-    local safe = aetherPortSafe
-    local notify = aetherPortNotify
-    local rootOfLocal = aetherPortRoot
-    local matchRunning = aetherPortMatchRunning
-    local equippedKit = aetherPortEquippedKit
-    local horizontalUnit = aetherPortHorizontalUnit
-    local moduleByName = aetherPortModule
-    local register = aetherPortRegister
-    local abilityController = aetherPortAbilityController
-    local canUseAbility = aetherPortCanUseAbility
-    local useAbility = aetherPortUseAbility
-    local nearestTarget = aetherPortNearestTarget
-    local waitCancelable = aetherPortWait
-    local addMovementOwner = aetherPortAddMovementOwner
-    local createDecoy = aetherPortCreateDecoy
-    local workspaceService = workspace
--- NoFallDamageV2
---------------------------------------------------------------------------------
-local NoFallDamageV2
-local noFallCreated
-local noFallGeneration = 0
-local noFallBusy = false
-NoFallDamageV2, noFallCreated = register('Blatant', 'NoFallDamageV2', {
-    Tooltip = 'AlSploit-style fall-damage prevention: briefly reports a landed state while preserving downward velocity.',
-    Function = function(callback)
-        noFallGeneration = noFallGeneration + 1
-        local generation = noFallGeneration
-        noFallBusy = false
-        if not callback then return end
-        local connection = runService.PostSimulation:Connect(function()
-            if noFallBusy or generation ~= noFallGeneration or not NoFallDamageV2.Enabled then return end
-            local highJump = moduleByName('HighJump')
-            if highJump and highJump.Enabled then return end
-            local root, _, humanoid = rootOfLocal()
-            if not root or not humanoid then return end
-            local velocity = root.AssemblyLinearVelocity
-            if velocity.Y >= -45 then return end
-            noFallBusy = true
-            task.spawn(function()
-                local oldY = velocity.Y
-                root = rootOfLocal()
-                if not root or generation ~= noFallGeneration or not NoFallDamageV2.Enabled then noFallBusy = false; return end
-                root.AssemblyLinearVelocity = Vector3.new(root.AssemblyLinearVelocity.X, 44, root.AssemblyLinearVelocity.Z)
-                safe('nofall.landed', humanoid.ChangeState, humanoid, Enum.HumanoidStateType.Landed)
-                runService.PreSimulation:Wait()
-                root = rootOfLocal()
-                if root and generation == noFallGeneration and NoFallDamageV2.Enabled then
-                    root.AssemblyLinearVelocity = Vector3.new(root.AssemblyLinearVelocity.X, oldY, root.AssemblyLinearVelocity.Z)
-                end
-                noFallBusy = false
-            end)
-        end)
-        NoFallDamageV2:Clean(connection)
-    end
-})
 end)
 
 run(function()
