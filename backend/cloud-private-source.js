@@ -1,6 +1,7 @@
 'use strict';
 
 const http = require('node:http');
+const crypto = require('node:crypto');
 const premium = require('./private-source');
 const cloud = require('./cloud-configs');
 
@@ -68,6 +69,14 @@ const rateLimit = req => {
   return bucket.count <= CLOUD_RATE_LIMIT ? null : Math.max(1, Math.ceil((bucket.resetAt - now) / 1000));
 };
 
+// Cloud ownership is tied to both the currently authenticated premium key and its
+// Roblox identity. If a key is unlinked and later rebound to another account, the
+// new account gets a different ownership ID and cannot inherit the old user's data.
+const cloudSession = session => ({
+  ...session,
+  keyId: crypto.createHash('sha256').update(String(session.keyId) + '\0' + String(session.userId)).digest('hex')
+});
+
 const routeCloud = async (req, res, url) => {
   if (req.method === 'OPTIONS') return res.writeHead(204, {
     'access-control-allow-origin': '*',
@@ -85,13 +94,13 @@ const routeCloud = async (req, res, url) => {
   }
 
   if (url.pathname === '/cloud/import' && req.method === 'POST') {
-    const session = await premium.requireSession(url);
+    const session = cloudSession(await premium.requireSession(url));
     const config = await cloud.importShare(session, await readBody(req));
     return json(res, 201, {success: true, config});
   }
 
   if (url.pathname === '/cloud/configs') {
-    const session = await premium.requireSession(url);
+    const session = cloudSession(await premium.requireSession(url));
     if (req.method === 'GET') {
       const configs = await cloud.list(session, url.searchParams.get('placeId'));
       return json(res, 200, {success: true, limit: cloud.MAX_CONFIGS_PER_KEY, configs});
@@ -104,7 +113,7 @@ const routeCloud = async (req, res, url) => {
 
   const configMatch = url.pathname.match(/^\/cloud\/configs\/([a-f0-9-]{16,64})$/i);
   if (configMatch) {
-    const session = await premium.requireSession(url);
+    const session = cloudSession(await premium.requireSession(url));
     const id = configMatch[1];
     if (req.method === 'GET') {
       const config = await cloud.get(session, id);
@@ -157,4 +166,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = {server, routeCloud, readBody};
+module.exports = {server, routeCloud, readBody, cloudSession};
