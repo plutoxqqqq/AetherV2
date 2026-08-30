@@ -4,6 +4,16 @@
 local license = ... or {}
 local CORE_LOCAL = 'aetherv2/guis/new.core.lua'
 
+-- A Premium session is valid only for the current init. Older fetch closures/tokens must never
+-- survive a no-key/invalid-key reinjection, otherwise main.lua can see the stale transport and
+-- reload private modules even though the new authorization failed.
+if shared.AetherV2PremiumAuthorized ~= true then
+	shared.AetherV2PremiumToken = nil
+	shared.AetherV2PremiumRef = nil
+	shared.AetherV2PremiumFetchSource = nil
+	shared.AetherV2PremiumFetchTree = nil
+end
+
 local function currentRef()
 	if type(shared.AetherV2PublicRef) == 'string' and shared.AetherV2PublicRef:gsub('%s+', '') ~= '' then
 		return shared.AetherV2PublicRef:gsub('%s+', '')
@@ -86,7 +96,7 @@ patchExact('main logo colour refresh', [=[
 			for _, button in v.Buttons do
 ]=], "local mainLogo = v.Object and v.Object:FindFirstChild('VapeLogo', true)")
 
-patchExact('category edit hover state', [=[
+patchExact('category edit hover state and world startup', [=[
 function mainapi:CreateCategory(categorysettings)
 	local categoryapi = {
 		Type = 'Category',
@@ -96,7 +106,7 @@ function mainapi:CreateCategory(categorysettings)
 function mainapi:CreateCategory(categorysettings)
 	local categoryapi = {
 		Type = 'Category',
-		Expanded = false
+		Expanded = categorysettings.Name == 'World'
 	}
 	local categoryHovered = false
 ]=], 'local categoryHovered = false')
@@ -127,7 +137,10 @@ patchExact('module hidden state refresh', [=[
 		end
 ]=], 'function moduleapi:RefreshHiddenState(editing)')
 
-patchExact('late module edit refresh', [=[
+-- Keep the immediate hidden-state refresh, but deliberately do not defer another SortModules /
+-- CanvasSize write. The deferred second layout pass introduced in the previous update made
+-- category expansion and late module insertion visibly jitter.
+patchExact('late module edit refresh without jitter', [=[
 		moduleapi.Object = modulebutton
 		mainapi.Modules[modulesettings.Name] = moduleapi
 
@@ -139,18 +152,7 @@ patchExact('late module edit refresh', [=[
 		if categoryapi.UpdateHidden then categoryapi:UpdateHidden() end
 
 		mainapi:SortModules()
-		task.defer(function()
-			if not moduleapi.Object or not moduleapi.Object.Parent then return end
-			moduleapi:RefreshHiddenState(mainapi.EditGUI == true)
-			if categoryapi.UpdateHidden then categoryapi:UpdateHidden() end
-			mainapi:SortModules()
-			local parent = moduleapi.Object.Parent
-			local layout = parent:FindFirstChildOfClass('UIListLayout')
-			if parent:IsA('ScrollingFrame') and layout then
-				parent.CanvasSize = UDim2.fromOffset(0, layout.AbsoluteContentSize.Y / scale.Scale)
-			end
-		end)
-]=], 'task.defer(function()\n\t\t\tif not moduleapi.Object or not moduleapi.Object.Parent then return end')
+]=], 'moduleapi:RefreshHiddenState(mainapi.EditGUI == true)')
 
 patchExact('category edit mode refresh', [=[
 	function categoryapi:SetEditMode(enabled)
@@ -213,9 +215,6 @@ patchExact('category hover refresh', [=[
 	end)
 	clickgui:GetPropertyChangedSignal('Visible'):Connect(function()
 		if not clickgui.Visible then
-			-- Closing the whole menu is also the end of a global category-edit session.
-			-- Otherwise Done/pencil visibility and hidden rows retain half of the old state
-			-- when Roblox suppresses MouseLeave on an invisible ScreenGui.
 			if mainapi.EditGUI then
 				mainapi.EditGUI = false
 				for _, category in mainapi.Categories do
@@ -261,9 +260,6 @@ patchExact('home free premium tier uptime', [=[
 				sessionRow.Detail.Text = 'v'..tostring(mainapi.Version)..' • '..aetherHomeTier()..' • '..math.floor((os.clock() - (mainapi.StartedAt or os.clock())) / 60)..'m'
 ]=], "sessionRow.Detail.Text = 'v'..tostring(mainapi.Version)..' • '..aetherHomeTier()")
 
--- Cloud Configs reuses the existing JSON import path. The optional skipLoad flag is
--- only used for background Sync to Copy updates so an inactive local copy can be
--- refreshed without switching the player's current config.
 patchExact('cloud import skip-load signature', [=[
 local function importJsonConfig(text, requestedName)
 ]=], [=[
@@ -318,8 +314,6 @@ end
 
 local mainapi = compiled(license)
 
--- Cloud Configs is intentionally a small public client layer. Failure to fetch or
--- initialise it must never prevent normal/local Aether configs from working.
 local cloudSource, cloudError
 if isfile and isfile('aetherv2/libraries/cloud-configs.lua') then
 	local ok, cached = pcall(readfile, 'aetherv2/libraries/cloud-configs.lua')
