@@ -5156,6 +5156,7 @@ run(function()
     local VoidAxeClutch
     local HealthCheck
     local DamagePercent
+    local CvDamage
     local Zephyr
     local rayCheck = RaycastParams.new()
     rayCheck.RespectCanCollide = true
@@ -5706,7 +5707,7 @@ run(function()
             local root = entitylib.character.RootPart
             local humanoid = entitylib.character.Humanoid
             local velocity = root.Velocity
-            if trackedVelocity < -45 then
+            if trackedVelocity < -(45 + ((CvDamage and CvDamage.Value or 0) * 0.75)) then
                 -- cv behaviour: briefly report a landed state, preserve the fall's previous
                 -- velocity, and settle the GroundHit record immediately.
                 root.Velocity = Vector3.new(0, 2.5, 0)
@@ -5734,6 +5735,7 @@ run(function()
 
     local function setSettingsVisible()
         local legit = Mode and Mode.Value == 'Legit'
+        if CvDamage and CvDamage.Object then CvDamage.Object.Visible = not legit end
         if MinVelocity and MinVelocity.Object then MinVelocity.Object.Visible = legit end
         if GroundDistance and GroundDistance.Object then GroundDistance.Object.Visible = legit end
         if HealthCheck and HealthCheck.Object then HealthCheck.Object.Visible = legit end
@@ -5805,6 +5807,14 @@ run(function()
             end
         end,
 		Tooltip = 'Blatant - cv NoFallDamage behavior\nLegit - Aether clutch logic'
+    })
+    CvDamage = NoFall:CreateSlider({
+        Name = 'Damage',
+        Min = 0,
+        Max = 100,
+        Default = 0,
+        Suffix = '%',
+        Tooltip = 'Blatant only: matches cv NoFallDamage damage percentage behavior'
     })
     MinVelocity = NoFall:CreateSlider({
         Name = 'Minimum Velocity',
