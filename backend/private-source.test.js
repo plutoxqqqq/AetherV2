@@ -42,11 +42,11 @@ test('premium loader only exposes session metadata', () => {
   assert.doesNotMatch(loader, /SourceEndpoint|\/source\?/);
 });
 
-test('cloud ownership is bound to both premium key and Roblox account', () => {
-  const first = service.cloudOwnerSession({keyId: 'd'.repeat(64), username: 'FirstUser', userId: '111'});
-  const same = service.cloudOwnerSession({keyId: 'd'.repeat(64), username: 'FirstUser', userId: '111'});
-  const differentUser = service.cloudOwnerSession({keyId: 'd'.repeat(64), username: 'SecondUser', userId: '222'});
-  const differentKey = service.cloudOwnerSession({keyId: 'e'.repeat(64), username: 'FirstUser', userId: '111'});
+test('cloud ownership is bound to both premium key and Roblox account', async () => {
+  const first = await service.cloudOwnerSession({keyId: 'd'.repeat(64), username: 'FirstUser', userId: '111'});
+  const same = await service.cloudOwnerSession({keyId: 'd'.repeat(64), username: 'FirstUser', userId: '111'});
+  const differentUser = await service.cloudOwnerSession({keyId: 'd'.repeat(64), username: 'SecondUser', userId: '222'});
+  const differentKey = await service.cloudOwnerSession({keyId: 'e'.repeat(64), username: 'FirstUser', userId: '111'});
   assert.equal(first.keyId, same.keyId);
   assert.notEqual(first.keyId, differentUser.keyId);
   assert.notEqual(first.keyId, differentKey.keyId);

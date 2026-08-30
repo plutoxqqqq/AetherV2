@@ -18,6 +18,7 @@ local PARTS = {
 }
 local LOCAL_DIR = 'aetherv2/guis/liquidglass/'
 local REMOTE_DIR = 'guis/liquidglass/'
+local CACHE_REF_PATH = LOCAL_DIR..'.ref'
 
 local function validSource(body)
 	if type(body) ~= 'string' or #body < 32 or body == '404: Not Found' then return false end
@@ -58,15 +59,22 @@ local function fetch(path, ref)
 	return ok and validSource(result) and result or nil
 end
 
+local ACTIVE_REF = currentRef()
+local cachedRef
+if isfile and isfile(CACHE_REF_PATH) then
+	local ok, value = pcall(readfile, CACHE_REF_PATH)
+	if ok and type(value) == 'string' then cachedRef = value:gsub('%s+', '') end
+end
+local CACHE_IS_CURRENT = cachedRef == ACTIVE_REF
+
 local function getPart(name)
 	local localPath = LOCAL_DIR..name
-	if isfile and isfile(localPath) then
+	if CACHE_IS_CURRENT and isfile and isfile(localPath) then
 		local ok, cached = pcall(readfile, localPath)
 		if ok and validSource(cached) then return cached end
 	end
-	local ref = currentRef()
-	local body = fetch(REMOTE_DIR..name, ref)
-	if not body and ref ~= 'main' then body = fetch(REMOTE_DIR..name, 'main') end
+	local body = fetch(REMOTE_DIR..name, ACTIVE_REF)
+	if not body and ACTIVE_REF ~= 'main' then body = fetch(REMOTE_DIR..name, 'main') end
 	if not body then error('AetherV2 Liquid Glass: failed to load '..name, 0) end
 	if type(writefile) == 'function' then
 		ensureFolder(LOCAL_DIR)
@@ -78,12 +86,17 @@ end
 local source = table.create(#PARTS)
 for index, name in ipairs(PARTS) do source[index] = getPart(name) end
 source = table.concat(source, '\n')
+if type(writefile) == 'function' then
+	ensureFolder(LOCAL_DIR)
+	pcall(writefile, CACHE_REF_PATH, ACTIVE_REF)
+end
 
--- Premium modules keep their real module names/config keys. The loader marks them with
--- module.Premium/module.Tag; Liquid Glass renders that metadata as a compact pill.
+-- Premium modules keep their real module names/config keys. Require both loader-owned
+-- markers so stale/legacy PRO metadata on ordinary modules cannot produce a premium badge.
 local badgeMarker = "    local name=label(card,moduleDisplayName(module),13,true); name.Size=UDim2.new(1,-76,0,24); name.Position=UDim2.fromOffset(14,10); name.ZIndex=114"
-local badgeReplacement = [[    local name=label(card,moduleDisplayName(module),13,true); name.Size=UDim2.new(1,module.Premium and -154 or -76,0,24); name.Position=UDim2.fromOffset(14,10); name.ZIndex=114
-    if module.Premium then
+local badgeReplacement = [[    local isPremiumModule=module.Premium==true and module.Tag=='PREMIUM'
+    local name=label(card,moduleDisplayName(module),13,true); name.Size=UDim2.new(1,isPremiumModule and -154 or -76,0,24); name.Position=UDim2.fromOffset(14,10); name.ZIndex=114
+    if isPremiumModule then
         local premium=label(card,'PREMIUM',8,true,Color3.fromRGB(238,222,255),Enum.TextXAlignment.Center)
         premium.Size=UDim2.fromOffset(62,20); premium.Position=UDim2.new(1,-142,0,12); premium.BackgroundColor3=accent(); premium.BackgroundTransparency=.78; premium.ZIndex=116; corner(premium,7)
         create('UIStroke',{Color=accent(),Transparency=.52,Thickness=1},premium)
