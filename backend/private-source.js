@@ -4,6 +4,7 @@ const http = require('node:http');
 const crypto = require('node:crypto');
 const registry = require('./key-registry');
 const cloud = require('./cloud-configs');
+const executionStats = require('./execution-stats');
 require('./key-conflicts');
 
 const boundedNumber = (value, fallback, min, max) => {
@@ -27,7 +28,9 @@ const RATE_WINDOW_MS = boundedNumber(process.env.AETHER_RATE_WINDOW_MS, 60000, 1
 const RATE_LIMIT = boundedNumber(process.env.AETHER_RATE_LIMIT, 180, 10, 10000);
 const AUTH_RATE_LIMIT = boundedNumber(process.env.AETHER_AUTH_RATE_LIMIT, 20, 2, 1000);
 const CLOUD_RATE_LIMIT = boundedNumber(process.env.AETHER_CLOUD_RATE_LIMIT, 120, 10, 10000);
+const ANALYTICS_RATE_LIMIT = boundedNumber(process.env.AETHER_ANALYTICS_RATE_LIMIT, 60, 5, 1000);
 const CLOUD_MAX_BODY = cloud.MAX_PAYLOAD_BYTES + (64 * 1024);
+const ANALYTICS_MAX_BODY = 8 * 1024;
 const TRUST_PROXY = process.env.AETHER_TRUST_PROXY === 'true';
 const sessions = new Map();
 const rateBuckets = new Map();
@@ -120,6 +123,22 @@ const readCloudBody = req => new Promise((resolve, reject) => {
   });
 });
 
+const readAnalyticsBody = req => new Promise((resolve, reject) => {
+  let size = 0;
+  const chunks = [];
+  req.on('data', chunk => {
+    const value = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    size += value.length;
+    if (size > ANALYTICS_MAX_BODY) return reject(problem('Analytics payload is too large', 413));
+    chunks.push(value);
+  });
+  req.on('end', () => {
+    try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}')); }
+    catch { reject(problem('Invalid analytics JSON body', 400)); }
+  });
+  req.on('error', reject);
+});
+
 const requestIp = req => String(TRUST_PROXY && req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown')
   .split(',')[0].trim().slice(0, 100);
 const consumeRateLimit = (req, pathname) => {
@@ -127,8 +146,9 @@ const consumeRateLimit = (req, pathname) => {
   if (rateBuckets.size > 10000) for (const [key, value] of rateBuckets) if (value.resetAt <= now) rateBuckets.delete(key);
   const authRoute = pathname === '/premium/authorize';
   const cloudRoute = pathname.startsWith('/cloud/');
-  const limit = authRoute ? AUTH_RATE_LIMIT : cloudRoute ? CLOUD_RATE_LIMIT : RATE_LIMIT;
-  const group = authRoute ? 'auth' : cloudRoute ? 'cloud' : 'premium-source';
+  const analyticsRoute = pathname === '/analytics/execution';
+  const limit = analyticsRoute ? ANALYTICS_RATE_LIMIT : authRoute ? AUTH_RATE_LIMIT : cloudRoute ? CLOUD_RATE_LIMIT : RATE_LIMIT;
+  const group = analyticsRoute ? 'analytics' : authRoute ? 'auth' : cloudRoute ? 'cloud' : 'premium-source';
   const key = requestIp(req) + ':' + group;
   let bucket = rateBuckets.get(key);
   if (!bucket || bucket.resetAt <= now) bucket = {count: 0, resetAt: now + RATE_WINDOW_MS};
@@ -345,6 +365,12 @@ const server = http.createServer(async (req, res) => {
     const retryAfter = consumeRateLimit(req, url.pathname);
     if (retryAfter) return json(res, 429, {success: false, error: 'Too many requests; try again shortly'}, {'retry-after': String(retryAfter)});
 
+    if (url.pathname === '/analytics/execution' && (req.method === 'POST' || req.method === 'GET')) {
+      const payload = req.method === 'POST' ? await readAnalyticsBody(req) : {};
+      await executionStats.recordExecution(payload);
+      return json(res, 202, {success: true});
+    }
+
     if (url.pathname.startsWith('/cloud/')) return await routeCloud(req, res, url);
 
     if (req.method === 'GET' && url.pathname === '/health') {
@@ -354,6 +380,7 @@ const server = http.createServer(async (req, res) => {
         normalSource: 'public-github',
         premiumEnabled,
         cloudConfigs: true,
+        executionAnalytics: true,
         cloudConfigLimit: cloud.MAX_CONFIGS_PER_KEY,
         discordBot: Boolean(process.env.DISCORD_TOKEN)
       });

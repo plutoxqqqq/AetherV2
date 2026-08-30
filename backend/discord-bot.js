@@ -8,6 +8,7 @@ const {
   Routes,
   SlashCommandBuilder,
   EmbedBuilder,
+  AttachmentBuilder,
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
@@ -18,6 +19,7 @@ const {
 } = require('discord.js');
 const registry = require('./key-registry');
 const conflicts = require('./key-conflicts');
+const executionStats = require('./execution-stats');
 
 const OWNER_IDS = new Set((process.env.DISCORD_OWNER_IDS || '').split(',').map(value => value.trim()).filter(Boolean));
 const APPLICATION_ID = process.env.DISCORD_APPLICATION_ID || '';
@@ -98,6 +100,25 @@ const commands = [
       .setName('audit')
       .setDescription('Browse recent key-management events')
       .addIntegerOption(option => option.setName('limit').setDescription('Events to load').setMinValue(1).setMaxValue(100).setRequired(false)))
+,
+  new SlashCommandBuilder()
+    .setName('stats')
+    .setDescription('View AetherV2 execution analytics')
+    .setDMPermission(false)
+    .addSubcommand(sub => sub.setName('summary').setDescription('Show hourly, daily, weekly, monthly, and all-time stats'))
+    .addSubcommand(sub => sub
+      .setName('graph')
+      .setDescription('Render an execution trend line graph')
+      .addStringOption(option => option.setName('period').setDescription('Graph period').setRequired(true).addChoices(
+        {name: 'Hourly · last 24 hours', value: 'hourly'},
+        {name: 'Daily · last 30 days', value: 'daily'},
+        {name: 'Weekly · last 12 weeks', value: 'weekly'},
+        {name: 'Monthly · last 12 months', value: 'monthly'}
+      ))
+      .addStringOption(option => option.setName('metric').setDescription('What to graph').setRequired(false).addChoices(
+        {name: 'Executions', value: 'executions'},
+        {name: 'Unique players', value: 'unique'}
+      )))
 ].map(command => command.toJSON());
 
 const truncate = (value, length) => {
@@ -286,7 +307,7 @@ const conflictListView = async (userId, requestedPage = 0) => {
         label: truncate(item.attemptedUsername + ' using ' + item.boundUsername + "'s key", 100),
         description: truncate(item.attempts + ' rejected attempt' + (item.attempts === 1 ? '' : 's') + ' • ' + item.keyId.slice(0, 12), 100),
         value: item.conflictId
-      }))));
+      })))));
   }
   return {embeds: [embed], components};
 };
@@ -702,13 +723,49 @@ const friendlyError = error => {
 };
 const logSafeError = (context, error) => console.error('[AetherV2] ' + context + ':', truncate(error && error.message || error, 300));
 
+const statValue = value => inline(String(value.executions) + ' exec / ' + String(value.unique) + ' unique');
+const handleStatsCommand = async interaction => {
+  const subcommand = interaction.options.getSubcommand();
+  if (subcommand === 'summary') {
+    const stats = executionStats.summary();
+    const embed = new EmbedBuilder()
+      .setColor(0xbe73ff)
+      .setTitle('📈 AetherV2 execution stats')
+      .setDescription('Execution totals and hashed unique-player counts. Period buckets use UTC.')
+      .addFields(
+        {name: 'This hour', value: statValue(stats.hourly), inline: true},
+        {name: 'Today', value: statValue(stats.daily), inline: true},
+        {name: 'This week', value: statValue(stats.weekly), inline: true},
+        {name: 'This month', value: statValue(stats.monthly), inline: true},
+        {name: 'All time', value: statValue(stats.allTime), inline: true}
+      )
+      .setFooter({text: stats.lastSeenAt ? 'Last execution ' + stats.lastSeenAt : 'No executions recorded yet'});
+    return respond(interaction, {embeds: [embed]});
+  }
+  const period = interaction.options.getString('period', true);
+  const metric = interaction.options.getString('metric', false) || 'executions';
+  const graph = executionStats.renderGraph(period, metric);
+  const fileName = 'aetherv2-' + period + '-' + metric + '.png';
+  const attachment = new AttachmentBuilder(graph.buffer, {name: fileName});
+  const first = graph.points[0], last = graph.points[graph.points.length - 1];
+  const embed = new EmbedBuilder()
+    .setColor(0xbe73ff)
+    .setTitle('📈 ' + (metric === 'unique' ? 'Unique players' : 'Executions') + ' · ' + period)
+    .setDescription('Range ' + inline(first.label) + ' → ' + inline(last.label) + ' • peak ' + inline(graph.maxValue) + ' • UTC')
+    .setImage('attachment://' + fileName);
+  return respond(interaction, {embeds: [embed], files: [attachment]});
+};
+
 const handleInteraction = async interaction => {
   if (interaction.isChatInputCommand()) {
-    if (interaction.commandName !== 'key') return;
-    if (!isOwnerId(interaction.user.id)) return reply(interaction, 'You are not authorized to manage AetherV2 keys.');
+    if (!['key', 'stats'].includes(interaction.commandName)) return;
+    if (!isOwnerId(interaction.user.id)) return reply(interaction, 'You are not authorized to manage AetherV2.');
     await interaction.deferReply({ephemeral: true});
-    try { await handleKeyCommand(interaction); }
-    catch (error) { logSafeError('Discord key command failed', error); await reply(interaction, '❌ ' + friendlyError(error)); }
+    try {
+      if (interaction.commandName === 'stats') await handleStatsCommand(interaction);
+      else await handleKeyCommand(interaction);
+    }
+    catch (error) { logSafeError('Discord command failed', error); await reply(interaction, '❌ ' + friendlyError(error)); }
     return;
   }
   if (!interaction.isButton() && !interaction.isStringSelectMenu() && !interaction.isModalSubmit()) return;
@@ -742,7 +799,7 @@ const registerCommands = async () => {
   const rest = new REST({version: '10'}).setToken(process.env.DISCORD_TOKEN);
   const route = GUILD_ID ? Routes.applicationGuildCommands(APPLICATION_ID, GUILD_ID) : Routes.applicationCommands(APPLICATION_ID);
   await rest.put(route, {body: commands});
-  console.log('[AetherV2] registered Discord key commands' + (GUILD_ID ? ' for guild ' + GUILD_ID : ' globally'));
+  console.log('[AetherV2] registered Discord management commands' + (GUILD_ID ? ' for guild ' + GUILD_ID : ' globally'));
 };
 
 const startDiscordBot = async () => {

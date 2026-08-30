@@ -141,3 +141,18 @@ Source and authorization rate limits are per process and per observed client IP.
 ## Config-review service
 
 `server.js` remains separate from key management. It accepts config submissions, exposes an `ADMIN_KEY`-protected review queue, and publishes accepted config files through GitHub. Its persistent `DATA_FILE` must be backed up. Do not reuse Discord, GitHub, admin, or Aether access keys across roles.
+
+## Execution analytics
+
+The public loader reports one execution to the premium-source service without sending a premium key. When the executor exposes a request API, the report includes the Roblox UserId so the backend can count unique players; only a one-way SHA-256 hash is persisted. Executors without a request API still increment the anonymous execution total.
+
+For durable all-time stats on Render, attach a persistent disk to the combined `node private-source.js` service and set:
+
+```text
+AETHER_STATS_FILE=/var/data/execution-stats.json
+AETHER_ANALYTICS_RATE_LIMIT=60
+```
+
+Run the Discord bot in the same `private-source.js` process so it reads the same live stats store. `/stats summary` shows the current hour, day, week, month, and all-time totals. `/stats graph` renders a PNG line graph for hourly (24 points), daily (30), weekly (12), or monthly (12) data and can graph either executions or unique players. Buckets use UTC.
+
+The client-side report is intentionally lightweight and can be spoofed by a modified client, so these numbers are product telemetry rather than tamper-proof billing/security data. The analytics endpoint is separately rate-limited and never accepts or stores raw premium keys.

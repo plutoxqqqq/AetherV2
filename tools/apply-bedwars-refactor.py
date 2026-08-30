@@ -144,17 +144,54 @@ def split_game_file():
     if not calls:
         raise RuntimeError('No CreateModule calls were found in games/6872274481.lua')
 
-    # A module belongs to the nearest run(function()) wrapper around it. That keeps helper locals,
-    # toggles, callbacks, and conditional alternatives in the same source block without inventing
-    # a new runtime scope.
+    # Prefer the nearest run(function()) wrapper because it keeps helper locals, settings,
+    # callbacks, and conditional alternatives together. A few legacy modules are registered
+    # directly rather than through run(); for those, extract the balanced CreateModule call
+    # itself instead of refusing the entire refactor.
+    def standalone_module_span(call):
+        match = MODULE_CALL.match(masked, call['pos'])
+        if not match:
+            raise RuntimeError(f"Could not re-read module constructor for {call['name']}")
+        opening = match.end() - 1
+        depth = 0
+        end = None
+        for index in range(opening, len(masked)):
+            char = masked[index]
+            if char == '(':
+                depth += 1
+            elif char == ')':
+                depth -= 1
+                if depth == 0:
+                    end = index + 1
+                    break
+        if end is None:
+            raise RuntimeError(f"Unclosed standalone CreateModule call for {call['name']}")
+        while end < len(source) and source[end] in ' \t':
+            end += 1
+        if end < len(source) and source[end] == ';':
+            end += 1
+
+        # Include a simple `Module =` / `local Module =` prefix when it is on the same line.
+        # More complex surrounding control flow remains in main.lua and the marker is restored
+        # at exactly the old constructor position when bundle.lua is generated.
+        line_start = source.rfind('\n', 0, call['pos']) + 1
+        prefix = source[line_start:call['pos']]
+        start = line_start if re.fullmatch(r'\s*(?:local\s+)?[A-Za-z_][A-Za-z0-9_, \t]*=\s*', prefix) else call['pos']
+        return (start, end)
+
     nearest = {}
+    standalone_count = 0
     for call_index, call in enumerate(calls):
         containing = [span for span in spans if span[0] <= call['pos'] < span[1]]
-        if not containing:
-            raise RuntimeError(f"Module {call['name']} is not inside run(function())")
-        nearest[call_index] = min(containing, key=lambda span: span[1] - span[0])
+        if containing:
+            nearest[call_index] = min(containing, key=lambda span: span[1] - span[0])
+        else:
+            nearest[call_index] = standalone_module_span(call)
+            standalone_count += 1
 
     selected = sorted(set(nearest.values()))
+    if standalone_count:
+        print(f'Found {standalone_count} module registration(s) outside run(function()); extracting their constructors directly')
     # If selected wrappers overlap, promote the nested set to the outer selected wrapper. This is
     # rare, but it preserves exact lexical/conditional behaviour instead of producing invalid Lua.
     changed = True
@@ -330,6 +367,8 @@ def patch_private_source():
 def patch_discord_bot():
     path = ROOT / 'backend' / 'discord-bot.js'
     text = read(path)
+    # Existing conflict selector is missing the final components.push() closing parenthesis.
+    text = text.replace('      }))));', '      })))));', 1)
     if 'AttachmentBuilder' not in text:
         text = text.replace('  EmbedBuilder,\n', '  EmbedBuilder,\n  AttachmentBuilder,\n', 1)
     if "require('./execution-stats')" not in text:
