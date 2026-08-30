@@ -12,7 +12,9 @@ local PARTS = {
 	'03-controls.lua',
 	'04-controls-extra.lua',
 	'05-inspector.lua',
-	'06-pages.lua'
+	'06-pages.lua',
+	'07-actions-input.lua',
+	'08-finalize.lua'
 }
 local LOCAL_DIR = 'aetherv2/guis/liquidglass/'
 local REMOTE_DIR = 'guis/liquidglass/'
