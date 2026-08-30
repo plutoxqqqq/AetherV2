@@ -39,6 +39,15 @@ jobs:
         run: python tools/apply-aug30-unfinished.py
       - name: Apply verification fixes
         run: python tools/fix-aug30-verification.py
+      - name: Patch normalizer for Luau template strings
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('tools/normalize-bedwars-layout.py')
+          text = path.read_text()
+          text = text.replace("if c in ('\\'', '\"'):", "if c in ('\\'', '\"', '`'):")
+          path.write_text(text)
+          PY
       - name: Normalize BedWars module layout
         run: python tools/normalize-bedwars-layout.py
       - name: Report module-file audit
