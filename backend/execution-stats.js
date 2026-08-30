@@ -7,7 +7,8 @@ const zlib = require('node:zlib');
 
 const STATS_FILE = process.env.AETHER_STATS_FILE || path.join(__dirname, 'execution-stats.json');
 const VERSION = 2;
-const ACTIVE_WINDOW_MS = 150000;
+const ACTIVE_WINDOW_MS = 30000;
+const LAUNCH_CLASSIFY_WINDOW_MS = 60000;
 const MAX_HEARTBEAT_DELTA_SECONDS = 90;
 const RETENTION = Object.freeze({hourly: 2160, daily: 3650, weekly: 520, monthly: 240});
 const PERIODS = ['hourly', 'daily', 'weekly', 'monthly'];
@@ -199,9 +200,17 @@ const addLaunch = input => {
   return {accepted: true, event: 'execution', profileId: id, uniqueKnown: Boolean(id)};
 };
 
-const classifyPending = (profile, access) => {
-  if (!profile || access === 'unknown' || profile.unknownExecutions <= 0 || state.access.unknown <= 0) return false;
-  profile.unknownExecutions -= 1;
+const classifyPending = (profile, access, now = Date.now()) => {
+  if (!profile || access === 'unknown' || state.access.unknown <= 0) return false;
+  if (profile.unknownExecutions > 0) {
+    profile.unknownExecutions -= 1;
+  } else {
+    const launchAt = state.lastSeenAt ? Date.parse(state.lastSeenAt) : NaN;
+    if (!Number.isFinite(launchAt) || Math.abs(now - launchAt) > LAUNCH_CLASSIFY_WINDOW_MS) return false;
+    // The legacy/core launch can arrive without Roblox identity. Attach that already-counted
+    // launch to the first identified heartbeat without incrementing global execution totals.
+    profile.executions += 1;
+  }
   state.access.unknown -= 1;
   if (access === 'premium') profile.premiumExecutions += 1;
   else profile.freeExecutions += 1;
@@ -221,7 +230,7 @@ const addHeartbeat = input => {
     session = {lastAt: now, access};
     runtimeSessions.set(runtimeKey, session);
     profile.sessions += 1;
-    classifyPending(profile, access);
+    classifyPending(profile, access, now);
   } else {
     const delta = Math.max(0, Math.min(MAX_HEARTBEAT_DELTA_SECONDS, (now - session.lastAt) / 1000));
     if (delta > 0) profile.trackedSeconds += delta;
@@ -240,11 +249,45 @@ const addHeartbeat = input => {
   return {accepted: true, event: 'heartbeat', profileId: id};
 };
 
-const recordExecution = async input => String(input && input.event || 'execution').toLowerCase() === 'heartbeat'
-  ? addHeartbeat(input || {})
-  : addLaunch(input || {});
+const addSessionEnd = input => {
+  const now = Date.now();
+  const sessionId = validSessionId(input && input.sessionId);
+  const {id, profile} = profileFor(input || {});
+  if (!id || !profile || !sessionId) return {accepted: false, event: 'session_end', reason: 'identity-or-session-missing'};
+  const runtimeKey = id + ':' + sessionId;
+  const session = runtimeSessions.get(runtimeKey);
+  if (session) {
+    const delta = Math.max(0, Math.min(MAX_HEARTBEAT_DELTA_SECONDS, (now - session.lastAt) / 1000));
+    if (delta > 0) profile.trackedSeconds += delta;
+    runtimeSessions.delete(runtimeKey);
+  }
+  profile.lastSeenAt = new Date(now).toISOString();
+  state.lastSeenAt = profile.lastSeenAt;
+  scheduleWrite();
+  return {accepted: true, event: 'session_end', profileId: id};
+};
+
+const recordExecution = async input => {
+  const event = String(input && input.event || 'execution').toLowerCase();
+  if (event === 'heartbeat') return addHeartbeat(input || {});
+  if (event === 'session_end') return addSessionEnd(input || {});
+  return addLaunch(input || {});
+};
 
 const bucketCount = bucket => ({executions: bucket ? bucket.executions : 0, unique: bucket ? Object.keys(bucket.users).length : 0});
+const profileIsActive = id => {
+  const now = Date.now();
+  let active = false;
+  for (const [key, session] of runtimeSessions) {
+    if (now - session.lastAt > ACTIVE_WINDOW_MS) {
+      runtimeSessions.delete(key);
+      continue;
+    }
+    if (key.startsWith(id + ':')) active = true;
+  }
+  return active;
+};
+
 const publicProfile = (id, profile) => ({
   profileId: id,
   userId: String(profile.userId),
@@ -260,7 +303,8 @@ const publicProfile = (id, profile) => ({
   lastHeartbeatAt: profile.lastHeartbeatAt || null,
   lastAccess: validAccess(profile.lastAccess),
   lastPlaceId: validPlaceId(profile.lastPlaceId),
-  active: Boolean(profile.lastHeartbeatAt && Date.now() - Date.parse(profile.lastHeartbeatAt) <= ACTIVE_WINDOW_MS)
+  active: profileIsActive(id),
+  calculating: profileIsActive(id)
 });
 
 const summary = () => {
@@ -336,9 +380,12 @@ const dailySeries = (range, metric) => {
   }
   return values;
 };
-const series = (period, metric = 'executions') => ['7d', '30d', '90d', 'all'].includes(period)
-  ? dailySeries(period, metric)
-  : normalSeries(period, metric);
+const series = (period, metric = 'executions') => {
+  // Every graph is daily. Legacy period names remain accepted for API compatibility, but are
+  // mapped to useful daily windows instead of changing the x-axis unit.
+  const range = ({hourly: '7d', daily: '30d', weekly: '90d', monthly: 'all'})[period] || period;
+  return dailySeries(range, metric);
+};
 
 const crcTable = (() => {
   const table = new Uint32Array(256);

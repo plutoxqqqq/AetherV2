@@ -10,7 +10,7 @@ local function analyticsEndpoint()
 	return endpoint:gsub('/+$', '')..'/analytics/execution'
 end
 
-local function sendHeartbeat(sessionId)
+local function sendTelemetry(sessionId, eventName)
 	local player = game:GetService('Players').LocalPlayer
 	if not player then return false end
 	local requestFunction = (syn and syn.request) or http_request or request
@@ -21,7 +21,7 @@ local function sendHeartbeat(sessionId)
 		Method = 'POST',
 		Headers = {['Content-Type'] = 'application/json'},
 		Body = http:JSONEncode({
-			event = 'heartbeat',
+			event = eventName or 'heartbeat',
 			sessionId = sessionId,
 			username = player.Name,
 			userId = tostring(player.UserId),
@@ -53,15 +53,23 @@ local result = core(license)
 task.spawn(function()
 	local sessionId = game:GetService('HttpService'):GenerateGUID(false):gsub('[^%w%-_]', '')
 	local deadline = os.clock() + 30
-	repeat task.wait(0.5) until (shared.vape and shared.vape.Loaded) or os.clock() >= deadline
-	if not shared.vape then return end
-	while shared.vape do
-		sendHeartbeat(sessionId)
-		for _ = 1, 60 do
+	local function running()
+		local current = shared.vape
+		return type(current) == 'table' and current.Loaded ~= false and current.Uninjecting ~= true
+	end
+	repeat task.wait(0.5) until running() or os.clock() >= deadline
+	if not running() then return end
+	while running() do
+		sendTelemetry(sessionId, 'heartbeat')
+		for _ = 1, 10 do
 			task.wait(1)
-			if not shared.vape then return end
+			if not running() then
+				sendTelemetry(sessionId, 'session_end')
+				return
+			end
 		end
 	end
+	sendTelemetry(sessionId, 'session_end')
 end)
 
 return result
