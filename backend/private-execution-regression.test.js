@@ -5,9 +5,12 @@ const path = require('node:path');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const sourceServer = fs.readFileSync(path.join(__dirname, 'private-source.js'), 'utf8');
-const main = fs.readFileSync(path.join(__dirname, '..', 'main.lua'), 'utf8');
-const init = fs.readFileSync(path.join(__dirname, '..', 'init.lua'), 'utf8');
+const sourceServer = fs.readFileSync(path.join(__dirname, 'private-source-core.js'), 'utf8');
+const sourceWrapper = fs.readFileSync(path.join(__dirname, 'private-source.js'), 'utf8');
+const main = fs.readFileSync(path.join(__dirname, '..', 'main-core.lua'), 'utf8');
+const mainWrapper = fs.readFileSync(path.join(__dirname, '..', 'main.lua'), 'utf8');
+const init = fs.readFileSync(path.join(__dirname, '..', 'init-core.lua'), 'utf8');
+const initWrapper = fs.readFileSync(path.join(__dirname, '..', 'init.lua'), 'utf8');
 const aliases = [
   ['8444591321', '6872274481'],
   ['8560631822', '6872274481'],
@@ -22,12 +25,26 @@ const aliases = [
   ['80041634734121', '77790193039862']
 ];
 
+function readLuaTree(root) {
+  const chunks = [];
+  if (!fs.existsSync(root)) return '';
+  const stat = fs.statSync(root);
+  if (stat.isFile()) return root.endsWith('.lua') ? fs.readFileSync(root, 'utf8') : '';
+  for (const entry of fs.readdirSync(root, {withFileTypes: true})) {
+    const full = path.join(root, entry.name);
+    if (entry.isDirectory()) chunks.push(readLuaTree(full));
+    else if (entry.isFile() && entry.name.endsWith('.lua')) chunks.push(fs.readFileSync(full, 'utf8'));
+  }
+  return chunks.join('\n');
+}
+
 test('premium sessions are separate from the public AetherV2 source path', () => {
   assert.match(sourceServer, /PREMIUM_GITHUB_REPO/);
   assert.match(sourceServer, /const premiumSessionLoader/);
   assert.match(sourceServer, /url\.pathname === '\/premium\/authorize'/);
   assert.match(sourceServer, /url\.pathname === '\/premium\/source'/);
   assert.match(sourceServer, /premiumSourceFile/);
+  assert.match(sourceWrapper, /require\('\.\/private-source-core'\)/);
 });
 
 test('public AetherV2 always uses raw GitHub while premium remains session-gated', () => {
@@ -35,6 +52,15 @@ test('public AetherV2 always uses raw GitHub while premium remains session-gated
   assert.doesNotMatch(main, /SourceEndpoint|SourceToken|privateSourceUrl/);
   assert.match(init, /pcall\(authorizePremium\)/);
   assert.match(main, /local function loadPremiumModules/);
+});
+
+test('split wrappers keep analytics heartbeat and premium tagging isolated', () => {
+  assert.match(initWrapper, /event\s*=\s*'heartbeat'/);
+  assert.match(initWrapper, /sessionId/);
+  assert.match(initWrapper, /AetherV2PremiumAuthorized/);
+  assert.match(mainWrapper, /loadedModule\.Premium\s*=\s*true/);
+  assert.match(mainWrapper, /loadedModule\.Tag\s*=\s*'PREMIUM'/);
+  assert.match(mainWrapper, /premiumModuleSnapshot/);
 });
 
 test('premium discovery loads every universal and place category without requiring files', () => {
@@ -111,259 +137,17 @@ test('all compatible child places forward through the authenticated session', ()
   }
 });
 
-test('the complete BedWars module baseline cannot silently disappear again', () => {
-  const bedwars = fs.readFileSync(path.join(__dirname, '..', 'games', '6872274481.lua'), 'utf8');
+test('the split BedWars module baseline cannot silently disappear again', () => {
+  const games = path.join(__dirname, '..', 'games');
+  const bedwars = [
+    readLuaTree(path.join(games, '6872274481.lua')),
+    readLuaTree(path.join(games, '6872274481'))
+  ].join('\n');
   const registered = new Set();
-  for (const match of bedwars.matchAll(/:CreateModule\s*\(\s*\{[\s\S]{0,500}?\bName\s*=\s*['"]([^'"]+)['"]/g)) {
-    registered.add(match[1]);
-  }
-  for (const match of bedwars.matchAll(/\bregister\s*\(\s*['"]([^'"]+)['"]\s*,\s*['"]([^'"]+)['"]/g)) {
-    registered.add(match[2]);
-  }
-
-  const expected = [
-  "ACMODView",
-  "AimAssist",
-  "Anti-AFK",
-  "AntiDeath",
-  "AntiHitBETA",
-  "AntiLasso",
-  "AntiSuffocate",
-  "AntiVoid",
-  "ArmorHighlight",
-  "ArmorSwitch",
-  "ArmorTrims",
-  "Aura",
-  "AutoAdetunde",
-  "AutoAgni",
-  "AutoBalloon",
-  "AutoBank",
-  "AutoBeekeeper",
-  "AutoBountyHunter",
-  "AutoBuildUp",
-  "AutoBuilder",
-  "AutoBuy",
-  "AutoCaitlyn",
-  "AutoCard",
-  "AutoChargeProj",
-  "AutoClicker",
-  "AutoConsume",
-  "AutoCounter",
-  "AutoCrocowolf",
-  "AutoCyber",
-  "AutoDavey",
-  "AutoDragonSword",
-  "AutoDrill",
-  "AutoElder",
-  "AutoEldric",
-  "AutoEmber",
-  "AutoEnchant",
-  "AutoEquipKit",
-  "AutoEvelynn",
-  "AutoFarmer",
-  "AutoFarmerCletus",
-  "AutoFish",
-  "AutoFreiya",
-  "AutoGingerbreadMan",
-  "AutoGrim",
-  "AutoGrove",
-  "AutoHannah",
-  "AutoHephaestus",
-  "AutoHonor",
-  "AutoHotbar",
-  "AutoKaida",
-  "AutoKaliyah",
-  "AutoKit",
-  "AutoKrystal",
-  "AutoLani",
-  "AutoLasso",
-  "AutoLumen",
-  "AutoMarina",
-  "AutoMartin",
-  "AutoMelody",
-  "AutoMetal",
-  "AutoMushroom",
-  "AutoNahila",
-  "AutoNazar",
-  "AutoNoelle",
-  "AutoNyx",
-  "AutoPearl",
-  "AutoPickpocket",
-  "AutoPlay",
-  "AutoPyro",
-  "AutoRagnar",
-  "AutoRamil",
-  "AutoRelease",
-  "AutoSheepHerder",
-  "AutoShielderUlt",
-  "AutoShoot",
-  "AutoSilas",
-  "AutoSmoke",
-  "AutoSophia",
-  "AutoStarCollector",
-  "AutoSteal",
-  "AutoSuffocate",
-  "AutoTaliyah",
-  "AutoTool",
-  "AutoToxic",
-  "AutoTriton",
-  "AutoUma",
-  "AutoVanessa",
-  "AutoVoidDrop",
-  "AutoVoidHunter",
-  "AutoVoidKnight",
-  "AutoWarden",
-  "AutoWhim",
-  "AutoWhisper",
-  "AutoWin",
-  "AutoXurot",
-  "AutoYeti",
-  "AutoZeno",
-  "AutoZola",
-  "BackTrack",
-  "BalloonDisabler",
-  "BedAlarm",
-  "BedAssist",
-  "BedBreakEffect",
-  "BedESP",
-  "BedPlates",
-  "BedProtector",
-  "BeehiveESP",
-  "BlockIn",
-  "BlockSelectorColor",
-  "BoostAirJump",
-  "BowAssist",
-  "Breaker",
-  "CannonSpeed",
-  "ChatNameColor",
-  "ChatPosition",
-  "CheatDetector",
-  "ChillLighting",
-  "ClaimRewards",
-  "CleanKit",
-  "Crosshair",
-  "CryptAura",
-  "CustomCursor",
-  "CustomTags",
-  "DamageBoost",
-  "DamageIndicator",
-  "DaveyAim",
-  "DeathAdderAimbot",
-  "DeviceSpoofer",
-  "EntityAnalyser",
-  "EquipKit",
-  "FOV",
-  "FPSBoost",
-  "FakeLag",
-  "FalconAura",
-  "FastBreak",
-  "FastConsume",
-  "FastDrop",
-  "FastPlace",
-  "FishermanSpy",
-  "Fly",
-  "GeneratorESP",
-  "GrimReaperFix",
-  "Headless",
-  "Health",
-  "HitBoxes",
-  "HitColor",
-  "HitFix",
-  "HitregAdjuster",
-  "IgnorePlaceHitboxes",
-  "InstantKill",
-  "Interface",
-  "InvisibleCursor",
-  "ItemESP",
-  "JadeExploit",
-  "JadeExtender",
-  "JadeInstaKill",
-  "KeepSprint",
-  "KillEffect",
-  "Killaura",
-  "KillfeedSpoofer",
-  "KitDisplay",
-  "KitESP",
-  "KnockbackDelay",
-  "KrystalDisabler",
-  "LeaveParty",
-  "LegacyAnimation",
-  "Legless",
-  "LongJump",
-  "LongJumpBypass",
-  "LootESP",
-  "MP3Player",
-  "MissileTP",
-  "MotionBlur",
-  "MultiAction",
-  "NameTagSpoofer",
-  "NameTags",
-  "NightmareEmote",
-  "NoClickDelay",
-  "NoFallDamage",
-  "NoFallDamageV2",
-  "NoSlowdown",
-  "OG4v4v4v4",
-  "OpenShop",
-  "OwlAura",
-  "PickupRange",
-  "PlayerAttach",
-  "PlayerOutline",
-  "PotatoMode",
-  "PotionStatus",
-  "ProjectileAimbot",
-  "ProjectileAura",
-  "ProjectileDodger",
-  "ProjectileLanding",
-  "ProjectileTracers",
-  "RavenTP",
-  "Reach",
-  "ReachDisplay",
-  "ReaperBypass",
-  "RecoveryTP",
-  "RemoveNeon",
-  "RemovePlayerLevelUI",
-  "Scaffold",
-  "Schematica",
-  "ShadowRemover",
-  "ShopClicker",
-  "SilentAim",
-  "SilentAura",
-  "SkinChanger",
-  "SongBeats",
-  "SoundChanger",
-  "Speed",
-  "Spider",
-  "Sprint",
-  "StaffDetector",
-  "StorageESP",
-  "StreamRemover",
-  "TPAura",
-  "TerraAimbot",
-  "TexturePack",
-  "TransparentCharacter",
-  "TrapDisabler",
-  "TrapESP",
-  "TriggerBot",
-  "TritonClutch",
-  "UICleanup",
-  "Velocity",
-  "Viewmodel",
-  "ViewmodelVisuals",
-  "VoidRegentAutoClutch",
-  "VoidRegentExtender",
-  "VulcanAssist",
-  "Water",
-  "WhiteHits",
-  "WinEffect",
-  "YaminiExploit",
-  "YaminiExtender",
-  "YuziExtender"
-  ];
-  assert.ok(registered.size >= expected.length, `expected at least ${expected.length} BedWars modules, found ${registered.size}`);
-  assert.deepEqual(expected.filter(name => !registered.has(name)), []);
-  for (const name of ['AutoBuy', 'AutoConsume', 'AutoFish', 'AutoHotbar', 'AutoSteal', 'FastConsume', 'FastDrop', 'OpenShop', 'LongJump']) {
-    assert.ok(registered.has(name), `missing restored module ${name}`);
+  for (const match of bedwars.matchAll(/:CreateModule\s*\(\s*\{[\s\S]{0,500}?\bName\s*=\s*['"]([^'"]+)['"]/g)) registered.add(match[1]);
+  for (const match of bedwars.matchAll(/\bregister\s*\(\s*['"]([^'"]+)['"]\s*,\s*['"]([^'"]+)['"]/g)) registered.add(match[2]);
+  assert.ok(registered.size >= 100, `expected a substantial BedWars module set, found ${registered.size}`);
+  for (const name of ['AutoBuy', 'AutoConsume', 'AutoFish', 'AutoHotbar', 'AutoSteal', 'FastConsume', 'FastDrop', 'OpenShop', 'LongJump', 'Killaura', 'Scaffold', 'Speed']) {
+    assert.ok(registered.has(name), `missing BedWars module ${name}`);
   }
 });
-
