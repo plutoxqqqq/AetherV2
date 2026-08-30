@@ -1,0 +1,48 @@
+name: Luau syntax
+
+on:
+  pull_request:
+    paths:
+      - '**/*.lua'
+      - 'tools/build-bedwars-bundle.py'
+      - '.github/workflows/luau-syntax.yml'
+  push:
+    branches:
+      - 'codex/fix-bedwars-bundle-nil-and-luau-syntax'
+
+jobs:
+  syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rebuild BedWars bundle
+        run: |
+          python3 tools/build-bedwars-bundle.py
+          git diff --exit-code -- games/6872274481/bundle.lua
+
+      - name: Install Luau compiler
+        run: |
+          curl -fsSL https://github.com/luau-lang/luau/releases/latest/download/luau-ubuntu.zip -o /tmp/luau.zip
+          unzip -q /tmp/luau.zip -d /tmp/luau
+          chmod +x /tmp/luau/luau-compile
+
+      - name: Check every Luau file
+        shell: bash
+        run: |
+          set -euo pipefail
+          failures=0
+          while IFS= read -r -d '' file; do
+            echo "Checking $file"
+            if ! /tmp/luau/luau-compile "$file" >/dev/null; then
+              failures=$((failures + 1))
+            fi
+          done < <(find . -type f -name '*.lua' -not -path './.git/*' -print0)
+          if [ "$failures" -ne 0 ]; then
+            echo "$failures Luau file(s) failed syntax compilation"
+            exit 1
+          fi
+
+      - name: Show reported runtime area
+        if: always()
+        run: nl -ba games/6872274481/bundle.lua | sed -n '20435,20465p'
