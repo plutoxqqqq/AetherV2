@@ -375,7 +375,7 @@ local function getHitChance(ent, flight)
 	local airborne = ent.Humanoid and ent.Humanoid.FloorMaterial == Enum.Material.Air
 	local errorBudget = (horizontal * flight * 0.28) + (acceleration * flight * flight * 0.12)
 	if airborne then errorBudget += math.abs(velocity.Y) * flight * 0.12 end
-	return math.clamp(math.round(100 - errorBudget), 0, 100)
+	return math.clamp((100 - errorBudget) / 100, 0, 1)
 end
 
 local function projectileAcceleration(gravity)

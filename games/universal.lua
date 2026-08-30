@@ -8983,6 +8983,8 @@ run(function()
 	local ThroughWalls
 	local originals = setmetatable({}, {__mode = 'k'})
 	local applying = setmetatable({}, {__mode = 'k'})
+	local environment = (getgenv and getgenv()) or _G
+	local api = environment.AetherInteractExtender or {}
 
 	local function remember(prompt)
 		if originals[prompt] then return true end
@@ -9023,6 +9025,23 @@ run(function()
 		if not PromptEditor.Enabled then return end
 		for prompt in originals do applyPrompt(prompt) end
 	end
+
+
+	api.IsEnabled = function()
+		return PromptEditor and PromptEditor.Enabled == true
+	end
+	api.Activate = function(prompt)
+		if not api.IsEnabled() then return false, 'PromptEditor is disabled' end
+		if typeof(prompt) ~= 'Instance' or not prompt:IsA('ProximityPrompt') then return false, 'invalid prompt' end
+		applyPrompt(prompt)
+		if type(fireproximityprompt) ~= 'function' then return false, 'fireproximityprompt unavailable' end
+		local ok, result = pcall(fireproximityprompt, prompt)
+		return ok and result ~= false, ok and nil or tostring(result)
+	end
+	environment.AetherInteractExtender = api
+	vape:Clean(function()
+		if environment.AetherInteractExtender == api then environment.AetherInteractExtender = nil end
+	end)
 
 	PromptEditor = vape.Categories.World:CreateModule({
 		Name = 'PromptEditor',
