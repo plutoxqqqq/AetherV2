@@ -7,6 +7,7 @@ on:
     paths:
       - tools/apply-bedwars-refactor.py
       - tools/patch-refactor-standalone.py
+      - tools/patch-refactor-discord.py
       - tools/build-bedwars-bundle.py
       - games/6872274481/**
   workflow_dispatch:
@@ -28,6 +29,8 @@ jobs:
           python-version: '3.12'
       - name: Patch splitter for standalone modules
         run: python tools/patch-refactor-standalone.py
+      - name: Patch existing Discord syntax
+        run: python tools/patch-refactor-discord.py
       - name: Apply one-time structural refactor
         if: hashFiles('tools/apply-bedwars-refactor.py') != ''
         run: python tools/apply-bedwars-refactor.py
