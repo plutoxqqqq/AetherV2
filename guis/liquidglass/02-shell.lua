@@ -1,6 +1,35 @@
     Name = 'AetherLiquidGlass', Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1,
     BorderSizePixel = 0, Visible = false, ZIndex = 100
 }, guiParent)
+-- Liquid Glass owns the visible Aether interface. Keep the legacy controller alive, but hide
+-- every pre-existing GuiObject sibling so the classic search/module UI cannot bleed through or
+-- sit above the new shell. The Liquid Glass root is intentionally excluded.
+local legacySweepInstalled = false
+local function hideLegacyVisuals()
+    if legacySweepInstalled then return end
+    legacySweepInstalled = true
+    local function hide(object)
+        if typeof(object) ~= 'Instance' or not object:IsA('GuiObject') or object:IsDescendantOf(root) then return end
+        object.Visible = false
+        if not hiddenLegacy[object] then
+            hiddenLegacy[object] = true
+            connect(object:GetPropertyChangedSignal('Visible'), function()
+                if object.Parent and object.Visible and not object:IsDescendantOf(root) then object.Visible = false end
+            end)
+        end
+    end
+    for _, child in ipairs(guiParent:GetChildren()) do
+        if child ~= root then
+            if child:IsA('GuiObject') then
+                hide(child)
+            elseif child:IsA('ScreenGui') or child:IsA('Folder') then
+                for _, descendant in ipairs(child:GetDescendants()) do hide(descendant) end
+            end
+        end
+    end
+end
+
+task.defer(hideLegacyVisuals)
 
 local scrim = create('TextButton', {
     Name = 'Scrim', Size = UDim2.fromScale(1, 1), BackgroundColor3 = COLORS.Deep,

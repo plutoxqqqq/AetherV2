@@ -92,27 +92,114 @@ local function buildInspector(module)
     tween(inspector,0.28,{Position=UDim2.new(1,0,0,58)},Enum.EasingStyle.Quint)
 end
 
+local function normalizedModuleKey(value)
+    return tostring(value or ''):lower():gsub('[%s_%-%./]+', '')
+end
+
+local function resolveModuleCategory(module)
+    if not module then return 'Other' end
+    local wanted = normalizedModuleKey(module.Name)
+    for rawName, api in pairs(mainapi.Categories or {}) do
+        if type(api) == 'table' and type(api.Modules) == 'table' then
+            for key, candidate in pairs(api.Modules) do
+                if candidate == module then
+                    return tostring(rawName) == 'Main' and 'Aether' or tostring(rawName)
+                end
+                if type(candidate) == 'table' and wanted ~= '' and normalizedModuleKey(candidate.Name or key) == wanted then
+                    return tostring(rawName) == 'Main' and 'Aether' or tostring(rawName)
+                end
+                if type(candidate) ~= 'table' and wanted ~= '' and normalizedModuleKey(key) == wanted then
+                    return tostring(rawName) == 'Main' and 'Aether' or tostring(rawName)
+                end
+            end
+        end
+    end
+    return tostring(module.LiquidCategory or module.Category or 'Other')
+end
+
+local function syncModuleCategory(module)
+    local category = resolveModuleCategory(module)
+    if module and category ~= '' then module.LiquidCategory = category end
+    return category
+end
+
 local function moduleCard(parent,module,order)
     local height=liquidSettings.CompactCards and 78 or 96
     local card,stroke=cardSurface(parent,height,order)
     card.Name='Module_'..tostring(module.Name or order)
-    local hit=textButton(card,''); hit.Size=UDim2.fromScale(1,1); hit.ZIndex=112
-    local name=label(card,moduleDisplayName(module),13,true); name.Size=UDim2.new(1,-76,0,24); name.Position=UDim2.fromOffset(14,10); name.ZIndex=114
-    local cat=label(card,tostring(module.LiquidCategory or module.Category or ''),9,false,COLORS.Tertiary); cat.Size=UDim2.new(1,-78,0,16); cat.Position=UDim2.fromOffset(14,33); cat.ZIndex=114
-    local desc=label(card,tostring(module.Tooltip or ''),9,false,COLORS.Secondary); desc.Size=UDim2.new(1,-28,0,32); desc.Position=UDim2.fromOffset(14,55); desc.TextWrapped=true; desc.TextYAlignment=Enum.TextYAlignment.Top; desc.ZIndex=114; desc.Visible=not liquidSettings.CompactCards
+    card.Active=true
+    card.ClipsDescendants=true
+    syncModuleCategory(module)
+
+    local hit=textButton(card,'')
+    hit.Size=UDim2.new(1,-64,1,0)
+    hit.Position=UDim2.fromOffset(0,0)
+    hit.ZIndex=123
+    hit.Active=true
+    hit.Selectable=false
+
+    local name=label(card,moduleDisplayName(module),13,true)
+    name.Size=UDim2.new(1,-76,0,24); name.Position=UDim2.fromOffset(14,10); name.ZIndex=124
+    local cat=label(card,tostring(module.LiquidCategory or module.Category or ''),9,false,COLORS.Tertiary)
+    cat.Size=UDim2.new(1,-78,0,16); cat.Position=UDim2.fromOffset(14,33); cat.ZIndex=124
+    local desc=label(card,tostring(module.Tooltip or ''),9,false,COLORS.Secondary)
+    desc.Size=UDim2.new(1,-28,0,32); desc.Position=UDim2.fromOffset(14,55)
+    desc.TextWrapped=true; desc.TextYAlignment=Enum.TextYAlignment.Top; desc.ZIndex=124
+    desc.Visible=not liquidSettings.CompactCards
+
     local switch,refreshSwitch=makeSwitch(card,function() return module.Enabled==true end,function(value)
         if module.Enabled~=value and type(module.Toggle)=='function' then pcall(module.Toggle,module); remember(module) end
     end)
-    switch.AnchorPoint=Vector2.new(1,0); switch.Position=UDim2.new(1,-12,0,12); switch.ZIndex=117
-    connect(hit.MouseButton1Click,function() buildInspector(module) end)
-    connect(hit.MouseEnter,function() tween(card,0.14,{BackgroundTransparency=0.38}); stroke.Transparency=0.82 end)
-    connect(hit.MouseLeave,function() tween(card,0.14,{BackgroundTransparency=0.5}); stroke.Transparency=0.91 end)
+    switch.AnchorPoint=Vector2.new(1,0); switch.Position=UDim2.new(1,-12,0,12); switch.ZIndex=126
+
+    local opening=false
+    local function openModule()
+        if opening then return end
+        opening=true
+        task.defer(function() opening=false end)
+        buildInspector(module)
+    end
+
+    local function openOwningCategory()
+        local category=syncModuleCategory(module)
+        state.SelectedModule=nil
+        state.Page='Category'
+        state.Category=category
+        filterBox.Text=''
+        if state.RenderPage then state.RenderPage() end
+    end
+
+    connect(hit.MouseButton1Click,openModule)
+    connect(hit.MouseButton2Click,openOwningCategory)
+    connect(hit.InputBegan,function(input)
+        if input.UserInputType==Enum.UserInputType.MouseButton1 then
+            openModule()
+        elseif input.UserInputType==Enum.UserInputType.MouseButton2 then
+            openOwningCategory()
+        end
+    end)
+
+    connect(hit.MouseEnter,function()
+        tween(card,0.14,{BackgroundTransparency=0.38})
+        stroke.Transparency=0.82
+    end)
+    connect(hit.MouseLeave,function()
+        tween(card,0.14,{BackgroundTransparency=module.Enabled and 0.32 or 0.5})
+        stroke.Transparency=module.Enabled and 0.55 or 0.91
+    end)
+
     local function refresh()
-        refreshSwitch(); stroke.Color=module.Enabled and accent() or COLORS.White; stroke.Transparency=module.Enabled and 0.55 or 0.91
+        syncModuleCategory(module)
+        refreshSwitch()
         card.BackgroundColor3=module.Enabled and Color3.fromRGB(31,28,43) or COLORS.Surface2
+        card.BackgroundTransparency=module.Enabled and 0.32 or 0.5
+        stroke.Color=module.Enabled and accent() or COLORS.White
+        stroke.Transparency=module.Enabled and 0.55 or 0.91
+        cat.Text=tostring(module.LiquidCategory or module.Category or '')
     end
     state.ModuleCards[module]={Card=card,Refresh=refresh}
-    refresh(); return card
+    refresh()
+    return card
 end
 
 local function sectionHeading(parent,text,order)
