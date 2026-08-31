@@ -1,0 +1,93 @@
+name: Apply AetherV2 fixes retry
+
+on:
+  push:
+    branches:
+      - codex/fix-cloud-mousetp-scaffold-infinitefly-liquidglass
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.ref_name }}
+      - name: Apply fixes
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          import subprocess
+          import traceback
+          failures=[]
+          changed=[]
+          def patch(label, fn):
+              try:
+                  if fn():
+                      changed.append(label); print('OK', label)
+                  else:
+                      print('SKIP', label)
+              except Exception as e:
+                  failures.append(label+': '+repr(e)); print('FAIL', label, repr(e)); traceback.print_exc()
+
+          def cloud():
+              p=Path('backend/private-source-core.js'); s=p.read_text(); m="const routeCloud = async (req, res, url) => {\n"; add="  url.pathname = url.pathname.replace(/\\/+$/, '') || '/';\n"
+              if add in s: return False
+              assert m in s
+              p.write_text(s.replace(m,m+add,1)); return True
+          patch('cloud-route-trailing-slash', cloud)
+
+          def whitelist():
+              p=Path('main-core.lua'); s=p.read_text(); old="local validGuis = {new = true, old = true, rise = true}"; new="local validGuis = {new = true, old = true, rise = true, liquidglass = true}"
+              assert old in s or new in s
+              if new in s:return False
+              p.write_text(s.replace(old,new,1)); return True
+          patch('liquidglass-loader-whitelist', whitelist)
+
+          def dropdown():
+              p=Path('guis/new.core.lua'); s=p.read_text(); old="List = inputService.TouchEnabled and {'new', 'old'} or {'new', 'old', 'rise'},"; new="List = inputService.TouchEnabled and {'new', 'old', 'liquidglass'} or {'new', 'old', 'rise', 'liquidglass'},"
+              assert old in s or new in s
+              if new in s:return False
+              p.write_text(s.replace(old,new,1)); return True
+          patch('liquidglass-settings-dropdown', dropdown)
+
+          def scaffold():
+              p=Path('games/6872274481/utility/Scaffold.lua'); s=p.read_text(); before=s
+              if 'local LevelBridge' not in s: s=s.replace('\tlocal KeepY\n','\tlocal KeepY\n\tlocal LevelBridge\n',1)
+              if "Name = 'Level bridge'" not in s:
+                  marker="\tKeepY = Scaffold:CreateToggle({Name = 'Keep Y', Default = true, Tooltip = 'Keeps a level bridge unless downwards mode is held'})\n"
+                  assert marker in s
+                  s=s.replace(marker,marker+"\tLevelBridge = Scaffold:CreateToggle({Name = 'Level bridge', Default = false, Tooltip = 'Locks Scaffold to the starting bridge level'})\n",1)
+              if 'LevelBridge.Enabled' not in s:
+                  assert 'if KeepY.Enabled and not downwards then' in s
+                  s=s.replace('if KeepY.Enabled and not downwards then','if (KeepY.Enabled or LevelBridge.Enabled) and not downwards then',1)
+              if s!=before:p.write_text(s);return True
+              return False
+          patch('free-scaffold-level-bridge', scaffold)
+
+          def infinitefly():
+              p=Path('games/universal.lua'); s=p.read_text(); start=s.find('    ------------------------------------------------------------------------\n    -- Shared visual-clone helper used by InfiniteFly.')
+              if start<0:return False
+              end=s.find('    Fly = vape.Categories.Blatant:CreateModule({',start); assert end>=0
+              old=subprocess.check_output(['git','show','a543c1cbdbaa0c1be9aea9c9458bdbfab5989f8c:games/universal.lua'],text=True)
+              a=old.find('run(function()\n    -- InfiniteFly'); b=old.find('\nend)\n\nrun(function()',a); assert a>=0 and b>=0
+              inner=old[a+len('run(function()\n'):b].rstrip()
+              p.write_text(s[:start]+inner+'\n\n'+s[end:]); return True
+          patch('infinitefly-anti-void-cycle', infinitefly)
+
+          Path('.fix-status.txt').write_text(('CHANGED\n'+'\n'.join(changed)+'\n\nFAILURES\n'+'\n'.join(failures)+'\n'))
+          PY
+      - name: Commit fixes and remove workflow
+        shell: bash
+        run: |
+          set -e
+          rm -f .github/workflows/retry-fixes.yml _fix-trigger.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "fix: Cloud Configs, Scaffold, InfiniteFly and Liquid Glass" || true
+          git push origin HEAD:${GITHUB_REF_NAME}
