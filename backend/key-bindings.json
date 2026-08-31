@@ -40,8 +40,8 @@
       "username": "AetherV2Owner",
       "userId": "11515370034",
       "firstUsedAt": "2026-08-26T22:13:15.291Z",
-      "uses": 14,
-      "lastUsedAt": "2026-08-30T21:22:16.511Z",
+      "uses": 15,
+      "lastUsedAt": "2026-08-31T06:27:51.458Z",
       "transferredAt": "2026-08-29T07:04:19.885Z"
     },
     "8e5bd4179b423e0e17cf2f0a4d1ee4d5e6ab22f49dddd1abb0233b2fc25a772d": {
@@ -976,6 +976,16 @@
       "actor": "plutoxqq (1364123154196336661)",
       "operationId": "524f62e7-e757-4885-9956-e25590f5c1c7",
       "label": "Unlabelled"
+    },
+    {
+      "at": "2026-08-31T06:27:51.458Z",
+      "action": "use",
+      "keyId": "fdad1b82d01fa9abee01d94e46eee107c49d2bcd37f093f4ccd2b3654a54e324",
+      "actor": "loader",
+      "operationId": "90d43ad4-7b56-4308-9508-b59db4e0f07f",
+      "username": "AetherV2Owner",
+      "userId": "11515370034",
+      "uses": 15
     }
   ]
 }
