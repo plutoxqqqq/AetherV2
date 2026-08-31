@@ -21,6 +21,9 @@ jobs:
       - name: Apply deterministic Liquid Glass repairs
         run: python3 tools/repair-liquidglass-interactions-v2.py
 
+      - name: Validate repair tooling
+        run: python3 -m py_compile tools/repair-liquidglass-interactions-v2.py
+
       - name: Show changed files
         run: git diff --check && git status --short
 
@@ -30,17 +33,9 @@ jobs:
           unzip -q /tmp/luau.zip -d /tmp/luau
           chmod +x /tmp/luau/luau-compile
 
-      - name: Validate changed Luau
-        shell: bash
+      - name: Validate assembled Liquid Glass loader
         run: |
-          set -euo pipefail
-          for file in \
-            guis/liquidglass.lua \
-            guis/liquidglass/02-shell.lua \
-            guis/liquidglass/05-inspector.lua; do
-            echo "=== $file ==="
-            /tmp/luau/luau-compile "$file"
-          done
+          /tmp/luau/luau-compile guis/liquidglass.lua
 
       - name: Commit repaired sources
         run: |
