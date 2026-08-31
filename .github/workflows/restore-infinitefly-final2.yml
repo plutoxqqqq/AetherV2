@@ -1,0 +1,42 @@
+name: Finalize InfiniteFly
+
+on:
+  push:
+    branches:
+      - codex/fix-cloud-mousetp-scaffold-infinitefly-liquidglass
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.ref_name }}
+      - run: |
+          python3 <<'PY'
+          from pathlib import Path
+          import subprocess
+          p=Path('games/universal.lua'); current=p.read_text()
+          start=current.find('run(function()\n    ------------------------------------------------------------------------\n    -- Shared visual-clone helper used by InfiniteFly.')
+          end=current.find('run(function()\n    local Mode', start)
+          if start < 0 or end < 0: raise SystemExit(f'current block markers start={start} end={end}')
+          patch=subprocess.check_output(['git','show','--format=','--unified=0','a543c1cbdbaa0c1be9aea9c9458bdbfab5989f8c','--','games/universal.lua'], text=True)
+          added=[line[1:] for line in patch.splitlines() if line.startswith('+') and not line.startswith('+++')]
+          begin=next((i for i,line in enumerate(added) if line.strip()=='run(function()' and i+1<len(added) and 'InfiniteFly' in added[i+1]),-1)
+          if begin<0: raise SystemExit('InfiniteFly block not found in a543 diff')
+          finish=next((i for i in range(begin+1,len(added)) if added[i].strip()=='run(function()'),-1)
+          if finish<0: raise SystemExit('InfiniteFly diff block end not found')
+          block='\n'.join(added[begin:finish]).rstrip()
+          p.write_text(current[:start]+block+'\n\n'+current[end:])
+          PY
+      - run: |
+          rm -f .github/workflows/restore-infinitefly.yml .github/workflows/restore-infinitefly-v2.yml .github/workflows/restore-infinitefly-final2.yml .github/workflows/diagnose-infinitefly.yml .infinitefly-debug.txt .fix-status.txt _diag-trigger.txt _final-infinitefly-trigger.txt _restore-trigger.txt _restore-v2-trigger.txt _restore-v2-trigger-2.txt _retry-trigger.txt _infinitefly-debug-trigger.txt _infinitefly-trigger.txt _final-infinitefly-trigger.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "fix: restore InfiniteFly anti-void replication cycle"
+          git push origin HEAD:${GITHUB_REF_NAME}
