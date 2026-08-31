@@ -384,25 +384,21 @@ connect(searchButton.MouseButton1Click,function()
     task.defer(function() if filterBox.Parent and filterBox.Visible then pcall(function() filterBox:CaptureFocus() end) end end)
 end)
 
-local filterGuard=false
 local filterRevision=0
 local function rerenderFilteredPage()
-    if filterGuard then return end
     if state.Page~='Category' and state.Page~='Search' and state.Page~='Actions' then return end
     filterRevision+=1
     local revision=filterRevision
-    local focused=filterBox:IsFocused()
-    local scroll=page.CanvasPosition
-    task.defer(function()
+    task.delay(0.12,function()
         if revision~=filterRevision or not root.Parent then return end
+        local scroll=page.CanvasPosition
         renderPage()
-        page.CanvasPosition=scroll
-        if focused and filterBox.Visible then pcall(function() filterBox:CaptureFocus() end) end
+        if page.Parent then page.CanvasPosition=scroll end
     end)
 end
 connect(filterBox:GetPropertyChangedSignal('Text'),rerenderFilteredPage)
 connect(filterBox.FocusLost,function()
-    if filterBox.Visible then rerenderFilteredPage() end
+    -- Focus changes do not rebuild the results or mutate the search TextBox.
 end)
 filterBox.Active=true
 filterBox.TextEditable=true
