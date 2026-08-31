@@ -9,6 +9,7 @@ run(function()
 	local Mouse
 	local BridgeWidth
 	local KeepY
+	local LevelBridge
 	local JumpBridge
 	local BlockPreference
 	local RestoreSlot
@@ -164,7 +165,7 @@ run(function()
 							for i = Expand.Value, 1, -1 do
 								local currentpos = roundPos(root.Position - Vector3.new(0, entitylib.character.HipHeight + (Downwards.Enabled and inputService:IsKeyDown(Enum.KeyCode.LeftShift) and 4.5 or 1.5), 0) + entitylib.character.Humanoid.MoveDirection * (i * 3))
 								local downwards = Downwards.Enabled and inputService:IsKeyDown(Enum.KeyCode.LeftShift)
-								if KeepY.Enabled and not downwards then
+								if (KeepY.Enabled or LevelBridge.Enabled) and not downwards then
 									lockedY = lockedY or currentpos.Y
 									currentpos = Vector3.new(currentpos.X, lockedY, currentpos.Z)
 								else
@@ -222,6 +223,7 @@ run(function()
 		Tooltip = 'Places up to three blocks across while bridging'
 	})
 	KeepY = Scaffold:CreateToggle({Name = 'Keep Y', Default = true, Tooltip = 'Keeps a level bridge unless downwards mode is held'})
+	LevelBridge = Scaffold:CreateToggle({Name = 'Level bridge', Default = false, Tooltip = 'Locks Scaffold to the starting bridge level'})
 	JumpBridge = Scaffold:CreateToggle({Name = 'Jump bridge', Tooltip = 'Repeats natural jumps while moving on a bridge'})
 	Tower = Scaffold:CreateToggle({
 		Name = 'Tower',

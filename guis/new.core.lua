@@ -10395,7 +10395,7 @@ scaleslider = guipane:CreateSlider({
 })
 guipane:CreateDropdown({
 	Name = 'GUI Theme',
-	List = inputService.TouchEnabled and {'new', 'old'} or {'new', 'old', 'rise'},
+	List = inputService.TouchEnabled and {'new', 'old', 'liquidglass'} or {'new', 'old', 'rise', 'liquidglass'},
 	Function = function(val, mouse)
 		if mouse then
 			-- Flush the current profile before reloading so the accent colour and

@@ -550,7 +550,7 @@ end
 if not isfile('aetherv2/profiles/gui.txt') then
 	writefile('aetherv2/profiles/gui.txt', 'new')
 end
-local validGuis = {new = true, old = true, rise = true}
+local validGuis = {new = true, old = true, rise = true, liquidglass = true}
 local gui = readfile('aetherv2/profiles/gui.txt'):gsub('%s+', '')
 if gui == 'newer' then
 	gui = 'new'

@@ -301,6 +301,7 @@ const premiumTree = async () => {
 };
 
 const routeCloud = async (req, res, url) => {
+  url.pathname = url.pathname.replace(/\/+$/, '') || '/';
   const shareMatch = url.pathname.match(/^\/cloud\/share\/([^/]+)$/);
   if (req.method === 'GET' && shareMatch) {
     const config = await cloud.resolveShare(decodeURIComponent(shareMatch[1]));
