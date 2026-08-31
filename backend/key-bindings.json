@@ -197,6 +197,14 @@
       "enabled": true,
       "expiresAt": null,
       "rotatedFrom": "eb1ebdad59c70f81f7fe71f66656a3b1ae6cc41d2bd584c83aa1b5dadaa2e508"
+    },
+    "d0c32535af7f3e73bfa17aec97f20a0ef19d67ae11684541cb81cb0ef165e612": {
+      "label": "Unlabelled",
+      "source": "discord",
+      "createdAt": "2026-08-31T04:53:24.192Z",
+      "createdBy": "plutoxqq (1364123154196336661)",
+      "enabled": true,
+      "expiresAt": null
     }
   },
   "audit": [
@@ -944,6 +952,14 @@
       "username": "AetherV2Owner",
       "userId": "11515370034",
       "uses": 14
+    },
+    {
+      "at": "2026-08-31T04:53:24.668Z",
+      "action": "generate",
+      "keyId": "d0c32535af7f3e73bfa17aec97f20a0ef19d67ae11684541cb81cb0ef165e612",
+      "actor": "plutoxqq (1364123154196336661)",
+      "operationId": "a96128bd-642a-4563-922e-b1e89590a148",
+      "label": "Unlabelled"
     }
   ]
 }
