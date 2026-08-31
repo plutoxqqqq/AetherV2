@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "conflicts": {
+    "41b000fec562527605f06fe9": {
+      "keyId": "f140d9f07c87ca2d8598029ccd056e299da9933880cd72f8364f353c39857fbe",
+      "boundUsername": "Aimingagainstyou",
+      "boundUserId": "11575425712",
+      "attemptedUsername": "508477",
+      "attemptedUserId": "9491884524",
+      "firstSeenAt": "2026-08-31T17:20:45.459Z",
+      "lastSeenAt": "2026-08-31T17:20:45.459Z",
+      "attempts": 1,
+      "status": "open"
+    }
+  },
+  "bans": {}
+}
