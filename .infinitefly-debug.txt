@@ -1,3 +1,7 @@
-Traceback (most recent call last):
-  File "<stdin>", line 8, in <module>
-Exception: current markers start=-1 end=-1
+current_space=58799
+current_tab=-1
+high_space=64546
+high_tab=-1
+old_space=-1
+old_tab=-1
+old_end=15249
