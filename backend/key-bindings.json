@@ -205,6 +205,14 @@
       "createdBy": "plutoxqq (1364123154196336661)",
       "enabled": true,
       "expiresAt": null
+    },
+    "e346e5b1f1274eb0c5bdb4e6b8cd2c6933b92c83fdbaf59de7ec8611aa7e2601": {
+      "label": "Unlabelled",
+      "source": "discord",
+      "createdAt": "2026-08-31T04:53:24.967Z",
+      "createdBy": "plutoxqq (1364123154196336661)",
+      "enabled": true,
+      "expiresAt": null
     }
   },
   "audit": [
@@ -959,6 +967,14 @@
       "keyId": "d0c32535af7f3e73bfa17aec97f20a0ef19d67ae11684541cb81cb0ef165e612",
       "actor": "plutoxqq (1364123154196336661)",
       "operationId": "a96128bd-642a-4563-922e-b1e89590a148",
+      "label": "Unlabelled"
+    },
+    {
+      "at": "2026-08-31T04:53:26.246Z",
+      "action": "generate",
+      "keyId": "e346e5b1f1274eb0c5bdb4e6b8cd2c6933b92c83fdbaf59de7ec8611aa7e2601",
+      "actor": "plutoxqq (1364123154196336661)",
+      "operationId": "524f62e7-e757-4885-9956-e25590f5c1c7",
       "label": "Unlabelled"
     }
   ]
