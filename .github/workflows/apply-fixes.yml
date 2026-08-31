@@ -1,0 +1,144 @@
+name: Apply AetherV2 fixes
+
+on:
+  push:
+    branches:
+      - codex/fix-cloud-mousetp-scaffold-infinitefly-liquidglass
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.ref_name }}
+
+      - name: Apply fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+          import re
+          import subprocess
+
+          changed = []
+
+          def replace_once(path, old, new, label):
+              p = Path(path)
+              text = p.read_text()
+              if new in text:
+                  return False
+              if old not in text:
+                  raise SystemExit(f'{label}: marker not found in {path}')
+              p.write_text(text.replace(old, new, 1))
+              changed.append(path)
+              return True
+
+          # 1) Cloud Configs: tolerate a trailing slash on /cloud/configs and
+          # /cloud/configs/<id>. Some deployed clients/proxies normalize URLs that way,
+          # which previously fell through to the exact-match 404 handler.
+          core = Path('backend/private-source-core.js')
+          text = core.read_text()
+          marker = "const routeCloud = async (req, res, url) => {\n"
+          if "url.pathname = url.pathname.replace(/\\/+$/, '') || '/';" not in text:
+              if marker not in text:
+                  raise SystemExit('Cloud route marker not found')
+              text = text.replace(marker, marker + "  url.pathname = url.pathname.replace(/\\/+$/, '') || '/';\n", 1)
+              core.write_text(text)
+              changed.append(str(core))
+
+          # 2) GUI Settings: expose the already-shipped Liquid Glass frontend as a real
+          # selectable GUI. main-core already loads guis/<selected>.lua, so only the
+          # whitelist and Settings dropdown need to accept the new value.
+          replace_once(
+              'main-core.lua',
+              "local validGuis = {new = true, old = true, rise = true}",
+              "local validGuis = {new = true, old = true, rise = true, liquidglass = true}",
+              'Liquid Glass GUI whitelist'
+          )
+          replace_once(
+              'guis/new.core.lua',
+              "List = inputService.TouchEnabled and {'new', 'old'} or {'new', 'old', 'rise'},",
+              "List = inputService.TouchEnabled and {'new', 'old', 'liquidglass'} or {'new', 'old', 'rise', 'liquidglass'},",
+              'Liquid Glass GUI dropdown'
+          )
+
+          # 3) Free Scaffold: preserve its existing settings and add the Level bridge
+          # control from the premium implementation. Level bridge is intentionally an
+          # alias of Keep Y's level-lock behaviour rather than a separate placement path.
+          scaffold = Path('games/6872274481/utility/Scaffold.lua')
+          text = scaffold.read_text()
+          if "local LevelBridge" not in text:
+              text = text.replace("\tlocal KeepY\n", "\tlocal KeepY\n\tlocal LevelBridge\n", 1)
+              changed.append(str(scaffold))
+          if "Name = 'Level bridge'" not in text:
+              old = "\tKeepY = Scaffold:CreateToggle({Name = 'Keep Y', Default = true, Tooltip = 'Keeps a level bridge unless downwards mode is held'})\n"
+              new = old + "\tLevelBridge = Scaffold:CreateToggle({Name = 'Level bridge', Default = false, Tooltip = 'Locks Scaffold to the starting bridge level'})\n"
+              if old not in text:
+                  raise SystemExit('Scaffold Keep Y setting marker not found')
+              text = text.replace(old, new, 1)
+              changed.append(str(scaffold))
+          text2 = text.replace(
+              "if KeepY.Enabled and not downwards then",
+              "if (KeepY.Enabled or LevelBridge.Enabled) and not downwards then",
+              1
+          )
+          if text2 == text and "LevelBridge.Enabled" not in text:
+              raise SystemExit('Scaffold level-lock logic marker not found')
+          if text2 != text:
+              text = text2
+              changed.append(str(scaffold))
+          scaffold.write_text(text)
+
+          # 4) InfiniteFly: replace the recent visual-clone implementation (which is effectively
+          # another Fly controller and adds a large per-frame clone/update workload) with the
+          # older anti-void replication-cycle implementation. It withholds replication only for
+          # short ground-touch cycles, then restores the flags on every exit path.
+          current = Path('games/universal.lua').read_text()
+          start_marker = "    ------------------------------------------------------------------------\n    -- Shared visual-clone helper used by InfiniteFly."
+          start = current.find(start_marker)
+          fly_marker = "    Fly = vape.Categories.Blatant:CreateModule({"
+          if start < 0:
+              raise SystemExit('Current InfiniteFly visual-clone block not found')
+          end = current.find(fly_marker, start)
+          if end < 0:
+              raise SystemExit('Fly module marker after InfiniteFly not found')
+
+          old_source = subprocess.check_output([
+              'git', 'show', 'a543c1cbdbaa0c1be9aea9c9458bdbfab5989f8c:games/universal.lua'
+          ], text=True)
+          old_start = old_source.find("run(function()\n    -- InfiniteFly")
+          old_end = old_source.find("\nend)\n\nrun(function()", old_start)
+          if old_start < 0 or old_end < 0:
+              raise SystemExit('Reference InfiniteFly implementation not found')
+          old_inner = old_source[old_start + len("run(function()\n"):old_end].rstrip()
+          current = current[:start] + old_inner + "\n\n" + current[end:]
+          Path('games/universal.lua').write_text(current)
+          changed.append('games/universal.lua')
+
+          # De-duplicate the changed-file list while preserving order.
+          changed = list(dict.fromkeys(changed))
+          if not changed:
+              raise SystemExit('No changes were produced')
+          print('Changed:', ', '.join(changed))
+          PY
+
+      - name: Remove one-time workflow and commit fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/apply-fixes.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No staged changes"
+            exit 0
+          fi
+          git commit -m "fix: Cloud Configs, MouseTP support, Scaffold, InfiniteFly, Liquid Glass"
+          git push origin HEAD:${GITHUB_REF_NAME}
