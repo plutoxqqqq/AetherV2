@@ -62,8 +62,8 @@
       "username": "TheSevenSeas387",
       "userId": "11565522448",
       "firstUsedAt": "2026-08-31T19:18:38.424Z",
-      "lastUsedAt": "2026-08-31T19:18:38.424Z",
-      "uses": 1
+      "lastUsedAt": "2026-08-31T19:43:03.797Z",
+      "uses": 2
     }
   },
   "keys": {
@@ -1023,6 +1023,16 @@
       "username": "TheSevenSeas387",
       "userId": "11565522448",
       "uses": 1
+    },
+    {
+      "at": "2026-08-31T19:43:03.797Z",
+      "action": "use",
+      "keyId": "e346e5b1f1274eb0c5bdb4e6b8cd2c6933b92c83fdbaf59de7ec8611aa7e2601",
+      "actor": "loader",
+      "operationId": "b9e02dc0-2e09-46c9-84ca-84d2df86f133",
+      "username": "TheSevenSeas387",
+      "userId": "11565522448",
+      "uses": 2
     }
   ]
 }
