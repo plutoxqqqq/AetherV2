@@ -199,20 +199,20 @@ local function renderFeatureTags(parent, module)
     local tags = featureTagsFor(module)
     if #tags == 0 then return end
     local holder = create('Frame', {
-        Name = 'FeatureTags', Size = UDim2.new(0, 174, 0, 20),
-        Position = UDim2.new(1, -186, 1, -25), BackgroundTransparency = 1, BorderSizePixel = 0,
-        ZIndex = 118
+        Name = 'FeatureTags', Size = UDim2.new(1, -28, 0, 20),
+        AnchorPoint = Vector2.new(0, 1), Position = UDim2.new(0, 14, 1, -8),
+        BackgroundTransparency = 1, BorderSizePixel = 0, ZIndex = 118
     }, parent)
     local layout = create('UIListLayout', {
         FillDirection = Enum.FillDirection.Horizontal,
-        HorizontalAlignment = Enum.HorizontalAlignment.Right,
+        HorizontalAlignment = Enum.HorizontalAlignment.Left,
         VerticalAlignment = Enum.VerticalAlignment.Center,
         Padding = UDim.new(0, 4)
     }, holder)
-    local widths = {NEW = 42, UPDATED = 58, PATCHED = 58, REMOVED = 58, PREMIUM = 70}
+    local widths = {NEW = 36, UPDATED = 52, PATCHED = 52, REMOVED = 52, PREMIUM = 62}
     for _, tag in ipairs(tags) do
         local pill = label(holder, tag, 7, true, COLORS.White, Enum.TextXAlignment.Center)
-        pill.Size = UDim2.fromOffset(widths[tag] or 54, 18)
+        pill.Size = UDim2.fromOffset(widths[tag] or 50, 18)
         pill.BackgroundColor3 = tagColor(tag)
         pill.BackgroundTransparency = (tag == 'PREMIUM' or tag == 'NEW') and 0.12 or 0.25
         pill.ZIndex = 119
@@ -243,6 +243,12 @@ source = source:gsub("switch%.AnchorPoint=Vector2%.new%(1,0%); switch%.Position=
 	"switch.AnchorPoint=Vector2.new(1,0); switch.Position=UDim2.new(1,-12,0,12); switch.ZIndex=120",
 	1
 )
+
+-- Rounded cards own all visual children so gradients, tag pills and hover surfaces cannot bleed
+-- through the antialiased side pixels of an off module.
+source = source:gsub("    corner(frame, 16)\n    local stroke",
+    "    corner(frame, 16)\n    frame.ClipsDescendants = true\n    local stroke",
+    1)
 
 local oldDesc = "local desc=label(card,tostring(module.Tooltip or ''),9,false,COLORS.Secondary); desc.Size=UDim2.new(1,-28,0,32); desc.Position=UDim2.fromOffset(14,55); desc.TextWrapped=true; desc.TextYAlignment=Enum.TextYAlignment.Top; desc.ZIndex=114; desc.Visible=not liquidSettings.CompactCards"
 local newDesc = "local hasFeatureTags=#featureTagsFor(module)>0; local desc=label(card,tostring(module.Tooltip or ''),9,false,COLORS.Secondary); desc.Size=UDim2.new(1,hasFeatureTags and -200 or -28,0,32); desc.Position=UDim2.fromOffset(14,55); desc.TextWrapped=true; desc.TextYAlignment=Enum.TextYAlignment.Top; desc.ZIndex=114; desc.Visible=not liquidSettings.CompactCards; renderFeatureTags(card,module)"
@@ -433,9 +439,6 @@ mainapi.LiquidGlass.OpenSpotlight=function()
     task.defer(function() if filterBox.Parent and filterBox.Visible then pcall(function() filterBox:CaptureFocus() end) end end)
 end
 
--- Premium modules are loaded after the public GUI is created. Refresh the visible page once the
--- main controller reports Loaded so newly-discovered modules and their PREMIUM tags become visible
--- without needing to reinject the script.
 task.spawn(function()
     local deadline=os.clock()+45
     while root.Parent and not mainapi.Loaded and os.clock()<deadline do task.wait(0.2) end
