@@ -12,7 +12,6 @@
 		"ACMODView",
 		"Keystrokes"
 	],
-	"text": "[BEDWARS]\n[+] Added MultiAction to Exploits for compatible simultaneous actions\n[+] Added AutoEnchant to Inventory for automatic table repair and enchanting\n[^] Renamed DeathTP to RecoveryTP\n[^] Consolidated visual modules into the customizable Theme Render module\n[!] Fixed Killaura Fury Potion attack speed\n[!] Fixed StreamRemover and ACMODView Remove disguises\n[-] Removed standalone Atmosphere, TimeChanger, Shader, AuroraSky, StormMode, Bloom, AbyssalDepths, and IRLReplica modules; their visual functionality is available in Theme\n\n[GENERAL]\n[+] Added LowHealthVignette to Legit\n[^] Expanded Keystrokes with mouse-click and spacebar support\n[^] Improved auto-execute startup time",
 	"newModules": [
 		"MultiAction",
 		"AutoEnchant",
@@ -26,6 +25,10 @@
 		"ACMODView",
 		"Keystrokes"
 	],
+	"patchedModules": [],
+	"premiumModules": [
+		"MouseTP"
+	],
 	"removedModules": [
 		"Atmosphere",
 		"TimeChanger",
@@ -35,5 +38,6 @@
 		"Bloom",
 		"AbyssalDepths",
 		"IRLReplica"
-	]
+	],
+	"text": "[BEDWARS]\n[+] Added MultiAction to Exploits for compatible simultaneous actions\n[+] Added AutoEnchant to Inventory for automatic table repair and enchanting\n[^] Renamed DeathTP to RecoveryTP\n[^] Consolidated visual modules into the customizable Theme Render module\n[!] Fixed Killaura Fury Potion attack speed\n[!] Fixed StreamRemover and ACMODView Remove disguises\n[-] Removed standalone Atmosphere, TimeChanger, Shader, AuroraSky, StormMode, Bloom, AbyssalDepths, and IRLReplica modules; their visual functionality is available in Theme\n\n[GENERAL]\n[+] Added LowHealthVignette to Legit\n[^] Expanded Keystrokes with mouse-click and spacebar support\n[^] Improved auto-execute startup time\n[PREMIUM]\n[+] MouseTP is available to authorized Premium sessions"
 }
