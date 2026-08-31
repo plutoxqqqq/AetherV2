@@ -1,0 +1,48 @@
+name: Debug InfiniteFly
+
+on:
+  push:
+    branches:
+      - codex/fix-cloud-mousetp-scaffold-infinitefly-liquidglass
+
+permissions:
+  contents: write
+
+jobs:
+  debug:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.ref_name }}
+      - name: Diagnose and patch InfiniteFly
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          import subprocess, traceback
+          p=Path('games/universal.lua')
+          s=p.read_text()
+          try:
+              start=s.find('run(function()\n\tlocal InfiniteFly')
+              end=s.find('run(function()\n\tlocal HighJump', start)
+              if start < 0 or end < 0: raise Exception(f'current markers start={start} end={end}')
+              old=subprocess.check_output(['git','show','a543c1cbdbaa0c1be9aea9c9458bdbfab5989f8c:games/universal.lua'], text=True)
+              a=old.find('run(function()\n    -- InfiniteFly')
+              b=old.find('\nend)\n\nrun(function()', a)
+              if a < 0 or b < 0: raise Exception(f'reference markers a={a} b={b}')
+              ref=old[a:b+4]
+              p.write_text(s[:start]+ref+'\n\n'+s[end:])
+              status='SUCCESS'
+          except Exception:
+              status=traceback.format_exc()
+          Path('.infinitefly-debug.txt').write_text(status)
+          PY
+      - name: Commit result
+        run: |
+          rm -f .github/workflows/fix-infinitefly-debug.yml _infinitefly-trigger.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "fix: restore InfiniteFly implementation"
+          git push origin HEAD:${GITHUB_REF_NAME}
