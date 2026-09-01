@@ -1,21 +1,21 @@
 run(function()
-    local connections = {}
+    local connection
 
     vape.Categories.World:CreateModule({
-	Name = 'Anti-AFK',
-	Function = function(callback)
-		if callback then
-			for _, v in getconnections(lplr.Idled) do
-				table.insert(connections, v)
-				v:Disable()
-			end
-		else
-			for _, v in connections do
-				v:Enable()
-			end
-			table.clear(connections)
-		end
-	end,
-	Tooltip = 'Lets you stay ingame without getting kicked',
+        Name = 'Anti-AFK',
+        Function = function(callback)
+            if callback then
+                connection = lplr.Idled:Connect(function()
+                    local VirtualUser = game:GetService('VirtualUser')
+
+                    VirtualUser:CaptureController()
+                    VirtualUser:ClickButton2(Vector2.new())
+                end)
+            elseif connection then
+                connection:Disconnect()
+                connection = nil
+            end
+        end,
+        Tooltip = 'Lets you stay ingame without getting kicked'
     })
 end)
