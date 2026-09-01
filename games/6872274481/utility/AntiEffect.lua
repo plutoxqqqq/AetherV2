@@ -49,7 +49,7 @@ run(function()
 	Dizzy = AntiEffect:CreateToggle({
 		Name = 'Dizzy',
 		Default = true,
-		Tooltip = 'Stops the dizzy toad swinging your walk direction around, the slow itself is on the server'
+		Tooltip = 'Stops the dizzy toad swinging your walk direction around'
 	})
 	Fear = AntiEffect:CreateToggle({
 		Name = 'Werewolf fear',
@@ -69,6 +69,6 @@ run(function()
 			end
 		end,
 		Default = true,
-		Tooltip = 'Clears the coloured screen border frozen, decay, soaked and the rest put over your view'
+		Tooltip = 'Clears the coloured screen border frozen, decay, soaked, and the rest put over your view'
 	})
 end)
