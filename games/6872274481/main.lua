@@ -2432,724 +2432,6 @@ local function activateJadeTool(item)
 	return fired
 end
 
---[[
-    Combat
-]]
-
---[[AETHER_MODULE:render/HitAccuracy.lua]]
---[[AETHER_MODULE:utility/MemoryFixer.lua]]
---[[AETHER_MODULE:utility/AntiEffect.lua]]
---[[AETHER_MODULE:combat/AimAssist.lua]]
-
---[[AETHER_MODULE:combat/AutoClicker.lua]]
-
---[[AETHER_MODULE:combat/BowAssist.lua]]
-
---[[AETHER_MODULE:combat/NoClickDelay.lua]]
-
---[[AETHER_MODULE:combat/HitregAdjuster.lua]]
---[[AETHER_MODULE:blatant/DeathAdderAimbot.lua]]
---[[AETHER_MODULE:combat/Reach.lua]]
-
---[[AETHER_MODULE:combat/ShopClicker.lua]]
-
---[[AETHER_MODULE:combat/SilentAura.lua]]
-
---[[AETHER_MODULE:combat/Sprint.lua]]
-
---[[AETHER_MODULE:combat/TriggerBot.lua]]
-
---[[AETHER_MODULE:combat/Velocity.lua]]
-
---[[AETHER_MODULE:blatant/AntiVoid.lua]]
-
---[[AETHER_MODULE:blatant/NoFallDamage.lua]]
-
---[[AETHER_MODULE:blatant/AntiDeath.lua]]
-
-
---[[AETHER_MODULE:render/ChillLighting.lua]]
-
--- Water: fills the void with real Roblox water, at exactly the height AntiFall puts its barrier.
---
--- Height comes from AntiFall's own barrier when that module is on, and is worked out the same way
--- (lowest block on the map, minus two) when it is not - so the surface always sits where the
--- barrier does, whether or not you use it.
---
--- Terrain mode is genuine Roblox water: waves, refraction, the lot. It is written locally, so it is
--- yours alone and never replicates. It follows you in slabs and clears the one behind you, because
--- filling a whole BedWars map at once is a lot of voxels for something you only ever see under your
--- feet. Part mode is the cheap version - one plane with the water material and Roblox's own water
--- texture on top - for anywhere terrain writes are unavailable.
-run(function()
-    local Water
-    local Mode
-    local Size
-    local Depth
-    local Waves
-    local Color
-    local part
-    local filled
-    local oldWater
-    local fx        -- underwater screen effects (ColorCorrection / Blur / SunRays), Realistic mode only
-    local oldFog    -- saved Lighting fog, put back the moment you surface
-    local submerged -- currently below the water surface
-
-    local function barrierHeight()
-        if AntiFallPart and AntiFallPart.Parent then
-            return AntiFallPart.Position.Y
-        end
-        local mag = math.huge
-        pcall(function()
-            for _, pos in bedwars.BlockController:getStore():getAllBlockPositions() do
-                pos = pos * 3
-                if pos.Y < mag and not getPlacedBlock(pos + Vector3.new(0, 3, 0)) then
-                    mag = pos.Y
-                end
-            end
-        end)
-        if mag == math.huge then return nil end
-        return mag - 2
-    end
-
-    local function clearTerrain()
-        if not filled then return end
-        pcall(function()
-            workspace.Terrain:FillBlock(filled.CFrame, filled.Size, Enum.Material.Air)
-        end)
-        filled = nil
-    end
-
-    local function applyWaterLook()
-        local terrain = workspace.Terrain
-        if not oldWater then
-            oldWater = {
-                Color = terrain.WaterColor,
-                Transparency = terrain.WaterTransparency,
-                Reflectance = terrain.WaterReflectance,
-                WaveSize = terrain.WaterWaveSize,
-                WaveSpeed = terrain.WaterWaveSpeed
-            }
-        end
-        terrain.WaterColor = Color3.fromHSV(Color.Hue, Color.Sat, Color.Value)
-        terrain.WaterTransparency = math.clamp(1 - Color.Opacity, 0, 1)
-        terrain.WaterWaveSize = Waves.Enabled and 0.15 or 0
-        terrain.WaterWaveSpeed = Waves.Enabled and 12 or 0
-    end
-
-    local function restoreWaterLook()
-        if not oldWater then return end
-        local terrain = workspace.Terrain
-        pcall(function()
-            terrain.WaterColor = oldWater.Color
-            terrain.WaterTransparency = oldWater.Transparency
-            terrain.WaterReflectance = oldWater.Reflectance
-            terrain.WaterWaveSize = oldWater.WaveSize
-            terrain.WaterWaveSpeed = oldWater.WaveSpeed
-        end)
-        oldWater = nil
-    end
-
-    local function makePart(height)
-        if part then
-            part.Position = Vector3.new(0, height, 0)
-            return
-        end
-        part = Instance.new('Part')
-        part.Name = 'AetherWater'
-        part.Size = Vector3.new(10000, Depth.Value, 10000)
-        part.Position = Vector3.new(0, height, 0)
-        part.Anchored = true
-        part.CanCollide = false
-        part.CanQuery = false
-        part.CanTouch = false
-        part.Material = Enum.Material.Water
-        part.Color = Color3.fromHSV(Color.Hue, Color.Sat, Color.Value)
-        part.Transparency = math.clamp(1 - Color.Opacity, 0, 1)
-        part.Parent = workspace
-        -- Roblox's own water surface texture on the top face, so Part mode reads as water rather
-        -- than as a flat blue slab.
-        local texture = Instance.new('Texture')
-        texture.Name = 'WaterSurface'
-        texture.Face = Enum.NormalId.Top
-        texture.Texture = 'rbxasset://textures/water/normal_1.dds'
-        texture.StudsPerTileU = 24
-        texture.StudsPerTileV = 24
-        texture.Transparency = 0.35
-        texture.Parent = part
-        pcall(function()
-            bedwars.QueryUtil:setQueryIgnored(part, true)
-        end)
-    end
-
-    local function removePart()
-        if part then
-            part:Destroy()
-            part = nil
-        end
-    end
-
-    ----------------------------------------------------------------------------
-    -- Realistic mode. Terrain water, but glassy and reflective, and it comes alive only while you
-    -- are actually in it: the look (fog, colour grade, god-rays, sway) and the buoyancy are applied
-    -- when your eyes / body go under the surface and taken straight back off when you surface, so
-    -- nothing here ever touches the world while you are stood on dry land.
-    ----------------------------------------------------------------------------
-    local FX_NAME = 'AetherWaterFX'
-
-    local function applyRealisticLook()
-        local terrain = workspace.Terrain
-        if not oldWater then
-            oldWater = {
-                Color = terrain.WaterColor,
-                Transparency = terrain.WaterTransparency,
-                Reflectance = terrain.WaterReflectance,
-                WaveSize = terrain.WaterWaveSize,
-                WaveSpeed = terrain.WaterWaveSpeed
-            }
-        end
-        terrain.WaterColor = Color3.fromHSV(Color.Hue, Color.Sat, Color.Value)
-        terrain.WaterTransparency = math.clamp(1 - Color.Opacity, 0, 1)
-        -- Glassy: reflect the sky and world off the surface, with livelier waves than the flat look.
-		terrain.WaterReflectance = Waves.Enabled and 0.18 or 0.08
-		terrain.WaterWaveSize = Waves.Enabled and 0.09 or 0.025
-		terrain.WaterWaveSpeed = Waves.Enabled and 7 or 2
-    end
-
-    local function ensureFX()
-        if fx then return end
-        fx = {}
-        local cc = Instance.new('ColorCorrectionEffect')
-        cc.Name = FX_NAME
-        cc.Enabled = false
-        cc.Parent = lightingService
-        fx.cc = cc
-        local blur = Instance.new('BlurEffect')
-        blur.Name = FX_NAME..'Blur'
-        blur.Enabled = false
-        blur.Size = 0
-        blur.Parent = lightingService
-        fx.blur = blur
-        local rays = Instance.new('SunRaysEffect')
-        rays.Name = FX_NAME..'Rays'
-        rays.Enabled = false
-        rays.Parent = lightingService
-        fx.rays = rays
-    end
-
-    local function restoreFog()
-        if not oldFog then return end
-        pcall(function()
-            lightingService.FogStart = oldFog.Start
-            lightingService.FogEnd = oldFog.End
-            lightingService.FogColor = oldFog.Color
-        end)
-        oldFog = nil
-    end
-
-    -- Came back up (or left Realistic mode): switch the look off and hand the fog back, but keep the
-    -- effect instances around so diving straight back in does not churn them.
-    local function surfaced()
-        if not submerged then return end
-        submerged = false
-        restoreFog()
-        if fx then
-            pcall(function()
-                fx.cc.Enabled = false
-                fx.blur.Enabled = false
-                fx.rays.Enabled = false
-            end)
-        end
-    end
-
-    local function removeFX()
-        surfaced()
-        if fx then
-            for _, effect in fx do
-                pcall(function() effect:Destroy() end)
-            end
-            fx = nil
-        end
-    end
-
-    -- Called every frame while Realistic is on. surface is the top of the water slab.
-    local function updateRealistic(surface)
-        ensureFX()
-        local cam = gameCamera
-        local under = cam and cam.CFrame.Position.Y < surface
-
-        if under then
-            if not submerged then
-                submerged = true
-                if not oldFog then
-                    oldFog = {Start = lightingService.FogStart, End = lightingService.FogEnd, Color = lightingService.FogColor}
-                end
-            end
-            local col = Color3.fromHSV(Color.Hue, Color.Sat, Color.Value)
-            local sway = 0.5 + 0.5 * math.sin(tick() * 1.4)
-            -- Fog closes in the deeper/less clear the water is, so it reads as real water rather
-            -- than a blue filter.
-            lightingService.FogColor = col
-            lightingService.FogStart = 0
-            lightingService.FogEnd = 55 + Color.Opacity * 55 + sway * 6
-            fx.cc.Enabled = true
-            fx.cc.TintColor = col:Lerp(Color3.new(1, 1, 1), 0.05 + 0.04 * sway)
-            fx.cc.Brightness = -0.04
-            fx.cc.Contrast = 0.12
-            fx.cc.Saturation = -0.08
-			-- Blur and animated sun rays made this mode both muddy-looking and one
-			-- of the most expensive visual modules. Colour/fog provide depth without
-			-- adding full-screen render passes.
-			fx.blur.Enabled = false
-			fx.rays.Enabled = false
-        else
-            surfaced()
-        end
-
-        -- Buoyancy: while your body is under the surface, water drags your speed and floats you back
-        -- up, so falling into it feels like water instead of air.
-        if entitylib.isAlive then
-            local root = entitylib.character.RootPart
-            if root and isnetworkowner(root) and root.Position.Y < surface then
-                local vel = root.AssemblyLinearVelocity
-                local lift = math.clamp(vel.Y * 0.6 + 6, -8, 10)
-                root.AssemblyLinearVelocity = Vector3.new(vel.X * 0.85, lift, vel.Z * 0.85)
-            end
-        end
-    end
-
-    local function refresh()
-        local height = barrierHeight()
-        if not height then return end
-
-        if Mode.Value == 'Part' then
-            clearTerrain()
-            restoreWaterLook()
-            makePart(height)
-            part.Size = Vector3.new(10000, Depth.Value, 10000)
-            part.Color = Color3.fromHSV(Color.Hue, Color.Sat, Color.Value)
-            part.Transparency = math.clamp(1 - Color.Opacity, 0, 1)
-            return
-        end
-
-        removePart()
-        if Mode.Value == 'Realistic' then
-            applyRealisticLook()
-        else
-            applyWaterLook()
-        end
-
-        local centre = Vector3.new(0, height, 0)
-        if entitylib.isAlive then
-            local root = entitylib.character.RootPart
-            centre = Vector3.new(root.Position.X, height, root.Position.Z)
-        end
-        -- Voxels are 4 studs, so snap to that grid: an unsnapped fill leaves seams between slabs.
-        centre = Vector3.new(math.floor(centre.X / 4) * 4, math.floor(centre.Y / 4) * 4, math.floor(centre.Z / 4) * 4)
-        local size = Vector3.new(Size.Value, math.max(Depth.Value, 4), Size.Value)
-
-        if filled and (filled.CFrame.Position - centre).Magnitude < (Size.Value * 0.25) and filled.Size == size then
-            return
-        end
-        clearTerrain()
-        local cframe = CFrame.new(centre)
-        local ok = pcall(function()
-            workspace.Terrain:FillBlock(cframe, size, Enum.Material.Water)
-        end)
-        if ok then
-            filled = {CFrame = cframe, Size = size}
-        else
-            -- Terrain writes refused: fall back to the plane rather than showing nothing.
-            makePart(height)
-        end
-    end
-
-    Water = (vape.Categories.Visuals or vape.Categories.Render):CreateModule({
-        Name = 'Water',
-        Function = function(callback)
-            if callback then
-                repeat task.wait() until (store.matchState ~= 0 and store.map) or not Water.Enabled
-                if not Water.Enabled then return end
-                Water:Clean(function()
-                    clearTerrain()
-                    restoreWaterLook()
-                    removePart()
-                    removeFX()
-                end)
-                Water:Clean(task.spawn(function()
-                    while Water.Enabled do
-                        refresh()
-                        task.wait(0.5)
-                    end
-                end))
-                -- Realistic mode's look and buoyancy have to react the instant you break the surface,
-                -- so they run every frame rather than on the half-second refresh. Idle for the other
-                -- modes, and it reverts itself the frame you surface or switch mode away.
-				local nextRealisticUpdate = 0
-				Water:Clean(runService.Heartbeat:Connect(function()
-					if not Water.Enabled or Mode.Value ~= 'Realistic' then
-						surfaced()
-						return
-					end
-					if tick() < nextRealisticUpdate then return end
-					nextRealisticUpdate = tick() + 0.1
-                    local height = barrierHeight()
-                    if not height then return end
-                    updateRealistic(height + math.max(Depth.Value, 4) / 2)
-                end))
-            else
-                clearTerrain()
-                restoreWaterLook()
-                removePart()
-                removeFX()
-            end
-        end,
-        Tooltip = 'Fills the void with Roblox water at AntiFall\'s barrier height',
-        ExtraText = function()
-            return Mode.Value
-        end
-    })
-    Mode = Water:CreateDropdown({
-        Name = 'Mode',
-        List = {'Terrain', 'Part', 'Realistic'},
-        Default = 'Terrain',
-        Tooltip = 'Terrain - real Roblox water\nPart - one cheap plane across the map\nRealistic - reflective water with underwater effects',
-        Function = function()
-            if Water.Enabled then
-                clearTerrain()
-                restoreWaterLook()
-                removePart()
-                removeFX()
-                task.spawn(refresh)
-            end
-        end
-    })
-    Size = Water:CreateSlider({
-        Name = 'Area',
-        Min = 128,
-        Max = 2048,
-        Default = 768,
-        Suffix = ' studs',
-        Tooltip = 'How wide a patch of water to keep filled around you, in Terrain mode'
-    })
-    Depth = Water:CreateSlider({
-        Name = 'Depth',
-        Min = 4,
-        Max = 60,
-        Default = 12,
-        Suffix = ' studs',
-        Tooltip = 'How deep the water goes below the surface'
-    })
-    Waves = Water:CreateToggle({
-        Name = 'Waves',
-        Default = true,
-        Tooltip = 'Animate the surface. Off gives you a still, flat sheet',
-        Function = function()
-            if Water.Enabled and Mode.Value == 'Terrain' then
-                applyWaterLook()
-            end
-        end
-    })
-    Color = Water:CreateColorSlider({
-        Name = 'Color',
-        DefaultOpacity = 0.7,
-        Function = function()
-            if not Water.Enabled then return end
-            if Mode.Value == 'Terrain' then
-                applyWaterLook()
-            elseif part then
-                part.Color = Color3.fromHSV(Color.Hue, Color.Sat, Color.Value)
-                part.Transparency = math.clamp(1 - Color.Opacity, 0, 1)
-            end
-        end
-    })
-end)
-
---[[AETHER_MODULE:render/ChatPosition.lua]]
-
---[[AETHER_MODULE:blatant/BoostAirJump.lua]]
-
---[[AETHER_MODULE:exploits/BalloonDisabler.lua]]
-
--- KrystalDisabler lives further down, in the Kits window beside the rest of the kit modules.
-
--- (InfiniteSigrid removed. Re-asserting the ElkKitMounted remote to sustain the ride locked the
--- player server-side - you moved locally but stayed pinned for everyone else and could be hit.
--- A correct version needs the elk kit controller's real dismount/duration internals, which we
--- can't see from the repo, so the module is pulled rather than shipped broken and harmful.)
-
--- AutoBuildUp: towers you straight up. While you hold jump it fills the block-cell directly
--- beneath your feet - every cell as you rise, driven by position rather than a timer/apex - so
--- you build a gapless pillar and keep climbing as fast as you go up. Placement mirrors the
--- NoFall block clutch.
---[[AETHER_MODULE:blatant/AutoBuildUp.lua]]
-
---[[AETHER_MODULE:exploits/MultiAction.lua]]
-
-
--- RecoveryTP teleports at critical health after a confirmed landing.
---[[AETHER_MODULE:blatant/RecoveryTP.lua]]
-
--- BedWars' placement check queries character geometry before it sends the placement
--- remote. Suppress those queries only for the synchronous placement request; keeping
--- CanQuery false after it returns also hides an avatar from arrow/projectile raycasts.
---[[AETHER_MODULE:world/IgnorePlaceHitboxes.lua]]
-
---[[AETHER_MODULE:blatant/ProjectileDodger.lua]]
-
---[[AETHER_MODULE:blatant/TPAura.lua]]
-
--- cv's projectile charge routine, adapted to Aether's shared launch-hook registry.  The
--- registry composes with projectile modules already installed by Aether and restores the
--- original controller when the last hook is removed, avoiding the replacement/restore race the
--- reference implementation had when more than one module patched this method.
---[[AETHER_MODULE:blatant/AutoChargeProj.lua]]
-
---[[AETHER_MODULE:blatant/CannonSpeed.lua]]
-
---[[AETHER_MODULE:blatant/DamageBoost.lua]]
-
---[[AETHER_MODULE:blatant/FastBreak.lua]]
-
---[[AETHER_MODULE:world/FastPlace.lua]]
-
--- Consumes the supplied Grim Reaper soul and applies a configurable horizontal speed only while
--- the character is in the controller's soul-collecting channel. Leaving the form immediately
--- hands velocity control back to the game.
---[[AETHER_MODULE:kits/ReaperBypass.lua]]
-
---[[AETHER_MODULE:blatant/Fly.lua]]
-
---[[AETHER_MODULE:blatant/HitBoxes.lua]]
-
-
---[[AETHER_MODULE:blatant/InstantKill.lua]]
-
---[[AETHER_MODULE:blatant/KeepSprint.lua]]
-
---[[AETHER_MODULE:blatant/Killaura.lua]]
--- JadeInstaKill V2 is registered by AetherMatchRuntime above.
-
---[[AETHER_MODULE:blatant/LongJump.lua]]
---[[AETHER_MODULE:exploits/LongJumpBypass.lua]]
-
---[[
-    Kit extenders
-
-    Four modules, one per kit mobility ability: JadeExtender, VoidRegentExtender, CatExtender
-    and YuziExtender. Each hooks the single controller method that performs its ability and
-    pushes the character on with an extra impulse the moment that method fires.
-
-    Hooking the controller (rather than watching velocity or ability cooldowns) is what makes
-    this exact: the impulse lands on the frame the game itself performs the move, so it can
-    never fire on knockback, an explosion or a hotbar change, and an ability the server
-    refuses never produces one either.
-
-    They share `createKitExtender` below because only four things actually differ between
-    them - the controller, the method, the kit and the impulse - but each is registered as its
-    own module with its own Multiplier, so one of them failing to register cannot take the
-    other three out with it.
-]]
-
--- `spec` is everything that differs between the four:
---   Name       - module name.
---   Kit        - store.equippedKit value the ability belongs to.
---   Controller - field on `bedwars` holding the controller to hook.
---   Method     - method on that controller which performs the move.
---   Argument   - index into the call's arguments holding the move direction, when it takes one.
---   Impulse    - (root, direction, multiplier) -> impulse to apply, or nil to apply none.
---   Tooltip    - module tooltip.
-local function createKitExtender(spec)
-    local Extender
-    local Multiplier
-    local controller, original, hooked
-
-    -- Kit controllers are built when the match starts, so a module switched on in the lobby
-    -- has nothing to hook yet: wait for it rather than give up, and stop the moment the module
-    -- is switched off again.
-    local function install()
-        local target = bedwars[spec.Controller]
-        while not target and Extender.Enabled do
-            task.wait(0.1)
-            target = bedwars[spec.Controller]
-        end
-        if not Extender.Enabled or not target then return end
-
-        local method = target[spec.Method]
-        if typeof(method) ~= 'function' then return end
-        -- A second install racing the first (a fast off/on) would otherwise capture our own
-        -- hook as `original`, and disabling would then restore the hook rather than the
-        -- game's method.
-        if hooked and method == hooked then return end
-
-        controller, original = target, method
-        hooked = function(...)
-            -- Read out of the varargs here: the guarded block below is a closure, which
-            -- cannot see `...` of the function it sits in.
-			local direction = spec.Argument and select(spec.Argument, ...) or nil
-			if spec.Argument and typeof(direction) ~= 'Vector3' then
-				for index = 1, select('#', ...) do
-					local candidate = select(index, ...)
-					if typeof(candidate) == 'Vector3' then direction = candidate end
-				end
-			end
-            local results = table.pack(method(...))
-
-            if Extender.Enabled and entitylib.isAlive
-				and (not spec.Argument or typeof(direction) == 'Vector3') then
-				-- Controllers spend their cooldown before returning and several of them
-				-- write velocity again at the end of the same frame. A deferred impulse
-				-- therefore both proves the ability ran and cannot be overwritten by it.
-				task.defer(function()
-					pcall(function()
-						if not Extender.Enabled or not entitylib.isAlive then return end
-						local root = entitylib.character.RootPart
-						local impulse = spec.Impulse(root, direction, Multiplier.Value)
-						if impulse then root:ApplyImpulse(impulse) end
-					end)
-				end)
-            end
-
-            return table.unpack(results, 1, results.n)
-        end
-
-        controller[spec.Method] = hooked
-    end
-
-    Extender = kits:CreateModule({
-        Name = spec.Name,
-        Category = 'Ability',
-        Function = function(callback)
-            if callback then
-                Extender:Clean(task.spawn(install))
-            else
-                -- Only put the method back if it is still ours; something else may have
-                -- re-hooked it since, and restoring over that would undo their hook.
-                if controller and original and controller[spec.Method] == hooked then
-                    controller[spec.Method] = original
-                end
-                controller, original, hooked = nil, nil, nil
-            end
-        end,
-        Tooltip = spec.Tooltip
-    })
-
-    Multiplier = Extender:CreateSlider({
-        Name = 'Multiplier',
-        Min = 1,
-        Max = 5,
-        Default = 2,
-        Decimal = 10,
-        Suffix = 'x',
-        Tooltip = 'How much further than normal the ability carries you. 1x is the game\'s own distance'
-    })
-
-    return Extender
-end
-
-run(function()
-    createKitExtender({
-        Name = 'CatExtender',
-        Kit = 'cat',
-        Controller = 'CatController',
-        Method = 'leap',
-        -- leap(self, character, direction): the direction is the third argument.
-        Argument = 3,
-        Impulse = function(root, direction, multiplier)
-            local flat = direction * Vector3.new(1, 0, 1)
-            if flat.Magnitude <= 0 then return nil end
-            return flat.Unit * root.AssemblyMass * (multiplier - 1) * 70
-        end,
-        Tooltip = 'Extends how far the Cat/Yamini pounce launches you'
-    })
-end)
-
---[[AETHER_MODULE:blatant/NoSlowdown.lua]]
-
---[[AETHER_MODULE:kits/OwlAura.lua]]
-
---[[AETHER_MODULE:blatant/PlayerAttach.lua]]
-
---[[AETHER_MODULE:blatant/ProjectileAimbot.lua]]
-
---[[AETHER_MODULE:combat/SilentAim.lua]]
-
---[[AETHER_MODULE:blatant/ProjectileAura.lua]]
-
---[[AETHER_MODULE:blatant/Speed.lua]]
-
---[[AETHER_MODULE:blatant/Spider.lua]]
-
---[[AETHER_MODULE:kits/TerraAimbot.lua]]
-
---[[
-    Render
-]]
-
---[[AETHER_MODULE:render/ArmorHighlight.lua]]
-
---[[AETHER_MODULE:render/BedESP.lua]]
-
---[[AETHER_MODULE:render/BeehiveESP.lua]]
---[[AETHER_MODULE:render/CustomTags.lua]]
---[[AETHER_MODULE:render/GeneratorESP.lua]]
---[[AETHER_MODULE:render/Health.lua]]
---[[AETHER_MODULE:render/ItemESP.lua]]
---[[AETHER_MODULE:kits/KitDisplay.lua]]
---[[AETHER_MODULE:kits/KitESP.lua]]
---[[AETHER_MODULE:render/NameTags.lua]]
---[[AETHER_MODULE:render/ProjectileLanding.lua]]
---[[AETHER_MODULE:render/ProjectileTracers.lua]]
---[[AETHER_MODULE:render/SkinChanger.lua]]
---[[AETHER_MODULE:render/StorageESP.lua]]
---[[AETHER_MODULE:utility/ClaimRewards.lua]]
---[[AETHER_MODULE:inventory/AutoEnchant.lua]]
---[[AETHER_MODULE:render/StreamRemover.lua]]
---[[AETHER_MODULE:render/TrapESP.lua]]
---[[AETHER_MODULE:render/ViewmodelVisuals.lua]]
---[[AETHER_MODULE:utility/MP3Player.lua]]
-
---[[AETHER_MODULE:utility/AntiSuffocate.lua]]
-
---[[AETHER_MODULE:utility/AutoBalloon.lua]]
-
---[[AETHER_MODULE:utility/AntiLasso.lua]]
-
---[[AETHER_MODULE:utility/AutoPearl.lua]]
-
---[[AETHER_MODULE:kits/TritonClutch.lua]]
-
-
-
---[[AETHER_MODULE:utility/AutoPlay.lua]]
-
---[[AETHER_MODULE:utility/LeaveParty.lua]]
-
---[[AETHER_MODULE:utility/AutoRelease.lua]]
-
---[[AETHER_MODULE:utility/AutoShoot.lua]]
---[[AETHER_MODULE:utility/AutoToxic.lua]]
-
---[[AETHER_MODULE:utility/AutoVoidDrop.lua]]
-
---[[AETHER_MODULE:utility/BackTrack.lua]]
-
---[[AETHER_MODULE:utility/CheatDetector.lua]]
-
---[[AETHER_MODULE:utility/FakeLag.lua]]
-
---[[AETHER_MODULE:utility/KnockbackDelay.lua]]
-
---[[AETHER_MODULE:kits/MissileTP.lua]]
-
---[[AETHER_MODULE:utility/PickupRange.lua]]
-
---[[AETHER_MODULE:utility/Scaffold.lua]]
-
---[[AETHER_MODULE:utility/StaffDetector.lua]]
-
---[[AETHER_MODULE:utility/TrapDisabler.lua]]
-
 local AetherRuntimeContext = {
     vape = vape,
     vapeEvents = vapeEvents,
@@ -3186,7 +2468,6 @@ local AetherRuntimeContext = {
     canDebug = canDebug
 }
 
---[[AETHER_MODULE:kits/TrixieExploit.lua]]
 local function registerAetherRuntimeBase(context)
 -- AetherV2 BedWars reactive runtime
 -- Compiled directly in games/6872274481.lua with the live match-file context.
@@ -4613,8 +3894,239 @@ if not runtimeLoaded or type(runtimeResult) ~= 'table' then
 end
 AetherMatchRuntime = runtimeResult
 
---[[AETHER_MODULE:world/AutoWin.lua]]
---[[AETHER_MODULE:exploits/JadeInstaKill.lua]]
+local AetherPortContext = {Version = 2, Runtime = AetherMatchRuntime, Context = AetherRuntimeContext, Modules = {}, Diagnostics = {}}
+AetherMatchRuntime.AlSploitPorts = AetherPortContext
+AetherMatchRuntime.AlSploitPortsV2 = AetherPortContext
+
+local function aetherPortSafe(label, fn, ...)
+    if type(fn) ~= 'function' then return false, 'missing function' end
+    local ok, result = pcall(fn, ...)
+    if not ok then
+        AetherPortContext.Diagnostics[label] = {At = tick(), Error = tostring(result)}
+        return false, result
+    end
+    return true, result
+end
+local function aetherPortNotify(text, duration, kind)
+    aetherPortSafe('notify', notif, 'AetherV2', text, duration or 3, kind)
+end
+local function aetherPortRoot()
+    local char = entitylib.character
+    if entitylib.isAlive and char and char.RootPart and char.RootPart.Parent then return char.RootPart, char, char.Humanoid end
+    local character = lplr.Character
+    local root = character and (character.PrimaryPart or character:FindFirstChild('HumanoidRootPart'))
+    local humanoid = character and character:FindFirstChildOfClass('Humanoid')
+    if root and humanoid and humanoid.Health > 0 then return root, character, humanoid end
+end
+local function aetherPortMatchRunning()
+    local match = AetherMatchRuntime.BedWarsAPI and AetherMatchRuntime.BedWarsAPI.Match
+    if not match then return store.matchState ~= 0 end
+    return match:GetState() == match.States.RUNNING
+end
+local function aetherPortEquippedKit()
+    local api = AetherMatchRuntime.BedWarsAPI and AetherMatchRuntime.BedWarsAPI.Kits
+    if api then return select(1, api:GetEquipped()) end
+    return store.equippedKit or lplr:GetAttribute('PlayingAsKit')
+end
+local function aetherPortHorizontalUnit(vector)
+    if not vector then return nil end
+    local flat = Vector3.new(vector.X, 0, vector.Z)
+    return flat.Magnitude > 0.01 and flat.Unit or nil
+end
+local function aetherPortModule(name) return vape.Modules and vape.Modules[name] or nil end
+local function aetherPortRegister(categoryName, name, definition)
+    local existing = aetherPortModule(name)
+    if existing then AetherPortContext.Modules[name] = existing; return existing, false end
+    local category = vape.Categories and vape.Categories[categoryName]
+    assert(category and type(category.CreateModule) == 'function', 'missing Aether category '..categoryName)
+    definition.Name = name
+    local module = category:CreateModule(definition)
+    AetherPortContext.Modules[name] = module
+    return module, true
+end
+local function aetherPortAbilityController()
+    return bedwars.AbilityController or (bedwars.Knit and bedwars.Knit.Controllers and bedwars.Knit.Controllers.AbilityController)
+end
+local function aetherPortCanUseAbility(name)
+    local controller = aetherPortAbilityController()
+    if not controller then return false end
+    if type(controller.canUseAbility) == 'function' then
+        local ok, result = pcall(controller.canUseAbility, controller, name, {disableBlockedAbilityAlert = true})
+        if ok then return result ~= false end
+    end
+    return true
+end
+local function aetherPortUseAbility(name)
+    local controller = aetherPortAbilityController()
+    if not controller or type(controller.useAbility) ~= 'function' then return false, 'missing AbilityController' end
+    local ok, result = pcall(controller.useAbility, controller, name)
+    return ok and result ~= false, result
+end
+local function aetherPortNearestTarget(range, includeNPCs)
+    local root = aetherPortRoot(); if not root then return nil end
+    local ok, target = pcall(entitylib.EntityPosition, {Origin = root.Position, Range = range, Part = 'RootPart', Players = true, NPCs = includeNPCs and true or false})
+    return ok and target or nil
+end
+local function aetherPortWait(seconds, cancelled, step)
+    local deadline = tick() + seconds
+    repeat if cancelled and cancelled() then return false end; task.wait(step or 0.03) until tick() >= deadline
+    return true
+end
+local function aetherPortAddMovementOwner(name)
+    local movement = AetherMatchRuntime.Movement
+    if movement and movement.ExternalNames and not table.find(movement.ExternalNames, name) then table.insert(movement.ExternalNames, name) end
+end
+local function aetherPortCreateDecoy(followHorizontal)
+    local root, character, humanoid = aetherPortRoot(); if not root or not character or not humanoid then return nil end
+    local oldArchivable = character.Archivable; character.Archivable = true
+    local ok, clone = pcall(character.Clone, character); character.Archivable = oldArchivable
+    if not ok or not clone then return nil end
+    for _, object in clone:GetDescendants() do
+        if object:IsA('Script') or object:IsA('LocalScript') then object:Destroy()
+        elseif object:IsA('BasePart') then object.CanCollide = false; if object.Name == 'Cape' then object:Destroy() end end
+    end
+    clone.Name = 'AetherMovementDecoy'; clone.Parent = workspace
+    local cloneRoot = clone.PrimaryPart or clone:FindFirstChild('HumanoidRootPart')
+    local cloneHumanoid = clone:FindFirstChildOfClass('Humanoid')
+    if not cloneRoot or not cloneHumanoid then clone:Destroy(); return nil end
+    clone.PrimaryPart = cloneRoot; cloneRoot.Anchored = true; clone:PivotTo(character:GetPivot())
+    local originalSubject = gameCamera.CameraSubject; gameCamera.CameraSubject = cloneHumanoid
+    local decoy = {Model = clone, Root = cloneRoot, Humanoid = cloneHumanoid, OriginalSubject = originalSubject}
+    if followHorizontal then
+        decoy.Connection = runService.RenderStepped:Connect(function()
+            local liveRoot = aetherPortRoot()
+            if clone.Parent and liveRoot then cloneRoot.CFrame = CFrame.new(liveRoot.Position.X, cloneRoot.Position.Y, liveRoot.Position.Z) * liveRoot.CFrame.Rotation end
+        end)
+    end
+    function decoy:Destroy()
+        if self.Connection then self.Connection:Disconnect(); self.Connection = nil end
+        if gameCamera.CameraSubject == self.Humanoid then local _, _, liveHumanoid = aetherPortRoot(); gameCamera.CameraSubject = (self.OriginalSubject and self.OriginalSubject.Parent and self.OriginalSubject) or liveHumanoid end
+        if self.Model and self.Model.Parent then self.Model:Destroy() end
+    end
+    return decoy
+end
+
+--[[AETHER_MODULES]]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+-- KrystalDisabler lives further down, in the Kits window beside the rest of the kit modules.
+
+-- (InfiniteSigrid removed. Re-asserting the ElkKitMounted remote to sustain the ride locked the
+-- player server-side - you moved locally but stayed pinned for everyone else and could be hit.
+-- A correct version needs the elk kit controller's real dismount/duration internals, which we
+-- can't see from the repo, so the module is pulled rather than shipped broken and harmful.)
+
+-- AutoBuildUp: towers you straight up. While you hold jump it fills the block-cell directly
+-- beneath your feet - every cell as you rise, driven by position rather than a timer/apex - so
+-- you build a gapless pillar and keep climbing as fast as you go up. Placement mirrors the
+-- NoFall block clutch.
+
+
+
+
+
+-- RecoveryTP teleports at critical health after a confirmed landing.
+
+
+-- BedWars' placement check queries character geometry before it sends the placement
+-- remote. Suppress those queries only for the synchronous placement request; keeping
+-- CanQuery false after it returns also hides an avatar from arrow/projectile raycasts.
+
+
+
+
+
+
+-- cv's projectile charge routine, adapted to Aether's shared launch-hook registry.  The
+-- registry composes with projectile modules already installed by Aether and restores the
+-- original controller when the last hook is removed, avoiding the replacement/restore race the
+-- reference implementation had when more than one module patched this method.
+
+
+
+
+
+
+
+
+
+
+-- Consumes the supplied Grim Reaper soul and applies a configurable horizontal speed only while
+-- the character is in the controller's soul-collecting channel. Leaving the form immediately
+-- hands velocity control back to the game.
+
+
+
+
+
+
+
+
+
+
+
+
+-- JadeInstaKill V2 is registered by AetherMatchRuntime above.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 do
 local Runtime = AetherMatchRuntime
 -- LongJump Jade integration marker. games/6872274481.lua installs the adapter inside LongJump's
@@ -5125,153 +4637,18 @@ end
 
 
 
-local AetherPortContext = {Version = 2, Runtime = AetherMatchRuntime, Context = AetherRuntimeContext, Modules = {}, Diagnostics = {}}
-AetherMatchRuntime.AlSploitPorts = AetherPortContext
-AetherMatchRuntime.AlSploitPortsV2 = AetherPortContext
 
-local function aetherPortSafe(label, fn, ...)
-    if type(fn) ~= 'function' then return false, 'missing function' end
-    local ok, result = pcall(fn, ...)
-    if not ok then
-        AetherPortContext.Diagnostics[label] = {At = tick(), Error = tostring(result)}
-        return false, result
-    end
-    return true, result
-end
-local function aetherPortNotify(text, duration, kind)
-    aetherPortSafe('notify', notif, 'AetherV2', text, duration or 3, kind)
-end
-local function aetherPortRoot()
-    local char = entitylib.character
-    if entitylib.isAlive and char and char.RootPart and char.RootPart.Parent then return char.RootPart, char, char.Humanoid end
-    local character = lplr.Character
-    local root = character and (character.PrimaryPart or character:FindFirstChild('HumanoidRootPart'))
-    local humanoid = character and character:FindFirstChildOfClass('Humanoid')
-    if root and humanoid and humanoid.Health > 0 then return root, character, humanoid end
-end
-local function aetherPortMatchRunning()
-    local match = AetherMatchRuntime.BedWarsAPI and AetherMatchRuntime.BedWarsAPI.Match
-    if not match then return store.matchState ~= 0 end
-    return match:GetState() == match.States.RUNNING
-end
-local function aetherPortEquippedKit()
-    local api = AetherMatchRuntime.BedWarsAPI and AetherMatchRuntime.BedWarsAPI.Kits
-    if api then return select(1, api:GetEquipped()) end
-    return store.equippedKit or lplr:GetAttribute('PlayingAsKit')
-end
-local function aetherPortHorizontalUnit(vector)
-    if not vector then return nil end
-    local flat = Vector3.new(vector.X, 0, vector.Z)
-    return flat.Magnitude > 0.01 and flat.Unit or nil
-end
-local function aetherPortModule(name) return vape.Modules and vape.Modules[name] or nil end
-local function aetherPortRegister(categoryName, name, definition)
-    local existing = aetherPortModule(name)
-    if existing then AetherPortContext.Modules[name] = existing; return existing, false end
-    local category = vape.Categories and vape.Categories[categoryName]
-    assert(category and type(category.CreateModule) == 'function', 'missing Aether category '..categoryName)
-    definition.Name = name
-    local module = category:CreateModule(definition)
-    AetherPortContext.Modules[name] = module
-    return module, true
-end
-local function aetherPortAbilityController()
-    return bedwars.AbilityController or (bedwars.Knit and bedwars.Knit.Controllers and bedwars.Knit.Controllers.AbilityController)
-end
-local function aetherPortCanUseAbility(name)
-    local controller = aetherPortAbilityController()
-    if not controller then return false end
-    if type(controller.canUseAbility) == 'function' then
-        local ok, result = pcall(controller.canUseAbility, controller, name, {disableBlockedAbilityAlert = true})
-        if ok then return result ~= false end
-    end
-    return true
-end
-local function aetherPortUseAbility(name)
-    local controller = aetherPortAbilityController()
-    if not controller or type(controller.useAbility) ~= 'function' then return false, 'missing AbilityController' end
-    local ok, result = pcall(controller.useAbility, controller, name)
-    return ok and result ~= false, result
-end
-local function aetherPortNearestTarget(range, includeNPCs)
-    local root = aetherPortRoot(); if not root then return nil end
-    local ok, target = pcall(entitylib.EntityPosition, {Origin = root.Position, Range = range, Part = 'RootPart', Players = true, NPCs = includeNPCs and true or false})
-    return ok and target or nil
-end
-local function aetherPortWait(seconds, cancelled, step)
-    local deadline = tick() + seconds
-    repeat if cancelled and cancelled() then return false end; task.wait(step or 0.03) until tick() >= deadline
-    return true
-end
-local function aetherPortAddMovementOwner(name)
-    local movement = AetherMatchRuntime.Movement
-    if movement and movement.ExternalNames and not table.find(movement.ExternalNames, name) then table.insert(movement.ExternalNames, name) end
-end
-local function aetherPortCreateDecoy(followHorizontal)
-    local root, character, humanoid = aetherPortRoot(); if not root or not character or not humanoid then return nil end
-    local oldArchivable = character.Archivable; character.Archivable = true
-    local ok, clone = pcall(character.Clone, character); character.Archivable = oldArchivable
-    if not ok or not clone then return nil end
-    for _, object in clone:GetDescendants() do
-        if object:IsA('Script') or object:IsA('LocalScript') then object:Destroy()
-        elseif object:IsA('BasePart') then object.CanCollide = false; if object.Name == 'Cape' then object:Destroy() end end
-    end
-    clone.Name = 'AetherMovementDecoy'; clone.Parent = workspace
-    local cloneRoot = clone.PrimaryPart or clone:FindFirstChild('HumanoidRootPart')
-    local cloneHumanoid = clone:FindFirstChildOfClass('Humanoid')
-    if not cloneRoot or not cloneHumanoid then clone:Destroy(); return nil end
-    clone.PrimaryPart = cloneRoot; cloneRoot.Anchored = true; clone:PivotTo(character:GetPivot())
-    local originalSubject = gameCamera.CameraSubject; gameCamera.CameraSubject = cloneHumanoid
-    local decoy = {Model = clone, Root = cloneRoot, Humanoid = cloneHumanoid, OriginalSubject = originalSubject}
-    if followHorizontal then
-        decoy.Connection = runService.RenderStepped:Connect(function()
-            local liveRoot = aetherPortRoot()
-            if clone.Parent and liveRoot then cloneRoot.CFrame = CFrame.new(liveRoot.Position.X, cloneRoot.Position.Y, liveRoot.Position.Z) * liveRoot.CFrame.Rotation end
-        end)
-    end
-    function decoy:Destroy()
-        if self.Connection then self.Connection:Disconnect(); self.Connection = nil end
-        if gameCamera.CameraSubject == self.Humanoid then local _, _, liveHumanoid = aetherPortRoot(); gameCamera.CameraSubject = (self.OriginalSubject and self.OriginalSubject.Parent and self.OriginalSubject) or liveHumanoid end
-        if self.Model and self.Model.Parent then self.Model:Destroy() end
-    end
-    return decoy
-end
 
---[[AETHER_MODULE:exploits/YaminiExploit.lua]]
---[[AETHER_MODULE:exploits/JadeExploit.lua]]
---[[AETHER_MODULE:blatant/AntiHitBETA.lua]]
---[[AETHER_MODULE:exploits/BalloonDisabler.lua]]
---[[AETHER_MODULE:exploits/MultiAction.lua]]
---[[AETHER_MODULE:kits/InfiniteSigrid.lua]]
---[[AETHER_MODULE:exploits/JadeHammerExploit.lua]]
+
+
+
+
+
 AetherMatchRuntime.JadeHammerExploit = vape.Modules and vape.Modules.JadeHammerExploit or nil
 
 
 
---[[AETHER_MODULE:utility/EntityAnalyser.lua]]
 
---[[
-    World
-]]
-
---[[AETHER_MODULE:world/Anti-AFK.lua]]
-
---[[AETHER_MODULE:world/AutoSuffocate.lua]]
-
---[[AETHER_MODULE:world/AutoTool.lua]]
-
---[[AETHER_MODULE:world/BedAssist.lua]]
-
---[[AETHER_MODULE:world/BedProtector.lua]]
---[[AETHER_MODULE:world/BlockIn.lua]]
-
---[[AETHER_MODULE:world/Schematica.lua]]
-
---[[
-    Inventory
-]]
-
---[[AETHER_MODULE:inventory/ArmorSwitch.lua]]
 
 --[[
     AutoBank
@@ -5292,136 +4669,118 @@ AetherMatchRuntime.JadeHammerExploit = vape.Modules and vape.Modules.JadeHammerE
 
     A count of everything currently banked can be shown above the hotbar, in either mode.
 ]]
---[[AETHER_MODULE:inventory/AutoBank.lua]]
 
---[[AETHER_MODULE:inventory/AutoBuy.lua]]
---[[AETHER_MODULE:inventory/OpenShop.lua]]
 
---[[AETHER_MODULE:inventory/AutoConsume.lua]]
 
---[[AETHER_MODULE:inventory/AutoFish.lua]]
 
---[[AETHER_MODULE:inventory/AutoHotbar.lua]]
 
---[[AETHER_MODULE:inventory/AutoSteal.lua]]
 
---[[AETHER_MODULE:inventory/FastConsume.lua]]
 
---[[AETHER_MODULE:inventory/FastDrop.lua]]
+
+
+
+
+
+
+
+
+
 
 --[[
     Minigames
 ]]
 
---[[AETHER_MODULE:utility/AutoHonor.lua]]
 
---[[AETHER_MODULE:render/BedPlates.lua]]
 
---[[AETHER_MODULE:world/Breaker.lua]]
 
---[[
-    Legit
-]]
 
---[[AETHER_MODULE:render/ArmorTrims.lua]]
 
---[[AETHER_MODULE:legit/BedAlarm.lua]]
-
---[[AETHER_MODULE:legit/BedBreakEffect.lua]]
-
---[[AETHER_MODULE:legit/BlockSelectorColor.lua]]
-
---[[AETHER_MODULE:legit/CleanKit.lua]]
-
---[[AETHER_MODULE:legit/Crosshair.lua]]
-
---[[AETHER_MODULE:legit/DamageIndicator.lua]]
 
 -- DeviceSpoofer, replaced with the reference build's version. Aether's only ever wrote a
 -- local attribute back onto the player, which the server never reads. This hooks the input
 -- controller the game asks for the device type and tells the server directly, which is what
 -- actually changes what other clients see you as.
---[[AETHER_MODULE:legit/DeviceSpoofer.lua]]
 
---[[AETHER_MODULE:legit/FOV.lua]]
 
---[[AETHER_MODULE:legit/FPSBoost.lua]]
 
---[[AETHER_MODULE:legit/HitColor.lua]]
 
---[[AETHER_MODULE:legit/HitFix.lua]]
 
---[[AETHER_MODULE:legit/Interface.lua]]
 
---[[AETHER_MODULE:legit/KillEffect.lua]]
 
---[[AETHER_MODULE:legit/PotionStatus.lua]]
 
---[[AETHER_MODULE:legit/ReachDisplay.lua]]
 
---[[AETHER_MODULE:legit/SongBeats.lua]]
 
---[[AETHER_MODULE:legit/SoundChanger.lua]]
 
---[[AETHER_MODULE:legit/KillfeedSpoofer.lua]]
 
---[[AETHER_MODULE:legit/TexturePack.lua]]
 
---[[AETHER_MODULE:legit/UICleanup.lua]]
 
---[[AETHER_MODULE:legit/Viewmodel.lua]]
 
---[[AETHER_MODULE:legit/WinEffect.lua]]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 -- Unique BedWars match modules ported from skid.lua.
 
---[[AETHER_MODULE:render/LootESP.lua]]
-
---[[AETHER_MODULE:world/NightmareEmote.lua]]
-
---[[AETHER_MODULE:world/AutoCounter.lua]]
 
 
---[[AETHER_MODULE:legit/TransparentCharacter.lua]]
-
---[[AETHER_MODULE:utility/Headless.lua]]
-
---[[AETHER_MODULE:utility/Legless.lua]]
-
---[[AETHER_MODULE:world/ShadowRemover.lua]]
-
---[[AETHER_MODULE:legit/WhiteHits.lua]]
-
---[[AETHER_MODULE:world/RemoveNeon.lua]]
-
---[[AETHER_MODULE:world/PotatoMode.lua]]
-
---[[AETHER_MODULE:legit/MotionBlur.lua]]
-
---[[AETHER_MODULE:kits/GrimReaperFix.lua]]
-
---[[AETHER_MODULE:utility/CustomCursor.lua]]
 
 
---[[AETHER_MODULE:render/NameTagSpoofer.lua]]
-
---[[AETHER_MODULE:render/Aura.lua]]
 
 
---[[AETHER_MODULE:render/ChatNameColor.lua]]
 
---[[AETHER_MODULE:render/PlayerOutline.lua]]
 
---[[AETHER_MODULE:world/ACMODView.lua]]
 
---[[AETHER_MODULE:utility/InvisibleCursor.lua]]
 
---[[AETHER_MODULE:render/LegacyAnimation.lua]]
 
---[[AETHER_MODULE:render/RemovePlayerLevelUI.lua]]
 
---[[AETHER_MODULE:render/OG4v4v4v4.lua]]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 --[[
 	Kits
@@ -5429,161 +4788,161 @@ AetherMatchRuntime.JadeHammerExploit = vape.Modules and vape.Modules.JadeHammerE
 	cv base implementations, registered through Aether's Kits GUI category.
 ]]
 
---[[AETHER_MODULE:kits/AutoAdetunde.lua]]
 
---[[AETHER_MODULE:kits/AutoBeekeeper.lua]]
 
---[[AETHER_MODULE:kits/AutoBountyHunter.lua]]
 
---[[AETHER_MODULE:kits/AutoBuilder.lua]]
 
---[[AETHER_MODULE:kits/AutoCaitlyn.lua]]
 
---[[AETHER_MODULE:kits/AutoCard.lua]]
 
---[[AETHER_MODULE:kits/AutoCrocowolf.lua]]
 
---[[AETHER_MODULE:kits/AutoCyber.lua]]
 
---[[AETHER_MODULE:kits/AutoDavey.lua]]
 
---[[AETHER_MODULE:kits/AutoDragonSword.lua]]
 
---[[AETHER_MODULE:kits/AutoDrill.lua]]
 
---[[AETHER_MODULE:kits/AutoElder.lua]]
 
---[[AETHER_MODULE:kits/AutoEldric.lua]]
 
---[[AETHER_MODULE:kits/AutoEmber.lua]]
 
---[[AETHER_MODULE:kits/AutoEquipKit.lua]]
 
---[[AETHER_MODULE:kits/AutoFarmer.lua]]
 
---[[AETHER_MODULE:kits/AutoFarmerCletus.lua]]
 
---[[AETHER_MODULE:kits/AutoFreiya.lua]]
 
---[[AETHER_MODULE:kits/AutoGingerbreadMan.lua]]
 
---[[AETHER_MODULE:kits/AutoGrim.lua]]
 
---[[AETHER_MODULE:kits/AutoGrove.lua]]
 
---[[AETHER_MODULE:kits/AutoHannah.lua]]
 
---[[AETHER_MODULE:kits/AutoHephaestus.lua]]
 
---[[AETHER_MODULE:kits/AutoKaida.lua]]
 
---[[AETHER_MODULE:kits/AutoKaliyah.lua]]
 
---[[AETHER_MODULE:kits/AutoKit.lua]]
 
---[[AETHER_MODULE:kits/AutoKrystal.lua]]
 
---[[AETHER_MODULE:kits/AutoLani.lua]]
 
---[[AETHER_MODULE:kits/AutoLasso.lua]]
 
---[[AETHER_MODULE:kits/AutoLumen.lua]]
 
---[[AETHER_MODULE:kits/AutoMarina.lua]]
 
---[[AETHER_MODULE:kits/AutoMartin.lua]]
 
---[[AETHER_MODULE:kits/AutoMelody.lua]]
 
---[[AETHER_MODULE:kits/AutoMetal.lua]]
 
---[[AETHER_MODULE:kits/AutoMushroom.lua]]
 
---[[AETHER_MODULE:kits/AutoNahila.lua]]
 
---[[AETHER_MODULE:kits/AutoNazar.lua]]
 
---[[AETHER_MODULE:kits/AutoNoelle.lua]]
 
---[[AETHER_MODULE:kits/AutoNyx.lua]]
 
---[[AETHER_MODULE:kits/AutoPyro.lua]]
 
---[[AETHER_MODULE:kits/AutoRagnar.lua]]
 
---[[AETHER_MODULE:kits/AutoRamil.lua]]
 
---[[AETHER_MODULE:kits/AutoSheepHerder.lua]]
 
---[[AETHER_MODULE:kits/AutoShielderUlt.lua]]
 
---[[AETHER_MODULE:kits/AutoSilas.lua]]
 
---[[AETHER_MODULE:kits/AutoSmoke.lua]]
 
---[[AETHER_MODULE:kits/AutoSophia.lua]]
 
---[[AETHER_MODULE:kits/AutoStarCollector.lua]]
 
---[[AETHER_MODULE:kits/AutoTaliyah.lua]]
 
---[[AETHER_MODULE:kits/AutoTriton.lua]]
 
---[[AETHER_MODULE:kits/AutoUma.lua]]
 
---[[AETHER_MODULE:kits/AutoVanessa.lua]]
 
---[[AETHER_MODULE:kits/AutoVoidHunter.lua]]
 
---[[AETHER_MODULE:kits/AutoVoidKnight.lua]]
 
---[[AETHER_MODULE:kits/AutoWarden.lua]]
 
---[[AETHER_MODULE:kits/AutoWhim.lua]]
 
---[[AETHER_MODULE:kits/AutoWhisper.lua]]
 
---[[AETHER_MODULE:kits/AutoXurot.lua]]
 
---[[AETHER_MODULE:kits/AutoYeti.lua]]
 
---[[AETHER_MODULE:kits/AutoZeno.lua]]
 
---[[AETHER_MODULE:kits/AutoZola.lua]]
 
---[[AETHER_MODULE:kits/CryptAura.lua]]
 
---[[AETHER_MODULE:kits/DaveyAim.lua]]
 
---[[AETHER_MODULE:kits/EquipKit.lua]]
 
---[[AETHER_MODULE:kits/FalconAura.lua]]
 
---[[AETHER_MODULE:kits/FishermanSpy.lua]]
 
---[[AETHER_MODULE:kits/JadeExtender.lua]]
 
---[[AETHER_MODULE:kits/AutoPickpocket.lua]]
 
---[[AETHER_MODULE:kits/RavenTP.lua]]
 
---[[AETHER_MODULE:kits/VoidRegentAutoClutch.lua]]
 
---[[AETHER_MODULE:kits/VoidRegentExtender.lua]]
 
---[[AETHER_MODULE:kits/VulcanAssist.lua]]
 
---[[AETHER_MODULE:kits/YaminiExtender.lua]]
 
---[[AETHER_MODULE:kits/YuziExtender.lua]]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 -- Aether-only: cv has no Agni implementation, so retain the existing targeted
 -- rocket boost and void-clutch behavior as its own Kits module.
---[[AETHER_MODULE:kits/AutoAgni.lua]]
+
 
 -- AutoKit covers normal spirit collection, while this Aether-only mode keeps
 -- its conditional Evelynn recall workflow (fall/swing gates and facing).
---[[AETHER_MODULE:kits/AutoEvelynn.lua]]
+
 
 
 -- KrystalDisabler (restored; InfiniteKrystal was folded into it). Krystal - the GlacialSkater
@@ -5599,6 +4958,6 @@ AetherMatchRuntime.JadeHammerExploit = vape.Modules and vape.Modules.JadeHammerE
 -- it back down. Kept from InfiniteKrystal: the Kits window home beside AutoKrystal, the
 -- Enabled check inside the hook, the identity check before restoring, and a momentum figure
 -- that is a number the server can plausibly see rather than 9e9.
---[[AETHER_MODULE:kits/KrystalDisabler.lua]]
 
---[[AETHER_MODULE:render/NoBob.lua]]
+
+

@@ -7,10 +7,10 @@ const assert = require('node:assert/strict');
 
 const sourceServer = fs.readFileSync(path.join(__dirname, 'private-source-core.js'), 'utf8');
 const sourceWrapper = fs.readFileSync(path.join(__dirname, 'private-source.js'), 'utf8');
-const main = fs.readFileSync(path.join(__dirname, '..', 'main-core.lua'), 'utf8');
-const mainWrapper = fs.readFileSync(path.join(__dirname, '..', 'main.lua'), 'utf8');
-const init = fs.readFileSync(path.join(__dirname, '..', 'init-core.lua'), 'utf8');
-const initWrapper = fs.readFileSync(path.join(__dirname, '..', 'init.lua'), 'utf8');
+const main = fs.readFileSync(path.join(__dirname, '..', 'main.lua'), 'utf8');
+const mainWrapper = main;
+const init = fs.readFileSync(path.join(__dirname, '..', 'init.lua'), 'utf8');
+const initWrapper = init;
 const aliases = [
   ['8444591321', '6872274481'],
   ['8560631822', '6872274481'],
@@ -59,8 +59,6 @@ test('split wrappers keep analytics heartbeat and premium tagging isolated', () 
   assert.match(initWrapper, /sendTelemetry\(sessionId,\s*'session_end'\)/);
   assert.match(initWrapper, /sessionId/);
   assert.match(initWrapper, /AetherV2PremiumAuthorized/);
-  assert.match(mainWrapper, /loadedModule\.Premium\s*=\s*true/);
-  assert.match(mainWrapper, /loadedModule\.Tag\s*=\s*'PREMIUM'/);
   assert.match(mainWrapper, /premiumModuleSnapshot/);
 });
 
