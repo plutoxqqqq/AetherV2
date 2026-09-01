@@ -3,8 +3,6 @@ name: Apply AetherV2 source refactor
 on:
   push:
     branches: [refactor/auto-module-discovery]
-  pull_request:
-    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -21,7 +19,7 @@ jobs:
       - name: Apply refactor
         run: python tools/refactor-entrypoints.py
       - name: Commit refactor
-        if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+        if: github.event_name == 'push'
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
