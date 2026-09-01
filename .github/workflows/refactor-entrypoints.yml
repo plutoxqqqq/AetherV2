@@ -23,5 +23,8 @@ jobs:
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          # Do not include workflow changes in the bot-created commit; the GitHub App token lacks workflow scope.
+          git restore --source=origin/main -- .github/workflows/bedwars-structure.yml
+          git restore --source=origin/main -- .github/workflows/refactor-entrypoints.yml
           git add -A
           git diff --cached --quiet || (git commit -m 'Refactor AetherV2 module discovery and entrypoints' && git push origin HEAD:refactor/auto-module-discovery)
