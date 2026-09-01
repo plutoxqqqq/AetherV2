@@ -56,7 +56,7 @@ Legacy `AETHER_KEY`, `AETHER_KEYS`, and singular `DISCORD_OWNER_ID` fallbacks ar
 ```text
 AETHER_REGISTRY_FILE=backend/key-bindings.json
 AETHER_ALLOWED_REFS=main
-AETHER_ALLOWED_PATHS=init.lua,main.lua,loadstring,version.txt,cv,gui,assets/,configs/,games/,guis/,libraries/,profiles/
+AETHER_ALLOWED_PATHS=init.lua,main.lua,loadstring,version.txt,assets/,configs/,games/,guis/,libraries/,profiles/
 # Restrict private premium files to the module paths the client needs.
 PREMIUM_ALLOWED_PATHS=games/
 AETHER_SESSION_MINUTES=120

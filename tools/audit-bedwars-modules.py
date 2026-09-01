@@ -16,6 +16,7 @@ PCALL_CREATE = re.compile(r'pcall\s*\(\s*([A-Za-z_][A-Za-z0-9_\.]*)\.CreateModul
 REGISTER = re.compile(r'\bregister\s*\(\s*([\'\"])([^\'\"]+)\1\s*,\s*([\'\"])([^\'\"]+)\3\s*,\s*\{', re.M)
 OVERLAY = re.compile(r'([A-Za-z_][A-Za-z0-9_\.]*)\s*:\s*CreateOverlay\s*\(\s*\{', re.M)
 NAME = re.compile(r'\bName\s*=\s*([\'\"])(.*?)\1', re.S)
+EXPLICIT_NAME = re.compile(r'^\s*--\s*AETHER_MODULE_NAME:\s*(.+?)\s*$', re.M)
 
 
 def receiver_category(receiver):
@@ -66,7 +67,8 @@ def main():
         rel = path.relative_to(GAME_DIR)
         files.append(rel)
         source = path.read_text(encoding='utf-8')
-        modules = logical_modules(source)
+        explicit = EXPLICIT_NAME.search(source)
+        modules = [(explicit.group(1).strip(), receiver_category('Dynamic'))] if explicit else logical_modules(source)
         overlays = logical_overlays(source)
         if rel.parts[0].lower() in OBSOLETE_DIRS:
             problems.append((str(rel), 'obsolete directory', modules, overlays))
