@@ -1,32 +1,35 @@
 run(function()
     local DeathSpawn
+    local Mode
     local Target
     local Waypoint
     local GlideSpeed
     local HeightOffset
-    local pendingPosition
-    local pendingRotation
-    local waitingForRespawn = false
+    local generation = 0
     local deathConnection
     local characterConnection
-    local generation = 0
+    local travelConnection
 
-    local function getRoot(character)
+    local function rootOf(character)
         return character and (character:FindFirstChild('HumanoidRootPart') or character:WaitForChild('HumanoidRootPart', 5))
     end
 
-    local function getHumanoid(character)
+    local function humanoidOf(character)
         return character and (character:FindFirstChildOfClass('Humanoid') or character:WaitForChild('Humanoid', 5))
     end
 
+    local function alive()
+        return entitylib.isAlive and entitylib.character and entitylib.character.RootPart and entitylib.character.Humanoid
+    end
+
     local function parseWaypoint(value)
-        local coords = value and value:match('^%s*(-?[%d%.]+)%s*,%s*(-?[%d%.]+)%s*,%s*(-?[%d%.]+)')
-        if not coords then return nil end
+        if not value or value == '' then return nil end
         local x, y, z = value:match('^%s*(-?[%d%.]+)%s*,%s*(-?[%d%.]+)%s*,%s*(-?[%d%.]+)')
+        if not x then return nil end
         return Vector3.new(tonumber(x), tonumber(y), tonumber(z))
     end
 
-    local function getTargetPosition()
+    local function getTarget()
         if Target.Value == 'Mouse' then
             local mouse = lplr:GetMouse()
             return mouse and mouse.Hit and mouse.Hit.Position or nil
@@ -37,96 +40,101 @@ run(function()
     local function clearConnections()
         if deathConnection then deathConnection:Disconnect(); deathConnection = nil end
         if characterConnection then characterConnection:Disconnect(); characterConnection = nil end
+        if travelConnection then travelConnection:Disconnect(); travelConnection = nil end
     end
 
-    local function glideTo(position, rotation, myGeneration)
-        local start = os.clock()
-        local root
-        local connection
+    local function killCharacter()
+        local character = lplr.Character
+        local humanoid = humanoidOf(character)
+        if humanoid and humanoid.Health > 0 then
+            humanoid.Health = 0
+        elseif character then
+            pcall(function() character:BreakJoints() end)
+        end
+    end
 
-        connection = runService.Heartbeat:Connect(function()
+    local function glide(position, rotation, myGeneration)
+        if travelConnection then travelConnection:Disconnect() end
+
+        local firstFrame = true
+        travelConnection = runService.Heartbeat:Connect(function()
             if myGeneration ~= generation or not DeathSpawn.Enabled then
-                connection:Disconnect()
+                travelConnection:Disconnect()
+                travelConnection = nil
                 return
             end
 
-            root = entitylib.isAlive and entitylib.character.RootPart or getRoot(lplr.Character)
+            local root = alive() and entitylib.character.RootPart or rootOf(lplr.Character)
             if not root then return end
 
-            local target = position + Vector3.new(0, HeightOffset.Value, 0)
-            local delta = target - root.Position
+            local destination = position + Vector3.new(0, HeightOffset.Value, 0)
+            local delta = destination - root.Position
             local distance = delta.Magnitude
-
             if distance <= 2.5 then
-                root.CFrame = CFrame.new(target) * (rotation or CFrame.identity)
+                root.CFrame = CFrame.new(destination) * (rotation or CFrame.identity)
                 root.AssemblyLinearVelocity = Vector3.zero
-                connection:Disconnect()
-                waitingForRespawn = false
+                travelConnection:Disconnect()
+                travelConnection = nil
                 if DeathSpawn.Enabled then DeathSpawn:Toggle() end
                 return
             end
 
             local direction = delta.Unit
             local speed = math.max(GlideSpeed.Value, 1)
-            root.AssemblyLinearVelocity = direction * math.min(speed, math.max(distance * 60, speed))
+            root.AssemblyLinearVelocity = direction * speed
 
-            -- Give the newly spawned character an immediate first-frame displacement.
-            if os.clock() - start < 0.05 then
-                root.CFrame += direction * math.min(distance, speed / 60)
+            if firstFrame then
+                firstFrame = false
+                root.CFrame = CFrame.new(root.Position + direction * math.min(distance, speed / 60)) * root.CFrame.Rotation
             end
         end)
-        DeathSpawn:Clean(connection)
+        DeathSpawn:Clean(travelConnection)
     end
 
-    local function respawnAt(position, rotation, myGeneration)
-        waitingForRespawn = true
-
+    local function respawnAndReturn(position, rotation, myGeneration)
         characterConnection = lplr.CharacterAdded:Connect(function(character)
             if myGeneration ~= generation or not DeathSpawn.Enabled then return end
             task.defer(function()
                 if myGeneration ~= generation or not DeathSpawn.Enabled then return end
-                local root = getRoot(character)
-                local humanoid = getHumanoid(character)
-                if not root or not humanoid then return end
+                local root = rootOf(character)
+                if not root then return end
 
-                -- Spawn directly at the saved position, then begin the fast glide immediately.
+                -- Begin on the first available frame after CharacterAdded.
                 root.CFrame = CFrame.new(position) * (rotation or CFrame.identity)
                 root.AssemblyLinearVelocity = Vector3.zero
-                waitingForRespawn = false
-                glideTo(position, rotation, myGeneration)
+                glide(position, rotation, myGeneration)
             end)
         end)
         DeathSpawn:Clean(characterConnection)
-
-        local character = lplr.Character
-        if character then
-            local humanoid = getHumanoid(character)
-            if humanoid and humanoid.Health > 0 then
-                humanoid.Health = 0
-            else
-                pcall(function() character:BreakJoints() end)
-            end
-        end
+        killCharacter()
     end
 
-    local function setupRespawnMode(myGeneration)
+    local function hookRespawnMode(myGeneration)
         local function hook(character)
-            local humanoid = getHumanoid(character)
-            local root = getRoot(character)
+            local humanoid = humanoidOf(character)
+            local root = rootOf(character)
             if not humanoid or not root then return end
 
             if deathConnection then deathConnection:Disconnect() end
             deathConnection = humanoid.Died:Connect(function()
                 if myGeneration ~= generation or not DeathSpawn.Enabled then return end
-                local deathPosition = root.Position
-                local rotation = root.CFrame - root.Position
-                pendingPosition = deathPosition
-                pendingRotation = rotation
 
-                task.defer(function()
+                -- Exact position at the death event, before the old character disappears.
+                local position = root.Position
+                local rotation = root.CFrame - root.Position
+
+                if characterConnection then characterConnection:Disconnect() end
+                characterConnection = lplr.CharacterAdded:Connect(function(newCharacter)
                     if myGeneration ~= generation or not DeathSpawn.Enabled then return end
-                    respawnAt(deathPosition, rotation, myGeneration)
+                    task.defer(function()
+                        if myGeneration ~= generation or not DeathSpawn.Enabled then return end
+                        local newRoot = rootOf(newCharacter)
+                        if not newRoot then return end
+                        newRoot.CFrame = CFrame.new(position) * rotation
+                        newRoot.AssemblyLinearVelocity = Vector3.zero
+                    end)
                 end)
+                DeathSpawn:Clean(characterConnection)
             end)
             DeathSpawn:Clean(deathConnection)
         end
@@ -145,40 +153,33 @@ run(function()
             local myGeneration = generation
             clearConnections()
 
-            if not callback then
-                waitingForRespawn = false
-                pendingPosition = nil
-                pendingRotation = nil
+            if not callback then return end
+
+            if Mode.Value == 'Respawn' then
+                -- Every death is handled automatically using that death's exact position.
+                hookRespawnMode(myGeneration)
                 return
             end
 
-            if Target.Value == 'Waypoint' then
-                pendingPosition = parseWaypoint(Waypoint.Value)
-                if not pendingPosition then
-                    notif('DeathSpawn', 'Invalid waypoint. Use x, y, z.', 4, 'warning')
-                    task.defer(function() if DeathSpawn.Enabled then DeathSpawn:Toggle() end end)
-                    return
-                end
-            else
-                pendingPosition = getTargetPosition()
-                if not pendingPosition then
-                    notif('DeathSpawn', 'No mouse position found.', 4, 'warning')
-                    task.defer(function() if DeathSpawn.Enabled then DeathSpawn:Toggle() end end)
-                    return
-                end
+            local targetPosition = getTarget()
+            if not targetPosition then
+                notif('DeathSpawn', Target.Value == 'Mouse' and 'No mouse position found.' or 'Invalid waypoint. Use x, y, z.', 4, 'warning')
+                task.defer(function() if DeathSpawn.Enabled then DeathSpawn:Toggle() end end)
+                return
             end
 
-            local root = entitylib.isAlive and entitylib.character.RootPart
-            pendingRotation = root and (root.CFrame - root.Position) or CFrame.identity
-
-            if Target.Value == 'Mouse' then
-                -- TP mode: capture the destination before killing the current character.
-                respawnAt(pendingPosition, pendingRotation, myGeneration)
-            else
-                respawnAt(pendingPosition, pendingRotation, myGeneration)
-            end
+            local root = alive() and entitylib.character.RootPart
+            local rotation = root and (root.CFrame - root.Position) or CFrame.identity
+            -- Save the destination before respawning, then immediately glide the new character there.
+            respawnAndReturn(targetPosition, rotation, myGeneration)
         end,
-        Tooltip = 'Respawns your character and returns to a saved mouse or waypoint position.'
+        Tooltip = 'Respawn at a saved mouse/waypoint position or automatically respawn at your death position.'
+    })
+
+    Mode = DeathSpawn:CreateDropdown({
+        Name = 'Mode',
+        List = {'TP', 'Respawn'},
+        Default = 'TP'
     })
 
     Target = DeathSpawn:CreateDropdown({
@@ -189,8 +190,7 @@ run(function()
 
     Waypoint = DeathSpawn:CreateTextBox({
         Name = 'Waypoint',
-        Placeholder = 'x, y, z',
-        Function = function() end
+        Placeholder = 'x, y, z'
     })
 
     GlideSpeed = DeathSpawn:CreateSlider({
@@ -209,74 +209,4 @@ run(function()
         Decimal = 10,
         Suffix = ' studs'
     })
-
-    setupRespawnMode = nil
-
-    -- Respawn mode is always armed while the module is enabled: every subsequent death
-    -- is captured and the new character is returned to the recorded death position.
-    local originalFunction = DeathSpawn.Function
-    DeathSpawn.Function = function(callback)
-        if not callback then
-            generation += 1
-            clearConnections()
-            waitingForRespawn = false
-            pendingPosition = nil
-            pendingRotation = nil
-            return
-        end
-
-        generation += 1
-        local myGeneration = generation
-        clearConnections()
-
-        if Target.Value == 'Waypoint' then
-            pendingPosition = parseWaypoint(Waypoint.Value)
-            if not pendingPosition then
-                notif('DeathSpawn', 'Invalid waypoint. Use x, y, z.', 4, 'warning')
-                task.defer(function() if DeathSpawn.Enabled then DeathSpawn:Toggle() end end)
-                return
-            end
-        else
-            pendingPosition = getTargetPosition()
-            if not pendingPosition then
-                notif('DeathSpawn', 'No mouse position found.', 4, 'warning')
-                task.defer(function() if DeathSpawn.Enabled then DeathSpawn:Toggle() end end)
-                return
-            end
-        end
-
-        local root = entitylib.isAlive and entitylib.character.RootPart
-        pendingRotation = root and (root.CFrame - root.Position) or CFrame.identity
-
-        -- First activation performs the saved-destination respawn. After that, the same
-        -- module stays armed and automatically returns to the latest death position.
-        respawnAt(pendingPosition, pendingRotation, myGeneration)
-
-        DeathSpawn:Clean(lplr.CharacterAdded:Connect(function(character)
-            if myGeneration ~= generation or not DeathSpawn.Enabled then return end
-            local humanoid = getHumanoid(character)
-            local rootPart = getRoot(character)
-            if not humanoid or not rootPart then return end
-
-            task.defer(function()
-                if myGeneration ~= generation or not DeathSpawn.Enabled then return end
-                if waitingForRespawn then return end
-
-                local deathPosition = pendingPosition or rootPart.Position
-                local rotation = pendingRotation or (rootPart.CFrame - rootPart.Position)
-                rootPart.CFrame = CFrame.new(deathPosition) * rotation
-
-                if deathConnection then deathConnection:Disconnect() end
-                deathConnection = humanoid.Died:Connect(function()
-                    if myGeneration ~= generation or not DeathSpawn.Enabled then return end
-                    local saved = rootPart.Position
-                    local savedRotation = rootPart.CFrame - rootPart.Position
-                    pendingPosition = saved
-                    pendingRotation = savedRotation
-                    respawnAt(saved, savedRotation, myGeneration)
-                end)
-                DeathSpawn:Clean(deathConnection)
-            end)
-        end))
-    end
 end)
