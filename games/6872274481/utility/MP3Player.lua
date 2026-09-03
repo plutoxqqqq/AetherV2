@@ -11,6 +11,9 @@ run(function()
     local HUDProgress
     local HUDTime
     local HUDColor
+    local PulseToBeat
+    local PulseFrequency
+    local PulseIntensity
 
     local SONGS = 'aetherv2/songs'
     local SPOTIFY = 'aetherv2/spotify'
@@ -18,14 +21,13 @@ run(function()
     local sound
     local tracks, index = {}, 0
     local hudName, hudTime, hudBarFill, hudBackground
+    local pulseOverlay
     local lastScan = 0
     local scanKey = ''
-    -- When the current track was started, so the watchdog below can tell a song that has
-    -- finished from one that has only just been asked to start.
     local lastPlay = 0
+    local beatCooldown = 0
+    local loudnessAverage = 0
 
-    -- Every filesystem call is optional: some executors ship none of them, and the module has to
-    -- degrade to "no songs found" rather than erroring on load.
     local function fsList(path)
         local ok, res = pcall(function()
             if isfolder and not isfolder(path) then
@@ -64,7 +66,6 @@ run(function()
             return a.Name:lower() < b.Name:lower()
         end)
 
-        -- Playlist, when you have filled one in, is both the filter and the order.
         local wanted = Playlist and Playlist.ListEnabled or {}
         if #wanted > 0 then
             local ordered = {}
@@ -130,25 +131,51 @@ run(function()
         end
     end
 
+    local function setPulseVisible(transparency)
+        if pulseOverlay then
+            pulseOverlay.BackgroundTransparency = math.clamp(transparency, 0, 1)
+        end
+    end
+
+    local function resetPulse()
+        setPulseVisible(1)
+        beatCooldown = 0
+        loudnessAverage = 0
+    end
+
+    local function frequencyDelay()
+        if not PulseFrequency then return 0.45 end
+        if PulseFrequency.Value == 'Less' then return 0.8 end
+        if PulseFrequency.Value == 'Regular' then return 0.25 end
+        return 0.45
+    end
+
+    local function pulseFromBeat(loudness)
+        if not PulseToBeat.Enabled or not sound or not sound.IsPlaying or not pulseOverlay then return end
+        local now = os.clock()
+        if now < beatCooldown then return end
+
+        -- PlaybackLoudness is an amplitude estimate, so compare it against a moving average.
+        -- This makes the pulse react to actual peaks instead of flashing constantly on loud songs.
+        loudnessAverage = loudnessAverage == 0 and loudness or (loudnessAverage * 0.92 + loudness * 0.08)
+        local threshold = math.max(loudnessAverage * 1.45, 120)
+        if loudness < threshold then return end
+
+        local peak = math.clamp((loudness - threshold) / math.max(threshold, 1), 0, 1)
+        local intensity = (PulseIntensity.Value / 100) * (0.35 + peak * 0.65)
+        pulseOverlay.BackgroundTransparency = 1 - math.clamp(intensity, 0, 1)
+        beatCooldown = now + frequencyDelay()
+    end
+
     local function stop()
         if sound then
             pcall(function()
                 sound:Stop()
             end)
         end
+        resetPulse()
     end
 
-    -- Looping is the engine's job, not ours.
-    --
-    -- Repeating a song used to mean replaying it from the Ended handler, which is two
-    -- problems at once: it leaves an audible gap at every repeat, and Ended is not
-    -- something to depend on - a sound whose asset was still loading when Play ran can
-    -- fire it immediately or never, and then the music just stops. Looped restarts the
-    -- track inside the engine with no gap and no event involved.
-    --
-    -- Called on every play AND from the two toggles, so turning Loop on part way through a
-    -- song loops that song rather than quietly waiting for the next one - which is what
-    -- made the toggle look like it did nothing at all.
     local function applyLoop()
         if not (sound and Loop and Shuffle) then return end
         sound.Looped = Loop.Enabled and not Shuffle.Enabled
@@ -158,11 +185,9 @@ run(function()
         if #tracks <= 0 then
             index = 0
             refreshHUD()
+            resetPulse()
             return
         end
-        -- Stamped before the asset is resolved, not after: a track the executor cannot load
-        -- returns below, and leaving the stamp stale would have the watchdog walk the
-        -- playlist several times a second complaining about each one.
         lastPlay = tick()
         index = ((newIndex - 1) % #tracks) + 1
         local track = tracks[index]
@@ -177,6 +202,7 @@ run(function()
         sound.PlaybackSpeed = Speed.Value
         sound.TimePosition = 0
         applyLoop()
+        resetPulse()
         pcall(function()
             sound:Play()
         end)
@@ -217,15 +243,11 @@ run(function()
                 sound.PlaybackSpeed = Speed.Value
                 sound.Parent = vape.gui
                 MP3Player:Clean(sound)
-                -- Only ever advances: a looping track never ends, because Looped keeps it
-                -- going inside the engine.
                 MP3Player:Clean(sound.Ended:Connect(function()
                     if not MP3Player.Enabled then return end
                     advance(1)
                 end))
 
-                -- Toggle() shows the HUD frame for any module with a Size, so put Show HUD back in
-                -- charge of it now that the module is on.
                 if MP3Player.Children then
                     MP3Player.Children.Visible = ShowHUD.Enabled
                 end
@@ -235,20 +257,27 @@ run(function()
                     play(Shuffle.Enabled and math.random(1, #tracks) or 1)
                 end
 
+                MP3Player:Clean(runService.RenderStepped:Connect(function()
+                    if PulseToBeat.Enabled and sound and sound.IsPlaying then
+                        pulseFromBeat(sound.PlaybackLoudness)
+                    else
+                        resetPulse()
+                    end
+
+                    if pulseOverlay and pulseOverlay.BackgroundTransparency < 1 then
+                        pulseOverlay.BackgroundTransparency = math.min(1, pulseOverlay.BackgroundTransparency + 0.08)
+                    end
+                end))
+
                 MP3Player:Clean(task.spawn(function()
                     while MP3Player.Enabled do
                         if AutoRefresh.Enabled and tick() - lastScan > 3 then
                             lastScan = tick()
                             local changed = scan(true)
-                            -- Nothing playing and songs have just appeared: start on them.
                             if changed and sound and not sound.IsPlaying and #tracks > 0 then
                                 play(index > 0 and index or 1)
                             end
                         end
-                        -- Backstop for a track that finished without Ended firing, which is
-                        -- what left the playlist sitting in silence part way through. A
-                        -- looping track is still playing, so this never touches it, and the
-                        -- second since the last start keeps it off a song that is loading.
                         if sound and #tracks > 0 and sound.SoundId ~= '' and sound.IsLoaded
                             and not sound.IsPlaying and not sound.IsPaused
                             and (tick() - lastPlay) > 1 then
@@ -274,7 +303,6 @@ run(function()
         end
     })
 
-    -- HUD, built into the draggable frame the GUI hands us (same pattern AutoWin uses).
     if MP3Player.Children then
         local hud = MP3Player.Children
         if hud.Position == UDim2.new() then
@@ -343,6 +371,18 @@ run(function()
         fillCorner.CornerRadius = UDim.new(1, 0)
         fillCorner.Parent = hudBarFill
     end
+
+    -- Full-screen pulse layer. It lives above the game content but below the module HUD.
+    pulseOverlay = Instance.new('Frame')
+    pulseOverlay.Name = 'AetherMP3BeatPulse'
+    pulseOverlay.Size = UDim2.fromScale(1, 1)
+    pulseOverlay.Position = UDim2.fromScale(0, 0)
+    pulseOverlay.BackgroundColor3 = Color3.new(1, 1, 1)
+    pulseOverlay.BackgroundTransparency = 1
+    pulseOverlay.BorderSizePixel = 0
+    pulseOverlay.ZIndex = 40
+    pulseOverlay.Visible = false
+    pulseOverlay.Parent = vape.gui
 
     MP3Player:CreateButton({
         Name = 'Play / Pause',
@@ -423,8 +463,6 @@ run(function()
     PlayField = MP3Player:CreateTextBox({
         Name = 'Play song',
         Placeholder = 'song name',
-        -- TextBox hands us `enter`, not the text, and fires on every keystroke - so only act once
-        -- the name has actually been submitted.
         Function = function(enter)
             if not enter then return end
             local val = PlayField and PlayField.Value or ''
@@ -482,4 +520,32 @@ run(function()
         DefaultOpacity = 0.55,
         Function = refreshHUD
     })
+    PulseToBeat = MP3Player:CreateToggle({
+        Name = 'Pulse to Beat',
+        Function = function(callback)
+            if PulseFrequency and PulseFrequency.Object then PulseFrequency.Object.Visible = callback end
+            if PulseIntensity and PulseIntensity.Object then PulseIntensity.Object.Visible = callback end
+            if pulseOverlay then pulseOverlay.Visible = callback end
+            if not callback then resetPulse() end
+        end,
+        Tooltip = 'Pulse the screen in time with peaks in the current song'
+    })
+    PulseFrequency = MP3Player:CreateDropdown({
+        Name = 'Frequency',
+        List = { 'Less', 'Normal', 'Regular' },
+        Default = 'Normal',
+        Darker = true,
+        Tooltip = 'Less - fewer pulses; Normal - balanced; Regular - reacts more often',
+    })
+    PulseIntensity = MP3Player:CreateSlider({
+        Name = 'Intensity',
+        Min = 1,
+        Max = 100,
+        Default = 55,
+        Suffix = '%',
+        Darker = true,
+        Tooltip = 'Controls how strong the screen pulse is',
+    })
+    PulseFrequency.Object.Visible = false
+    PulseIntensity.Object.Visible = false
 end)
