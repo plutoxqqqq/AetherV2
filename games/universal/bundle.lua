@@ -4024,34 +4024,213 @@ run(function()
     })
 end)
 
+-- Client-side time scale.  The base simulation tick still runs normally; values above one add
+-- only the extra local physics time needed to reach the selected multiplier.
 run(function()
-    local Timer
-    local Value
+	local Timer
+	local Value
+	local animationSpeeds = {}
+	local stepPhysicsFailure
 
-    Timer = vape.Categories.Blatant:CreateModule({
-	Name = 'Timer',
-	Function = function(callback)
-		if callback then
-			setfflag('SimEnableStepPhysics', 'True')
-			setfflag('SimEnableStepPhysicsSelective', 'True')
-			Timer:Clean(runService.RenderStepped:Connect(function(dt)
-				if Value.Value > 1 then
-					runService:Pause()
-					workspace:StepPhysics(dt * (Value.Value - 1), { entitylib.character.RootPart })
-					runService:Run()
-				end
-			end))
+	local function scaleAnimations(scale)
+		local character = entitylib and entitylib.character and entitylib.character.Character
+		if not character then return end
+		local humanoid = character:FindFirstChildOfClass('Humanoid')
+		local animator = humanoid and humanoid:FindFirstChildOfClass('Animator')
+		if not animator then return end
+
+		for _, track in animator:GetPlayingAnimationTracks() do
+			if animationSpeeds[track] == nil then
+				animationSpeeds[track] = track.Speed
+			end
+			pcall(track.AdjustSpeed, track, animationSpeeds[track] * scale)
 		end
-	end,
-	Tooltip = 'Change the game speed',
-    })
-    Value = Timer:CreateSlider({
-	Name = 'Value',
-	Min = 1,
-	Max = 3,
-	Decimal = 10,
-    })
+	end
+
+	local function restoreAnimations()
+		for track, speed in animationSpeeds do
+			pcall(function() track:AdjustSpeed(speed) end)
+		end
+		table.clear(animationSpeeds)
+	end
+
+	Timer = vape.Categories.Blatant:CreateModule({
+		Name = 'Timer',
+		Function = function(callback)
+			if callback then
+				-- StepPhysics is available to supported executors.  Pause and Run are
+				-- PluginSecurity methods in Roblox clients, so calling them here caused the
+				-- RenderStepped callback to error before Timer could take a single step.
+				pcall(setfflag, 'SimEnableStepPhysics', 'True')
+				pcall(setfflag, 'SimEnableStepPhysicsSelective', 'True')
+				Timer:Clean(runService.RenderStepped:Connect(function(dt)
+					local scale = math.max(Value.Value, 1)
+					local root = entitylib.character and entitylib.character.RootPart
+					if root and scale > 1 and not stepPhysicsFailure then
+						local success, problem = pcall(workspace.StepPhysics, workspace, dt * (scale - 1), {root})
+						if not success and not stepPhysicsFailure then
+							stepPhysicsFailure = tostring(problem)
+							warn('[AetherV2] Timer could not step local physics: '..stepPhysicsFailure)
+						end
+					end
+					scaleAnimations(scale)
+				end))
+			else
+				restoreAnimations()
+				stepPhysicsFailure = nil
+			end
+		end,
+		Tooltip = 'Change the client game simulation speed',
+	})
+
+	Value = Timer:CreateSlider({
+		Name = 'Value',
+		Min = 1,
+		Max = 3,
+		Default = 1,
+		Decimal = 10,
+	})
 end)
+
+
+run(function()
+	local Wallhop
+	local Offset
+	local Mode
+	local CameraTime
+	local params = OverlapParams.new()
+	params.RespectCanCollide = true
+	local cameraRestore
+	local cameraTurn
+	local timeout = 0
+
+	local function updateCamera()
+		if cameraRestore then
+			gameCamera.CFrame = CFrame.new(
+				gameCamera.CFrame.Position.X,
+				gameCamera.CFrame.Position.Y,
+				gameCamera.CFrame.Position.Z,
+				unpack(cameraRestore, 4, cameraRestore.n)
+			)
+			cameraRestore = nil
+		end
+		if not cameraTurn then return false end
+
+		local alpha = math.clamp((os.clock() - cameraTurn.StartedAt) / cameraTurn.Duration, 0, 1)
+		-- Ease in and out so the turn has no visible snap at either end.  Apply only the
+		-- incremental yaw, which preserves both the live camera position and player input.
+		local progress = alpha * alpha * (3 - (2 * alpha))
+		local delta = progress - cameraTurn.Progress
+		if delta ~= 0 then
+			gameCamera.CFrame *= CFrame.Angles(0, math.rad(cameraTurn.Offset * delta), 0)
+			cameraTurn.Progress = progress
+		end
+		if alpha >= 1 then cameraTurn = nil end
+		return cameraTurn ~= nil
+	end
+
+	local function doCheck()
+		if updateCamera() then return end
+
+		if not entitylib.isAlive then
+			return
+		end
+
+		local hum = entitylib.character.Humanoid
+		local root = entitylib.character.RootPart
+		if hum.MoveDirection.Magnitude <= 0 then
+			return
+		end
+		if root.AssemblyLinearVelocity.Y >= 0 or hum.FloorMaterial ~= Enum.Material.Air then
+			return
+		end
+
+		params.CollisionGroup = root.CollisionGroup
+		params.FilterDescendantsInstances = { lplr.Character }
+
+		local parts = workspace:GetPartBoundsInBox(
+			CFrame.new(root.Position - Vector3.new(0, entitylib.character.HipHeight / 2, 0)),
+			Vector3.new(3, entitylib.character.HipHeight, 3),
+			params
+		)
+		local wall = false
+
+		for _, part in parts do
+			if part:IsA('BasePart') and part.CanCollide then
+				local pos = part:GetClosestPointOnSurface(root.Position)
+				if root.Position.Y - pos.Y > root.Size.Y / 2 then
+					wall = true
+					break
+				end
+			end
+		end
+
+		if wall and os.clock() - timeout > 0.2 then
+			-- The original logic only rotated the camera. Actually request a jump here.
+			hum.Jump = true
+			hum:ChangeState(Enum.HumanoidStateType.Jumping)
+
+			if Mode.Value == 'Legit' then
+				cameraTurn = {
+					StartedAt = os.clock(),
+					Duration = math.max(CameraTime.Value, 0.01),
+					Offset = Offset.Value,
+					Progress = 0
+				}
+			else
+				cameraRestore = table.pack(gameCamera.CFrame:GetComponents())
+				gameCamera.CFrame *= CFrame.Angles(0, math.rad(Offset.Value), 0)
+			end
+			timeout = os.clock()
+		end
+	end
+
+	Wallhop = vape.Categories.Blatant:CreateModule({
+		Name = 'Wallhop',
+		Function = function(callback)
+			if callback then
+				if workspace.AuthorityMode == Enum.AuthorityMode.Server then
+					Wallhop:Clean(runService:BindToSimulation(doCheck))
+				else
+					Wallhop:Clean(runService.RenderStepped:Connect(doCheck))
+				end
+			else
+				cameraRestore = nil
+				cameraTurn = nil
+			end
+		end,
+		Tooltip = 'Automatically jumps and rotates the camera for wallhopping.'
+	})
+
+	Offset = Wallhop:CreateSlider({
+		Name = 'Offset',
+		Min = -45,
+		Max = 45,
+		Default = 45,
+		Suffix = 'degrees'
+	})
+	Mode = Wallhop:CreateDropdown({
+		Name = 'Mode',
+		List = {'Instant', 'Legit'},
+		Default = 'Instant',
+		Function = function(value)
+			if CameraTime and CameraTime.Object then CameraTime.Object.Visible = value == 'Legit' end
+			if value ~= 'Legit' then cameraTurn = nil end
+		end,
+		Tooltip = 'Instant applies the offset for one frame. Legit turns the camera over the selected time.'
+	})
+	CameraTime = Wallhop:CreateSlider({
+		Name = 'Camera Time',
+		Min = 0.05,
+		Max = 2,
+		Default = 0.25,
+		Decimal = 100,
+		Suffix = 's',
+		Visible = false,
+		Tooltip = 'How long Legit mode takes to reach the wallhop camera angle.'
+	})
+end)
+
 
 --[[
     Render
@@ -7165,26 +7344,27 @@ end)
 ]]
 
 run(function()
-    local connections = {}
+    local connection
 
     vape.Categories.World:CreateModule({
-	Name = 'Anti-AFK',
-	Function = function(callback)
-		if callback then
-			for _, v in getconnections(lplr.Idled) do
-				table.insert(connections, v)
-				v:Disable()
-			end
-		else
-			for _, v in connections do
-				v:Enable()
-			end
-			table.clear(connections)
-		end
-	end,
-	Tooltip = 'Lets you stay ingame without getting kicked',
+        Name = 'Anti-AFK',
+        Function = function(callback)
+            if callback then
+                connection = lplr.Idled:Connect(function()
+                    local VirtualUser = game:GetService('VirtualUser')
+
+                    VirtualUser:CaptureController()
+                    VirtualUser:ClickButton2(Vector2.new())
+                end)
+            elseif connection then
+                connection:Disconnect()
+                connection = nil
+            end
+        end,
+        Tooltip = 'Lets you stay ingame without getting kicked'
     })
 end)
+
 
 
 run(function()
@@ -10252,4 +10432,266 @@ run(function()
             if FPSUnlocker.Enabled and typeof(setfpscap) == 'function' then pcall(setfpscap, value) end
         end
     })
+end)
+
+
+--[[AETHER_UNIVERSAL_UNORDERED_MODULES]]
+-- blatant/DeathSpawn.lua
+run(function()
+    local DeathSpawn
+    local generation = 0
+    local deathConnection
+    local characterConnection
+
+    local function disconnect(connection)
+        if connection then
+            connection:Disconnect()
+        end
+    end
+
+    local function clearConnections()
+        disconnect(deathConnection)
+        disconnect(characterConnection)
+        deathConnection = nil
+        characterConnection = nil
+    end
+
+    local function getHumanoid(character)
+        return character and character:FindFirstChildOfClass('Humanoid')
+    end
+
+    local function getRoot(character)
+        return character and character:FindFirstChild('HumanoidRootPart')
+    end
+
+    local function saveTransform(character)
+        local root = getRoot(character)
+        if not root then return nil end
+
+        return root.Position, root.CFrame.Rotation
+    end
+
+    local function placeCharacter(character, position, rotation)
+        local root = getRoot(character) or character:WaitForChild('HumanoidRootPart', 5)
+        if not root or not position then return end
+
+        -- Always attempt the placement as soon as the replacement character exists.
+        root.CFrame = CFrame.new(position) * (rotation or CFrame.identity)
+        root.AssemblyLinearVelocity = Vector3.zero
+    end
+
+    local function hookCharacter(character, myGeneration)
+        if myGeneration ~= generation or not DeathSpawn.Enabled then return end
+
+        local humanoid = getHumanoid(character) or character:WaitForChild('Humanoid', 5)
+        local root = getRoot(character) or character:WaitForChild('HumanoidRootPart', 5)
+        if not humanoid or not root then return end
+
+        disconnect(deathConnection)
+        deathConnection = humanoid.Died:Connect(function()
+            if myGeneration ~= generation or not DeathSpawn.Enabled then return end
+
+            -- Capture the exact position and rotation at the moment of death.
+            local position, rotation = saveTransform(character)
+            if not position then return end
+
+            disconnect(characterConnection)
+            characterConnection = lplr.CharacterAdded:Connect(function(newCharacter)
+                if myGeneration ~= generation or not DeathSpawn.Enabled then return end
+
+                task.defer(function()
+                    if myGeneration ~= generation or not DeathSpawn.Enabled then return end
+                    placeCharacter(newCharacter, position, rotation)
+                end)
+            end)
+
+            DeathSpawn:Clean(characterConnection)
+
+            -- Roblox normally creates the replacement character automatically.
+            -- If the current character remains present, keep attempting to restore
+            -- the saved transform until CharacterAdded supplies the replacement.
+        end)
+
+        DeathSpawn:Clean(deathConnection)
+    end
+
+    DeathSpawn = vape.Categories.Blatant:CreateModule({
+        Name = 'DeathSpawn',
+        Function = function(callback)
+            generation += 1
+            local myGeneration = generation
+            clearConnections()
+
+            if not callback then return end
+
+            if lplr.Character then
+                hookCharacter(lplr.Character, myGeneration)
+            end
+
+            local connection = lplr.CharacterAdded:Connect(function(character)
+                if myGeneration ~= generation or not DeathSpawn.Enabled then return end
+                hookCharacter(character, myGeneration)
+            end)
+            DeathSpawn:Clean(connection)
+        end,
+        Tooltip = 'Respawn at the position and rotation where you died.'
+    })
+end)
+-- blatant/FastClimb.lua
+run(function()
+	local FastClimb
+	local Speed
+
+	FastClimb = vape.Categories.Blatant:CreateModule({
+		Name = 'FastClimb',
+		Function = function(callback)
+			if callback then
+				FastClimb:Clean(runService.PreSimulation:Connect(function()
+					if not entitylib.isAlive then
+						return
+					end
+					local character = entitylib.character
+					local hum = character.Humanoid
+					local root = character.RootPart
+					if hum:GetState() ~= Enum.HumanoidStateType.Climbing then
+						return
+					end
+					local velocity = root.AssemblyLinearVelocity
+					if math.abs(velocity.Y) > 0.01 then
+						root.AssemblyLinearVelocity = Vector3.new(velocity.X, math.sign(velocity.Y) * Speed.Value, velocity.Z)
+					end
+				end))
+			end
+		end,
+		Tooltip = 'Climb ladders and climbable surfaces faster.'
+	})
+
+	Speed = FastClimb:CreateSlider({
+		Name = 'Speed',
+		Min = 1,
+		Max = 100,
+		Default = 50,
+		Suffix = 'studs/s'
+	})
+end)
+-- render/HitboxESP.lua
+run(function()
+	local HitboxESP
+	local Color
+	local Transparency
+	local Walls
+	local Reference = {}
+	local Folder = Instance.new('Folder')
+	Folder.Name = 'AetherHitboxESP'
+	Folder.Parent = vape.gui
+
+	local function isValid(ent)
+		return ent.Player and ent.Player ~= lplr and ent.Character and ent.Character.Parent
+	end
+
+	local function remove(ent)
+		local refs = Reference[ent]
+		if not refs then
+			return
+		end
+		for _, adornment in refs do
+			adornment:Destroy()
+		end
+		Reference[ent] = nil
+	end
+
+	local function add(ent)
+		if not isValid(ent) then
+			return
+		end
+		remove(ent)
+
+		local refs = {}
+		local color = entitylib.getEntityColor(ent) or Color3.fromHSV(Color.Hue, Color.Sat, Color.Value)
+		for _, part in ent.Character:GetDescendants() do
+			if part:IsA('BasePart') and part.Transparency < 1 and part.Name ~= 'HumanoidRootPart' then
+				local box = Instance.new('BoxHandleAdornment')
+				box.Name = 'Hitbox'
+				box.Adornee = part
+				box.Size = part.Size
+				box.CFrame = CFrame.identity
+				box.AlwaysOnTop = Walls.Enabled
+				box.ZIndex = 0
+				box.Color3 = color
+				box.Transparency = Transparency.Value
+				box.Parent = Folder
+				table.insert(refs, box)
+			end
+		end
+		Reference[ent] = refs
+	end
+
+	HitboxESP = vape.Categories.Render:CreateModule({
+		Name = 'HitboxESP',
+		Function = function(callback)
+			if callback then
+				HitboxESP:Clean(entitylib.Events.EntityAdded:Connect(function(ent)
+					add(ent)
+				end))
+				HitboxESP:Clean(entitylib.Events.EntityRemoved:Connect(function(ent)
+					remove(ent)
+				end))
+				HitboxESP:Clean(vape.Categories.Friends.ColorUpdate.Event:Connect(function()
+					for ent, refs in Reference do
+						local color = entitylib.getEntityColor(ent) or Color3.fromHSV(Color.Hue, Color.Sat, Color.Value)
+						for _, box in refs do
+							box.Color3 = color
+						end
+					end
+				end))
+				for _, ent in entitylib.List do
+					add(ent)
+				end
+			else
+				for ent in Reference do
+					remove(ent)
+				end
+			end
+		end,
+		Tooltip = 'Displays player hitboxes as transparent coloured boxes.'
+	})
+
+	Color = HitboxESP:CreateColorSlider({
+		Name = 'Color',
+		Function = function(hue, sat, val)
+			for ent, refs in Reference do
+				local color = entitylib.getEntityColor(ent) or Color3.fromHSV(hue, sat, val)
+				for _, box in refs do
+					box.Color3 = color
+				end
+			end
+		end
+	})
+
+	Transparency = HitboxESP:CreateSlider({
+		Name = 'Transparency',
+		Min = 0,
+		Max = 1,
+		Default = 0.65,
+		Decimal = 10,
+		Function = function(value)
+			for _, refs in Reference do
+				for _, box in refs do
+					box.Transparency = value
+				end
+			end
+		end
+	})
+
+	Walls = HitboxESP:CreateToggle({
+		Name = 'Render Walls',
+		Default = true,
+		Function = function(callback)
+			for _, refs in Reference do
+				for _, box in refs do
+					box.AlwaysOnTop = callback
+				end
+			end
+		end
+	})
 end)

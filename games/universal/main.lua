@@ -974,6 +974,8 @@ end)
 
 --[[AETHER_UNIVERSAL_MODULE:blatant/Timer.lua]]
 
+--[[AETHER_UNIVERSAL_MODULE:blatant/Wallhop.lua]]
+
 --[[
     Render
 ]]

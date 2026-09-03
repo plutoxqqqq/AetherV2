@@ -1,12 +1,15 @@
 run(function()
 	local Wallhop
 	local Offset
+	local Mode
+	local CameraTime
 	local params = OverlapParams.new()
 	params.RespectCanCollide = true
 	local cameraRestore
+	local cameraTurn
 	local timeout = 0
 
-	local function doCheck()
+	local function updateCamera()
 		if cameraRestore then
 			gameCamera.CFrame = CFrame.new(
 				gameCamera.CFrame.Position.X,
@@ -16,6 +19,23 @@ run(function()
 			)
 			cameraRestore = nil
 		end
+		if not cameraTurn then return false end
+
+		local alpha = math.clamp((os.clock() - cameraTurn.StartedAt) / cameraTurn.Duration, 0, 1)
+		-- Ease in and out so the turn has no visible snap at either end.  Apply only the
+		-- incremental yaw, which preserves both the live camera position and player input.
+		local progress = alpha * alpha * (3 - (2 * alpha))
+		local delta = progress - cameraTurn.Progress
+		if delta ~= 0 then
+			gameCamera.CFrame *= CFrame.Angles(0, math.rad(cameraTurn.Offset * delta), 0)
+			cameraTurn.Progress = progress
+		end
+		if alpha >= 1 then cameraTurn = nil end
+		return cameraTurn ~= nil
+	end
+
+	local function doCheck()
+		if updateCamera() then return end
 
 		if not entitylib.isAlive then
 			return
@@ -55,8 +75,17 @@ run(function()
 			hum.Jump = true
 			hum:ChangeState(Enum.HumanoidStateType.Jumping)
 
-			cameraRestore = table.pack(gameCamera.CFrame:GetComponents())
-			gameCamera.CFrame *= CFrame.Angles(0, math.rad(Offset.Value), 0)
+			if Mode.Value == 'Legit' then
+				cameraTurn = {
+					StartedAt = os.clock(),
+					Duration = math.max(CameraTime.Value, 0.01),
+					Offset = Offset.Value,
+					Progress = 0
+				}
+			else
+				cameraRestore = table.pack(gameCamera.CFrame:GetComponents())
+				gameCamera.CFrame *= CFrame.Angles(0, math.rad(Offset.Value), 0)
+			end
 			timeout = os.clock()
 		end
 	end
@@ -72,6 +101,7 @@ run(function()
 				end
 			else
 				cameraRestore = nil
+				cameraTurn = nil
 			end
 		end,
 		Tooltip = 'Automatically jumps and rotates the camera for wallhopping.'
@@ -83,5 +113,25 @@ run(function()
 		Max = 45,
 		Default = 45,
 		Suffix = 'degrees'
+	})
+	Mode = Wallhop:CreateDropdown({
+		Name = 'Mode',
+		List = {'Instant', 'Legit'},
+		Default = 'Instant',
+		Function = function(value)
+			if CameraTime and CameraTime.Object then CameraTime.Object.Visible = value == 'Legit' end
+			if value ~= 'Legit' then cameraTurn = nil end
+		end,
+		Tooltip = 'Instant applies the offset for one frame. Legit turns the camera over the selected time.'
+	})
+	CameraTime = Wallhop:CreateSlider({
+		Name = 'Camera Time',
+		Min = 0.05,
+		Max = 2,
+		Default = 0.25,
+		Decimal = 100,
+		Suffix = 's',
+		Visible = false,
+		Tooltip = 'How long Legit mode takes to reach the wallhop camera angle.'
 	})
 end)

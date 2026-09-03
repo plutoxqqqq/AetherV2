@@ -6,6 +6,7 @@ block with a marker. bundle.lua restores those blocks in their original lexical
 positions, so splitting does not change runtime scope or load order.
 """
 from pathlib import Path
+import argparse
 import json
 import re
 
@@ -197,11 +198,30 @@ def extract():
 
 def build_bundle():
     template = TEMPLATE.read_text(encoding='utf-8')
-    for marker in re.findall(r'--\[\[AETHER_UNIVERSAL_MODULE:([^\]]+)\]\]', template):
+    markers = re.findall(r'--\[\[AETHER_UNIVERSAL_MODULE:([^\]]+)\]\]', template)
+    if not markers:
+        raise RuntimeError('No universal module markers found in games/universal/main.lua')
+    included = set()
+    for marker in markers:
         path = GAME_DIR / marker
         if not path.exists():
             raise RuntimeError(f'Missing module source for {marker}')
         template = template.replace(f'--[[AETHER_UNIVERSAL_MODULE:{marker}]]', path.read_text(encoding='utf-8'), 1)
+        included.add(marker)
+
+    # A new module is still safe before its marker is added to main.lua: mirror the old dynamic
+    # loader by appending it in path order.  That keeps the bundle fast without making a new file
+    # silently disappear from a release.
+    extras = []
+    for path in sorted(GAME_DIR.rglob('*.lua')):
+        if path in {TEMPLATE, BUNDLE}:
+            continue
+        relative = path.relative_to(GAME_DIR).as_posix()
+        if '/' in relative and relative not in included:
+            extras.append((relative, path.read_text(encoding='utf-8')))
+    if extras:
+        template += '\n\n--[[AETHER_UNIVERSAL_UNORDERED_MODULES]]\n'
+        template += '\n'.join(f'-- {relative}\n{source}' for relative, source in extras)
     BUNDLE.write_text(template, encoding='utf-8')
 
 
@@ -229,6 +249,12 @@ return chunk(...)
 
 
 if __name__ == '__main__':
-    extract()
-    write_entrypoint()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--build', action='store_true', help='rebuild the universal bundle from the split source')
+    args = parser.parse_args()
+    if args.build:
+        build_bundle()
+    else:
+        extract()
+        write_entrypoint()
 ''
