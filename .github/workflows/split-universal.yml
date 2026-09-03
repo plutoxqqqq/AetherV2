@@ -11,7 +11,7 @@ permissions:
   contents: write
 
 jobs:
-  split:
+  build:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -19,8 +19,40 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Split universal modules
-        run: python3 tools/split-universal-modules.py
+      - name: Rebuild universal bundle
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          root = Path('.')
+          template_path = root / 'games/universal/main.lua'
+          bundle_path = root / 'games/universal/bundle.lua'
+          template = template_path.read_text(encoding='utf-8')
+
+          markers = re.findall(r'--\[\[AETHER_UNIVERSAL_MODULE:([^\]]+)\]\]', template)
+          if not markers:
+              raise SystemExit('No universal module markers found')
+
+          bundle = template
+          for marker in markers:
+              module_path = root / 'games/universal' / marker
+              if not module_path.is_file():
+                  raise SystemExit(f'Missing module source: {module_path}')
+              bundle = bundle.replace(
+                  f'--[[AETHER_UNIVERSAL_MODULE:{marker}]]',
+                  module_path.read_text(encoding='utf-8'),
+                  1,
+              )
+
+          if 'AETHER_UNIVERSAL_MODULE:' in bundle:
+              raise SystemExit('Bundle still contains module markers')
+          if ':CreateModule' not in bundle:
+              raise SystemExit('Bundle contains no module registrations')
+
+          bundle_path.write_text(bundle, encoding='utf-8')
+          print(f'Rebuilt {bundle_path} from {len(markers)} module blocks')
+          PY
 
       - name: Validate reconstruction
         run: |
@@ -28,8 +60,8 @@ jobs:
           from pathlib import Path
           import re
           root = Path('.')
-          template = (root / 'games/universal/main.lua').read_text()
-          bundle = (root / 'games/universal/bundle.lua').read_text()
+          template = (root / 'games/universal/main.lua').read_text(encoding='utf-8')
+          bundle = (root / 'games/universal/bundle.lua').read_text(encoding='utf-8')
           markers = re.findall(r'--\[\[AETHER_UNIVERSAL_MODULE:([^\]]+)\]\]', template)
           assert markers, 'No module markers generated'
           assert ':CreateModule' in bundle, 'Rebuilt bundle contains no module registrations'
@@ -37,14 +69,14 @@ jobs:
           print(f'Validated {len(markers)} module blocks')
           PY
 
-      - name: Commit generated tree
+      - name: Commit generated bundle
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add games/universal.lua games/universal tools/split-universal-modules.py .github/workflows/split-universal.yml
+          git add games/universal/bundle.lua
           if git diff --cached --quiet; then
             echo 'No generated changes to commit.'
             exit 0
           fi
-          git commit -m 'refactor: split universal modules'
+          git commit -m 'build: regenerate universal bundle'
           git push
