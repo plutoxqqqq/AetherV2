@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - refactor/split-universal-modules
+      - feature/timer-timescale
   workflow_dispatch:
 
 permissions:
