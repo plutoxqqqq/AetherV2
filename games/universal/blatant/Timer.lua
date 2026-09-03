@@ -54,7 +54,6 @@ run(function()
                         runService:Run()
 
                         if not success then
-                            -- Keep the client running if StepPhysics is unavailable or fails.
                             runService:Run()
                         end
                     end
