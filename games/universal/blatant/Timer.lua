@@ -1,3 +1,4 @@
+-- Client-side time scale: 1 = normal, below 1 = slow motion, above 1 = fast motion.
 run(function()
     local Timer
     local Value
