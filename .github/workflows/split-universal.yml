@@ -3,7 +3,12 @@ name: Generate Universal Modules
 on:
   push:
     branches:
+      - main
       - refactor/split-universal-modules
+    paths:
+      - 'games/universal/**'
+      - 'tools/split-universal-modules.py'
+      - '.github/workflows/split-universal.yml'
   workflow_dispatch:
 
 permissions:
@@ -18,8 +23,8 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Split universal modules
-        run: python3 tools/split-universal-modules.py
+      - name: Build universal bundle from module files
+        run: python3 tools/split-universal-modules.py --build
 
       - name: Validate reconstruction
         run: |
@@ -33,6 +38,7 @@ jobs:
           assert markers, 'No module markers generated'
           assert ':CreateModule' in bundle, 'Rebuilt bundle contains no module registrations'
           assert not re.search(r'AETHER_UNIVERSAL_MODULE:', bundle), 'Bundle still contains markers'
+          assert "Name = 'Fly'" in bundle, 'Universal Fly missing from bundle'
           print(f'Validated {len(markers)} module blocks')
           PY
 
@@ -45,5 +51,5 @@ jobs:
             echo 'No generated changes to commit.'
             exit 0
           fi
-          git commit -m 'refactor: split universal modules'
+          git commit -m 'Rebuild universal module bundle'
           git push
