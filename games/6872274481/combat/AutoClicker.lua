@@ -9,6 +9,12 @@ run(function()
 	local heldInputs = {}
 	local bridgeInputs = {}
 
+	local function clickInterval()
+		local slider = store.hand.toolType == 'block' and BlockCPS or CPS
+		local value = slider and slider.GetRandomValue and slider.GetRandomValue() or 12
+		return 1 / math.max(value, 1)
+	end
+
 	local function stopInput(source)
 		heldInputs[source] = nil
 		bridgeInputs[source] = nil
@@ -25,12 +31,12 @@ run(function()
 			return
 		end
 
-		Thread = task.delay(1 / (store.hand.toolType == 'block' and BlockCPS or CPS).GetRandomValue(), function()
+		Thread = task.spawn(function()
 			repeat
 				if not bedwars.AppController:isLayerOpen(bedwars.UILayers.MAIN) then
 					local blockPlacer = bedwars.BlockPlacementController.blockPlacer
 					if store.hand.toolType == 'block' and Blocks.Enabled and (not Wool.Enabled or store.hand.tool.Name:find('wool_')) and blockPlacer then
-						if (workspace:GetServerTimeNow() - bedwars.BlockCpsController.lastPlaceTimestamp) >= ((1 / 12) * 0.5) then
+						if (workspace:GetServerTimeNow() - bedwars.BlockCpsController.lastPlaceTimestamp) >= ((1 / 20) * 0.5) then
 							if next(bridgeInputs) and blockPlacer.autoBridge then
 								blockPlacer:autoBridge(workspace:GetServerTimeNow() - bedwars.KnockbackController:getLastKnockbackTime() >= 0.2)
 							else
@@ -45,7 +51,7 @@ run(function()
 					end
 				end
 
-				task.wait(1 / (store.hand.toolType == 'block' and BlockCPS or CPS).GetRandomValue())
+				task.wait(clickInterval())
 			until not AutoClicker.Enabled or not next(heldInputs)
 			Thread = nil
 		end)
@@ -59,8 +65,6 @@ run(function()
 					if input.UserInputType == Enum.UserInputType.MouseButton1 then
 						AutoClick(input, false)
 					elseif input.UserInputType == Enum.UserInputType.Touch then
-						-- World touches use the selector's suggested placement exactly like desktop.
-						-- Gui buttons are handled below so camera/menu touches cannot start clicking.
 						local overButton = false
 						for _, object in guiService:GetGuiObjectsAtPosition(input.Position.X, input.Position.Y) do
 							if object:IsA('GuiButton') then overButton = true; break end
@@ -103,7 +107,7 @@ run(function()
 						if not mobileUI or not AutoClicker.Enabled then return end
 						for _, button in mobileUI:GetDescendants() do hookButton(button) end
 						AutoClicker:Clean(mobileUI.DescendantAdded:Connect(hookButton))
-					end)
+				end)
 				end
 			else
 				table.clear(heldInputs)
@@ -147,9 +151,9 @@ run(function()
 	BlockCPS = AutoClicker:CreateTwoSlider({
 		Name = 'Block CPS',
 		Min = 1,
-		Max = 12,
-		DefaultMin = 12,
-		DefaultMax = 12,
+		Max = 20,
+		DefaultMin = 20,
+		DefaultMax = 20,
 		Darker = true
 	})
 end)
