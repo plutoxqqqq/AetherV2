@@ -25026,20 +25026,57 @@ run(function()
     local List
     local NameToId = {}
 
+    local function selectedId()
+        return List and NameToId[List.Value] or nil
+    end
+
+    local function applyAttribute()
+        local id = selectedId()
+        if id ~= nil then
+            lplr:SetAttribute('WinEffectType', id)
+        end
+    end
+
+    local function playEffect()
+        local id = selectedId()
+        if id == nil then return end
+        applyAttribute()
+
+        local remote
+        pcall(function()
+            remote = bedwars.Client:Get('WinEffectTriggered')
+        end)
+        local instance = remote and remote.instance
+        if instance and instance.OnClientEvent then
+            local payload = {
+                winEffectType = id,
+                winningPlayer = lplr
+            }
+            local fired = false
+            pcall(function()
+                for _, conn in getconnections(instance.OnClientEvent) do
+                    local fn = conn.Function or conn.FunctionValue
+                    if type(fn) == 'function' then
+                        fired = true
+                        pcall(fn, payload)
+                    end
+                end
+            end)
+            if not fired then
+                pcall(function()
+                    firesignal(instance.OnClientEvent, payload)
+                end)
+            end
+        end
+    end
+
     WinEffect = vape.Categories.Legit:CreateModule({
         Name = 'WinEffect',
         Function = function(callback)
             if callback then
-                WinEffect:Clean(vapeEvents.MatchEndEvent.Event:Connect(function()
-                    for i, v in getconnections(bedwars.Client:Get('WinEffectTriggered').instance.OnClientEvent) do
-                        if v.Function then
-                            v.Function({
-                                winEffectType = NameToId[List.Value],
-                                winningPlayer = lplr
-                            })
-                        end
-                    end
-                end))
+                applyAttribute()
+                WinEffect:Clean(lplr:GetAttributeChangedSignal('WinEffectType'):Connect(applyAttribute))
+                WinEffect:Clean(vapeEvents.MatchEndEvent.Event:Connect(playEffect))
             end
         end,
         Tooltip = 'Allows you to select any clientside win effect'
@@ -25052,7 +25089,12 @@ run(function()
     table.sort(WinEffectName)
     List = WinEffect:CreateDropdown({
         Name = 'Effects',
-        List = WinEffectName
+        List = WinEffectName,
+        Function = function()
+            if WinEffect.Enabled then
+                applyAttribute()
+            end
+        end
     })
 end)
 -- END AETHER MODULE: legit/WinEffect.lua --
@@ -29355,6 +29397,44 @@ run(function()
 	})
 end)
 -- END AETHER MODULE: render/RemovePlayerLevelUI.lua --
+
+-- BEGIN AETHER MODULE: render/SetPlayerLevel.lua --
+run(function()
+    local SetPlayerLevel
+    local originalLevel = nil
+    local customLevel = 1
+
+    SetPlayerLevel = vape.Categories.Render:CreateModule({
+        Name = 'SetPlayerLevel',
+        Function = function(state)
+            if state then
+                originalLevel = lplr:GetAttribute('PlayerLevel')
+                lplr:SetAttribute('PlayerLevel', customLevel)
+            else
+                if originalLevel ~= nil then
+                    lplr:SetAttribute('PlayerLevel', originalLevel)
+                end
+                originalLevel = nil
+            end
+        end,
+        Tooltip = 'Client-sided player level spoof.'
+    })
+
+    SetPlayerLevel:CreateSlider({
+        Name = 'Level',
+        Min = 1,
+        Max = 1000,
+        Default = 1,
+        Decimal = 1,
+        Function = function(val)
+            customLevel = math.floor(val)
+            if SetPlayerLevel.Enabled then
+                lplr:SetAttribute('PlayerLevel', customLevel)
+            end
+        end
+    })
+end)
+-- END AETHER MODULE: render/SetPlayerLevel.lua --
 
 -- BEGIN AETHER MODULE: render/SkinChanger.lua --
 run(function()
