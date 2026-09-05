@@ -15,6 +15,8 @@ else
 	id, commchannel = create_comm_channel()
 end
 local drawingrefs, queued, thread = {}, {}
+local visibilitySuppressed = false
+local desiredVisible = {}
 isactor = isactor and true or false
 local classes = {
 	Base = {
@@ -121,12 +123,18 @@ commchannel.Event:Connect(function(...)
 				props[v] = obj[v]
 			end
 			drawingrefs[ref] = obj
+			desiredVisible[ref] = props.Visible
+			if visibilitySuppressed then props.Visible = false end
 			commchannel:Fire(true, 'new', props, ref, args[2])
 		elseif key == 'update' then
 			for i, v in args[1] do
 				local obj = drawingrefs[i]
 				if obj then
 					for propname, prop in v do
+						if propname == 'Visible' then
+							desiredVisible[i] = prop
+							if visibilitySuppressed then prop = false end
+						end
 						obj[propname] = prop
 					end
 				end
@@ -138,10 +146,28 @@ commchannel.Event:Connect(function(...)
 					obj:Remove()
 				end)
 				drawingrefs[args[1]] = nil
+				desiredVisible[args[1]] = nil
 			end
 		end
 	end
 end)
+
+local controller = {
+	Suppressed = false,
+	SetSuppressed = function(self, enabled)
+		visibilitySuppressed = enabled == true
+		self.Suppressed = visibilitySuppressed
+		for ref, obj in drawingrefs do
+			if visibilitySuppressed then
+				desiredVisible[ref] = obj.Visible
+				obj.Visible = false
+			else
+				obj.Visible = desiredVisible[ref] ~= false
+			end
+		end
+	end
+}
+if getgenv then getgenv().AetherV2DrawingController = controller end
 
 if isactor and not Drawing then
 	thread = task.spawn(function()
