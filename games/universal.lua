@@ -10996,3 +10996,6 @@ run(function()
 		end
 	})
 end)
+
+-- Universal utility modules kept as independent source files.
+loadstring(downloadFile('aetherv2/games/universal/utility/StreamProof.lua'), 'StreamProof')(license)
