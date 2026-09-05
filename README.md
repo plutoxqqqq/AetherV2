@@ -32,7 +32,7 @@ Supported UI: `guis/new.lua`. Old `newer` profile values migrate to `new`. Setti
 
 Users submit configs from Public Configs in the GUI. Reviewers accept or reject them.
 
-- Review button is shown only to Roblox names in `reviewAccounts` inside `guis/new.core.lua` (currently `aetherv2owner`, `plutoxqqqqqq`).
+- Review button is shown only to Roblox names in `reviewAccounts` inside `guis/new.lua` (currently `aetherv2owner`, `plutoxqqqqqq`).
 - API auth is `ADMIN_KEY` on the config backend. The client sends it from `aetherv2/profiles/configadminkey.txt`.
 - To change reviewers: edit that `reviewAccounts` table and give each reviewer the same `ADMIN_KEY`. Rotate `ADMIN_KEY` on the Worker/service to revoke access.
 
