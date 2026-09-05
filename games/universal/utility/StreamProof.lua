@@ -14,23 +14,25 @@ run(function()
 			if savedButton ~= button then
 				savedButton = button
 				table.clear(savedButtonProperties)
+				local objects = {button}
+				for _, child in button:GetDescendants() do
+					objects[#objects + 1] = child
+				end
 				local function save(object, property)
 					local ok, value = pcall(function() return object[property] end)
 					if ok then
 						savedButtonProperties[#savedButtonProperties + 1] = {object, property, value}
-						pcall(function() object[property] = property == 'Visible' and true or 1 end)
+						pcall(function() object[property] = 1 end)
 					end
 				end
-				for _, object in {button, button:GetDescendants()} do
-					if typeof(object) == 'Instance' then
-						if object:IsA('GuiObject') then
-							for _, property in {'BackgroundTransparency', 'ImageTransparency', 'TextTransparency', 'TextStrokeTransparency', 'GroupTransparency'} do
-								pcall(function() save(object, property) end)
-							end
-							pcall(function() object.Visible = true end)
-						elseif object:IsA('UIStroke') then
-							save(object, 'Transparency')
+				for _, object in objects do
+					if object:IsA('GuiObject') then
+						for _, property in {'BackgroundTransparency', 'ImageTransparency', 'TextTransparency', 'TextStrokeTransparency', 'GroupTransparency'} do
+							pcall(function() save(object, property) end)
 						end
+						pcall(function() object.Visible = true end)
+					elseif object:IsA('UIStroke') then
+						save(object, 'Transparency')
 					end
 				end
 			end
@@ -63,8 +65,7 @@ run(function()
 					end
 				end)
 
-				local mobile = userInputService.TouchEnabled and not userInputService.KeyboardEnabled
-				if mobile then
+				if userInputService.TouchEnabled and not userInputService.KeyboardEnabled then
 					setButtonHidden(vape.VapeButton, true)
 					mobileConnection = runService.RenderStepped:Connect(function()
 						if vape.VapeButton ~= savedButton then
