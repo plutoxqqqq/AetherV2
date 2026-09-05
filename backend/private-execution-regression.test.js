@@ -138,10 +138,7 @@ test('all compatible child places forward through the authenticated session', ()
 
 test('the split BedWars module baseline cannot silently disappear again', () => {
   const games = path.join(__dirname, '..', 'games');
-  const bedwars = [
-    readLuaTree(path.join(games, '6872274481.lua')),
-    readLuaTree(path.join(games, '6872274481'))
-  ].join('\n');
+  const bedwars = readLuaTree(path.join(games, '6872274481.lua'));
   const registered = new Set();
   for (const match of bedwars.matchAll(/:CreateModule\s*\(\s*\{[\s\S]{0,500}?\bName\s*=\s*['"]([^'"]+)['"]/g)) registered.add(match[1]);
   for (const match of bedwars.matchAll(/\bregister\s*\(\s*['"]([^'"]+)['"]\s*,\s*['"]([^'"]+)['"]/g)) registered.add(match[2]);
