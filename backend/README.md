@@ -142,6 +142,19 @@ Source and authorization rate limits are per process and per observed client IP.
 
 `server.js` remains separate from key management. It accepts config submissions, exposes an `ADMIN_KEY`-protected review queue, and publishes accepted config files through GitHub. Its persistent `DATA_FILE` must be backed up. Do not reuse Discord, GitHub, admin, or Aether access keys across roles.
 
+Who can review:
+
+- API: anyone presenting `Authorization: Bearer $ADMIN_KEY`. Set `ADMIN_KEY` on the Worker or `npm start` process. Rotate that value to drop old reviewers.
+- In-game Review button: Roblox usernames listed in `reviewAccounts` in `guis/new.core.lua`. That list is display-only. The key is the real gate.
+- Client sends the key from `aetherv2/profiles/configadminkey.txt`.
+
+How to change reviewers:
+
+1. Edit `reviewAccounts` in `guis/new.core.lua` (lowercase Roblox names).
+2. Give each reviewer `configadminkey.txt` containing the current `ADMIN_KEY`.
+3. Redeploy/restart the config backend after changing `ADMIN_KEY`.
+4. `DISCORD_OWNER_IDS` does not grant config-review access.
+
 ## Execution analytics
 
 The public loader reports one execution to the premium-source service without sending a premium key. When the executor exposes a request API, the report includes the Roblox UserId so the backend can count unique players; only a one-way SHA-256 hash is persisted. Executors without a request API still increment the anonymous execution total.
