@@ -1,59 +1,10 @@
 name: BedWars structure
 
 on:
-  push:
-    branches: [main, refactor/auto-module-discovery]
-    paths:
-      - .github/workflows/bedwars-structure.yml
-      - tools/build-bedwars-bundle.py
-      - tools/audit-bedwars-modules.py
-      - games/6872274481/**
-  pull_request:
-    branches: [main]
-    paths:
-      - .github/workflows/bedwars-structure.yml
-      - tools/build-bedwars-bundle.py
-      - tools/audit-bedwars-modules.py
-      - games/6872274481/**
   workflow_dispatch:
 
-permissions:
-  contents: write
-
 jobs:
-  validate:
-    if: github.actor != 'github-actions[bot]'
+  retired:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.ref || github.ref_name }}
-          fetch-depth: 0
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - name: Audit module files
-        run: python tools/audit-bedwars-modules.py
-      - name: Build BedWars bundle
-        run: python tools/build-bedwars-bundle.py
-      - name: Verify generated bundle is reproducible
-        run: |
-          cp games/6872274481/bundle.lua /tmp/bundle.lua
-          python tools/build-bedwars-bundle.py
-          cmp /tmp/bundle.lua games/6872274481/bundle.lua
-      - name: Validate backend JavaScript
-        run: |
-          node --check backend/private-source.js
-          node --check backend/discord-bot.js
-          node --check backend/execution-stats.js
-      - name: Commit generated bundle
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add games/6872274481/bundle.lua
-          if git diff --cached --quiet; then
-            echo "Bundle already current"
-            exit 0
-          fi
-          git commit -m "Build BedWars module bundle"
-          git push origin HEAD:${{ github.event.pull_request.head.ref || github.ref_name }}
+      - run: echo 'BedWars modules now live in games/6872274481.lua. This workflow is retired.'

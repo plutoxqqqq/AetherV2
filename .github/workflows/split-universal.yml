@@ -1,55 +1,10 @@
 name: Generate Universal Modules
 
 on:
-  push:
-    branches:
-      - main
-      - refactor/split-universal-modules
-    paths:
-      - 'games/universal/**'
-      - 'tools/split-universal-modules.py'
-      - '.github/workflows/split-universal.yml'
   workflow_dispatch:
 
-permissions:
-  contents: write
-
 jobs:
-  split:
+  retired:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Build universal bundle from module files
-        run: python3 tools/split-universal-modules.py --build
-
-      - name: Validate reconstruction
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          import re
-          root = Path('.')
-          template = (root / 'games/universal/main.lua').read_text()
-          bundle = (root / 'games/universal/bundle.lua').read_text()
-          markers = re.findall(r'--\[\[AETHER_UNIVERSAL_MODULE:([^\]]+)\]\]', template)
-          assert markers, 'No module markers generated'
-          assert ':CreateModule' in bundle, 'Rebuilt bundle contains no module registrations'
-          assert not re.search(r'AETHER_UNIVERSAL_MODULE:', bundle), 'Bundle still contains markers'
-          assert "Name = 'Fly'" in bundle, 'Universal Fly missing from bundle'
-          print(f'Validated {len(markers)} module blocks')
-          PY
-
-      - name: Commit generated tree
-        run: |
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add games/universal.lua games/universal tools/split-universal-modules.py .github/workflows/split-universal.yml
-          if git diff --cached --quiet; then
-            echo 'No generated changes to commit.'
-            exit 0
-          fi
-          git commit -m 'Rebuild universal module bundle'
-          git push
+      - run: echo 'Universal modules now live in games/universal.lua. This workflow is retired.'

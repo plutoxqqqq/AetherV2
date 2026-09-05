@@ -5,43 +5,19 @@ on:
     paths:
       - '**/*.lua'
       - 'backend/**'
-      - 'tools/**'
       - '.github/workflows/luau-syntax.yml'
   push:
     branches:
-      - 'codex/fix-bedwars-bundle-nil-and-luau-syntax'
+      - main
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   syntax:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event_name == 'push' && github.ref_name || github.head_ref }}
-
-      - name: Apply requested repairs
-        shell: bash
-        run: |
-          python3 tools/apply-stats-details-fixes.py
-          python3 tools/fix-stats-regression-test.py
-          python3 - <<'PY'
-          from pathlib import Path
-          path = Path('games/6872274481/main.lua')
-          source = path.read_text(encoding='utf-8')
-          old = "Runtime:InstallLongJumpJadeHook(moduleByName('LongJump'))"
-          new = "Runtime:InstallLongJumpJadeHook(Runtime.ModuleByName and Runtime.ModuleByName('LongJump'))"
-          if old in source:
-              source = source.replace(old, new, 1)
-              path.write_text(source, encoding='utf-8')
-          elif new not in source:
-              raise SystemExit('Expected LongJump Jade hook call was not found')
-          PY
-
-      - name: Rebuild BedWars bundle
-        run: python3 tools/build-bedwars-bundle.py
 
       - name: Install Luau compiler
         run: |
@@ -53,51 +29,21 @@ jobs:
         shell: bash
         run: |
           set -uo pipefail
-          mkdir -p /tmp/luau-diagnostics
           failures=0
-          : > /tmp/luau-diagnostics/results.txt
           check_file() {
             local file="$1"
-            if ! /tmp/luau/luau-compile "$file" >/tmp/luau.out 2>/tmp/luau.err; then
+            if ! /tmp/luau/luau-compile "$file" >/dev/null 2>/tmp/luau.err; then
               failures=$((failures + 1))
-              { echo "=== $file ==="; cat /tmp/luau.out; cat /tmp/luau.err; echo; } | tee -a /tmp/luau-diagnostics/results.txt
+              echo "=== $file ==="
+              cat /tmp/luau.err
             fi
           }
-          while IFS= read -r -d '' file; do check_file "$file"; done < <(find . -type f -name '*.lua' -not -path './.git/*' -not -path './guis/liquidglass/*' -print0)
-          echo "failures=$failures" | tee -a /tmp/luau-diagnostics/results.txt
+          while IFS= read -r file; do check_file "$file"; done <<EOF
+          $(find . -type f -name '*.lua' -not -path './.git/*' -not -path './guis/liquidglass/*')
+          EOF
+          echo "failures=$failures"
           if [ "$failures" -ne 0 ]; then exit 1; fi
 
-      - name: Commit repaired sources
-        if: success() && github.event_name == 'push'
-        shell: bash
-        run: |
-          if git diff --quiet; then exit 0; fi
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add backend/execution-stats.js backend/discord-bot.js backend/execution-stats-v2.test.js backend/private-execution-regression.test.js init.lua games/6872274481/main.lua games/6872274481/bundle.lua
-          git commit -m 'Fix BedWars runtime and execution details telemetry'
-          git push origin HEAD:${{ github.ref_name }}
-
       - name: Run backend tests
-        if: success()
         working-directory: backend
-        shell: bash
-        run: |
-          mkdir -p /tmp/backend-diagnostics
-          set -o pipefail
-          (npm ci && npm run check && npm test) 2>&1 | tee /tmp/backend-diagnostics/results.txt
-
-      - name: Upload diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: validation-diagnostics
-          path: |
-            /tmp/luau-diagnostics
-            /tmp/backend-diagnostics
-
-      - name: Ensure bundle is current
-        if: success()
-        run: |
-          python3 tools/build-bedwars-bundle.py
-          git diff --exit-code -- games/6872274481/bundle.lua
+        run: npm ci && npm run check && npm test
