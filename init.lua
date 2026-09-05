@@ -183,6 +183,7 @@ local revisionPath = 'aetherv2/profiles/file-revisions.json'
 local httpService = game:GetService('HttpService')
 local revisions = {}
 local remoteFiles = {}
+local checkedFiles = {}
 
 local function loadRevisions()
 	if not exists(revisionPath) then return end
@@ -198,10 +199,6 @@ local function saveRevisions()
 	pcall(function()
 		writefile(revisionPath, httpService:JSONEncode(revisions))
 	end)
-end
-
-local function relativePath(path)
-	return tostring(path):gsub('^aetherv2/', ''):gsub('\\', '/')
 end
 
 local function cachePath(relative)
@@ -276,6 +273,7 @@ local function downloadCurrent(relative, expectedSha)
 		return false
 	end
 	revisions[relative] = expectedSha
+	checkedFiles[relative] = true
 	return true
 end
 
@@ -287,27 +285,19 @@ local function refreshCachedFiles()
 		return false
 	end
 
-	local changed = false
 	for relative, remoteSha in pairs(remoteFiles) do
 		if not isLocalOnly(relative) then
 			local path = cachePath(relative)
-			if isfile(path) and revisions[relative] ~= remoteSha then
-				if downloadCurrent(relative, remoteSha) then
-					changed = true
+			if isfile(path) then
+				if revisions[relative] == remoteSha then
+					checkedFiles[relative] = true
+				else
+					downloadCurrent(relative, remoteSha)
 				end
 			end
 		end
 	end
 
-	-- init.lua itself is cached for queue-on-teleport/reload paths.
-	local initSha = remoteFiles['init.lua']
-	if initSha and revisions['init.lua'] ~= initSha then
-		if downloadCurrent('init.lua', initSha) then
-			changed = true
-		end
-	end
-
-	if changed then saveRevisions() end
 	return true
 end
 
@@ -318,6 +308,10 @@ if not exists('aetherv2/assets/new/loading.png') then
 		local body = game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/main/assets/new/loading.png', true)
 		if type(body) == 'string' and body:sub(1, 8) == '\137PNG\r\n\26\n' then
 			writefile('aetherv2/assets/new/loading.png', body)
+			if remoteFiles['assets/new/loading.png'] then
+				revisions['assets/new/loading.png'] = remoteFiles['assets/new/loading.png']
+				checkedFiles['assets/new/loading.png'] = true
+			end
 		end
 	end)
 end
@@ -417,6 +411,10 @@ if not exists('aetherv2/main.lua') then
 		error('Could not download aetherv2/main.lua')
 	end
 	writefile('aetherv2/main.lua', body)
+	if remoteFiles['main.lua'] then
+		revisions['main.lua'] = remoteFiles['main.lua']
+		checkedFiles['main.lua'] = true
+	end
 end
 
 local ok, result = pcall(function()
@@ -427,16 +425,13 @@ if not ok then
 	error(result)
 end
 
--- Record the remote revisions of files that became cached during this execution.
--- This makes the next launch a true no-op for unchanged files.
-if next(remoteFiles) then
-	for relative, remoteSha in pairs(remoteFiles) do
-		if not isLocalOnly(relative) and isfile(cachePath(relative)) then
+-- Only write revisions for files we actually verified or successfully updated.
+if next(checkedFiles) then
+	for relative in pairs(checkedFiles) do
+		local remoteSha = remoteFiles[relative]
+		if remoteSha then
 			revisions[relative] = remoteSha
 		end
-	end
-	if isfile('aetherv2/init.lua') and remoteFiles['init.lua'] then
-		revisions['init.lua'] = remoteFiles['init.lua']
 	end
 	saveRevisions()
 end
