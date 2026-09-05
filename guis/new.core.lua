@@ -15,27 +15,27 @@ end
 
 local function patchBody(source)
 	if type(source) ~= 'string' then return source end
-	local old = [=[            v.Object.VapeLogo.Accent.BackgroundColor3 = Color3.fromHSV(hue, sat, val)
-            v.Object.VapeLogo.V4Logo.BackgroundColor3 = Color3.fromHSV(hue, sat, val)
-            v.Object.VapeLogo.V4Logo.TextColor3 = mainapi:TextColor(hue, sat, val)]=]
-	local new = [=[            local mainLogo = v.Object and v.Object:FindFirstChild('VapeLogo', true)
-            if mainLogo then
-                local logoAccent = mainLogo:FindFirstChild('Accent', true)
-                local v4Logo = mainLogo:FindFirstChild('V4Logo', true)
-                if logoAccent then logoAccent.BackgroundColor3 = Color3.fromHSV(hue, sat, val) end
-                if v4Logo then
-                    v4Logo.BackgroundColor3 = Color3.fromHSV(hue, sat, val)
-                    v4Logo.TextColor3 = mainapi:TextColor(hue, sat, val)
-                end
-            end]=]
+	local old = '\t\t\tv.Object.VapeLogo.Accent.BackgroundColor3 = Color3.fromHSV(hue, sat, val)\n\t\t\tv.Object.VapeLogo.V4Logo.BackgroundColor3 = Color3.fromHSV(hue, sat, val)\n\t\t\tv.Object.VapeLogo.V4Logo.TextColor3 = mainapi:TextColor(hue, sat, val)'
+	local new = table.concat({
+		'\t\t\tlocal mainLogo = v.Object and v.Object:FindFirstChild(\'VapeLogo\', true)',
+		'\t\t\tif mainLogo then',
+		'\t\t\t\tlocal logoAccent = mainLogo:FindFirstChild(\'Accent\', true)',
+		'\t\t\t\tlocal v4Logo = mainLogo:FindFirstChild(\'V4Logo\', true)',
+		'\t\t\t\tif logoAccent then logoAccent.BackgroundColor3 = Color3.fromHSV(hue, sat, val) end',
+		'\t\t\t\tif v4Logo then',
+		'\t\t\t\t\tv4Logo.BackgroundColor3 = Color3.fromHSV(hue, sat, val)',
+		'\t\t\t\t\tv4Logo.TextColor3 = mainapi:TextColor(hue, sat, val)',
+		'\t\t\t\tend',
+		'\t\t\tend'
+	}, '\n')
 	if source:find(old, 1, true) then
 		source = source:gsub(old, new, 1)
 	end
-	source = source:gsub(
-		'function mainapi:Load%(skipgui, profile%)\n\tif not skipgui then\n\t\tself%.GUIColor:SetValue%(nil, nil, nil, accent%.Notch%)\n\tend',
-		'function mainapi:Load(skipgui, profile)\n\tif not skipgui then\n\t\tpcall(function()\n\t\t\tself.GUIColor:SetValue(nil, nil, nil, accent.Notch)\n\t\tend)\n\tend',
-		1
-	)
+	local loadOld = 'function mainapi:Load(skipgui, profile)\n\tif not skipgui then\n\t\tself.GUIColor:SetValue(nil, nil, nil, accent.Notch)\n\tend'
+	local loadNew = 'function mainapi:Load(skipgui, profile)\n\tif not skipgui then\n\t\tpcall(function()\n\t\t\tself.GUIColor:SetValue(nil, nil, nil, accent.Notch)\n\t\tend)\n\tend'
+	if source:find(loadOld, 1, true) then
+		source = source:gsub(loadOld, loadNew, 1)
+	end
 	return source
 end
 
@@ -48,7 +48,6 @@ end
 
 if isfile and isfile('aetherv2/guis/new.lua') then
 	local ok, source = pcall(readfile, 'aetherv2/guis/new.lua')
-	-- Only execute a cached new.lua if it is a real controller, not this wrapper.
 	if ok and usable(source) and not source:find('CORE_LOCAL', 1, true) then
 		return run(source, 'guis/new.lua')
 	end
