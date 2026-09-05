@@ -1,4 +1,7 @@
 run(function()
+	if vape.Modules and vape.Modules.AutoEnchant then
+		return
+	end
 	local category = vape.Categories.Inventory or vape.Categories.Utility or vape.Categories.World
 	if not category or type(category.CreateModule) ~= 'function' then
 		warn('[AetherV2] AutoEnchant could not find a module category')
