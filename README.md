@@ -1,41 +1,50 @@
 > [!WARNING]
-> AetherV2 is a private, key-gated build. Do not commit or post access keys, Discord tokens, or GitHub tokens.
+> Do not commit or post access keys, Discord tokens, GitHub tokens, or `ADMIN_KEY`.
 
 # AetherV2
 
-AetherCore Rebirth rebirthed. The current distribution uses a private source proxy, short-lived source sessions, and per-user access keys managed through Discord.
+Public AetherV2 loads from GitHub. Premium modules are optional and key-gated through Discord plus the premium source proxy.
 
 ## Running AetherV2
 
-Each approved user receives a unique loader from an owner. It has this shape:
+Public loader:
 
 ```lua
-loadstring(game:HttpGet(
-    "https://YOUR-SOURCE-ORIGIN/loader?key=YOUR-ONE-TIME-ASSIGNED-KEY",
-    true
-))()
+loadstring(game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/main/init.lua', true), 'init.lua')()
 ```
 
-The key binds to the first verified Roblox username/UserId that authorizes it. Do not use the public raw-GitHub loadstring from older releases; the active loader retrieves client files through the authenticated source proxy.
+Optional premium key (unlocks private `AetherV2Premium` modules only):
 
-Raw keys are intentionally not stored. Discord shows a new or rotated raw key and its loader once, in an ephemeral response. Later key management uses the SHA-256 key ID only; a lost raw key must be rotated, not recovered.
+```lua
+loadstring(game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/main/init.lua', true), 'init.lua')({
+	Closet = false,
+	premiumKey = "KEY_HERE"
+})
+```
 
-Revoked and expired keys invalidate existing source sessions on their next request. Renewing sets a future expiry and reactivates the key. Rotation revokes the old key, invalidates its sessions, and creates a replacement.
+A raw premium key is shown once in Discord. It binds to the first verified Roblox username/UserId. Lost keys must be rotated. Revoke, expire, or rotate invalidates premium sessions; public AetherV2 keeps working.
 
 ## Interface
 
-The supported main interface is `guis/new.lua`. The retired `newer.lua`/Nexus implementation has been removed; old `newer` profile selections migrate to `new` automatically.
+Supported UI: `guis/new.lua`. Old `newer` profile values migrate to `new`. Settings → GUI has a Transparency slider (0%–80%).
 
-Settings → GUI includes a **Transparency** slider from 0% to 80%. At 0% the interface keeps its original appearance. Higher values progressively add restrained liquid-glass translucency, highlight, edge, and blur effects while keeping controls readable.
+## Public configs
 
-## Backend development
+Users submit configs from Public Configs in the GUI. Reviewers accept or reject them.
 
-The backend directory contains:
+- Review button is shown only to Roblox names in `reviewAccounts` inside `guis/new.core.lua` (currently `aetherv2owner`, `plutoxqqqqqq`).
+- API auth is `ADMIN_KEY` on the config backend. The client sends it from `aetherv2/profiles/configadminkey.txt`.
+- To change reviewers: edit that `reviewAccounts` table and give each reviewer the same `ADMIN_KEY`. Rotate `ADMIN_KEY` on the Worker/service to revoke access.
 
-- `private-source.js` — key-gated source proxy and short-lived sessions.
-- `key-registry.js` — validated GitHub-backed key registry.
-- `discord-bot.js` — owner-only key-management commands and dashboard.
-- `server.js` — the separate public-config review API.
+Default backend: `https://aether-config-backend.aether-config-backend-plutoxqq.workers.dev`  
+Override with `getgenv().AetherConfigBackend` or `aetherv2/profiles/configbackend.txt`.
+
+## Backend
+
+- `private-source.js` — premium source proxy and sessions
+- `key-registry.js` — GitHub-backed key registry
+- `discord-bot.js` — owner-only key commands (`DISCORD_OWNER_IDS`)
+- `server.js` — config-review API (`ADMIN_KEY`)
 
 ```bash
 cd backend
@@ -44,10 +53,10 @@ npm run check
 npm test
 ```
 
-Deployment, environment variables, command behavior, and security limitations are documented in [backend/README.md](backend/README.md).
+See [backend/README.md](backend/README.md).
 
 ## Executors
 
-AetherV2 expects an executor with strong Luau and filesystem support. Executor behavior can change, so test the private loader in a controlled account before distributing a key.
+Needs an executor with solid Luau and filesystem support.
 
 [Join the official Discord server](https://discord.gg/aYu5c9v9zv)
