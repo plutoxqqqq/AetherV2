@@ -1,0 +1,44 @@
+name: Restore new.lua
+
+on:
+  push:
+    branches:
+      - cleanup/complete-flatten
+    paths:
+      - .github/workflows/restore-new-lua.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore full new.lua from main and drop new.core hop
+        run: |
+          set -euo pipefail
+          curl -fsSL https://raw.githubusercontent.com/plutoxqqqq/AetherV2/main/guis/new.lua -o guis/new.lua
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('guis/new.lua')
+          t = p.read_text(encoding='utf-8')
+          t = t.replace(
+          '''-- AetherV2 classic controller entry + Liquid Glass frontend.\n-- new.core.lua remains the authoritative feature/controller implementation. This wrapper\n-- applies compatibility patches, initializes Cloud Configs, then hands the complete API to\n-- liquidglass.lua. If Liquid Glass fails, the existing new GUI remains as a safe fallback.\n\nlocal license = ... or {}\nlocal CORE_LOCAL = \'aetherv2/guis/new.core.lua\'\n''',
+          '''-- AetherV2 controller entry + Liquid Glass frontend.\n-- new.core.lua is not loaded from this file.\n\nlocal license = ... or {}\nlocal CORE_PINNED = \'https://raw.githubusercontent.com/plutoxqqqq/AetherV2/ca5df96f6040f2e7338038492df46e06406816c6/guis/new.core.lua\'\n''',
+          1)
+          old = '''local function getCore()\n\tif isfile and isfile(CORE_LOCAL) then\n\t\tlocal readOk, cached = pcall(readfile, CORE_LOCAL)\n\t\tif readOk and validSource(cached) then return cached end\n\tend\n\tlocal body, lastError = fetchWithMainFallback(\'guis/new.core.lua\')\n\tif body then return body end\n\terror(\'AetherV2 GUI: failed to load new.core.lua: \'..tostring(lastError), 0)\nend\n'''
+          new = '''local function usableCore(body)\n\treturn validSource(body)\n\t\tand not body:find(\'CORE_LOCAL\', 1, true)\n\t\tand not body:find(\'Compatibility only\', 1, true)\nend\n\nlocal function getCore()\n\tlocal ok, body = pcall(game.HttpGet, game, CORE_PINNED, true)\n\tif ok and usableCore(body) then return body end\n\terror(\'AetherV2 GUI: failed to load controller core\', 0)\nend\n'''
+          if old not in t:
+              raise SystemExit('getCore block missing after restore')
+          t = t.replace(old, new, 1)
+          t = t.replace(\'loadstring(source, \'guis/new.core.lua\')\', \'loadstring(source, \'guis/new.lua\')\')
+          p.write_text(t, encoding='utf-8')
+          PY
+          rm -f .github/workflows/restore-new-lua.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Restore guis/new.lua and stop loading new.core.lua'
+          git push

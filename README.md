@@ -26,7 +26,11 @@ A raw premium key is shown once in Discord. It binds to the first verified Roblo
 
 ## Interface
 
-Supported UI: `guis/new.lua`. Old `newer` profile values migrate to `new`. Settings → GUI has a Transparency slider (0%–80%).
+Supported UI: `guis/new.lua`. It does not load `guis/new.core.lua`. Old `newer` profile values migrate to `new`. Settings → GUI has a Transparency slider (0%–80%).
+
+## Games
+
+Each game is one file under `games/<placeId>.lua`, plus `games/universal.lua`. There are no `games/universal/` or `games/6872274481/` folders.
 
 ## Public configs
 
