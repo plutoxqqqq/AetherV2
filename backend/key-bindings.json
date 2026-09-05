@@ -220,6 +220,14 @@
       "createdBy": "plutoxqq (1364123154196336661)",
       "enabled": true,
       "expiresAt": null
+    },
+    "8f027bcfa7c1da26e283ae2059270f3f4bac736e80222a16156a3dd58a15459a": {
+      "label": "Unlabelled",
+      "source": "discord",
+      "createdAt": "2026-09-05T22:09:36.659Z",
+      "createdBy": "plutoxqq (1364123154196336661)",
+      "enabled": true,
+      "expiresAt": null
     }
   },
   "audit": [
@@ -1693,6 +1701,14 @@
       "username": "TheSevenSeas387",
       "userId": "11565522448",
       "uses": 53
+    },
+    {
+      "at": "2026-09-05T22:09:37.230Z",
+      "action": "generate",
+      "keyId": "8f027bcfa7c1da26e283ae2059270f3f4bac736e80222a16156a3dd58a15459a",
+      "actor": "plutoxqq (1364123154196336661)",
+      "operationId": "03703702-d184-4151-99b4-bf6e67ff2b3f",
+      "label": "Unlabelled"
     }
   ]
 }
