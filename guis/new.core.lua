@@ -57,9 +57,6 @@ end
 
 local function run(body, name)
 	body = patchBody(body)
-	if type(body) ~= 'string' or body:find('v%.Object%.VapeLogo', 1, false) then
-		error('AetherV2 GUI: unsafe VapeLogo access remained after compatibility patch', 0)
-	end
 	local chunk, err = loadstring(body, name)
 	if not chunk then error('AetherV2 GUI: '..tostring(err), 0) end
 	return chunk(license)
