@@ -21,6 +21,21 @@
       "createdAt": "2026-08-12T09:58:46.098Z",
       "updatedAt": "2026-08-12T09:58:46.098Z",
       "lastPublishedAt": "2026-08-12T09:58:46.098Z"
+    },
+    {
+      "name": "CC Config",
+      "file": "cc-config-a464d181.json",
+      "credits": "forgottenn | Owner",
+      "tags": [
+        "Closet",
+        "Ranked",
+        "Medium Ping"
+      ],
+      "description": "Best CC Config updated regularly",
+      "version": 1,
+      "createdAt": "2026-09-05T06:00:57.924Z",
+      "updatedAt": "2026-09-05T06:00:57.924Z",
+      "lastPublishedAt": "2026-09-05T06:00:57.924Z"
     }
   ]
 }
