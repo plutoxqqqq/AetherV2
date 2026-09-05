@@ -885,7 +885,9 @@ local function neededFiles(files)
 		elseif path:sub(-4) == '.lua' or path:sub(-5) == '.json' or path:sub(-4) == '.txt' then
 			-- Only this game's module, never the other twenty-odd.
 			if path:sub(1, 6) == 'games/' then
-				include = path == 'games/universal.lua' or path == 'games/'..place..'.lua'
+				-- Universal executes from its generated bundle.  Fetch that one file with the
+				-- normal startup pool instead of making the loader issue a request per module.
+				include = path == 'games/universal.lua' or path == 'games/universal/bundle.lua' or path == 'games/'..place..'.lua'
 			elseif path:sub(1, 5) == 'guis/' then
 				include = path == 'guis/'..gui..'.lua' or path == 'guis/'..gui..'.core.lua'
 			elseif path:sub(1, 6) == 'tools/' or path:sub(1, 1) == '.' then

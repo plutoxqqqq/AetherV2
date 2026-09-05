@@ -1,0 +1,18 @@
+{
+  "generatedFrom": "games/6872274481.lua",
+  "moduleBlocks": 212,
+  "moduleRegistrations": 218,
+  "coupledGroups": 0,
+  "categories": [
+    "blatant",
+    "combat",
+    "exploits",
+    "inventory",
+    "kits",
+    "legit",
+    "render",
+    "utility",
+    "world"
+  ],
+  "layout": "one-module-per-file"
+}
