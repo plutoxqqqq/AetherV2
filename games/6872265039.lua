@@ -1,21 +1,11 @@
--- Each module registers through run(). A bare func() meant one bad module aborted the whole chunk
--- part-way through; isolate them so a single failure only costs that module.
-local run = function(func)
-	local success, result = xpcall(func, debug and debug.traceback or tostring)
-	if not success then
-		warn('[AetherV2] Skipped a module during startup: '..tostring(result))
-	end
-	return success
-end
+local run = function(func) func() end
 local cloneref = cloneref or function(obj) return obj end
-
 local playersService = cloneref(game:GetService('Players'))
 local replicatedStorage = cloneref(game:GetService('ReplicatedStorage'))
 local inputService = cloneref(game:GetService('UserInputService'))
 local tweenService = cloneref(game:GetService('TweenService'))
 local runService = cloneref(game:GetService('RunService')) 
 local httpService = cloneref(game:GetService('HttpService'))
-
 local lplr = playersService.LocalPlayer
 local vape = shared.vape
 local entitylib = vape.Libraries.entity
@@ -31,26 +21,17 @@ run(function()
 		local ind = table.find(tab, 'Client')
 		return ind and tab[ind + 1] or ''
 	end
-	-- Bounded: this runs on the loader's thread, so a wait with no exit is a load that never ends.
 	local KnitInit, Knit
-	local knitDeadline = tick() + 45
 	repeat
 		KnitInit, Knit = pcall(function()
 			return debug.getupvalue(require(lplr.PlayerScripts.TS.knit).setup, 9)
 		end)
-		if KnitInit and Knit then break end
+		if KnitInit then break end
 		task.wait(0.1)
-	until tick() > knitDeadline
-	if not (KnitInit and Knit) then
-		error('Knit never became available - the game has not finished loading')
-	end
+	until KnitInit
 
 	if not debug.getupvalue(Knit.Start, 1) then
-		local upvalueDeadline = tick() + 15
-		repeat task.wait(0.1) until debug.getupvalue(Knit.Start, 1) or tick() > upvalueDeadline
-		if not debug.getupvalue(Knit.Start, 1) then
-			error('debug.getupvalue is unavailable on this executor')
-		end
+		repeat task.wait(0.1) until debug.getupvalue(Knit.Start, 1)
 	end
 
 	local Flamework = require(replicatedStorage['rbxts_include']['node_modules']['@flamework'].core.out).Flamework
@@ -58,8 +39,8 @@ run(function()
 	local Client = require(replicatedStorage.TS.remotes).default.Client
 	local OldGet, OldBreak = Client.Get
 	local function safeGetProto(func, index)
-		if not func or not debug or type(debug.getproto) ~= 'function' then return nil end
-		local success, proto = pcall(debug.getproto, func, index)
+		if not func then return nil end
+		local success, proto = pcall(safeGetProto, func, index)
 		if success then
 			return proto
 		else
@@ -101,11 +82,16 @@ run(function()
 			}
 		end,
 		HudAliveCount = require(lplr.PlayerScripts.TS.controllers.global['top-bar'].ui.game['hud-alive-player-counts']).HudAlivePlayerCounts,
-		ItemMeta = debug.getupvalue(require(replicatedStorage.TS.item['item-meta']).getItemMeta, 1),
+		ItemMeta = (function()
+			local ok, mod = pcall(require, replicatedStorage.TS.item['item-meta'])
+			if ok and mod and mod.getItemMeta then
+				return debug.getupvalue(mod.getItemMeta, 1) or {}
+			end
+			return {}
+		end)(),
 		Knit = Knit,
 		KnockbackUtil = require(replicatedStorage.TS.damage['knockback-util']).KnockbackUtil,
 		MageKitUtil = require(replicatedStorage.TS.games.bedwars.kit.kits.mage['mage-kit-util']).MageKitUtil,
-		MilestoneRewards = require(replicatedStorage.TS.milestones.milestones).MilestoneRewards,
 		NametagController = Knit.Controllers.NametagController,
 		PartyController = Flamework.resolveDependency('@easy-games/lobby:client/controllers/party-controller@PartyController'),
 		ProjectileMeta = require(replicatedStorage.TS.projectile['projectile-meta']).ProjectileMeta,
@@ -116,7 +102,13 @@ run(function()
 		RuntimeLib = require(replicatedStorage['rbxts_include'].RuntimeLib),
 		SoundList = require(replicatedStorage.TS.sound['game-sound']).GameSound,
 		Store = require(lplr.PlayerScripts.TS.ui.store).ClientStore,
-		TeamUpgradeMeta = debug.getupvalue(require(replicatedStorage.TS.games.bedwars['team-upgrade']['team-upgrade-meta']).getTeamUpgradeMetaForQueue, 6),
+		TeamUpgradeMeta = (function()
+			local ok, mod = pcall(require, replicatedStorage.TS.games.bedwars['team-upgrade']['team-upgrade-meta'])
+			if ok and mod and mod.getTeamUpgradeMetaForQueue then
+				return debug.getupvalue(mod.getTeamUpgradeMetaForQueue, 6) or {}
+			end
+			return {}
+		end)(),
 		UILayers = require(replicatedStorage['rbxts_include']['node_modules']['@easy-games']['game-core'].out).UILayers,
 		VisualizerUtils = require(lplr.PlayerScripts.TS.lib.visualizer['visualizer-utils']).VisualizerUtils,
 		WeldTable = require(replicatedStorage.TS.util['weld-util']).WeldUtil,
@@ -138,37 +130,6 @@ run(function()
 		table.clear(bedwars)
 	end)
 end)
-
-local function activeLobbyKit()
-	local values = {
-		lplr:GetAttribute('PlayingAsKit'),
-		lplr:GetAttribute('PlayingAsKits'),
-		lplr:GetAttribute('SelectedKit'),
-		lplr:GetAttribute('Kit'),
-		lplr:GetAttribute('kit')
-	}
-	local ready = bedwars.Store ~= nil
-	if bedwars.Store then
-		local ok, state = pcall(bedwars.Store.getState, bedwars.Store)
-		ready = ok and type(state) == 'table'
-		if ready then
-			local kit = state.Kit or state.kit or {}
-			local locker = state.Locker or state.locker or {}
-			local bedwarsState = state.Bedwars or state.BedWars or {}
-			table.insert(values, 1, kit.kit or kit.equippedKit or kit.selectedKit
-				or locker.equippedKit or locker.selectedKit
-				or bedwarsState.kit or bedwarsState.equippedKit)
-		end
-	end
-	for _, value in values do
-		if value ~= nil and value ~= '' and value ~= 'none' then return tostring(value), true end
-	end
-	return nil, ready
-end
-
-if type(vape.SetGameInfo) == 'function' then
-	vape:SetGameInfo({Name = 'BedWars', GetKit = activeLobbyKit})
-end
 
 
 getgenv()._aeroTierReady = true
@@ -208,81 +169,89 @@ run(function()
 				bedwars.SprintController:stopSprinting()
 			end
 		end,
-		Tooltip = 'Sets your sprinting to true'
+		Tooltip = 'Sets the player\'s sprinting to true.'
 	})
 end)
 	
-run(function()
-	local ClaimRewards, CratesOnly, Notify
-	local function claimedRewards()
-		local controller = bedwars.MilestonesController
-		if controller and controller.milestoneRewardsClaimed then return controller.milestoneRewardsClaimed end
-		local state = bedwars.Store:getState().Bedwars
-		return state and state.milestoneRewardsClaimed or {}
-	end
-	ClaimRewards = vape.Categories.Utility:CreateModule({
-		Name = 'ClaimRewards',
-		Function = function(enabled)
-			if not enabled then return end
-			repeat
-				local state = bedwars.Store:getState().Bedwars or {}
-				local claimed = claimedRewards()
-				for _, reward in bedwars.MilestoneRewards do
-					if not ClaimRewards.Enabled then break end
-					if reward.levelRequirement <= (state.playerLevel or 0) and not table.find(claimed, reward.id)
-						and (not CratesOnly.Enabled or reward.instantClaim) then
-						local success = bedwars.Client:Get('ClaimMilestoneReward'):CallServer(reward.id)
-						if success then
-							table.insert(claimed, reward.id)
-							if Notify.Enabled then notif('ClaimRewards', `Claimed {reward.description or reward.id}`, 5) end
-						end
-						task.wait(1)
-					end
-				end
-				task.wait(5)
-			until not ClaimRewards.Enabled
-		end,
-		Tooltip = 'Claims unlocked BedWars milestone rewards through the normal reward remote.'
-	})
-	CratesOnly = ClaimRewards:CreateToggle({Name = 'Crates only', Tooltip = 'Leaves kit and cosmetic choices unclaimed.'})
-	Notify = ClaimRewards:CreateToggle({Name = 'Notify', Default = true})
-end)
-
 run(function()
 	local AutoGamble
-	
-	AutoGamble = vape.Categories.Utility:CreateModule({
+	local SpawnRemote = bedwars.Client:GetNamespace('RewardCrate'):Get('SpawnRewardCrate')
+	local OpenRemote = bedwars.Client:GetNamespace('RewardCrate'):Get('OpenRewardCrate')
+	local crateTypes = {'level_up_crate', 'diamond_lucky_crate', 'afk_crate', 'murder_crate', 'kitskin_crate'}
+
+	local function getNextCrateId(skip)
+		local active = bedwars.CrateAltarController and bedwars.CrateAltarController.activeCrates
+		if type(active) ~= 'table' then return nil end
+		for _, crateList in pairs(active) do
+			if type(crateList) == 'table' then
+				for _, crate in pairs(crateList) do
+					if type(crate) == 'table' then
+						local id = crate.attributes and crate.attributes.crateId
+						if not id and crate.instance then
+							local ok, a = pcall(function() return crate.instance:GetAttribute('crateId') end)
+							if ok then id = a end
+						end
+						if id and not (skip and skip[id]) then
+							return id
+						end
+					end
+				end
+			end
+		end
+		return nil
+	end
+
+	AutoGamble = vape.Categories.Minigames:CreateModule({
 		Name = 'AutoGamble',
 		Function = function(callback)
 			if callback then
-				AutoGamble:Clean(bedwars.Client:GetNamespace('RewardCrate'):Get('CrateOpened'):Connect(function(data)
-					if data.openingPlayer == lplr then
-						local tab = bedwars.CrateItemMeta[data.reward.itemType] or {displayName = data.reward.itemType or 'unknown'}
-						notif('AutoGamble', 'Won '..tab.displayName, 5)
-					end
-				end))
-	
-				repeat
-					if not bedwars.CrateAltarController.activeCrates[1] then
-						for _, v in bedwars.Store:getState().Consumable.inventory do
-							if v.consumable:find('crate') then
-								bedwars.CrateAltarController:pickCrate(v.consumable, 1)
-								task.wait(1.2)
-								if bedwars.CrateAltarController.activeCrates[1] and bedwars.CrateAltarController.activeCrates[1][1] then
-									bedwars.Client:GetNamespace('RewardCrate'):Get('OpenRewardCrate'):SendToServer({
-										crateId = bedwars.CrateAltarController.activeCrates[1][1].attributes.crateId,
-										altarId = 1
-									})
+				pcall(function()
+					AutoGamble:Clean(bedwars.Client:GetNamespace('RewardCrate'):Get('CrateOpened'):Connect(function(data)
+						if data.openingPlayer == lplr then
+							local tab = bedwars.CrateItemMeta and bedwars.CrateItemMeta[data.reward.itemType] or {displayName = data.reward.itemType or 'unknown'}
+							notif('AutoGamble', 'Won '..tab.displayName, 5)
+						end
+					end))
+				end)
+
+				task.spawn(function()
+					local opened = {}
+					local spawnAltar = 1
+					local knownType = nil
+					repeat
+						local crateId = getNextCrateId(opened)
+						if crateId then
+							opened[crateId] = true
+							OpenRemote:SendToServer({ crateId = crateId })
+							task.wait(1)
+						else
+							local list = knownType and {knownType} or crateTypes
+							local spawned = false
+							for _, ct in ipairs(list) do
+								if not AutoGamble.Enabled then break end
+								SpawnRemote:SendToServer({ altarId = spawnAltar, crateType = ct, useAltarUpgrade = false })
+								for _ = 1, 12 do
+									if not AutoGamble.Enabled then break end
+									if getNextCrateId(opened) then
+										knownType = ct
+										spawned = true
+										break
+									end
+									task.wait(0.2)
 								end
-								break
+								if spawned then break end
+							end
+							spawnAltar = spawnAltar == 1 and 0 or 1
+							if not spawned then
+								knownType = nil
+								task.wait(0.5)
 							end
 						end
-					end
-					task.wait(1)
-				until not AutoGamble.Enabled
+					until not AutoGamble.Enabled
+				end)
 			end
 		end,
-		Tooltip = 'Automatically opens lucky crates, piston inspired!'
+		Tooltip = 'Automatically gamble crates.'
 	})
 end)
 	
@@ -358,7 +327,8 @@ run(function()
         
         ClanModule = vape.Categories.Render:CreateModule({
             Name = "CustomClanTag",
-            HoverText = "Click tags to equip/unequip",
+            HoverText = "Set a custom clan tag.",
+            Tooltip = "Set a custom clan tag.",
             Function = function(state)
                 enabledFlag = state
                 if state then
@@ -413,7 +383,7 @@ run(function()
 				return
 			end
 		end,
-		Tooltip = "matchhisory"
+		Tooltip = "Open your match history."
 	})																								
 end)
 
@@ -797,7 +767,7 @@ run(function()
 				cleanup()
 			end
 		end,
-		Tooltip = 'Custom nametag with rank icon and winstreak (lobby only)'
+		Tooltip = 'Brings back the OG name tags.'
 	})
 	
 	local TitleSizeSlider = OGNameTags:CreateSlider({
@@ -816,7 +786,7 @@ run(function()
 				end
 			end
 		end,
-		Tooltip = 'Scale original nametag to make title/role bigger'
+		Tooltip = 'Scale the original title/role nametag.'
 	})
 end)
 
@@ -842,7 +812,7 @@ run(function()
 				old = nil
 			end
 		end,
-		Tooltip ='Client Sided Titles :D'
+		Tooltip = 'Use any title client-sidedly.'
 	})
 	for _, v in pairs(bedwars.TitleTypes) do
 		TABLE[#TABLE+1] = v
@@ -985,12 +955,12 @@ run(function()
 		savedFullLeaderboards = nil
 	end
 
-	LeaderboardSpoof = vape.Categories.Render:CreateModule({
+	LeaderboardSpoof = vape.Categories.Minigames:CreateModule({
 		Name = "LeaderboardSpoof",
 		Function = function(enabled)
 			if enabled then doDispatch() else doRevert() end
 		end,
-		Tooltip = "Spoof your leaderboard stats (client sided only)"
+		Tooltip = "Edit leaderboard stats client-sidedly."
 	})
 
 	LeaderboardSpoof:CreateDropdown({
@@ -1180,7 +1150,8 @@ run(function()
 			else
 				cleanup(lplr.Character)
 			end
-		end
+		end,
+		Tooltip = "Use any nametag client-sidedly."
 	})
 
 	SpoofRankDropdown = NametagSpoof:CreateDropdown({
@@ -1356,7 +1327,8 @@ run(function()
                 cachedHumanoid = nil
                 lastValidationCheck = 0
             end
-        end
+        end,
+        Tooltip = "Play the Nightmare emote in place."
     })
 end)
 
@@ -1469,12 +1441,12 @@ run(function()
 		if ppLoop then task.cancel(ppLoop) ppLoop = nil end
 	end
 
-	PlayerProfileSpoof = vape.Categories.Render:CreateModule({
+	PlayerProfileSpoof = vape.Categories.Minigames:CreateModule({
 		Name = "PlayerProfileSpoof",
 		Function = function(callback)
 			if callback then ppStartLoop() else ppCleanup() end
 		end,
-		Tooltip = "Spoofs rank, RP bar color and leaderboard rank in your profile UI (client sided)"
+		Tooltip = "Edit player profile stats client-sidedly."
 	})
 
 	PPSRankDropdown = PlayerProfileSpoof:CreateDropdown({
@@ -1516,7 +1488,7 @@ run(function()
                 originalLevel = nil
             end
         end,
-        Tooltip = "Spoof your player level (client-sided)"
+        Tooltip = "Client-sided player level spoof."
     })
 
     SetPlayerLevel:CreateSlider({
@@ -1568,7 +1540,7 @@ run(function()
         originalWins = nil
     end
 
-    SetPlayerWins = vape.Categories.Render:CreateModule({
+    SetPlayerWins = vape.Categories.Minigames:CreateModule({
         Name = "SetPlayerWins",
         Function = function(state)
             if state then
@@ -1582,7 +1554,7 @@ run(function()
                 restoreWins()
             end
         end,
-        Tooltip = "Modify your wins in leaderstats (client‑sided)"
+        Tooltip = "Edit your wins client-sidedly."
     })
 
     SetPlayerWins:CreateSlider({
@@ -1609,9 +1581,9 @@ run(function()
         DoesExist = nil,
     }
 
-    WinstreakSpoofer = vape.Categories.Render:CreateModule({
+    WinstreakSpoofer = vape.Categories.Minigames:CreateModule({
         Name = 'WinstreakSpoofer',
-        Tooltip = 'Modifies/Adds your winstreak (client‑sided)',
+        Tooltip = 'Edit your winstreak client-sidedly.',
         Function = function(callback)
             if callback then
                 if not entitylib.isAlive then return end
@@ -1770,7 +1742,7 @@ run(function()
 	Headless = vape.Categories.Utility:CreateModule({
 		PerformanceModeBlacklisted = true,
 		Name = 'Headless',
-		Tooltip = 'free headless 2026',
+		Tooltip = 'Removes your head.'
 		Function = function(callback)
 			if callback then
 				if headlessLoop then task.cancel(headlessLoop) end
@@ -2021,9 +1993,9 @@ run(function()
 	end
 
 	local sbsLoop = nil
-	StatsBoardSpoof = vape.Categories.Render:CreateModule({
+	StatsBoardSpoof = vape.Categories.Minigames:CreateModule({
 		Name = "StatsBoardSpoof",
-		Tooltip = "Spoof your StatsBoard display (client-sided only)",
+		Tooltip = "Edits your statsboard client-sidedly."
 		Function = function(enabled)
 			if enabled then
 				readRealStats()
@@ -2140,28 +2112,8 @@ end)
 run(function()
     local LARPKits
     local KITS_TO_OWN = {}
-    local active = true
+    local active = false
     local connection = nil
-    local textList = nil
-
-    -- [[ COMPLETE KIT LIST FROM OFFICIAL WIKI ]]
-    local ALL_KITS = {
-        "None", "Builder", "Barbarian", "Farmer Cletus", "Baker", "Archer",
-        "Infernal Shielder", "Melody", "Pirate Davey", "Eldertree", "Lassy",
-        "Grim Reaper", "Zeno", "Vulcan", "Trinity", "Axolotl Amy", "Vanessa",
-        "Freiya", "Yuzi", "Miner", "Cyber", "Evelynn", "Hannah",
-        "Warrior", "Bounty Hunter", "Beekeeper Beatrix", "Jade", "Raven",
-        "Spirit Catcher", "Pyro", "Trapper", "Gompy", "Fisherman", "Jack",
-        "Ares", "Santa", "Gingerbread Man", "Smoke", "Yeti", "Frosty",
-        "Aery", "Metal Detector", "Alchemist", "Sheep Herder", "Crocowolf",
-        "Conqueror", "Nyx", "Lucía", "Merchant Marco", "Dino Tamer Dom",
-        "Cobalt", "Star Collector Stella", "Zephyr", "Void Regent", "Ember",
-        "Lumen", "Lani", "Adetunde", "Agni", "Bekzat", "Caitlyn", "Davey",
-        "Death Adder", "Kaida", "Marina", "Milo", "Nazar", "Noelle",
-        "Nyoka", "Sheila", "Silas", "Spirit Assassin", "Styx", "Taliyah",
-        "Terra", "Umbra", "Umeko", "Warden", "Whim", "Whisper", "Wizard",
-        "Wren", "Xu'rot", "Yamini", "Zenith", "Zola"
-    }
 
     local function getKitName(btn)
         local tag = btn:FindFirstChild("KitNameTag")
@@ -2222,24 +2174,23 @@ run(function()
         end
     end
 
-    LARPKits = vape.Categories.Render:CreateModule({
+    LARPKits = vape.Categories.Minigames:CreateModule({
         Name = "LARPKits",
-        Tooltip = "Client‑side only – moves kits visually to 'Owned' in lobby",
+        Tooltip = "Own any kit client-sidedly."
         Function = function(callback)
             active = callback
             if callback then
                 startAutoMove()
-                applyKits()
+                applyKits() 
             else
                 stopAutoMove()
             end
         end
     })
 
-    textList = LARPKits:CreateTextList({
+    LARPKits:CreateTextList({
         Name = "Kits To Own",
         Placeholder = "Type kit names here e.g. Ragnar",
-        Default = ALL_KITS,
         Function = function(list)
             KITS_TO_OWN = {}
             for _, name in ipairs(list) do
@@ -2252,174 +2203,132 @@ run(function()
             end
         end
     })
-
-    startAutoMove()
-    applyKits()
 end)
 
 run(function()
-    ----------------------------------------------------------------------------------------------
-    -- AutoQueue - the lobby half of AutoWin.
-    --
-    -- BedWars plays matches in a different place to this one, so games/6872274481.lua (and the
-    -- AutoWin module inside it) is not loaded here at all, and the two places do not even share a
-    -- config file. Being teleported back to the lobby at the end of a match therefore used to end
-    -- an unattended run outright: nothing on this side knew a run was in progress, so nothing
-    -- queued the next game.
-    --
-    -- AutoWin leaves a note on disk saying it is running and which queue it wants. This reads that
-    -- note, and with Resume from AutoWin on it switches itself on off the back of it - which is
-    -- what actually closes the loop and lets the script keep playing for hours without anyone at
-    -- the keyboard.
-    ----------------------------------------------------------------------------------------------
     local AutoQueue
-    local Mode
-    local Resume
-    local Delay
-    local Notify
-
-    local STATE_FILE = 'aetherv2/profiles/autowin.json'
-
-    local function readState()
-        if not isfile or not isfile(STATE_FILE) then return nil end
-        local ok, data = pcall(function()
-            return httpService:JSONDecode(readfile(STATE_FILE))
-        end)
-        if ok and type(data) == 'table' then return data end
-        return nil
-    end
-
-    local function queueList()
-        local list = {'From AutoWin', 'Random'}
-        pcall(function()
-            local ids = {}
-            for id, meta in bedwars.QueueMeta do
-                if not meta.disabled and not meta.voiceChatOnly then
-                    table.insert(ids, id)
-                end
-            end
-            table.sort(ids)
-            for _, id in ipairs(ids) do
-                table.insert(list, id)
-            end
-        end)
-        return list
-    end
-
-    local function randomMode()
-        local modes = {}
-        pcall(function()
-            for id, meta in bedwars.QueueMeta do
-                if not meta.disabled and not meta.voiceChatOnly and not meta.rankCategory then
-                    table.insert(modes, id)
-                end
-            end
-        end)
-        if #modes == 0 then return nil end
-        return modes[math.random(1, #modes)]
-    end
-
-    -- Which queue to join. 'From AutoWin' follows whatever the match side asked for, including the
-    -- queue it was last actually playing, so the mode only has to be set in one place.
-    local function resolveMode()
-        local wanted = Mode.Value
-        if wanted == 'From AutoWin' then
-            local state = readState()
-            wanted = state and state.queue or 'Random'
-            if wanted == 'Current' then
-                wanted = (state and state.fallback) or 'Random'
-            end
-        end
-        if wanted == 'Random' or wanted == nil then
-            return randomMode()
-        end
-        return wanted
-    end
-
-    -- BedWars only accepts a queue request from the party leader, and only when the party is not
-    -- already queued or in a custom match. Firing it blind does nothing but produce errors, so all
-    -- three are checked and the loop simply waits when any of them says no.
-    local function canQueue()
-        local ok, allowed = pcall(function()
-            local state = bedwars.Store:getState()
-            if state.Game and state.Game.customMatch then return false end
-            if not state.Party or not state.Party.leader then return false end
-            if state.Party.leader.userId ~= lplr.UserId then return false end
-            return state.Party.queueState == 0
-        end)
-        return ok and allowed
-    end
-
+    local QueueType
+    local Leave
+    
+    local Categories = {}
+    
     AutoQueue = vape.Categories.Utility:CreateModule({
         Name = 'AutoQueue',
-        Function = function(callback)
-            if callback then
-                AutoQueue:Clean(task.spawn(function()
-                    -- Settle first. Landing in the lobby straight off a match teleport means the
-                    -- party and queue state are still arriving, and a request sent into that is
-                    -- simply dropped.
-                    task.wait(Delay.Value)
-                    while AutoQueue.Enabled do
-                        if canQueue() then
-                            local mode = resolveMode()
-                            if mode then
-                                if Notify.Enabled then
-                                    notif('AutoQueue', 'Queueing for '..tostring(mode), 4)
-                                end
-                                pcall(function()
-                                    bedwars.QueueController:joinQueue(mode)
-                                end)
-                                -- Give the request time to be accepted before asking again;
-                                -- canQueue goes false the moment it is, so this only ever retries
-                                -- a request that genuinely did not land.
-                                task.wait(8)
-                            else
-                                task.wait(2)
-                            end
-                        else
-                            task.wait(2)
+        Function = function(call)
+            if call then
+                repeat
+                    local partyData = bedwars.Store:getState().Party
+                    if partyData.leader.userId == lplr.UserId then
+                        if partyData.queueState == 3 and partyData.queueState ~= Categories[QueueType.Value] then
+                            replicatedStorage['events-@easy-games/lobby:shared/event/lobby-events@getEvents.Events'].leaveQueue:FireServer()
+                        elseif partyData.queueState < 2 then
+                            replicatedStorage['events-@easy-games/lobby:shared/event/lobby-events@getEvents.Events'].joinQueue:FireServer({
+                                queueType = Categories[QueueType.Value]
+                            })
+                            task.wait(1)
                         end
+                    elseif Leave.Enabled then
+                        replicatedStorage['events-@easy-games/lobby:shared/event/lobby-events@getEvents.Events'].leaveParty:FireServer()
                     end
-                end))
+                    task.wait(0.1)
+                until not AutoQueue.Enabled
+    
+            else
+                replicatedStorage['events-@easy-games/lobby:shared/event/lobby-events@getEvents.Events'].leaveQueue:FireServer()
             end
         end,
-        Tooltip = 'Queues a match from the lobby on its own, which is what lets AutoWin keep playing'
+        Tooltip = "Automatically queues."
     })
-    Mode = AutoQueue:CreateDropdown({
-        Name = 'Gamemode',
-        List = queueList(),
-        Tooltip = 'Which queue to join. From AutoWin follows the gamemode set on the match side'
+    
+    local list = {}
+    for i,v in bedwars.QueueMeta do
+        if not v.disabled then
+            Categories[v.title] = i
+            table.insert(list, v.title)
+        end
+    end
+    QueueType = AutoQueue:CreateDropdown({
+        Name = 'Queue Type',
+        List = list,
+        Default = 'Duels (2v2)'
     })
-    Delay = AutoQueue:CreateSlider({
-        Name = 'Queue delay',
-        Min = 1,
-        Max = 30,
-        Default = 5,
-        Suffix = ' seconds',
-        Tooltip = 'How long to settle in the lobby before queueing, so the party state has arrived'
+    Leave = AutoQueue:CreateToggle({
+        Name = 'Leave Party',
+        Default = true
     })
-    Resume = AutoQueue:CreateToggle({
-        Name = 'Resume from AutoWin',
-        Default = true,
-        Tooltip = 'Turns AutoQueue on by itself when AutoWin was running as you left the match'
-    })
-    Notify = AutoQueue:CreateToggle({
-        Name = 'Notifications',
-        Default = true,
-        Tooltip = 'Say which mode is being queued'
+end)
+
+run(function()
+    local LARPBedCoins
+    local customAmount = 0
+    local cachedLabel = nil
+
+    local function findLabel()
+        if cachedLabel and cachedLabel.Parent then
+            return cachedLabel
+        end
+        local pg = lplr:FindFirstChild("PlayerGui")
+        if not pg then return nil end
+        local sideGui = pg:FindFirstChild("LobbyHudSideGui")
+        if not sideGui then return nil end
+        local side = sideGui:FindFirstChild("LobbyHudSide")
+        if not side then return nil end
+        local currency = side:FindFirstChild("LobbyHudCurrency")
+        if not currency then return nil end
+        local inner = currency:FindFirstChild("LobbyHudCurrency")
+        if not inner then return nil end
+        local container = inner:FindFirstChild("Container")
+        if not container then return nil end
+        local amount = container:FindFirstChild("CurrencyAmount")
+        if not amount then return nil end
+        if not amount:IsA("TextLabel") then return nil end
+        cachedLabel = amount
+        return amount
+    end
+
+    local function formatNumber(n)
+        local s = tostring(math.floor(n))
+        local res = ""
+        for i = 1, #s do
+            res = res .. s:sub(i, i)
+            if (#s - i) % 3 == 0 and i ~= #s then
+                res = res .. ","
+            end
+        end
+        return res
+    end
+
+    local function updateCoins()
+        if not LARPBedCoins or not LARPBedCoins.Enabled then return end
+        local label = findLabel()
+        if not label then return end
+        label.Text = formatNumber(customAmount)
+    end
+
+    LARPBedCoins = vape.Categories.Minigames:CreateModule({
+        Name = "LARPBedCoins",
+        Tooltip = "Edit your BedCoin amount client-sidedly."
+        Function = function(callback)
+            if callback then
+                LARPBedCoins:Clean(runService.RenderStepped:Connect(function()
+                    updateCoins()
+                end))
+                updateCoins()
+            else
+                cachedLabel = nil
+            end
+        end
     })
 
-    -- Pick the run back up. Deferred because the config load runs after modules are registered and
-    -- would otherwise toggle this straight back off; a re-check of the note afterwards means the
-    -- user's own saved state still wins if they had explicitly turned AutoQueue off.
-    task.delay(6, function()
-        if not Resume.Enabled or AutoQueue.Enabled then return end
-        local state = readState()
-        if state and state.enabled and state.resume then
-            if Notify.Enabled then
-                notif('AutoQueue', 'AutoWin was running - queueing the next match', 6)
-            end
-            AutoQueue:Toggle()
+    LARPBedCoins:CreateSlider({
+        Name = "Coin Amount",
+        Min = 0,
+        Max = 1000000,
+        Default = 0,
+        Decimal = 1,
+        Function = function(val)
+            customAmount = math.floor(val)
+            if LARPBedCoins.Enabled then updateCoins() end
         end
-    end)
+    })
 end)
