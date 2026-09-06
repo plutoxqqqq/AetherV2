@@ -21,10 +21,16 @@ local cloneref = cloneref or function(obj)
 end
 local playersService = cloneref(game:GetService('Players'))
 
+local SOURCE_COMMIT = (isfile('aetherv2/profiles/commit.txt') and readfile('aetherv2/profiles/commit.txt')) or 'main'
+local PLACE_ALIAS = {
+	[8444591321] = 6872274481,
+	[8560631822] = 6872274481,
+}
+
 local function downloadFile(path, func)
 	if not isfile(path) then
 		local suc, res = pcall(function()
-			return game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..readfile('aetherv2/profiles/commit.txt')..'/'..select(1, path:gsub('aetherv2/', '')), true)
+			return game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..SOURCE_COMMIT..'/'..select(1, path:gsub('aetherv2/', '')), true)
 		end)
 		if not suc or res == '404: Not Found' then
 			error(res)
@@ -35,6 +41,38 @@ local function downloadFile(path, func)
 		writefile(path, res)
 	end
 	return (func or readfile)(path)
+end
+
+local function remoteExists(rel)
+	local suc, res = pcall(function()
+		return game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..SOURCE_COMMIT..'/'..rel, true)
+	end)
+	return suc and type(res) == 'string' and res ~= '404: Not Found' and not res:find('^%s*<!doctype html')
+end
+
+local function loadPacked(folder)
+	local listPath = 'aetherv2/games/'..folder..'/files.txt'
+	local relList = 'games/'..folder..'/files.txt'
+	local list
+	if isfile(listPath) then
+		list = readfile(listPath)
+	elseif remoteExists(relList) then
+		list = downloadFile(listPath)
+	else
+		return false
+	end
+	local chunks = {}
+	for line in string.gmatch(list, '[^\r\n]+') do
+		line = line:gsub('^%s+', ''):gsub('%s+$', '')
+		if line ~= '' and not line:find('^#') then
+			table.insert(chunks, downloadFile('aetherv2/games/'..folder..'/'..line))
+		end
+	end
+	if #chunks == 0 then
+		return false
+	end
+	loadstring(table.concat(chunks, '\n'), folder)()
+	return true
 end
 
 local function finishLoading()
@@ -90,18 +128,13 @@ vape = loadstring(downloadFile('aetherv2/guis/'..gui..'.lua'), 'gui')()
 shared.vape = vape
 
 if not shared.VapeIndependent then
-	loadstring(downloadFile('aetherv2/games/universal.lua'), 'universal')()
-	if isfile('aetherv2/games/'..game.PlaceId..'.lua') then
-		loadstring(readfile('aetherv2/games/'..game.PlaceId..'.lua'), tostring(game.PlaceId))()
-	else
-		if not shared.VapeDeveloper then
-			local suc, res = pcall(function()
-				return game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..readfile('aetherv2/profiles/commit.txt')..'/games/'..game.PlaceId..'.lua', true)
-			end)
-			if suc and res ~= '404: Not Found' then
-				loadstring(downloadFile('aetherv2/games/'..game.PlaceId..'.lua'), tostring(game.PlaceId))()
-			end
-		end
+	loadPacked('universal')
+	local place = PLACE_ALIAS[game.PlaceId] or game.PlaceId
+	if vape.Place == nil then
+		vape.Place = place
+	end
+	if not loadPacked(tostring(place)) then
+		warn('[AetherV2] No BedWars module folder for '..tostring(game.PlaceId))
 	end
 	finishLoading()
 else
