@@ -1,9 +1,13 @@
+local license = ... or {}
+if type(license) ~= 'table' then license = {} end
+
 repeat task.wait() until game:IsLoaded()
 if shared.vape then shared.vape:Uninject() end
 
 local vape
+local rawLoadstring = loadstring
 local loadstring = function(...)
-	local res, err = loadstring(...)
+	local res, err = rawLoadstring(...)
 	if err and vape then
 		vape:CreateNotification('AetherV2', 'Failed to load : '..err, 30, 'alert')
 	end
@@ -20,12 +24,42 @@ local cloneref = cloneref or function(obj)
 	return obj
 end
 local playersService = cloneref(game:GetService('Players'))
+local starterGui = cloneref(game:GetService('StarterGui'))
 
-local SOURCE_COMMIT = (isfile('aetherv2/profiles/commit.txt') and readfile('aetherv2/profiles/commit.txt')) or 'main'
+local SOURCE_COMMIT = (isfile('aetherv2/profiles/commit.txt') and readfile('aetherv2/profiles/commit.txt'):gsub('%s+', '')) or 'main'
+local BEDWARS_UNIVERSE = 2619619496
 local PLACE_ALIAS = {
 	[8444591321] = 6872274481,
 	[8560631822] = 6872274481,
+	[8200754399] = 6872274481,
+	[132768098780837] = 6872274481,
+	[16008862571] = 6872265039,
 }
+
+local function setPhase(text, progress)
+	if _G.AetherV2SetLoadingStatus then
+		pcall(_G.AetherV2SetLoadingStatus, text, progress)
+	end
+end
+
+local function closeLoading()
+	if _G.AetherV2CloseLoadingScreen then
+		pcall(_G.AetherV2CloseLoadingScreen)
+	elseif _G.AetherV2LoadingScreen then
+		pcall(function() _G.AetherV2LoadingScreen:Destroy() end)
+		_G.AetherV2LoadingScreen = nil
+	end
+end
+
+local function toast(title, text, duration)
+	pcall(function()
+		starterGui:SetCore('SendNotification', {
+			Title = title or 'AetherV2',
+			Text = text or '',
+			Duration = duration or 6
+		})
+	end)
+end
 
 local function downloadFile(path, func)
 	if not isfile(path) then
@@ -59,37 +93,80 @@ local function loadPacked(folder)
 	elseif remoteExists(relList) then
 		list = downloadFile(listPath)
 	else
-		return false
+		return false, 'no files.txt'
 	end
-	local chunks = {}
+	local names, chunks = {}, {}
 	for line in string.gmatch(list, '[^\r\n]+') do
 		line = line:gsub('^%s+', ''):gsub('%s+$', '')
 		if line ~= '' and not line:find('^#') then
-			table.insert(chunks, downloadFile('aetherv2/games/'..folder..'/'..line))
+			table.insert(names, line)
+		end
+	end
+	if #names == 0 then
+		return false, 'empty files.txt'
+	end
+	for i, name in ipairs(names) do
+		setPhase('Downloading '..folder..' ('..i..'/'..#names..')', 0.4 + (i / #names) * 0.35)
+		local ok, body = pcall(downloadFile, 'aetherv2/games/'..folder..'/'..name)
+		if ok then
+			table.insert(chunks, body)
+		else
+			warn('[AetherV2] skipped '..folder..'/'..name..': '..tostring(body))
 		end
 	end
 	if #chunks == 0 then
-		return false
+		return false, 'no chunks'
 	end
-	loadstring(table.concat(chunks, '\n'), folder)()
+	setPhase('Compiling '..folder, 0.8)
+	local chunk, err = loadstring(table.concat(chunks, '\n'), folder)
+	if not chunk then
+		warn('[AetherV2] compile failed '..folder..': '..tostring(err))
+		return false, err
+	end
+	local ok, result = pcall(chunk, license)
+	if not ok then
+		warn('[AetherV2] run failed '..folder..': '..tostring(result))
+		return false, result
+	end
 	return true
 end
 
 local function loadLegacy(name)
 	local path = 'aetherv2/games/'..name..'.lua'
 	if isfile(path) or remoteExists('games/'..name..'.lua') then
-		loadstring(downloadFile(path), name)()
-		return true
+		local chunk = loadstring(downloadFile(path), name)
+		if chunk then
+			pcall(chunk, license)
+			return true
+		end
 	end
 	return false
 end
 
+local function resolvePlace()
+	local id = game.PlaceId
+	if PLACE_ALIAS[id] then
+		return PLACE_ALIAS[id]
+	end
+	if game.GameId == BEDWARS_UNIVERSE then
+		if id == 6872265039 or id == 16008862571 then
+			return 6872265039
+		end
+		return 6872274481
+	end
+	return id
+end
+
 local function finishLoading()
 	vape.Init = nil
-	vape:Load()
+	pcall(function()
+		vape:Load()
+	end)
 	task.spawn(function()
 		repeat
-			vape:Save()
+			pcall(function()
+				vape:Save()
+			end)
 			task.wait(10)
 		until not vape.Loaded
 	end)
@@ -117,12 +194,16 @@ local function finishLoading()
 		end
 	end))
 
-	if not shared.vapereload then
-		if not vape.Categories then return end
-		if vape.Settings and vape.Settings.GUI and vape.Settings.GUI.Options and vape.Settings.GUI.Options['GUI bind indicator'] and vape.Settings.GUI.Options['GUI bind indicator'].Enabled then
-			vape:CreateNotification('Finished Loading', vape.VapeButton and 'Press the button in the top right to open GUI' or 'Press '..table.concat(vape.GUIBind and vape.GUIBind.Keys or {'RightShift'}, ' + '):upper()..' to open GUI', 5)
-		end
+	local bind = table.concat(vape.GUIBind and vape.GUIBind.Keys or vape.Keybind or {'RightShift'}, ' + '):upper()
+	local msg = vape.VapeButton and 'Press the button in the top right to open GUI' or 'Press '..bind..' to open GUI'
+	toast('Finished Loading', msg, 8)
+	if vape.CreateNotification then
+		pcall(function()
+			vape:CreateNotification('Finished Loading', msg, 6)
+		end)
 	end
+	setPhase('Loaded', 1)
+	task.delay(0.8, closeLoading)
 end
 
 if not isfile('aetherv2/profiles/gui.txt') then
@@ -133,20 +214,25 @@ local gui = 'new'
 if not isfolder('aetherv2/assets/'..gui) then
 	makefolder('aetherv2/assets/'..gui)
 end
-vape = loadstring(downloadFile('aetherv2/guis/'..gui..'.lua'), 'gui')()
+setPhase('Loading interface', 0.28)
+vape = loadstring(downloadFile('aetherv2/guis/'..gui..'.lua'), 'gui')(license)
 shared.vape = vape
+_G.vape = vape
 
 if not shared.VapeIndependent then
+	setPhase('Loading universal modules', 0.34)
 	if not loadPacked('universal') then
 		loadLegacy('universal')
 	end
-	local place = PLACE_ALIAS[game.PlaceId] or game.PlaceId
+	local place = resolvePlace()
 	if vape.Place == nil then
 		vape.Place = place
 	end
+	setPhase('Loading game modules ('..tostring(place)..')', 0.5)
 	if not loadPacked(tostring(place)) then
 		if not loadLegacy(tostring(place)) then
-			warn('[AetherV2] No BedWars module for '..tostring(game.PlaceId))
+			warn('[AetherV2] No game module for '..tostring(game.PlaceId)..' -> '..tostring(place))
+			toast('AetherV2', 'No game pack for '..tostring(game.PlaceId)..'. Universal only.', 8)
 		end
 	end
 	finishLoading()
