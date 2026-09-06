@@ -12,6 +12,8 @@ NAME_RE = [
     re.compile(r"vape\.Categories\.(\w+):CreateModule\(\{\s*Name\s*=\s*'([^']+)'", re.S),
     re.compile(r'vape\.Categories\.(\w+):CreateModule\(\{\s*Name\s*=\s*"([^"]+)"', re.S),
     re.compile(r"register\('(\w+)',\s*'([^']+)'"),
+    re.compile(r"\b(kits|minigames|blatant|combat|legit|render|utility|world|inventory|exploits|visuals):CreateModule\(\{\s*Name\s*=\s*'([^']+)'", re.S | re.I),
+    re.compile(r'\b(kits|minigames|blatant|combat|legit|render|utility|world|inventory|exploits|visuals):CreateModule\(\{\s*Name\s*=\s*"([^"]+)"', re.S | re.I),
 ]
 
 CAT_MAP = {
@@ -24,6 +26,8 @@ CAT_MAP = {
     "inventory": "Inventory",
     "exploits": "Exploits",
     "kits": "Kits",
+    "minigames": "Kits",
+    "visuals": "Render",
 }
 
 
