@@ -1,311 +1,202 @@
--- bedfight
-
---[[
-    --------------------------------------------------------------
-    -------------------------------------------------------------
-    https://www.roblox.com/games/71480482338212/bedfight
-    -------------------------------------------------------------
-    -------------------------------------------------------------
---]]
-
-
+-- AetherV2 port of XzynAstralz/Phantom Bedfight modules
+-- Source framework reference: XzynAstralz/Phantom main
 repeat task.wait() until game:IsLoaded()
 
 local hidden = get_hidden_gui or gethui
 local _sti = setthreadidentity or (getfenv and getfenv().setthreadidentity) or nil
+local cloneref = cloneref or function(obj) return obj end
 
-local Players = cloneref(game:GetService("Players"))
-local RunService = cloneref(game:GetService("RunService"))
-local ReplicatedStorage = cloneref(game:GetService("ReplicatedStorage"))
-local Lighting = cloneref(game:GetService("Lighting"))
-local Teams = cloneref(game:GetService("Teams"))
-local UserInputService = cloneref(game:GetService("UserInputService"))
+local vape = shared.vape or (getgenv and getgenv().vape)
+assert(vape, '[AetherV2] shared.vape is not available')
 
-local _GTS = cloneref(game:GetService("TextService"))
-local _twCache = {}
-local _ws = { string.char(70,105,114,101,83,101,114,118,101,114) }
-local function measureTextW(txt, sz, font)
-    local key = txt .. "\0" .. sz
-    local cached = _twCache[key]
-    if cached then return cached end
-    local ok, v = pcall(function() return _GTS:GetTextSize(txt, sz, font, Vector2.new(9999, 9999)) end)
-    local w = ok and v.X or #txt * sz * 0.55
-    _twCache[key] = w
-    return w
-end
-
+local Players = cloneref and cloneref(game:GetService('Players')) or game:GetService('Players')
+local RunService = cloneref and cloneref(game:GetService('RunService')) or game:GetService('RunService')
+local ReplicatedStorage = cloneref and cloneref(game:GetService('ReplicatedStorage')) or game:GetService('ReplicatedStorage')
+local Lighting = cloneref and cloneref(game:GetService('Lighting')) or game:GetService('Lighting')
+local Teams = cloneref and cloneref(game:GetService('Teams')) or game:GetService('Teams')
+local UserInputService = cloneref and cloneref(game:GetService('UserInputService')) or game:GetService('UserInputService')
 local lplr = Players.LocalPlayer
 local Camera = workspace.CurrentCamera
-local gameCamera = Camera
-local inputService = UserInputService
-
-local vape = shared.vape or getgenv().vape or vape
-if type(vape) ~= 'table' then
-    error('[AetherV2 Port] shared.vape is unavailable')
-end
 
 local entitylib = vape.Libraries and vape.Libraries.entity
-local targetinfo = vape.Libraries and vape.Libraries.targetinfo
-local prediction = vape.Libraries and vape.Libraries.prediction
+local predictionlib = vape.Libraries and vape.Libraries.prediction
 local colorlib = vape.Libraries and vape.Libraries.color
 
-if not entitylib then
-    error('[AetherV2 Port] entity library is unavailable')
+local function guiColor()
+    local c = vape.GUIColor
+    if typeof(c) == 'Color3' then return c end
+    if type(c) == 'table' and c.Hue then
+        return Color3.fromHSV(c.Hue, c.Sat or 1, c.Value or 1)
+    end
+    return Color3.fromRGB(120, 200, 255)
 end
 
-local Categories = vape.Categories
-local function getCategory(name)
-    local category = Categories and Categories[name]
-    if not category or type(category.CreateModule) ~= 'function' then
-        error('[AetherV2 Port] Missing category: '..tostring(name))
+local function createNotification(title, text, duration)
+    if vape and type(vape.CreateNotification) == 'function' then
+        return vape:CreateNotification(title, text, duration or 3)
     end
-    return category
-end
-
-local coreGui = cloneref(game:GetService('CoreGui'))
-local notif = function(title, message, duration, kind)
-    if type(vape.CreateNotification) == 'function' then
-        return vape:CreateNotification(title, message, duration, kind)
-    end
-    if type(vape.CreateNotification) == 'function' then
-        return vape.CreateNotification(title, message, duration, kind)
-    end
-end
-
-local createNotification = notif
-
--- Aether-compatible heartbeat scheduler used by the imported module.
-local RunLoops = {
-    _connections = {},
-    _accumulators = {}
-}
-
-function RunLoops:BindToHeartbeat(name, callback, interval)
-    self:UnbindFromHeartbeat(name)
-    interval = tonumber(interval) or 0
-    local acc = 0
-    self._accumulators[name] = 0
-    self._connections[name] = RunService.Heartbeat:Connect(function(dt)
-        if interval > 0 then
-            acc += dt
-            if acc < interval then return end
-            local elapsed = acc
-            acc = 0
-            self._accumulators[name] = elapsed
-            local ok, err = xpcall(function() callback(elapsed) end, debug and debug.traceback or tostring)
-            if not ok then warn('[AetherV2 Port] '..name..': '..tostring(err)) end
-        else
-            local ok, err = xpcall(function() callback(dt) end, debug and debug.traceback or tostring)
-            if not ok then warn('[AetherV2 Port] '..name..': '..tostring(err)) end
-        end
+    return pcall(function()
+        game:GetService('StarterGui'):SetCore('SendNotification', {Title = title, Text = text, Duration = duration or 3})
     end)
 end
 
-function RunLoops:UnbindFromHeartbeat(name)
-    local conn = self._connections[name]
-    if conn then conn:Disconnect() end
-    self._connections[name] = nil
-    self._accumulators[name] = nil
-end
-
-local cleanup = {}
-
-local funcs = {}
-function funcs:onExit(id, callback)
-    if cleanup[id] then
-        pcall(cleanup[id])
+local function createModule(categoryName, definition)
+    local name = definition.Name
+    if vape.Modules and vape.Modules[name] then return vape.Modules[name] end
+    local category = vape.Categories and vape.Categories[categoryName]
+    if not category and vape.Categories then
+        local aliases = {World = {'Render', 'Utility'}, Inventory = {'Utility', 'Render'}, Combat = {'Combat', 'Blatant'}, Utility = {'Utility', 'Render'}}
+        for _, fallback in ipairs(aliases[categoryName] or {'Utility', 'Render', 'Blatant'}) do
+            if vape.Categories[fallback] then category = vape.Categories[fallback]; break end
+        end
     end
-    cleanup[id] = callback
-end
-function funcs:offExit(id)
-    local callback = cleanup[id]
-    cleanup[id] = nil
-    if callback then pcall(callback) end
+    if not category then error('[AetherV2] Missing category '..tostring(categoryName)) end
+    assert(type(category.CreateModule) == 'function', '[AetherV2] Category '..categoryName..' does not support CreateModule')
+    return category:CreateModule(definition)
 end
 
-local runcode = function(fn)
+local function optionCategory(panel)
+    local map = {
+        blatantPanel = 'Blatant',
+        combatPanel = 'Combat',
+        renderPanel = 'Render',
+        inventoryPanel = 'Inventory',
+        utillityPanel = 'Utility',
+        utilityPanel = 'Utility',
+        worldPanel = 'World',
+        miscPanel = 'Utility'
+    }
+    return map[panel] or 'Utility'
+end
+
+local RunLoops = { _connections = {} }
+function RunLoops:BindToHeartbeat(name, _, fn)
+    if typeof(_) == 'function' then fn, _ = _, nil end
+    self:UnbindFromHeartbeat(name)
+    self._connections[name] = RunService.Heartbeat:Connect(fn)
+    return self._connections[name]
+end
+function RunLoops:UnbindFromHeartbeat(name)
+    local c = self._connections[name]
+    if c then c:Disconnect(); self._connections[name] = nil end
+end
+
+local Exit = {}
+local funcs = {}
+function funcs:onExit(name, callback)
+    Exit[name] = callback
+end
+function funcs:offExit(name)
+    local cb = Exit[name]
+    Exit[name] = nil
+    if cb then pcall(cb) end
+end
+function funcs:cleanup()
+    for name in pairs(Exit) do self:offExit(name) end
+    for name in pairs(RunLoops._connections) do RunLoops:UnbindFromHeartbeat(name) end
+end
+local function run(fn)
     task.spawn(function()
         local ok, err = xpcall(fn, debug and debug.traceback or tostring)
-        if not ok then warn('[AetherV2 Port] '..tostring(err)) end
+        if not ok then warn('[AetherV2] Bedfight port: '..tostring(err)) end
     end)
 end
 
-local GuiLibrary = {
-    kit = {
-        activeColor = function()
-            if colorlib and type(colorlib.get) == 'function' then
-                local ok, result = pcall(colorlib.get)
-                if ok and typeof(result) == 'Color3' then return result end
-            end
-            return Color3.fromRGB(255, 255, 255)
-        end
-    }
+local PlayerUtility = {
+    IsAlive = function(plr)
+        plr = plr or lplr
+        local char = plr and plr.Character
+        local hum = char and char:FindFirstChildOfClass('Humanoid')
+        local root = char and char:FindFirstChild('HumanoidRootPart')
+        return hum ~= nil and root ~= nil and hum.Health > 0
+    end,
 }
-
--- Phantom-style helpers mapped to AetherV2 libraries.
-local PlayerUtility = {}
-
-function PlayerUtility.IsAlive(player)
-    if not player or not player.Character then return false end
-    local humanoid = player.Character:FindFirstChildOfClass('Humanoid')
-    local root = player.Character:FindFirstChild('HumanoidRootPart') or player.Character.PrimaryPart
-    return humanoid ~= nil and humanoid.Health > 0 and root ~= nil
-end
-
-function PlayerUtility.GetNearestEntities(range, teamCheck)
-    local origin = (entitylib.character and entitylib.character.RootPart and entitylib.character.RootPart.Position) or
-        (lplr.Character and lplr.Character:FindFirstChild('HumanoidRootPart') and lplr.Character.HumanoidRootPart.Position)
+setmetatable(PlayerUtility, {__index = function(t, k)
+    if k == 'lplrIsAlive' then return PlayerUtility.IsAlive(lplr) end
+end})
+function PlayerUtility.GetNearestEntities(range, teamCheck, includeNPCs)
+    if not entitylib or type(entitylib.AllPosition) ~= 'function' then return {} end
+    local origin = lplr.Character and lplr.Character:FindFirstChild('HumanoidRootPart')
     if not origin then return {} end
-
-    local result = {}
-    for _, entity in ipairs(entitylib.List or {}) do
-        if entity and entity.Targetable ~= false and entity.RootPart and entity.RootPart.Parent then
-            local plr = entity.Player
-            local sameTeam = plr and lplr.Team and plr.Team == lplr.Team
-            if not (teamCheck and sameTeam) and (entity.RootPart.Position - origin).Magnitude <= (tonumber(range) or math.huge) then
-                table.insert(result, entity)
-            end
+    local ok, list = pcall(entitylib.AllPosition, {Origin = origin.Position, Range = range, Part = 'RootPart', Players = true, NPCs = includeNPCs == true, Wallcheck = false})
+    if not ok then return {} end
+    if teamCheck and lplr.Team then
+        local filtered = {}
+        for _, ent in ipairs(list or {}) do
+            if not ent.Team or ent.Team ~= lplr.Team then table.insert(filtered, ent) end
         end
+        return filtered
     end
-    table.sort(result, function(a, b)
-        return (a.RootPart.Position - origin).Magnitude < (b.RootPart.Position - origin).Magnitude
-    end)
-    return result
+    return list or {}
 end
-
 function PlayerUtility.GetEntityNearMouse(range, teamCheck)
-    if not gameCamera then return nil end
-    local mouse = inputService:GetMouseLocation()
-    local best, bestDist = nil, math.huge
-    for _, entity in ipairs(PlayerUtility.GetNearestEntities(range, teamCheck, false)) do
-        local part = entity.RootPart
-        local pos, visible = gameCamera:WorldToViewportPoint(part.Position)
-        if visible then
-            local d = (Vector2.new(pos.X, pos.Y) - mouse).Magnitude
-            if d < bestDist then
-                best, bestDist = entity, d
-            end
-        end
+    if not entitylib then return nil end
+    if type(entitylib.EntityNearMouse) == 'function' then
+        local ok, ent = pcall(entitylib.EntityNearMouse, {Range = range, Players = true, Part = 'RootPart'})
+        if ok then return ent end
     end
-    return best
+    local list = PlayerUtility.GetNearestEntities(range, teamCheck, false)
+    return list and list[1]
 end
-
-setmetatable(PlayerUtility, {
-    __index = function(_, key)
-        if key == 'lplrIsAlive' then
-            return entitylib.isAlive == true
-        end
-    end
-})
 
 local Prediction = {}
-function Prediction.NewTracker(size)
-    return {Size = tonumber(size) or 10, Samples = {}}
+function Prediction.NewTracker(size) return {Samples = {}, Size = size or 10} end
+function Prediction.PushSample(tracker, position, velocity, time)
+    if not tracker then return end
+    local samples = tracker.Samples
+    samples[#samples+1] = {Position = position, Velocity = velocity, Time = time}
+    while #samples > tracker.Size do table.remove(samples, 1) end
 end
-function Prediction.PushSample(tracker, position, velocity, timestamp)
-    if type(tracker) ~= 'table' then return end
-    tracker.Samples = tracker.Samples or {}
-    table.insert(tracker.Samples, {Position = position, Velocity = velocity, Time = timestamp or tick()})
-    while #tracker.Samples > (tracker.Size or 10) do table.remove(tracker.Samples, 1) end
-end
-function Prediction.SolveTrajectory(origin, speed, gravity, targetPos, targetVelocity, _workspaceGravity, maxTime, _unused1, _unused2, options)
-    if typeof(origin) ~= 'Vector3' or typeof(targetPos) ~= 'Vector3' then return end
-    speed = tonumber(speed)
-    gravity = math.abs(tonumber(gravity) or workspace.Gravity)
-    if not speed or speed <= 0 then return end
-
-    local latency = options and tonumber(options.latency) or 0
-    local predicted = targetPos + (targetVelocity or Vector3.zero) * latency
-    local flight = math.clamp((predicted - origin).Magnitude / speed, 0, tonumber(maxTime) or 5)
-
-    -- Two-pass lead estimate with gravity compensation.
-    for _ = 1, 2 do
-        predicted = targetPos + (targetVelocity or Vector3.zero) * flight
-        local dy = predicted.Y - origin.Y
-        local t2 = flight * flight
-        local vertical = dy + 0.5 * gravity * t2
-        local horizontal = Vector3.new(predicted.X - origin.X, 0, predicted.Z - origin.Z)
-        local h = horizontal.Magnitude
-        local disc = speed^4 - gravity * (gravity * h^2 + 2 * dy * speed^2)
-        if disc < 0 then
-            return predicted, flight
+function Prediction.SolveTrajectory(origin, speed, gravity, targetPosition, targetVelocity, _, lifetime, _, _, options)
+    if typeof(origin) ~= 'Vector3' or typeof(targetPosition) ~= 'Vector3' then return nil end
+    speed = tonumber(speed) or 0
+    if speed <= 0 then return nil end
+    options = type(options) == 'table' and options or {}
+    targetVelocity = typeof(targetVelocity) == 'Vector3' and targetVelocity or Vector3.zero
+    local targetAcceleration = Vector3.zero
+    local acceleration = Vector3.new(0, -(math.abs(tonumber(gravity) or workspace.Gravity)), 0)
+    if predictionlib and type(predictionlib.SolveIntercept) == 'function' then
+        local ok, solution = pcall(predictionlib.SolveIntercept,
+            origin,
+            speed,
+            acceleration,
+            targetPosition,
+            targetVelocity,
+            targetAcceleration,
+            0.001,
+            math.max(tonumber(lifetime) or 5, 0.05)
+        )
+        if ok and solution then
+            local impact = solution.ImpactPosition or targetPosition
+            local flight = solution.FlightTime or ((impact - origin).Magnitude / speed)
+            return impact, flight
         end
-        local rootDisc = math.sqrt(disc)
-        local tanLow = (speed^2 - rootDisc) / (gravity * math.max(h, 1e-6))
-        local angle = math.atan(tanLow)
-        local cosA = math.cos(angle)
-        if math.abs(cosA) < 1e-4 then break end
-        flight = math.clamp(h / math.max(speed * cosA, 1e-4), 0.01, tonumber(maxTime) or 5)
     end
-
-    local delta = predicted - origin
-    local horizontal = Vector3.new(delta.X, 0, delta.Z)
-    local horizontalDir = horizontal.Magnitude > 1e-4 and horizontal.Unit or Vector3.zero
-    local vy = (delta.Y + 0.5 * gravity * flight * flight) / math.max(flight, 0.01)
-    local initial = horizontalDir * speed
-    if horizontalDir.Magnitude > 0 then
-        local desiredH = math.sqrt(math.max(speed * speed - vy * vy, 0))
-        initial = horizontalDir * desiredH
-    end
-    initial += Vector3.new(0, vy, 0)
-    return origin + initial * flight, flight
+    local latency = tonumber(options.latency) or 0
+    local interceptTime = ((targetPosition - origin).Magnitude / speed) + latency
+    return targetPosition + targetVelocity * interceptTime, interceptTime
 end
 
--- A small Aether replacement for Phantom's fly-bar helper.
-local DrawLibrary = {}
-function DrawLibrary.CreateBar(parent)
-    parent = parent or coreGui
-    local screen = Instance.new('ScreenGui')
-    screen.Name = 'AetherFlyBar'
-    screen.ResetOnSpawn = false
-    screen.IgnoreGuiInset = true
-    screen.Enabled = false
-    screen.Parent = parent
-
-    local frame = Instance.new('Frame')
-    frame.Name = 'Holder'
-    frame.Size = UDim2.fromOffset(220, 24)
-    frame.Position = UDim2.new(0.5, -110, 0, 80)
-    frame.BackgroundTransparency = 1
-    frame.Parent = screen
-
-    local bar = Instance.new('Frame')
-    bar.Name = 'Bar'
-    bar.Size = UDim2.new(0, 0, 1, 0)
-    bar.BackgroundTransparency = 0.15
-    bar.BorderSizePixel = 0
-    bar.Parent = frame
-
-    local second = Instance.new('TextLabel')
-    second.Name = 'SecondLeft'
-    second.Size = UDim2.fromScale(1, 1)
-    second.BackgroundTransparency = 1
-    second.TextColor3 = Color3.new(1, 1, 1)
-    second.Font = Enum.Font.GothamSemibold
-    second.TextSize = 13
-    second.Text = '0s'
-    second.Parent = frame
-
-    return {
-        ScreenGui = screen,
-        Bar = bar,
-        SecondLeft = second
-    }
-end
-
-local data = {
-    hooked = {},
-    matchState = 0,
-    Attacking = false,
-    attackingEntity = nil,
-    gamemode = {
-        value = nil,
-        current = nil,
-        connection = nil
-    }
+local DrawLibrary = {
+    CreateBar = function(parent)
+        local gui = Instance.new('ScreenGui')
+        gui.Name = 'AetherBar'
+        gui.ResetOnSpawn = false
+        gui.Parent = parent
+        local bar = Instance.new('Frame')
+        bar.BackgroundTransparency = 0.25
+        bar.Size = UDim2.new(0, 240, 0, 22)
+        bar.Position = UDim2.fromOffset(10, 10)
+        bar.Parent = gui
+        local second = Instance.new('TextLabel')
+        second.BackgroundTransparency = 1
+        second.Size = UDim2.fromScale(1, 1)
+        second.TextColor3 = Color3.new(1, 1, 1)
+        second.Text = ''
+        second.Parent = gui
+        return {ScreenGui = gui, Bar = bar, SecondLeft = second}
+    end
 }
-
--- AetherV2 owns module registration; imported Phantom registrations are not deregistered.
 
 local bedfight = {
     remotes = {
@@ -339,8 +230,8 @@ _ws[3], _ws[4] = bedfight.remotes.SwordHit, bedfight.modules.SwordsData
 
 do -- update checker
     local HS = game:GetService("HttpService")
-    local CFG = "aetherv2/profiles/config/gameVersion.json"
-    if not isfolder("aetherv2/profiles/config") then makefolder("aetherv2/profiles/config") end
+    local CFG = "aetherv2/cache/bedfight_gameVersion.json"
+    if not isfolder("aetherv2/cache") then makefolder("aetherv2/cache") end
     if not isfile(CFG) then writefile(CFG, "{}") end
     task.spawn(function()
         task.wait(3)
@@ -1122,7 +1013,7 @@ do
 end
 
 local Distance = {Value = 21}
-runcode(function()
+run(function()
     local Killaura = {}
     local FacePlayer = {}
     local TeamCheck = {}
@@ -1187,7 +1078,7 @@ runcode(function()
         return currentController
     end
 
-    Killaura = getCategory("Combat"):CreateModule({
+    Killaura = createModule(optionCategory("combatPanel"), {
         Name = "Killaura",
         Beta = true,
         Function = function(callback)
@@ -1294,7 +1185,7 @@ runcode(function()
             end
         end
     })
-    Distance = Killaura.CreateSlider({
+    Distance = Killaura:CreateSlider({
         Name = "Distance",
         Min = 0,
         Max = 21,
@@ -1302,34 +1193,34 @@ runcode(function()
         Round = 1,
         Function = function() end
     })
-    TeamCheck = Killaura.CreateToggle({
+    TeamCheck = Killaura:CreateToggle({
         Name = "Team Check",
         Default = true,
         Function = function() end
     })
-    FacePlayer = Killaura.CreateToggle({
+    FacePlayer = Killaura:CreateToggle({
         Name = "FacePlayer",
         Function = function() end
     })
-    SwingOnly = Killaura.CreateToggle({
+    SwingOnly = Killaura:CreateToggle({
         Name = "Swing Only",
         Tooltip = "Only attacks while clicking",
         Function = function() end
     })
-    ItemOnly = Killaura.CreateToggle({
+    ItemOnly = Killaura:CreateToggle({
         Name = "Item Only",
         Tooltip = "Only attacks when sword is held",
         Function = function() end
     })
 end)
 
-runcode(function()
+run(function()
     local AimAssist = {}
     local AimFOV = {}
     local AimSmoothing = {}
     local aimTeamCheck = {}
 
-    AimAssist = getCategory("Combat"):CreateModule({
+    AimAssist = createModule(optionCategory("combatPanel"), {
         Name = "Aim Assist",
         Function = function(callback)
             if callback then
@@ -1352,20 +1243,20 @@ runcode(function()
             end
         end
     })
-    AimFOV = AimAssist.CreateSlider({
+    AimFOV = AimAssist:CreateSlider({
         Name = "Range",
         Min = 5,
         Max = 100,
         Default = 30,
         Round = 1,
     })
-    AimSmoothing = AimAssist.CreateSlider({
+    AimSmoothing = AimAssist:CreateSlider({
         Name = "Smoothness",
         Min = 0.05,
         Max = 1,
         Default = 0.15,
     })
-    aimTeamCheck = AimAssist.CreateToggle({
+    aimTeamCheck = AimAssist:CreateToggle({
         Name = "Team Check",
         Default = true,
         Function = function() end,
@@ -1373,7 +1264,7 @@ runcode(function()
 end)
 
 local SpeedSlider = {}
-runcode(function()
+run(function()
     local AutoJump = {}
     local Direction = {}
     local Mode = {}
@@ -1384,7 +1275,7 @@ runcode(function()
     local hsPhase = "boost"
     local hsTimer = 0
 
-    Speed = getCategory("Blatant"):CreateModule({
+    Speed = createModule(optionCategory("blatantPanel"), {
         Name = "Speed",
         ExtraText = "CFrame",
         Function = function(callback)
@@ -1438,19 +1329,19 @@ runcode(function()
             end
         end
     })
-    SpeedSlider = Speed.CreateSlider({
+    SpeedSlider = Speed:CreateSlider({
         Name = "Value",
         Min = 0,
         Max = 32,
         Default = 32,
         Round = 1,
     })
-    Mode = Speed.CreateDropdown({
+    Mode = Speed:CreateDropdown({
         Name = "Mode",
         List = {"Velocity", "HeatSeeker"},
         Default = "Velocity",
     })
-    local HSBoostSpeedSlider = Speed.CreateSlider({
+    local HSBoostSpeedSlider = Speed:CreateSlider({
         Name = "BoostSpeed",
         Min = 0,
         Max = 200,
@@ -1458,7 +1349,7 @@ runcode(function()
         Round = 1,
         Function = function(callback) HSHighSpeed.Value = callback end,
     })
-    local HSBaseSpeedSlider = Speed.CreateSlider({
+    local HSBaseSpeedSlider = Speed:CreateSlider({
         Name = "BaseSpeed",
         Min = 0,
         Max = 100,
@@ -1466,7 +1357,7 @@ runcode(function()
         Round = 1,
         Function = function(callback) HSLowSpeed.Value = callback end,
     })
-    local HSBoostDurSlider = Speed.CreateSlider({
+    local HSBoostDurSlider = Speed:CreateSlider({
         Name = "BoostDur",
         Min = 0.1,
         Max = 5,
@@ -1474,7 +1365,7 @@ runcode(function()
         Round = 1,
         Function = function(callback) HSHighDur.Value = callback end,
     })
-    local HSBaseDurSlider = Speed.CreateSlider({
+    local HSBaseDurSlider = Speed:CreateSlider({
         Name = "BaseDur",
         Min = 0.1,
         Max = 5,
@@ -1486,11 +1377,11 @@ runcode(function()
     Mode:ShowWhen("HeatSeeker", HSBaseSpeedSlider)
     Mode:ShowWhen("HeatSeeker", HSBoostDurSlider)
     Mode:ShowWhen("HeatSeeker", HSBaseDurSlider)
-    AutoJump = Speed.CreateToggle({
+    AutoJump = Speed:CreateToggle({
         Name = "AutoJump",
         Default = true,
     })
-    Direction = Speed.CreateToggle({
+    Direction = Speed:CreateToggle({
         Name = "Direction",
         Default = true,
         Function = function(callback)
@@ -1501,7 +1392,7 @@ runcode(function()
 end)
 
 local height = lplr.Character.HumanoidRootPart.Size.Y * 1.5
-runcode(function()
+run(function()
 	local ScreenGui = DrawLibrary.CreateBar(game.CoreGui)
 
 	local FlyValue = {}
@@ -1521,7 +1412,7 @@ runcode(function()
 	local EXT_ASCEND_TIME = 0.9
 	local MIN_SAFE_ASCEND = 10
 
-	Fly = getCategory("Blatant"):CreateModule({
+	Fly = createModule(optionCategory("blatantPanel"), {
 		Name = "Fly",
 		Function = function(callback)
 
@@ -1783,35 +1674,35 @@ runcode(function()
 			end
 		end
 	})
-	FlyValue = Fly.CreateSlider({
+	FlyValue = Fly:CreateSlider({
 		Name = "value",
 		Min = 0,
 		Max = 32,
 		Default = 32,
 		Round = 1
 	})
-	FlyVerticalValue = Fly.CreateSlider({
+	FlyVerticalValue = Fly:CreateSlider({
 		Name = "vertical value",
 		Min = 0,
 		Max = 100,
 		Default = 49,
 		Round = 1
 	})
-	ProgressBar = Fly.CreateToggle({
+	ProgressBar = Fly:CreateToggle({
 		Name = "ProgressBar",
 		Default = true
 	})
-	extendedFly = Fly.CreateToggle({
+	extendedFly = Fly:CreateToggle({
 		Name = "ExtendedFly",
 		Default = true
 	})
-	ExtendMode = Fly.CreateDropdown({
+	ExtendMode = Fly:CreateDropdown({
 		Name = "Extend Mode",
 		List = {"AscendDescend", "TweenDown"},
 		Default = "AscendDescend",
 	})
 	extendedFly:AddDependent(ExtendMode)
-	AscendTimer = Fly.CreateSlider({
+	AscendTimer = Fly:CreateSlider({
 		Name = "ascend time",
 		Min = 0.1,
 		Max = 0.9,
@@ -1820,13 +1711,13 @@ runcode(function()
 	})
 	ExtendMode:ShowWhen("AscendDescend", AscendTimer)
 	extendedFly:AddDependent(AscendTimer)
-	bypass = Fly.CreateToggle({
+	bypass = Fly:CreateToggle({
 		Name = "bypassTimer",
 		Default = false
 	})
 end)
 
-runcode(function()
+run(function()
     local LongFlyValue, LongFlyDuration, LongFlySlopeAngle = {}, {}, {}
     local smartFly = {}
     local overheadCheck = false
@@ -1886,8 +1777,9 @@ runcode(function()
         speedWasEnabled = false
     end
 
-    LongFly = getCategory("Blatant"):CreateModule({
+    LongFly = createModule(optionCategory("blatantPanel"), {
         Name = "LongFly",
+        New = true,
         Function = function(callback)
             if callback then
                 if os.clock() - lastActivated < cooldown then
@@ -2052,42 +1944,42 @@ runcode(function()
             end
         end
     })
-    LongFlyValue = LongFly.CreateSlider({
+    LongFlyValue = LongFly:CreateSlider({
         Name = "speed",
         Min = 0,
         Max = 300,
         Default = 300,
         Round = 1
     })
-    LongFlyDuration = LongFly.CreateSlider({
+    LongFlyDuration = LongFly:CreateSlider({
         Name = "duration",
         Min = 0.1,
         Max = 2,
         Default = 0.23,
         Round = 1
     })
-    LongFlySlopeAngle = LongFly.CreateSlider({
+    LongFlySlopeAngle = LongFly:CreateSlider({
         Name = "slope angle",
         Min = 0,
         Max = 10,
         Default = 5,
         Round = 1
     })
-    overheadCheck = LongFly.CreateToggle({
+    overheadCheck = LongFly:CreateToggle({
         Name = "Stop Under Block",
         Default = false,
         Function = function()
             phase, noBlockTimer = "0", 0
         end
     })
-    smartFly = LongFly.CreateToggle({
+    smartFly = LongFly:CreateToggle({
         Name = "SmartFly",
         Default = false,
         Function = function() end
     })
 end)
 
-runcode(function()
+run(function()
     local old
     local playerHook
     local hookedConnection
@@ -2107,7 +1999,7 @@ runcode(function()
 
     local Strength = {}
     local Velocity = {}
-    Velocity = getCategory("Combat"):CreateModule({
+    Velocity = createModule(optionCategory("combatPanel"), {
         Name = "Velocity",
         Function = function(callback)
             if callback then
@@ -2146,7 +2038,7 @@ runcode(function()
         end
     })
 
-    Strength = Velocity.CreateSlider({
+    Strength = Velocity:CreateSlider({
         Name = "Strength",
         Min = 0,
         Max = 100,
@@ -2154,7 +2046,7 @@ runcode(function()
     })
 end)
 
-runcode(function()
+run(function()
     local range = {Value = 120}
     local teamCheck = {Enabled = false}
     local targetPart = {Value = "HumanoidRootPart"}
@@ -2253,7 +2145,7 @@ runcode(function()
         return launchVel, solvedDir, solvedIntercept
     end
 
-    Projectile = getCategory("Combat"):CreateModule({
+    Projectile = createModule(optionCategory("combatPanel"), {
         Name = "ProjectileAimbot",
         Function = function(callback)
             if callback then
@@ -2298,37 +2190,37 @@ runcode(function()
             end
         end
     })
-    range = Projectile.CreateSlider({
+    range = Projectile:CreateSlider({
         Name = "Range",
         Min = 10,
         Max = 150,
         Default = 120,
         Round = 1,
     })
-    fov = Projectile.CreateSlider({
+    fov = Projectile:CreateSlider({
         Name = "Mouse FOV",
         Min = 10,
         Max = 300,
         Default = 120,
         Round = 1,
     })
-    teamCheck = Projectile.CreateToggle({
+    teamCheck = Projectile:CreateToggle({
         Name = "TeamCheck",
         Default = false,
         Function = function() end
     })
-    wallCheck = Projectile.CreateToggle({
+    wallCheck = Projectile:CreateToggle({
         Name = "Wall Check",
         Default = true,
         Function = function() end
     })
-    targetPart = Projectile.CreateDropdown({
+    targetPart = Projectile:CreateDropdown({
         Name = "TargetPart",
         List = {"HumanoidRootPart", "Head"},
         Default = "HumanoidRootPart",
         Function = function() end
     })
-    mode = Projectile.CreateDropdown({
+    mode = Projectile:CreateDropdown({
         Name = "Mode",
         List = {"Distance", "Mouse"},
         Default = "Distance",
@@ -2338,7 +2230,7 @@ runcode(function()
     mode:ShowWhen("Mouse", fov)
 end)
 
-runcode(function()
+run(function()
     local wallParams = RaycastParams.new()
     wallParams.FilterType = Enum.RaycastFilterType.Exclude
 
@@ -2449,7 +2341,7 @@ runcode(function()
         end)
     end
 
-    local Projectile = getCategory("Combat"):CreateModule({
+    local Projectile = createModule(optionCategory("combatPanel"), {
         Name = "ProjectileAura",
         Function = function(callback)
             if callback then
@@ -2483,7 +2375,7 @@ runcode(function()
             end
         end
     })
-    ProjRange = Projectile.CreateSlider({
+    ProjRange = Projectile:CreateSlider({
         Name = "range",
         Min = 10,
         Max = 150,
@@ -2491,14 +2383,14 @@ runcode(function()
         Round = 1,
         Function = function() end,
     })
-    ProjWall = Projectile.CreateToggle({
+    ProjWall = Projectile:CreateToggle({
         Name = "Wall Check",
         Default = true,
         Function = function() end,
     })
 end)
 
-runcode(function()
+run(function()
     local origReach = {}
     local ReachVal = {Value = 20}
     for name, data in pairs(bedfight.modules.SwordsData) do
@@ -2506,7 +2398,7 @@ runcode(function()
             origReach[name] = { Range = data.Range, HitboxSize = data.HitboxSize }
         end
     end
-    Reach = getCategory("Combat"):CreateModule({
+    Reach = createModule(optionCategory("combatPanel"), {
         Name = "Reach",
         Function = function(callback)
             for name, orig in pairs(origReach) do
@@ -2518,7 +2410,7 @@ runcode(function()
             end
         end
     })
-    Reach.CreateSlider({
+    Reach:CreateSlider({
         Name = "Range",
         Min = 5, 
         Max = 25, 
@@ -2538,7 +2430,7 @@ runcode(function()
     })
 end)
 
-runcode(function()
+run(function()
     local KeepInv = {}
     local SaveInLobby = {}
 
@@ -2724,8 +2616,9 @@ runcode(function()
         end)
     end
 
-    local CM = getCategory("Inventory"):CreateModule({
+    local CM = createModule(optionCategory("inventoryPanel"), {
         Name = "ChestManager",
+        New = true,
         Function = function(callback)
             if data.gamemode.current ~= "Ranked 1v1" and data.gamemode.current ~= "Ranked 4v4" then
                 local loopState = {cycle = 1, index = 1, teams = {}}
@@ -2753,17 +2646,17 @@ runcode(function()
             end
         end
     })
-    KeepInv = CM.CreateToggle({
+    KeepInv = CM:CreateToggle({
         Name = "KeepInv",
         Function = function() end
     })
-    SaveInLobby = CM.CreateToggle({
+    SaveInLobby = CM:CreateToggle({
         Name = "SaveInLobby",
         Function = function() end
     })
 end)
 
-runcode(function()
+run(function()
     local Cape = {}
     local Capedrop = {}
     local CapesFolder = ReplicatedStorage:WaitForChild("Capes")
@@ -2786,7 +2679,7 @@ runcode(function()
         table.insert(capeList, cape.Name)
     end
 
-    Cape = getCategory("Render"):CreateModule({
+    Cape = createModule(optionCategory("renderPanel"), {
         Name = "Cape",
         Function = function(callback)
             if callback then
@@ -2812,7 +2705,7 @@ runcode(function()
         end
     })
 
-    Capedrop = Cape.CreateDropdown({
+    Capedrop = Cape:CreateDropdown({
         Name = "Cape",
         List = capeList,
         Default = capeList[1] or "",
@@ -2823,7 +2716,7 @@ runcode(function()
     })
 end)
 
-runcode(function()
+run(function()
     local Tracers = {}
     local TracerThickness = {}
     local Lines = {}
@@ -2832,7 +2725,7 @@ runcode(function()
     local TracerColor = {}
     local TracerDistLabel = {}
 
-    Tracers = getCategory("Render"):CreateModule({
+    Tracers = createModule(optionCategory("renderPanel"), {
         Name = "Tracers",
         Function = function(callback)
             if callback then
@@ -2877,7 +2770,7 @@ runcode(function()
                                 if TracerColor.Enabled and v.Team then
                                     color = v.Team.TeamColor.Color
                                 else
-                                    color = GuiLibrary.kit:activeColor()
+                                    color = guiColor()
                                 end
                                 line.BackgroundColor3 = color
                                 line.BorderColor3 = color
@@ -2928,25 +2821,25 @@ runcode(function()
             end
         end
     })
-    TracerThickness = Tracers.CreateSlider({
+    TracerThickness = Tracers:CreateSlider({
         Name = "Thickness",
         Min = 1,
         Max = 10,
         Default = 1
     })
-    TracerColor = Tracers.CreateToggle({
+    TracerColor = Tracers:CreateToggle({
         Name = "Team Color",
         Default = false,
         Function = function() end
     })
-    TracerDistLabel = Tracers.CreateToggle({
+    TracerDistLabel = Tracers:CreateToggle({
         Name = "Distance Label",
         Default = false,
         Function = function() end
     })
 end)
 
-runcode(function()
+run(function()
     local NameTags = {}
     local TeamColor = {}
     local ShowDistance = {}
@@ -3208,7 +3101,7 @@ runcode(function()
         end
     end
 
-    NameTags = getCategory("Render"):CreateModule({
+    NameTags = createModule(optionCategory("renderPanel"), {
         Name = "NameTags",
         Function = function(callback)
             if callback then
@@ -3438,8 +3331,8 @@ runcode(function()
                                 end
 
                                 local baseName
-                                if _G.aetherNameSpoofActive then
-                                    baseName = _G.aetherSpoofName or "wynnech"
+                                if _G.phantomNameSpoofActive then
+                                    baseName = _G.phantomSpoofName or "wynnech"
                                 elseif ShowDisplayName.Enabled then
                                     baseName = plr.DisplayName ~= "" and plr.DisplayName or plr.Name
                                 else
@@ -3632,57 +3525,57 @@ runcode(function()
         end
     })
 
-    TeamColor = NameTags.CreateToggle({
+    TeamColor = NameTags:CreateToggle({
         Name = "Team Color",
         Default = true,
         Function = function()end,
     })
-    ShowDisplayName = NameTags.CreateToggle({
+    ShowDisplayName = NameTags:CreateToggle({
         Name = "Display Name",
         Default = true,
         Function = function()end,
     })
-    ShowDistance = NameTags.CreateToggle({
+    ShowDistance = NameTags:CreateToggle({
         Name = "Distance",
         Default = true,
         Function = function()end,
     })
-    ShowHealth = NameTags.CreateToggle({
+    ShowHealth = NameTags:CreateToggle({
         Name = "Health",
         Default = true,
         Function = function()end,
     })
-    ShowBrackets = NameTags.CreateToggle({
+    ShowBrackets = NameTags:CreateToggle({
         Name = "Brackets",
         Default = true,
         Function = function()end,
     })
-    ShowArmorIcons = NameTags.CreateToggle({
+    ShowArmorIcons = NameTags:CreateToggle({
         Name = "Armor Icons",
         Default = true,
         Function = function() updateSubVis() end,
     })
-    ShowSwordIcons = NameTags.CreateToggle({
+    ShowSwordIcons = NameTags:CreateToggle({
         Name = "Sword Icon",
         Default = true,
         Function = function() updateSubVis() end,
     })
-    IconBackground = NameTags.CreateToggle({
+    IconBackground = NameTags:CreateToggle({
         Name = "Icon Background",
         Default = true,
         Function = function() updateSubVis() end,
     })
-    RoundedCorners = NameTags.CreateToggle({
+    RoundedCorners = NameTags:CreateToggle({
         Name = "Icon Rounded",
         Default = true,
         Function = function() end,
     })
-    SeparateBackground = NameTags.CreateToggle({
+    SeparateBackground = NameTags:CreateToggle({
         Name = "Separate BG",
         Default = true,
         Function = function() updateSubVis() end,
     })
-    IconSpacing = NameTags.CreateSlider({
+    IconSpacing = NameTags:CreateSlider({
         Name = "Icon Spacing",
         Min = 1,
         Max = 12,
@@ -3690,7 +3583,7 @@ runcode(function()
         Round = 1,
         Function = function()end,
     })
-    TagSize = NameTags.CreateSlider({
+    TagSize = NameTags:CreateSlider({
         Name = "Icon Size",
         Min = 110,
         Max = 220,
@@ -3698,12 +3591,12 @@ runcode(function()
         Round = 1,
         Function = function()end,
     })
-    TagBg = NameTags.CreateToggle({
+    TagBg = NameTags:CreateToggle({
         Name = "Background",
         Default = true,
         Function = function()end,
     })
-    TagBgCorner = NameTags.CreateDropdown({
+    TagBgCorner = NameTags:CreateDropdown({
         Name = "Corner Style",
         List = {"Rounded", "Square"},
         Default = "Rounded",
@@ -3711,18 +3604,18 @@ runcode(function()
     })
     TagBgCorner:ShowWhen(TagBg)
     TagBg:AddDependent(TagBgCorner)
-    FontChoice = NameTags.CreateDropdown({
+    FontChoice = NameTags:CreateDropdown({
         Name = "Font",
         List = {"Arial","Montserrat","Nunito","Ubuntu","Roboto","Source Sans","Arimo","Gotham"},
         Default = "Arial",
         Function = function() end
     })
-    BoldText = NameTags.CreateToggle({
+    BoldText = NameTags:CreateToggle({
         Name = "Bold",
         Default = true,
         Function = function()end,
     })
-    FontWeight = NameTags.CreateDropdown({
+    FontWeight = NameTags:CreateDropdown({
         Name = "Bold Weight",
         List = {"Semibold", "Bold", "Black"},
         Default = "Semibold",
@@ -3730,7 +3623,7 @@ runcode(function()
     })
     FontWeight:ShowWhen(BoldText)
     BoldText:AddDependent(FontWeight)
-    TextSize = NameTags.CreateSlider({
+    TextSize = NameTags:CreateSlider({
         Name = "Text Size",
         Min = 7,
         Max = 20,
@@ -3743,7 +3636,7 @@ runcode(function()
 end)
 
 local PHANTOM_COLORS = {
-    Theme = function() return GuiLibrary.kit:activeColor() end,
+    Theme = function() return guiColor() end,
     Red = function() return Color3.fromRGB(255,60,60) end,
     Orange = function() return Color3.fromRGB(255,140,0) end,
     Yellow = function() return Color3.fromRGB(255,220,0) end,
@@ -3763,7 +3656,7 @@ local function pcol(dd)
     return (PHANTOM_COLORS[key] or PHANTOM_COLORS.Theme)()
 end
 
-runcode(function()
+run(function()
     local espRef = {}
     local espHLs = {}
     local espHurt = {}
@@ -3969,7 +3862,7 @@ runcode(function()
         end
     end
 
-    local ESP = getCategory("Render"):CreateModule({
+    local ESP = createModule(optionCategory("renderPanel"), {
         Name = "ESP",
         Function = function(callback)
             if callback then
@@ -4133,90 +4026,90 @@ runcode(function()
             end
         end
     })
-    ESPMode = ESP.CreateDropdown({
+    ESPMode = ESP:CreateDropdown({
         Name = "Mode",
         List = {"Highlight", "2D Box", "Corner Box", "3D Box"},
         Default = "Highlight",
         Function = function()end,
     })
-    ESPOutC = ESP.CreateDropdown({
+    ESPOutC = ESP:CreateDropdown({
         Name = "Outline Color",
         List = PHANTOM_COL_LIST,
         Default = "Theme",
         Function = function()end,
     })
-    ESPFillC = ESP.CreateDropdown({
+    ESPFillC = ESP:CreateDropdown({
         Name = "Fill Color",
         List = PHANTOM_COL_LIST,
         Default = "Theme",
         Function = function()end,
     })
-    ESPOutOp = ESP.CreateSlider({
+    ESPOutOp = ESP:CreateSlider({
         Name = "Outline Opacity",
         Min = 0,
         Max = 1,
         Default = 0,
     })
-    ESPFillOp = ESP.CreateSlider({
+    ESPFillOp = ESP:CreateSlider({
         Name = "Fill Opacity",
         Min = 0,
         Max = 1,
         Default = 0.5,
     })
-    ESPThick = ESP.CreateSlider({
+    ESPThick = ESP:CreateSlider({
         Name = "Line Thickness",
         Min = 1,
         Max = 4,
         Default = 1,
         Round = 1,
     })
-    ESPHurt = ESP.CreateToggle({
+    ESPHurt = ESP:CreateToggle({
         Name = "Hurt Indicator",
         Default = true,
         Function = function()end,
     })
-    ESPHurtC = ESP.CreateDropdown({
+    ESPHurtC = ESP:CreateDropdown({
         Name = "Hurt Color",
         List = {"Red", "Orange", "Yellow", "White", "Pink", "Cyan"},
         Default = "Red",
         Function = function()end,
     })
-    ESPHealth = ESP.CreateToggle({
+    ESPHealth = ESP:CreateToggle({
         Name = "Health Bar",
         Default = true,
         Function = function()end,
     })
-    ESPName = ESP.CreateToggle({
+    ESPName = ESP:CreateToggle({
         Name = "Name Label",
         Default = true,
         Function = function()end,
     })
-    ESPDist = ESP.CreateToggle({
+    ESPDist = ESP:CreateToggle({
         Name = "Distance",
         Default = false,
         Function = function()end,
     })
-    ESPWalls = ESP.CreateToggle({
+    ESPWalls = ESP:CreateToggle({
         Name = "Through Walls",
         Default = true,
         Function = function()end,
     })
-    ESPLQMode = ESP.CreateToggle({
+    ESPLQMode = ESP:CreateToggle({
         Name = "LQ Mode",
         Default = false,
         Function = function()end,
     })
-    ESPAimBox = ESP.CreateToggle({
+    ESPAimBox = ESP:CreateToggle({
         Name = "AimAssist Box",
         Default = false,
         Function = function()end,
     })
-    ESPSelf = ESP.CreateToggle({
+    ESPSelf = ESP:CreateToggle({
         Name = "Self Render",
         Default = false,
         Function = function()end,
     })
-    ESPTeam = ESP.CreateToggle({
+    ESPTeam = ESP:CreateToggle({
         Name = "Team Color",
         Default = false,
         Function = function()end,
@@ -4245,7 +4138,7 @@ runcode(function()
 end)
 
 
-runcode(function()
+run(function()
     local fpConn = nil
     local FirstPerson = {}
     local resetChar = function()
@@ -4258,7 +4151,7 @@ runcode(function()
         end
     end
 
-    FirstPerson = getCategory("Render"):CreateModule({
+    FirstPerson = createModule(optionCategory("renderPanel"), {
         Name = "FirstPerson",
         Function = function(callback)
             if callback then
@@ -4281,7 +4174,7 @@ runcode(function()
     })
 end)
 
-runcode(function()
+run(function()
     local ThemeDropdown = {}
     local GameThemes = {}
     local LIGHT_TAG = "NightTheme_Light"
@@ -5002,14 +4895,14 @@ runcode(function()
         end,
     }
 
-    GameThemes = getCategory("Misc"):CreateModule({
+    GameThemes = createModule(optionCategory("miscPanel"), {
         Name = "GameThemes",
         Function = function(callback)
             if callback then themes[ThemeDropdown.Value]()
             else cleanupAll(); themes.Default() end
         end
     })
-    ThemeDropdown = GameThemes.CreateDropdown({
+    ThemeDropdown = GameThemes:CreateDropdown({
         Name = "theme",
         List = {"Default","Morning","Sunset","LightSnow","ChillMorning","Blizzard","LightRain","HeavyRain","BloodMoon","Nighttime","Foggy","WasteLand","TimeCycle","GoldenHour","CherryBlossom","Haze","Void"},
         Default = "Default",
@@ -5019,7 +4912,7 @@ runcode(function()
     })
 end)
 
-runcode(function()
+run(function()
     local pg = lplr:FindFirstChild("PlayerGui")
 
     local HIDE_GUIS = {
@@ -5130,7 +5023,7 @@ runcode(function()
         end)
     end
 
-    getCategory("Misc"):CreateModule({
+    createModule(optionCategory("miscPanel"), {
         Name = "UICleanup",
         Function = function(callback)
             if callback then
@@ -5183,19 +5076,19 @@ runcode(function()
     })
 end)
 
-runcode(function()
+run(function()
     local BlockRange = {}
     local BlockRangeSlider = {}
     local rangeVal = {Value = 50}
     local infRange = false
     local origRange = bedfight.modules.BlocksData.Default.Range
-    BlockRange = getCategory("Utility"):CreateModule({
+    BlockRange = createModule(optionCategory("utillityPanel"), {
         Name = "BlockRange",
         Function = function(callback)
             bedfight.modules.BlocksData.Default.Range = callback and (infRange and math.huge or rangeVal.Value) or origRange
         end
     })
-    BlockRangeSlider = BlockRange.CreateSlider({
+    BlockRangeSlider = BlockRange:CreateSlider({
         Name = "Range",
         Min = 18, 
         Max = 200, 
@@ -5206,7 +5099,7 @@ runcode(function()
             if BlockRange.Enabled and not infRange then bedfight.modules.BlocksData.Default.Range = callback end
         end
     })
-    BlockRange.CreateToggle({
+    BlockRange:CreateToggle({
         Name = "Inf Range",
         Function = function(callback)
             infRange = callback
@@ -5217,7 +5110,7 @@ runcode(function()
     })
 end)
 
-runcode(function()
+run(function()
     local MiningData = require(game:GetService("ReplicatedStorage").Modules.DataModules.MiningData)
     local origMining = {}
     local FastBreak = {}
@@ -5227,7 +5120,7 @@ runcode(function()
             origMining[name] = d.Cooldown
         end
     end
-    FastBreak = getCategory("Utility"):CreateModule({
+    FastBreak = createModule(optionCategory("utillityPanel"), {
         Name = "FastBreak",
         Function = function(callback)
             local cd = FastBreakCooldown and FastBreakCooldown.Value or 0.1
@@ -5237,7 +5130,7 @@ runcode(function()
             end
         end
     })
-    FastBreakCooldown = FastBreak.CreateSlider({
+    FastBreakCooldown = FastBreak:CreateSlider({
         Name = "Cooldown",
         Min = 0,
         Max = 0.5,
@@ -5253,9 +5146,9 @@ runcode(function()
     })
 end)
 
-runcode(function()
+run(function()
     local Jetpack = {}
-    Jetpack = getCategory("Utility"):CreateModule({
+    Jetpack = createModule(optionCategory("utillityPanel"), {
         Name = "InfJetpack",
         Function = function(callback)
             if callback then
@@ -5269,7 +5162,7 @@ runcode(function()
     })
 end)
 
-runcode(function()
+run(function()
     local PlayEmote = {}
     local AnimSpoof = {}
     local UISpoof = {}
@@ -5298,7 +5191,7 @@ runcode(function()
         end
     end
 
-    PlayEmote = getCategory("Misc"):CreateModule({
+    PlayEmote = createModule(optionCategory("miscPanel"), {
         Name = "PlayEmote",
         Function = function(callback)
             if callback then
@@ -5324,7 +5217,7 @@ runcode(function()
         end
     })
 
-    PlayEmote.CreateDropdown({
+    PlayEmote:CreateDropdown({
         Name = "Emote",
         List = (function() local t = {} for _, v in ipairs(Emotes) do table.insert(t, v.Value) end return t end)(),
         Default = Emotes[1] and Emotes[1].Value or "",
@@ -5338,7 +5231,7 @@ runcode(function()
         end
     })
 
-    PlayEmote.CreateToggle({
+    PlayEmote:CreateToggle({
         Name = "Loop Emote",
         Default = false,
         Function = function(callback)
@@ -5355,7 +5248,7 @@ runcode(function()
         end
     })
 
-    UISpoof = PlayEmote.CreateToggle({
+    UISpoof = PlayEmote:CreateToggle({
         Name = "UI Spoof",
         Default = false,
         Function = function(callback)
@@ -5383,7 +5276,7 @@ runcode(function()
             end
         end
     })
-    AnimSpoof = PlayEmote.CreateToggle({
+    AnimSpoof = PlayEmote:CreateToggle({
         Name = "Sound Spoof",
         Default = true,
         Function = function(callback)
@@ -5398,7 +5291,7 @@ runcode(function()
     SelectedEmote = Emotes[1] and Emotes[1].Value or nil
 end)
 
-runcode(function()
+run(function()
     local SpoofBtn = {}
     local RanksData = require(ReplicatedStorage.Modules.DataModules.RanksData)
     local rankNames = {}
@@ -5573,7 +5466,7 @@ runcode(function()
         table.clear(biEntries)
     end
 
-    SpoofBtn = getCategory("Misc"):CreateModule({
+    SpoofBtn = createModule(optionCategory("miscPanel"), {
         Name = "StreamerMode",
         Function = function(callback)
             spoofBtnEnabled = callback == true
@@ -5593,7 +5486,7 @@ runcode(function()
         end
     })
 
-    lbSpoofToggle = SpoofBtn.CreateToggle({
+    lbSpoofToggle = SpoofBtn:CreateToggle({
         Name = "Leaderboard Spoof",
         Default = false,
         Function = function(callback)
@@ -5617,14 +5510,14 @@ runcode(function()
             end
         end
     })
-    LbRank = SpoofBtn.CreateSlider({
+    LbRank = SpoofBtn:CreateSlider({
         Name = "LB Rank #",
         Min = 1,
         Max = 100,
         Default = 1,
         Round = 1,
     })
-    LbScore = SpoofBtn.CreateSlider({
+    LbScore = SpoofBtn:CreateSlider({
         Name = "LB Score",
         Min = 0,
         Max = 9999,
@@ -5661,7 +5554,7 @@ runcode(function()
         end
     end
 
-    rankSpoofToggle = SpoofBtn.CreateToggle({
+    rankSpoofToggle = SpoofBtn:CreateToggle({
         Name = "Rank Spoof",
         Default = false,
         Function = function(callback)
@@ -5685,7 +5578,7 @@ runcode(function()
             end
         end
     })
-    RankDrop = SpoofBtn.CreateDropdown({
+    RankDrop = SpoofBtn:CreateDropdown({
         Name = "Rank",
         List = rankNames,
         Default = rankNames[#rankNames] or "Crystal III",
@@ -5729,13 +5622,13 @@ runcode(function()
         end
     end
 
-    nameSpoofToggle = SpoofBtn.CreateToggle({
+    nameSpoofToggle = SpoofBtn:CreateToggle({
         Name = "Name Spoof",
         Default = false,
         Function = function(callback)
             nameSpoofActive = callback
-            _G.aetherNameSpoofActive = callback
-            _G.aetherSpoofName = spoofName
+            _G.phantomNameSpoofActive = callback
+            _G.phantomSpoofName = spoofName
             if callback then
                 local nl = getNameList()
                 local coreGui = game:GetService("CoreGui")
@@ -5805,12 +5698,12 @@ runcode(function()
             end
         end
     })
-    NameTagTextBox = SpoofBtn.CreateTextbox({
+    NameTagTextBox = SpoofBtn:CreateTextbox({
         Name = "Spoof Name",
         Default = "wynnech",
         Function = function(val)
             spoofName = (val and val ~= "") and val or "wynnech"
-            _G.aetherSpoofName = spoofName
+            _G.phantomSpoofName = spoofName
             if nameSpoofActive then
                 local pg = lplr.PlayerGui
                 local gui = pg and pg:FindFirstChild("PlayersNameTagGui")
@@ -5832,7 +5725,7 @@ runcode(function()
     })
     nameSpoofToggle:AddDependent(NameTagTextBox)
 
-    boardInjectToggle = SpoofBtn.CreateToggle({
+    boardInjectToggle = SpoofBtn:CreateToggle({
         Name = "Board Inject",
         Default = false,
         Function = function(callback)
@@ -5854,7 +5747,7 @@ runcode(function()
             end
         end
     })
-    BiRankPos = SpoofBtn.CreateSlider({
+    BiRankPos = SpoofBtn:CreateSlider({
         Name = "Board Pos",
         Min = 1,
         Max = 100,
@@ -5867,7 +5760,7 @@ runcode(function()
             injectLobbyBoards()
         end,
     })
-    BiScore = SpoofBtn.CreateSlider({
+    BiScore = SpoofBtn:CreateSlider({
         Name = "Board Score",
         Min = 0,
         Max = 20000,
@@ -5880,7 +5773,7 @@ runcode(function()
             injectLobbyBoards()
         end,
     })
-    BiRankDrop = SpoofBtn.CreateDropdown({
+    BiRankDrop = SpoofBtn:CreateDropdown({
         Name = "Board Rank Icon",
         List = rankNames,
         Default = "Crystal III",
@@ -5899,12 +5792,12 @@ runcode(function()
     boardInjectToggle:AddDependent(BiRankDrop)
 end)
 
-runcode(function()
+run(function()
     repeat task.wait(1) until lplr.PlayerGui:FindFirstChild("TopbarButtonsGui")
 
     local ServerHop = {}
     local hopCount = 0
-    local cfgPath = "aetherv2/profiles/config/serverHop.json"
+    local cfgPath = "Phantom/storage/config/serverHop.json"
 
     local safeJSONDecode = function(str)
         if type(str) ~= "string" or str == "" then
@@ -5948,7 +5841,7 @@ runcode(function()
 
     local saveConfig = function(enabled, totalHops, extraFields)
         pcall(function()
-            local path = "aetherv2/profiles/config"
+            local path = "Phantom/storage/config"
             if not isfolder(path) then
                 makefolder(path)
             end
@@ -5965,7 +5858,7 @@ runcode(function()
         end)
     end
 
-    local serverListFolder = "aetherv2/profiles/configs"
+    local serverListFolder = "Phantom/storage/configs"
     local serverListPath = serverListFolder .. "/" .. tostring(game.PlaceId)
     local _cacheIndex = 0
 
@@ -6105,8 +5998,9 @@ runcode(function()
         end
     end
 
-    ServerHop = getCategory("Misc"):CreateModule({
+    ServerHop = createModule(optionCategory("miscPanel"), {
         Name = "ServerHop",
+        New = true,
         Function = function(callback)
             if callback then
                 local cfg = readConfig()
@@ -6143,7 +6037,7 @@ runcode(function()
         end
     })
 
-    lowPingEnabled = ServerHop.CreateToggle({
+    lowPingEnabled = ServerHop:CreateToggle({
         Name = "Low Ping Servers",
         Default = false,
         Function = function(on)
@@ -6163,7 +6057,7 @@ runcode(function()
     end)
 end)
 
--- runcode(function()
+-- run(function()
 --     local CFspeed = 50
 --     local CFloop = nil
 
@@ -6213,9 +6107,10 @@ end)
 --         return nil
 --     end
 
---     getCategory("Blatant"):CreateModule({
+--     createModule(optionCategory("blatantPanel"), {
 --         Name = "Creative(blocks)",
--- --         Function = function(callback)
+--         New = true,
+--         Function = function(callback)
 --             local char = lplr.Character
 --             if not char then return end
 --             local hum = char:FindFirstChildOfClass("Humanoid")
@@ -6250,15 +6145,16 @@ end)
 --     })
 -- end)
 
-runcode(function()
+run(function()
     local Knockback = {}
 
     local KBPower = {Value = 80}
     local KBDuration = {Value = 0.15}
     local KBMode = {Value = "Backward"}
 
-    Knockback = getCategory("Utility"):CreateModule({
+    Knockback = createModule(optionCategory("utillityPanel"), {
         Name = "Knockback",
+        New = true,
         Function = function(callback)
             if not callback then return end
             local char = lplr.Character
@@ -6283,7 +6179,7 @@ runcode(function()
         end
     })
 
-    KBPower = Knockback.CreateSlider({
+    KBPower = Knockback:CreateSlider({
         Name = "Power",
         Min = 10, 
         Max = 300, 
@@ -6291,7 +6187,7 @@ runcode(function()
         Function = function(callback) KBPower.Value = callback end
     })
 
-    KBDuration = Knockback.CreateSlider({
+    KBDuration = Knockback:CreateSlider({
         Name = "Duration",
         Min = 0.05, 
         Max = 1, 
@@ -6299,7 +6195,7 @@ runcode(function()
         Function = function(callback) KBDuration.Value = callback end
     })
 
-    KBMode = Knockback.CreateDropdown({
+    KBMode = Knockback:CreateDropdown({
         Name = "Direction",
         List = {"Backward", "Forward", "Up"},
         Default = "Backward",
@@ -6308,7 +6204,7 @@ runcode(function()
 end)
 
 
-runcode(function()
+run(function()
     local itemBBs = {}
     local itemTracked = {}
     local itemConns = {}
@@ -6361,7 +6257,7 @@ runcode(function()
         return bb, bg, bgcr, nameLbl, distLbl
     end
 
-    ItemBtn = getCategory("Render"):CreateModule({
+    ItemBtn = createModule(optionCategory("renderPanel"), {
         Name = "ItemESP",
         Function = function(callback)
             if callback then
@@ -6453,52 +6349,52 @@ runcode(function()
             end
         end
     })
-    ItemColor = ItemBtn.CreateDropdown({
+    ItemColor = ItemBtn:CreateDropdown({
         Name = "Color",
         List = PHANTOM_COL_LIST,
         Default = "Theme",
         Function = function()end,
     })
-    ItemRarity = ItemBtn.CreateToggle({
+    ItemRarity = ItemBtn:CreateToggle({
         Name = "Rarity Color",
         Default = true,
         Function = function()end,
     })
-    ItemShowName = ItemBtn.CreateToggle({
+    ItemShowName = ItemBtn:CreateToggle({
         Name = "Show Name",
         Default = true,
         Function = function()end,
     })
-    ItemShowDist = ItemBtn.CreateToggle({
+    ItemShowDist = ItemBtn:CreateToggle({
         Name = "Show Distance",
         Default = true,
         Function = function()end,
     })
-    ItemShowId = ItemBtn.CreateToggle({
+    ItemShowId = ItemBtn:CreateToggle({
         Name = "Show ID",
         Default = false,
         Function = function()end,
     })
-    ItemMaxDist = ItemBtn.CreateSlider({
+    ItemMaxDist = ItemBtn:CreateSlider({
         Name = "Max Distance",
         Min = 20,
         Max = 300,
         Default = 100,
         Round = 1,
     })
-    ItemSize = ItemBtn.CreateSlider({
+    ItemSize = ItemBtn:CreateSlider({
         Name = "Label Size",
         Min = 60,
         Max = 160,
         Default = 100,
         Round = 1,
     })
-    ItemBg = ItemBtn.CreateToggle({
+    ItemBg = ItemBtn:CreateToggle({
         Name = "Background",
         Default = true,
         Function = function()end,
     })
-    ItemCorner = ItemBtn.CreateDropdown({
+    ItemCorner = ItemBtn:CreateDropdown({
         Name = "Corner Style",
         List = {"Rounded", "Square"},
         Default = "Rounded",
@@ -6506,12 +6402,12 @@ runcode(function()
     })
 end)
 
-runcode(function()
+run(function()
     local origFogEnd, origFogStart, origFogColor, origBright, origAmbient, origAtmDen, origAtmHaze
     local Lighting = game:GetService("Lighting")
     local AV, AVFog, AVAtmos, AVBoost, AVFogEnd, AVFogColor
 
-    AV = getCategory("Utility"):CreateModule({
+    AV = createModule(optionCategory("utillityPanel"), {
         Name = "AntiVision",
         Function = function(callback)
             if callback then
@@ -6554,22 +6450,22 @@ runcode(function()
             end
         end
     })
-    AVFog = AV.CreateToggle({
+    AVFog = AV:CreateToggle({
         Name = "Remove Fog",
         Default = true,
         Function = function()end,
     })
-    AVAtmos = AV.CreateToggle({
+    AVAtmos = AV:CreateToggle({
         Name = "Clear Atmosphere",
         Default = true,
         Function = function()end,
     })
-    AVBoost = AV.CreateToggle({
+    AVBoost = AV:CreateToggle({
         Name = "Boost Lighting",
         Default = false,
         Function = function()end,
     })
-    AVFogEnd= AV.CreateSlider({
+    AVFogEnd= AV:CreateSlider({
         Name = "Fog Range",
         Min = 1000,
         Max = 200000,
@@ -6578,11 +6474,11 @@ runcode(function()
     })
 end)
 
-runcode(function()
+run(function()
     local warnGui, warnFrame, warnLabel = nil, nil, nil
     local NWBtn, NWDist, NWFlash, NWFlashColor, NWShowLabel, NWShowDist, NWPulse
 
-    NWBtn = getCategory("Misc"):CreateModule({
+    NWBtn = createModule(optionCategory("miscPanel"), {
         Name = "NearbyWarn",
         Function = function(callback)
             if callback then
@@ -6663,42 +6559,42 @@ runcode(function()
             end
         end
     })
-    NWDist = NWBtn.CreateSlider({
+    NWDist = NWBtn:CreateSlider({
         Name = "Warn Distance",
         Min = 5,
         Max = 60,
         Default = 15,
         Round = 1,
     })
-    NWFlash = NWBtn.CreateToggle({
+    NWFlash = NWBtn:CreateToggle({
         Name = "Screen Flash",
         Default = true,
         Function = function()end,
     })
-    NWFlashColor = NWBtn.CreateDropdown({
+    NWFlashColor = NWBtn:CreateDropdown({
         Name = "Flash Color",
         List = {"Red", "Orange", "Yellow", "Cyan", "White", "Pink", "Team Color"},
         Default = "Red",
         Function = function()end,
     })
-    NWPulse = NWBtn.CreateToggle({
+    NWPulse = NWBtn:CreateToggle({
         Name = "Pulse Effect",
         Default = true,
         Function = function()end,
     })
-    NWShowLabel = NWBtn.CreateToggle({
+    NWShowLabel = NWBtn:CreateToggle({
         Name = "Show Label",
         Default = true,
         Function = function()end,
     })
-    NWShowDist = NWBtn.CreateToggle({
+    NWShowDist = NWBtn:CreateToggle({
         Name = "Show Distance",
         Default = true,
         Function = function()end,
     })
 end)
 
-runcode(function()
+run(function()
     local tntEntries = {}
     local tntSpawn = {}
     local tntTracked = {}
@@ -6725,7 +6621,7 @@ runcode(function()
         return obj:IsA("BasePart") and obj.Position or nil
     end
 
-    TNTBtn = getCategory("Misc"):CreateModule({
+    TNTBtn = createModule(optionCategory("miscPanel"), {
         Name = "TNTDetector",
         Function = function(callback)
             if callback then
@@ -6869,35 +6765,35 @@ runcode(function()
             end
         end
     })
-    TNTColor = TNTBtn.CreateDropdown({
+    TNTColor = TNTBtn:CreateDropdown({
         Name = "Color",
         List = {"Red", "Orange", "Yellow", "White", "Theme", "Team Color"},
         Default = "Red",
         Function = function()end,
     })
-    TNTMaxDist = TNTBtn.CreateSlider({
+    TNTMaxDist = TNTBtn:CreateSlider({
         Name = "Max Distance",
         Min = 20,
         Max = 400,
         Default = 200,
         Round = 1,
     })
-    TNTShowName = TNTBtn.CreateToggle({
+    TNTShowName = TNTBtn:CreateToggle({
         Name = "Show Name",
         Default = true,
         Function = function()end,
     })
-    TNTShowDist = TNTBtn.CreateToggle({
+    TNTShowDist = TNTBtn:CreateToggle({
         Name = "Show Distance",
         Default = true,
         Function = function()end,
     })
-    TNTBg = TNTBtn.CreateToggle({
+    TNTBg = TNTBtn:CreateToggle({
         Name = "Background",
         Default = true,
         Function = function()end,
     })
-    TNTCorner = TNTBtn.CreateDropdown({
+    TNTCorner = TNTBtn:CreateDropdown({
         Name = "Corner Style",
         List = {"Rounded", "Square"},
         Default = "Rounded",
@@ -6905,7 +6801,7 @@ runcode(function()
     })
 end)
 
-runcode(function()
+run(function()
     local bedEntries = {}
     local BedBtn, BedColor, BedEnemyOnly, BedShowDist, BedShowTeam, BedFillOp, BedOutOp, BedBg, BedCorner
 
@@ -6985,7 +6881,7 @@ runcode(function()
         return label, color
     end
 
-    BedBtn = getCategory("Render"):CreateModule({
+    BedBtn = createModule(optionCategory("renderPanel"), {
         Name = "BedESP",
         Function = function(callback)
             if callback then
@@ -7121,45 +7017,45 @@ runcode(function()
             end
         end
     })
-    BedColor = BedBtn.CreateDropdown({
+    BedColor = BedBtn:CreateDropdown({
         Name = "Enemy Color",
         List = {"Auto", "Red", "Orange", "Yellow", "White", "Theme", "Team Color"},
         Default = "Auto",
         Function = function()end,
     })
-    BedFillOp = BedBtn.CreateSlider({
+    BedFillOp = BedBtn:CreateSlider({
         Name = "Fill Opacity",
         Min = 0,
         Max = 1,
         Default = 0.5,
     })
-    BedOutOp = BedBtn.CreateSlider({
+    BedOutOp = BedBtn:CreateSlider({
         Name = "Outline Opacity",
         Min = 0,
         Max = 1,
         Default = 0,
     })
-    BedEnemyOnly = BedBtn.CreateToggle({
+    BedEnemyOnly = BedBtn:CreateToggle({
         Name = "Enemy Only",
         Default = true,
         Function = function()end,
     })
-    BedShowDist = BedBtn.CreateToggle({
+    BedShowDist = BedBtn:CreateToggle({
         Name = "Show Distance",
         Default = true,
         Function = function()end,
     })
-    BedShowTeam = BedBtn.CreateToggle({
+    BedShowTeam = BedBtn:CreateToggle({
         Name = "Show Team Name",
         Default = true,
         Function = function()end,
     })
-    BedBg = BedBtn.CreateToggle({
+    BedBg = BedBtn:CreateToggle({
         Name = "Background",
         Default = true,
         Function = function()end,
     })
-    BedCorner = BedBtn.CreateDropdown({
+    BedCorner = BedBtn:CreateDropdown({
         Name = "Corner Style",
         List = {"Rounded", "Square"},
         Default = "Rounded",
@@ -7167,11 +7063,11 @@ runcode(function()
     })
 end)
 
-runcode(function()
+run(function()
     local fcActive, fcConn = false, nil
     local FCBtn, FCSpeed, FCFOV, FCNoClip
 
-    FCBtn = getCategory("World"):CreateModule({
+    FCBtn = createModule(optionCategory("worldPanel"), {
         Name = "Freecam",
         Function = function(callback)
             if callback then
@@ -7219,14 +7115,14 @@ runcode(function()
             end
         end
     })
-    FCSpeed = FCBtn.CreateSlider({
+    FCSpeed = FCBtn:CreateSlider({
         Name = "Speed",
         Min = 5,
         Max = 200,
         Default = 30,
         Round = 1,
     })
-    FCFOV = FCBtn.CreateSlider({
+    FCFOV = FCBtn:CreateSlider({
         Name = "FOV",
         Min = 20,
         Max = 120,
@@ -7235,7 +7131,7 @@ runcode(function()
     })
 end)
 
-runcode(function()
+run(function()
     local XRBtn, XROpacity, XRBlocks, XRWool
 
     local function processXray(on)
@@ -7254,7 +7150,7 @@ runcode(function()
         process(workspace:FindFirstChild("PlayersBlocksContainer"),  doWool)
     end
 
-    XRBtn = getCategory("World"):CreateModule({
+    XRBtn = createModule(optionCategory("worldPanel"), {
         Name = "Xray",
         Function = function(callback)
             if callback then
@@ -7269,25 +7165,25 @@ runcode(function()
             end
         end
     })
-    XROpacity = XRBtn.CreateSlider({
+    XROpacity = XRBtn:CreateSlider({
         Name = "Transparency",
         Min = 0.3,
         Max = 0.99,
         Default = 0.88,
     })
-    XRBlocks = XRBtn.CreateToggle({
+    XRBlocks = XRBtn:CreateToggle({
         Name = "Map Blocks",
         Default = true,
         Function = function()end,
     })
-    XRWool = XRBtn.CreateToggle({
+    XRWool = XRBtn:CreateToggle({
         Name = "Player Wool",
         Default = true,
         Function = function()end,
     })
 end)
 
-runcode(function()
+run(function()
     local AHBtn, AHSize, AHPadding, AHBg, AHCorner, AHOpacity, AHPos
 
     local hudGui, hudFrame = nil, nil
@@ -7422,7 +7318,7 @@ runcode(function()
         end
     end
 
-    AHBtn = getCategory("Inventory"):CreateModule({
+    AHBtn = createModule(optionCategory("inventoryPanel"), {
         Name = "ArmorHUD",
         Function = function(callback)
             if callback then
@@ -7482,38 +7378,38 @@ runcode(function()
             end
         end
     })
-    AHPos = AHBtn.CreateDropdown({
+    AHPos = AHBtn:CreateDropdown({
         Name = "Position",
         List = {"Bottom Left", "Bottom Right", "Middle Left", "Middle Right"},
         Default = "Bottom Left",
         Function = function() end,
     })
-    AHSize = AHBtn.CreateSlider({
+    AHSize = AHBtn:CreateSlider({
         Name = "Icon Size",
         Min = 24,
         Max = 64,
         Default = 40,
         Round = 1,
     })
-    AHPadding = AHBtn.CreateSlider({
+    AHPadding = AHBtn:CreateSlider({
         Name = "Icon Spacing",
         Min = 0,
         Max = 16,
         Default = 4,
         Round = 1,
     })
-    AHOpacity = AHBtn.CreateSlider({
+    AHOpacity = AHBtn:CreateSlider({
         Name = "BG Opacity",
         Min = 0,
         Max = 0.9,
         Default = 0.4,
     })
-    AHBg = AHBtn.CreateToggle({
+    AHBg = AHBtn:CreateToggle({
         Name = "Background",
         Default = true,
         Function = function() end,
     })
-    AHCorner = AHBtn.CreateDropdown({
+    AHCorner = AHBtn:CreateDropdown({
         Name = "Corner Style",
         List = {"Rounded", "Square"},
         Default = "Rounded",
@@ -7521,4 +7417,7 @@ runcode(function()
     })
 end)
 
-return vape
+-- AetherV2 lifecycle cleanup for the port.
+if vape and vape.Events and vape.Events.Shutdown then
+    pcall(function() vape.Events.Shutdown:Connect(function() funcs:cleanup() end) end)
+end
