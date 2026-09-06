@@ -1,101 +1,102 @@
 run(function()
-    local DeathSpawn
-    local generation = 0
-    local deathConnection
-    local characterConnection
+	local DeathSpawn
+	local generation = 0
+	local deathConnection
+	local characterConnection
+	local groundConnection
 
-    local function disconnect(connection)
-        if connection then
-            connection:Disconnect()
-        end
-    end
+	local lastPosition
+	local lastRotation
 
-    local function clearConnections()
-        disconnect(deathConnection)
-        disconnect(characterConnection)
-        deathConnection = nil
-        characterConnection = nil
-    end
+	local function disconnect(connection)
+		if connection then
+			connection:Disconnect()
+		end
+	end
 
-    local function getHumanoid(character)
-        return character and character:FindFirstChildOfClass('Humanoid')
-    end
+	local function clearConnections()
+		disconnect(deathConnection)
+		disconnect(characterConnection)
+		disconnect(groundConnection)
 
-    local function getRoot(character)
-        return character and character:FindFirstChild('HumanoidRootPart')
-    end
+		deathConnection = nil
+		characterConnection = nil
+		groundConnection = nil
+	end
 
-    local function saveTransform(character)
-        local root = getRoot(character)
-        if not root then return nil end
+	local function hookCharacter(character, myGeneration)
+		if myGeneration ~= generation or not DeathSpawn.Enabled then return end
 
-        return root.Position, root.CFrame.Rotation
-    end
+		local humanoid = character:FindFirstChildOfClass('Humanoid')
+			or character:WaitForChild('Humanoid', 5)
+		local root = character:FindFirstChild('HumanoidRootPart')
+			or character:WaitForChild('HumanoidRootPart', 5)
 
-    local function placeCharacter(character, position, rotation)
-        local root = getRoot(character) or character:WaitForChild('HumanoidRootPart', 5)
-        if not root or not position then return end
+		if not humanoid or not root then return end
 
-        -- Always attempt the placement as soon as the replacement character exists.
-        root.CFrame = CFrame.new(position) * (rotation or CFrame.identity)
-        root.AssemblyLinearVelocity = Vector3.zero
-    end
+		disconnect(deathConnection)
+		disconnect(groundConnection)
 
-    local function hookCharacter(character, myGeneration)
-        if myGeneration ~= generation or not DeathSpawn.Enabled then return end
+		-- Save the last position only while standing on something.
+		groundConnection = game:GetService('RunService').Heartbeat:Connect(function()
+			if myGeneration ~= generation or not DeathSpawn.Enabled then return end
 
-        local humanoid = getHumanoid(character) or character:WaitForChild('Humanoid', 5)
-        local root = getRoot(character) or character:WaitForChild('HumanoidRootPart', 5)
-        if not humanoid or not root then return end
+			if humanoid.FloorMaterial ~= Enum.Material.Air then
+				lastPosition = root.Position
+				lastRotation = root.CFrame.Rotation
+			end
+		end)
 
-        disconnect(deathConnection)
-        deathConnection = humanoid.Died:Connect(function()
-            if myGeneration ~= generation or not DeathSpawn.Enabled then return end
+		DeathSpawn:Clean(groundConnection)
 
-            -- Capture the exact position and rotation at the moment of death.
-            local position, rotation = saveTransform(character)
-            if not position then return end
+		deathConnection = humanoid.Died:Connect(function()
+			if myGeneration ~= generation or not DeathSpawn.Enabled then return end
+			if not lastPosition then return end
 
-            disconnect(characterConnection)
-            characterConnection = lplr.CharacterAdded:Connect(function(newCharacter)
-                if myGeneration ~= generation or not DeathSpawn.Enabled then return end
+			disconnect(characterConnection)
 
-                task.defer(function()
-                    if myGeneration ~= generation or not DeathSpawn.Enabled then return end
-                    placeCharacter(newCharacter, position, rotation)
-                end)
-            end)
+			characterConnection = lplr.CharacterAdded:Connect(function(newCharacter)
+				if myGeneration ~= generation or not DeathSpawn.Enabled then return end
 
-            DeathSpawn:Clean(characterConnection)
+				task.defer(function()
+					local newRoot = newCharacter:WaitForChild('HumanoidRootPart', 5)
+					if not newRoot then return end
 
-            -- Roblox normally creates the replacement character automatically.
-            -- If the current character remains present, keep attempting to restore
-            -- the saved transform until CharacterAdded supplies the replacement.
-        end)
+					newRoot.CFrame = CFrame.new(lastPosition) * lastRotation
+					newRoot.AssemblyLinearVelocity = Vector3.zero
+					newRoot.AssemblyAngularVelocity = Vector3.zero
+				end)
+			end)
 
-        DeathSpawn:Clean(deathConnection)
-    end
+			DeathSpawn:Clean(characterConnection)
+		end)
 
-    DeathSpawn = vape.Categories.Blatant:CreateModule({
-        Name = 'DeathSpawn',
-        Function = function(callback)
-            generation += 1
-            local myGeneration = generation
-            clearConnections()
+		DeathSpawn:Clean(deathConnection)
+	end
 
-            if not callback then return end
+	DeathSpawn = vape.Categories.Blatant:CreateModule({
+		Name = 'DeathSpawn',
+		Function = function(callback)
+			generation += 1
+			local myGeneration = generation
 
-            if lplr.Character then
-                hookCharacter(lplr.Character, myGeneration)
-            end
+			clearConnections()
 
-            local connection = lplr.CharacterAdded:Connect(function(character)
-                if myGeneration ~= generation or not DeathSpawn.Enabled then return end
-                hookCharacter(character, myGeneration)
-            end)
-            DeathSpawn:Clean(connection)
-        end,
-        Tooltip = 'Respawn at the position and rotation where you died.'
-    })
+			if not callback then return end
+
+			lastPosition = nil
+			lastRotation = nil
+
+			if lplr.Character then
+				hookCharacter(lplr.Character, myGeneration)
+			end
+
+			local connection = lplr.CharacterAdded:Connect(function(character)
+				hookCharacter(character, myGeneration)
+			end)
+
+			DeathSpawn:Clean(connection)
+		end,
+		Tooltip = 'Respawn at your last grounded position and rotation.'
+	})
 end)
--- blatant/FastClimb.lua
