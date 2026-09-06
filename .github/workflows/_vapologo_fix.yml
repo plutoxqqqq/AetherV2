@@ -1,0 +1,43 @@
+name: Apply VapeLogo safety fix
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.head_ref == 'fix/vapologo-errors-v2'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.head_ref }}
+
+      - name: Patch unsafe VapeLogo access
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('guis/new.lua')
+          text = path.read_text(encoding='utf-8').replace('\r\n', '\n').replace('\r', '\n')
+          old = """\t\t\tv.Object.VapeLogo.Accent.BackgroundColor3 = Color3.fromHSV(hue, sat, val)\n\t\t\tv.Object.VapeLogo.V4Logo.BackgroundColor3 = Color3.fromHSV(hue, sat, val)\n\t\t\tv.Object.VapeLogo.V4Logo.TextColor3 = mainapi:TextColor(hue, sat, val)"""
+          new = """\t\t\tlocal mainLogo = v.Object and v.Object:FindFirstChild('VapeLogo', true)\n\t\t\tif mainLogo then\n\t\t\t\tlocal accentObject = mainLogo:FindFirstChild('Accent', true)\n\t\t\t\tif accentObject then\n\t\t\t\t\taccentObject.BackgroundColor3 = Color3.fromHSV(hue, sat, val)\n\t\t\t\tend\n\t\t\t\tlocal v4Logo = mainLogo:FindFirstChild('V4Logo', true)\n\t\t\t\tif v4Logo then\n\t\t\t\t\tv4Logo.BackgroundColor3 = Color3.fromHSV(hue, sat, val)\n\t\t\t\t\tv4Logo.TextColor3 = mainapi:TextColor(hue, sat, val)\n\t\t\t\tend\n\t\t\tend"""
+          if old not in text:
+              raise SystemExit('Expected unsafe VapeLogo access was not found')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          Path('.github/workflows/_vapologo_fix.yml').unlink()
+          PY
+
+      - name: Commit fix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add guis/new.lua .github/workflows/_vapologo_fix.yml
+          git commit -m "fix: guard VapeLogo compatibility access"
+          git push origin HEAD:${{ github.head_ref }}
