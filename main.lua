@@ -75,6 +75,15 @@ local function loadPacked(folder)
 	return true
 end
 
+local function loadLegacy(name)
+	local path = 'aetherv2/games/'..name..'.lua'
+	if isfile(path) or remoteExists('games/'..name..'.lua') then
+		loadstring(downloadFile(path), name)()
+		return true
+	end
+	return false
+end
+
 local function finishLoading()
 	vape.Init = nil
 	vape:Load()
@@ -128,13 +137,17 @@ vape = loadstring(downloadFile('aetherv2/guis/'..gui..'.lua'), 'gui')()
 shared.vape = vape
 
 if not shared.VapeIndependent then
-	loadPacked('universal')
+	if not loadPacked('universal') then
+		loadLegacy('universal')
+	end
 	local place = PLACE_ALIAS[game.PlaceId] or game.PlaceId
 	if vape.Place == nil then
 		vape.Place = place
 	end
 	if not loadPacked(tostring(place)) then
-		warn('[AetherV2] No BedWars module folder for '..tostring(game.PlaceId))
+		if not loadLegacy(tostring(place)) then
+			warn('[AetherV2] No BedWars module for '..tostring(game.PlaceId))
+		end
 	end
 	finishLoading()
 else
