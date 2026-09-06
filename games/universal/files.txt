@@ -1,4 +1,6 @@
 base.lua
+Overlays/Radar.lua
+Overlays/SessionInfo.lua
 Combat/AimAssist.lua
 Combat/AutoClicker.lua
 Combat/Reach.lua
