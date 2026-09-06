@@ -14,6 +14,8 @@ NAME_RE = [
     re.compile(r"register\('(\w+)',\s*'([^']+)'"),
     re.compile(r"\b(kits|minigames|blatant|combat|legit|render|utility|world|inventory|exploits|visuals):CreateModule\(\{\s*Name\s*=\s*'([^']+)'", re.S | re.I),
     re.compile(r'\b(kits|minigames|blatant|combat|legit|render|utility|world|inventory|exploits|visuals):CreateModule\(\{\s*Name\s*=\s*"([^"]+)"', re.S | re.I),
+    re.compile(r"vape:CreateOverlay\(\{\s*Name\s*=\s*'([^']+)'", re.S),
+    re.compile(r'vape:CreateOverlay\(\{\s*Name\s*=\s*"([^"]+)"', re.S),
 ]
 
 CAT_MAP = {
@@ -28,6 +30,8 @@ CAT_MAP = {
     "kits": "Kits",
     "minigames": "Kits",
     "visuals": "Render",
+    "overlays": "Overlays",
+    "overlay": "Overlays",
 }
 
 
@@ -38,8 +42,11 @@ def safe_name(name: str) -> str:
 def classify(chunk: str):
     for pattern in NAME_RE:
         match = pattern.search(chunk)
-        if match:
-            return match.group(1), match.group(2)
+        if not match:
+            continue
+        if match.lastindex == 1:
+            return "Overlays", match.group(1)
+        return match.group(1), match.group(2)
     return None, None
 
 
@@ -114,9 +121,6 @@ def main() -> None:
             continue
         count = split_monolith(src, dest)
         print(f"split {src.name} -> {dest} ({count} modules)")
-        placeholder = dest / "blatant" / "x.lua"
-        if placeholder.exists():
-            placeholder.unlink()
 
 
 if __name__ == "__main__":

@@ -1,0 +1,48 @@
+name: Resplit overlays and legit from monoliths
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - tools/split-games.py
+      - .github/workflows/resplit-overlays.yml
+
+permissions:
+  contents: write
+
+jobs:
+  resplit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Restore monoliths and resplit
+        run: |
+          git show 140d1755e8370abf1e581895bd090f5ccac188eb:games/6872274481.lua > /tmp/6872274481.lua
+          git show 140d1755e8370abf1e581895bd090f5ccac188eb:games/universal.lua > /tmp/universal.lua
+          python3 - <<'PY'
+          from pathlib import Path
+          import importlib.util, shutil
+          spec = importlib.util.spec_from_file_location('split', 'tools/split-games.py')
+          mod = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(mod)
+          for src, dest in [('/tmp/universal.lua', 'games/universal'), ('/tmp/6872274481.lua', 'games/6872274481')]:
+              d = Path(dest)
+              if d.exists():
+                  shutil.rmtree(d)
+              n = mod.split_monolith(Path(src), d)
+              print(dest, n)
+          PY
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add games/universal games/6872274481 tools/split-games.py
+          if git diff --cached --quiet; then echo No changes; exit 0; fi
+          git commit -m "Extract overlay widgets into Overlays/"
+          git pull --rebase origin main
+          git push
