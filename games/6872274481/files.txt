@@ -216,6 +216,7 @@ Utility/KnockbackDelay.lua
 Utility/LeaveParty.lua
 Utility/MemoryFixer.lua
 Utility/MP3Player.lua
+Utility/PearlTP.lua
 Utility/PickupRange.lua
 Utility/Scaffold.lua
 Utility/StaffDetector.lua
@@ -232,7 +233,6 @@ World/Breaker.lua
 World/FastPlace.lua
 World/IgnorePlaceHitboxes.lua
 World/NightmareEmote.lua
-World/PearlTP.lua
 World/PotatoMode.lua
 World/RemoveNeon.lua
 World/Schematica.lua
