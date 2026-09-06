@@ -11399,9 +11399,18 @@ function mainapi:UpdateGUI(hue, sat, val, default)
 
 	for i, v in mainapi.Categories do
 		if i == 'Main' then
-			v.Object.VapeLogo.Accent.BackgroundColor3 = Color3.fromHSV(hue, sat, val)
-			v.Object.VapeLogo.V4Logo.BackgroundColor3 = Color3.fromHSV(hue, sat, val)
-			v.Object.VapeLogo.V4Logo.TextColor3 = mainapi:TextColor(hue, sat, val)
+			local mainLogo = v.Object and v.Object:FindFirstChild('VapeLogo', true)
+			if mainLogo then
+				local accentObject = mainLogo:FindFirstChild('Accent', true)
+				if accentObject then
+					accentObject.BackgroundColor3 = Color3.fromHSV(hue, sat, val)
+				end
+				local v4Logo = mainLogo:FindFirstChild('V4Logo', true)
+				if v4Logo then
+					v4Logo.BackgroundColor3 = Color3.fromHSV(hue, sat, val)
+					v4Logo.TextColor3 = mainapi:TextColor(hue, sat, val)
+				end
+			end
 			for _, button in v.Buttons do
 				if button.Enabled then
 					button.Object.TextColor3 = rainbow and Color3.fromHSV(mainapi:Color((hue - (button.Index * 0.025)) % 1)) or Color3.fromHSV(hue, sat, val)
