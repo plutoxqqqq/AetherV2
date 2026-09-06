@@ -175,146 +175,11 @@ for _, folder in {
 	end
 end
 
--- Per-file cache revisions.
--- GitHub's recursive tree gives each repository blob its SHA. We keep that SHA beside
--- every locally cached file, so an existing file is reused when its remote blob is the
--- same and replaced only when that specific file changed.
-local revisionPath = 'aetherv2/profiles/file-revisions.json'
-local httpService = game:GetService('HttpService')
-local revisions = {}
-local remoteFiles = {}
-local checkedFiles = {}
-
-local function loadRevisions()
-	if not exists(revisionPath) then return end
-	local ok, decoded = pcall(function()
-		return httpService:JSONDecode(readfile(revisionPath))
-	end)
-	if ok and type(decoded) == 'table' then
-		revisions = decoded
-	end
-end
-
-local function saveRevisions()
-	pcall(function()
-		writefile(revisionPath, httpService:JSONEncode(revisions))
-	end)
-end
-
-local function cachePath(relative)
-	return 'aetherv2/'..relative
-end
-
-local function isLocalOnly(relative)
-	return relative:sub(1, 6) == 'songs/' or relative:sub(1, 8) == 'configs/'
-end
-
-local function validDownloadedFile(path, body)
-	if type(body) ~= 'string' or #body < 1 then return false end
-	local head = body:sub(1, 300):lower()
-	if head:find('^%s*404') or head:find('^%s*429') or head:find('^%s*5%d%d:') or head:find('<!doctype html') or head:find('<html') then
-		return false
-	end
-	if path:lower():sub(-4) == '.png' then
-		return body:sub(1, 8) == '\137PNG\r\n\26\n'
-	end
-	return true
-end
-
-local function ensureFolder(path)
-	local parent = path:gsub('\\', '/'):match('^(.*)/[^/]+$')
-	if not parent then return end
-	local built = ''
-	for segment in parent:gmatch('[^/]+') do
-		built = built == '' and segment or built..'/'..segment
-		if not isfolder(built) then
-			pcall(makefolder, built)
-		end
-	end
-end
-
-local function fetchTree()
-	local ok, body = pcall(function()
-		return game:HttpGet('https://api.github.com/repos/plutoxqqqq/AetherV2/git/trees/main?recursive=1', true)
-	end)
-	if not ok or type(body) ~= 'string' then
-		return false, 'GitHub tree request failed'
-	end
-	local decodedOk, decoded = pcall(function()
-		return httpService:JSONDecode(body)
-	end)
-	if not decodedOk or type(decoded) ~= 'table' or type(decoded.tree) ~= 'table' then
-		return false, 'GitHub tree response was invalid'
-	end
-	for _, entry in ipairs(decoded.tree) do
-		if type(entry) == 'table' and entry.type == 'blob' and type(entry.path) == 'string' and type(entry.sha) == 'string' then
-			remoteFiles[entry.path] = entry.sha
-		end
-	end
-	return true
-end
-
-local function downloadCurrent(relative, expectedSha)
-	local path = cachePath(relative)
-	local ok, body = pcall(function()
-		return game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/main/'..relative, true)
-	end)
-	if not ok or not validDownloadedFile(relative, body) then
-		warn('[AetherV2] Failed to update '..relative)
-		return false
-	end
-	if relative:sub(-4) == '.lua' then
-		body = '--This watermark is used to delete the file if its cached, remove it to make the file persist after vape updates.\n'..body
-	end
-	ensureFolder(path)
-	local wrote = pcall(writefile, path, body)
-	if not wrote then
-		warn('[AetherV2] Failed to write '..path)
-		return false
-	end
-	revisions[relative] = expectedSha
-	checkedFiles[relative] = true
-	return true
-end
-
-local function refreshCachedFiles()
-	loadRevisions()
-	local ok, err = fetchTree()
-	if not ok then
-		warn('[AetherV2] File revision check skipped: '..tostring(err))
-		return false
-	end
-
-	for relative, remoteSha in pairs(remoteFiles) do
-		if not isLocalOnly(relative) then
-			local path = cachePath(relative)
-			if isfile(path) then
-				if revisions[relative] == remoteSha then
-					checkedFiles[relative] = true
-				else
-					downloadCurrent(relative, remoteSha)
-				end
-			end
-		end
-	end
-
-	return true
-end
-
-refreshCachedFiles()
-
-if not exists('aetherv2/assets/new/loading.png') then
-	pcall(function()
-		local body = game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/main/assets/new/loading.png', true)
-		if type(body) == 'string' and body:sub(1, 8) == '\137PNG\r\n\26\n' then
-			writefile('aetherv2/assets/new/loading.png', body)
-			if remoteFiles['assets/new/loading.png'] then
-				revisions['assets/new/loading.png'] = remoteFiles['assets/new/loading.png']
-				checkedFiles['assets/new/loading.png'] = true
-			end
-		end
-	end)
-end
+pcall(function()
+	local body = game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/main/cache.lua?t='..tostring(os.clock()), true)
+	assert(type(body)=='string' and #body>50 and not body:find('^%s*404'), 'cache.lua missing')
+	assert(loadstring(body, 'cache.lua'))()
+end)
 
 local function loadingParent()
 	if gethui then
@@ -404,17 +269,14 @@ end
 
 if not exists('aetherv2/main.lua') then
 	local ok, body = pcall(function()
-		return game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/main/main.lua', true)
+		local fetch = shared.AetherV2FetchSourceUrl
+		return game:HttpGet((type(fetch)=='function' and fetch('main.lua')) or 'https://raw.githubusercontent.com/plutoxqqqq/AetherV2/main/main.lua', true)
 	end)
 	if not ok or type(body) ~= 'string' or body == '404: Not Found' or #body < 20 then
 		closeLoadingScreen()
 		error('Could not download aetherv2/main.lua')
 	end
 	writefile('aetherv2/main.lua', body)
-	if remoteFiles['main.lua'] then
-		revisions['main.lua'] = remoteFiles['main.lua']
-		checkedFiles['main.lua'] = true
-	end
 end
 
 local ok, result = pcall(function()
@@ -423,17 +285,6 @@ end)
 if not ok then
 	closeLoadingScreen()
 	error(result)
-end
-
--- Only write revisions for files we actually verified or successfully updated.
-if next(checkedFiles) then
-	for relative in pairs(checkedFiles) do
-		local remoteSha = remoteFiles[relative]
-		if remoteSha then
-			revisions[relative] = remoteSha
-		end
-	end
-	saveRevisions()
 end
 
 return result
