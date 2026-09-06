@@ -17,7 +17,6 @@ Blatant/Killaura.lua
 Blatant/NoFallDamage.lua
 Blatant/Step.lua
 Blatant/LongJump.lua
-Blatant/MouseTP.lua
 Blatant/NoClip.lua
 Blatant/Speed.lua
 Blatant/Spider.lua
@@ -25,7 +24,7 @@ Blatant/SpinBot.lua
 Blatant/Jesus.lua
 Blatant/TargetStrafe.lua
 Blatant/Timer.lua
-Blatant/Wallhop.lua
+World/Wallhop.lua
 Render/Arrows.lua
 Render/Chams.lua
 Render/ESP.lua
