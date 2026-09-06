@@ -1,7 +1,79 @@
-# base.lua
-# blatant/init.lua
-# combat/init.lua
-# legit/init.lua
-# render/init.lua
-# utility/init.lua
-# world/init.lua
+base.lua
+Combat/AimAssist.lua
+Combat/AutoClicker.lua
+Combat/Reach.lua
+Combat/SilentAim.lua
+Combat/TriggerBot.lua
+Blatant/AntiVoid.lua
+Blatant/AirWalk.lua
+Blatant/Desync.lua
+Blatant/InfiniteFly.lua
+Blatant/HighJump.lua
+Blatant/HitBoxes.lua
+Blatant/InfiniteJump.lua
+Blatant/Killaura.lua
+Blatant/NoFallDamage.lua
+Blatant/Step.lua
+Blatant/LongJump.lua
+Blatant/MouseTP.lua
+Blatant/NoClip.lua
+Blatant/Speed.lua
+Blatant/Spider.lua
+Blatant/SpinBot.lua
+Blatant/Jesus.lua
+Blatant/TargetStrafe.lua
+Blatant/Timer.lua
+Blatant/Wallhop.lua
+Render/Arrows.lua
+Render/Chams.lua
+Render/ESP.lua
+Render/Fullbright.lua
+Render/GamingChair.lua
+Render/Health.lua
+Render/NameTags.lua
+Render/PlayerModel.lua
+Render/Search.lua
+Render/Tracers.lua
+Render/Waypoints.lua
+Render/ZoomUnlocker.lua
+Utility/AnimationPlayer.lua
+Utility/NoCameraCollision.lua
+Utility/AntiRagdoll.lua
+Utility/AutoRejoin.lua
+Utility/Blink.lua
+Utility/ChatSpammer.lua
+Utility/Disabler.lua
+Utility/Panic.lua
+Utility/Rejoin.lua
+Utility/ServerHop.lua
+Utility/StaffDetector.lua
+Utility/StateSpoofer.lua
+World/Anti-AFK.lua
+World/PromptEditor.lua
+World/Freecam.lua
+World/ForcePlayerCollisions.lua
+World/Gravity.lua
+World/Parkour.lua
+World/SafeWalk.lua
+World/Xray.lua
+Render/Theme.lua
+Legit/Breadcrumbs.lua
+Legit/Cape.lua
+Legit/ChinaHat.lua
+Legit/Clock.lua
+Legit/Coords.lua
+Legit/Disguise.lua
+Legit/FFlagEditor.lua
+Legit/FOV.lua
+Legit/FPS.lua
+Legit/LowHealthVignette.lua
+Legit/Keystrokes.lua
+Legit/Memory.lua
+Legit/Ping.lua
+Legit/SongBeats.lua
+Legit/Speedmeter.lua
+Utility/FPSUnlocker.lua
+Blatant/DeathSpawn.lua
+Blatant/FastClimb.lua
+Blatant/Fly.lua
+Render/HitboxESP.lua
