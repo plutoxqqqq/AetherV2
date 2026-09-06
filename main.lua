@@ -35,7 +35,10 @@ end
 local playersService = cloneref(game:GetService('Players'))
 local httpService = cloneref(game:GetService('HttpService'))
 
-local SOURCE = 'https://raw.githubusercontent.com/plutoxqqqq/AetherV2/main/'
+local SOURCE = (type(shared.AetherV2FetchSourceUrl) == 'function' and shared.AetherV2FetchSourceUrl(''))
+	or ('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'
+		..((type(shared.AetherV2PublicRef) == 'string' and shared.AetherV2PublicRef:gsub('%s+', '') ~= '' and shared.AetherV2PublicRef:gsub('%s+', '')) or 'main')
+		..'/')
 
 local ALLOWED = {
 	['guis/new.lua'] = true,
@@ -56,7 +59,7 @@ local function relativePath(path)
 end
 
 local function isGameModule(path)
-	return path:match('^games/%d+%.lua$') ~= nil
+	return path:match('^games/%d+%.lua$') ~= nil or path:match('^games/%d+%.patch%.lua$') ~= nil
 end
 
 local function isKeptLocal(path)
@@ -285,6 +288,10 @@ if not shared.VapeIndependent then
 			warn('[AetherV2] No game module for '..tostring(game.PlaceId))
 		end
 	end
+	local patchPath = 'aetherv2/games/'..game.PlaceId..'.patch.lua'
+	pcall(function()
+		loadstring(downloadFile(patchPath), tostring(game.PlaceId)..'-patch')(license)
+	end)
 	loadPremiumModules()
 	finishLoading()
 else
