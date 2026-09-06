@@ -176,6 +176,7 @@ Render/ChillLighting.lua
 Render/CustomTags.lua
 Render/GeneratorESP.lua
 Render/Health.lua
+Overlays/HitAccuracy.lua
 Render/ItemESP.lua
 Render/LegacyAnimation.lua
 Render/LootESP.lua
