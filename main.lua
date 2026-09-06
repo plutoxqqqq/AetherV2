@@ -108,12 +108,54 @@ shared.AetherV2FetchSource = function(path)
 	return downloadFile('aetherv2/'..relativePath(path))
 end
 
+local function hardenGui(source)
+	source = source:gsub('fontsize%.Text = text', "fontsize.Text = tostring(text or '')")
+	source = source:gsub('moduletitle%.Text = moduleapi%.DisplayName', "moduletitle.Text = tostring(moduleapi.DisplayName or moduleapi.Name or '')")
+	source = source:gsub('getfontsize%(removeTags%(text%)', "getfontsize(removeTags(text or '')")
+	source = source:gsub('option:Load%(v%)', 'pcall(function() option:Load(v) end)')
+	source = source:gsub('object:Toggle%(true%)', 'pcall(function() object:Toggle(true) end)')
+	source = source:gsub('self:UpdateTextGUI%(true%)', 'pcall(function() self:UpdateTextGUI(true) end)')
+	return source
+end
+
+local function hardenBedWars(source)
+	if not source:find('local function canPlace', 1, true) then
+		source = source:gsub('local function getBlockInterval%(%)', [[local function canPlace()
+	local placer = bedwars.BlockPlacementController and bedwars.BlockPlacementController.blockPlacer
+	if not placer then return false end
+	local ok, info = pcall(function()
+		local selector = placer.clientManager and placer.clientManager:getBlockSelector()
+		return selector and selector:getMouseInfo(0)
+	end)
+	return ok and type(info) == 'table' and info.placementPosition ~= nil
+end
+
+local function canSwing()
+	if not (entitylib and entitylib.isAlive) then return false end
+	if bedwars.SwordController and bedwars.SwordController.disableSwingState then return false end
+	if bedwars.DaoController and bedwars.DaoController.chargingMaid then return false end
+	return true
+end
+
+local function getBlockInterval()]], 1)
+	end
+	source = source:gsub('local kits, list = {}, {}', 'local kitIds, list = {}, {}', 1)
+	source = source:gsub('kits%[v%.name%] = i', 'kitIds[v.name] = i', 1)
+	source = source:gsub('kit = kits%[Kit%.Value%]', 'kit = kitIds[Kit.Value]', 1)
+	source = source:gsub('in bedwars%.ArmorTrimType do', 'in bedwars.ArmorTrimType or {} do')
+	source = source:gsub('in bedwars%.ArmorTrimColor do', 'in bedwars.ArmorTrimColor or {} do')
+	source = source:gsub('in bedwars%.ArmorTrimEffectType do', 'in bedwars.ArmorTrimEffectType or {} do')
+	source = source:gsub('in bedwars%.ItemSkinType do', 'in bedwars.ItemSkinType or {} do')
+	source = source:gsub('return patchAetherRuntime%(AetherMatchRuntime, context%)', 'return patchAetherRuntime(AetherMatchRuntime, AetherRuntimeContext or context)')
+	return source
+end
+
 local function runChunk(source, chunkName, ...)
 	source = tostring(source or '')
 	if chunkName == 'gui' then
-		source = source:gsub('fontsize%.Text = text', "fontsize.Text = tostring(text or '')")
-		source = source:gsub('moduletitle%.Text = moduleapi%.DisplayName', "moduletitle.Text = tostring(moduleapi.DisplayName or moduleapi.Name or '')")
-		source = source:gsub('getfontsize%(removeTags%(text%)', "getfontsize(removeTags(text or '')")
+		source = hardenGui(source)
+	elseif tostring(chunkName):match('^%d+$') then
+		source = hardenBedWars(source)
 	end
 	local chunk, err = compileString(source, chunkName)
 	if not chunk then
