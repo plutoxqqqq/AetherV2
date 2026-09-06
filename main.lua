@@ -13,14 +13,7 @@ if shared.vape then
 end
 
 local vape
-local loadstring = function(...)
-	local res, err = loadstring(...)
-	if err and vape then
-		vape:CreateNotification('AetherV2', 'Failed to load : '..err, 30, 'alert')
-	end
-	return res
-end
-
+local compileString = loadstring
 local queue_on_teleport = queue_on_teleport or function() end
 local isfile = isfile or function(file)
 	local suc, res = pcall(function()
@@ -115,6 +108,25 @@ shared.AetherV2FetchSource = function(path)
 	return downloadFile('aetherv2/'..relativePath(path))
 end
 
+local function runChunk(source, chunkName, ...)
+	source = tostring(source or '')
+	if chunkName == 'gui' then
+		source = source:gsub('fontsize%.Text = text', "fontsize.Text = tostring(text or '')")
+		source = source:gsub('moduletitle%.Text = moduleapi%.DisplayName', "moduletitle.Text = tostring(moduleapi.DisplayName or moduleapi.Name or '')")
+		source = source:gsub('getfontsize%(removeTags%(text%)', "getfontsize(removeTags(text or '')")
+	end
+	local chunk, err = compileString(source, chunkName)
+	if not chunk then
+		error(chunkName..' compile failed: '..tostring(err), 0)
+	end
+	local ok, result = xpcall(function(...)
+		return chunk(...)
+	end, debug.traceback, ...)
+	if not ok then
+		error(chunkName..': '..tostring(result), 0)
+	end
+	return result
+end
 
 local function loadPremiumModules()
 	if shared.AetherV2PremiumAuthorized ~= true then return end
@@ -155,7 +167,7 @@ local function loadPremiumModules()
 	for _, module in ipairs(modules) do
 		local received, source = pcall(fetchSource, module.Path)
 		if received and type(source) == 'string' and #source >= 8 then
-			local chunk, compileError = loadstring(source, 'premium/'..module.Path)
+			local chunk, compileError = compileString(source, 'premium/'..module.Path)
 			if chunk then
 				local categoryName, categoryApi = module.Category, nil
 				for name, category in pairs(vape.Categories or {}) do
@@ -202,7 +214,12 @@ end
 
 local function finishLoading()
 	vape.Init = nil
-	vape:Load()
+	local loaded, loadError = pcall(function()
+		vape:Load()
+	end)
+	if not loaded then
+		warn('[AetherV2] Config load failed: '..tostring(loadError))
+	end
 	if shared.AetherV2PremiumAuthorized and not license.Closet then
 		pcall(function()
 			vape:CreateNotification('AetherV2 Premium', 'Premium key validated', 6, 'info')
@@ -220,11 +237,7 @@ local function finishLoading()
 		teleportedServers = true
 		local teleportScript = [[
 			shared.vapereload = true
-			if shared.VapeDeveloper then
-				loadstring(readfile('aetherv2/main.lua'), 'main')(_scriptconfig)
-			else
-				loadstring(readfile('aetherv2/init.lua'), 'init')(_scriptconfig)
-			end
+			loadstring(game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/main/init.lua?t='..tostring(os.clock()), true), 'init.lua')(_scriptconfig)
 		]]
 		local teleportConfig = httpService:JSONEncode(license)
 		teleportConfig = teleportConfig:gsub('":true', '=true'):gsub('{"', '{')
@@ -242,11 +255,14 @@ local function finishLoading()
 	end))
 
 	if not shared.vapereload and not license.Closet then
-		vape:CreateNotification(
-			'Finished Loading',
-			(vape.VapeButton and 'Press the button in the top right' or 'Press '..table.concat(vape.Keybind or {'RightShift'}, ' + '):upper())..' to open GUI',
-			5
-		)
+		local bind = table.concat(vape.Keybind or {'RightShift'}, ' + '):upper()
+		pcall(function()
+			vape:CreateNotification(
+				'Finished Loading',
+				(vape.VapeButton and 'Press the button in the top right' or 'Press '..bind)..' to open GUI',
+				5
+			)
+		end)
 	end
 end
 
@@ -270,19 +286,19 @@ if not isfile('aetherv2/profiles/gui.txt') then
 	writefile('aetherv2/profiles/gui.txt', 'new')
 end
 
-vape = loadstring(downloadFile('aetherv2/guis/new.lua'), 'gui')(license)
+vape = runChunk(downloadFile('aetherv2/guis/new.lua'), 'gui', license)
 shared.vape = vape
 if _G then _G.vape = vape end
 if getgenv then getgenv().vape = vape end
 
 if not shared.VapeIndependent then
-	loadstring(downloadFile('aetherv2/games/universal.lua'), 'universal')(license)
+	runChunk(downloadFile('aetherv2/games/universal.lua'), 'universal', license)
 	local placePath = 'aetherv2/games/'..game.PlaceId..'.lua'
 	if isfile(placePath) then
-		loadstring(readfile(placePath), tostring(game.PlaceId))(license)
+		pcall(runChunk, readfile(placePath), tostring(game.PlaceId), license)
 	else
 		local ok = pcall(function()
-			loadstring(downloadFile(placePath), tostring(game.PlaceId))(license)
+			runChunk(downloadFile(placePath), tostring(game.PlaceId), license)
 		end)
 		if not ok then
 			warn('[AetherV2] No game module for '..tostring(game.PlaceId))
@@ -290,7 +306,7 @@ if not shared.VapeIndependent then
 	end
 	local patchPath = 'aetherv2/games/'..game.PlaceId..'.patch.lua'
 	pcall(function()
-		loadstring(downloadFile(patchPath), tostring(game.PlaceId)..'-patch')(license)
+		runChunk(downloadFile(patchPath), tostring(game.PlaceId)..'-patch', license)
 	end)
 	loadPremiumModules()
 	finishLoading()
