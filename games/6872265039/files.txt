@@ -16,3 +16,4 @@ Render/WinstreakSpoofer.lua
 Render/StatsBoardSpoof.lua
 Render/LARPKits.lua
 Utility/AutoQueue.lua
+Render/Headless.lua

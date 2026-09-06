@@ -207,7 +207,6 @@ Utility/AutoToxic.lua
 Utility/AutoVoidDrop.lua
 Utility/BackTrack.lua
 Utility/CheatDetector.lua
-Utility/ClaimRewards.lua
 Utility/CustomCursor.lua
 Utility/EntityAnalyser.lua
 Utility/FakeLag.lua
@@ -237,3 +236,14 @@ World/PotatoMode.lua
 World/RemoveNeon.lua
 World/Schematica.lua
 World/ShadowRemover.lua
+Utility/Legless.lua
+Utility/Headless.lua
+Inventory/AutoEnchant.lua
+Render/Water.lua
+Kits/CatExtender.lua
+Utility/AutoReportV2.lua
+Render/QueueCardMods.lua
+Utility/HackerDetector.lua
+Render/WeatherMods.lua
+Render/HotbarVisuals.lua
+Render/HealthbarVisuals.lua
