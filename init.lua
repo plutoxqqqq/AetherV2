@@ -14,10 +14,12 @@ local cloneref = cloneref or function(obj)
 	return obj
 end
 
+local SOURCE = 'main'
+
 local function downloadFile(path, func)
 	if not isfile(path) then
 		local suc, res = pcall(function()
-			return game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..readfile('aetherv2/profiles/commit.txt')..'/'..select(1, path:gsub('aetherv2/', '')), true)
+			return game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..SOURCE..'/'..select(1, path:gsub('aetherv2/', '')), true)
 		end)
 		if not suc or res == '404: Not Found' then
 			error(res)
@@ -44,28 +46,6 @@ for _, folder in {'aetherv2', 'aetherv2/games', 'aetherv2/profiles', 'aetherv2/a
 	if not isfolder(folder) then
 		makefolder(folder)
 	end
-end
-
-local function parseCommit(body)
-	if type(body) ~= 'string' then return nil end
-	local sha = body:match('"sha"%s*:%s*"(%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x)"')
-	if sha and #sha == 40 then return sha end
-	local oid = body:find('currentOid')
-	if oid then
-		local slice = body:sub(oid + 13, oid + 52)
-		if slice and #slice == 40 and slice:match('^%x+$') then return slice end
-	end
-	return nil
-end
-
-local function notify(title, text, duration)
-	pcall(function()
-		cloneref(game:GetService('StarterGui')):SetCore('SendNotification', {
-			Title = title or 'AetherV2',
-			Text = text or '',
-			Duration = duration or 5
-		})
-	end)
 end
 
 local disabledLoading = isfile('aetherv2/profiles/disableloading.txt')
@@ -152,50 +132,56 @@ if not disabledLoading and not license.Closet then
 			end
 		end
 	end)
-	notify('AetherV2', 'Loading…', 4)
 end
 
 _G.AetherV2SetLoadingStatus = setStatus
 _G.AetherV2CloseLoadingScreen = closeLoading
-setStatus('Waiting for game…', 0.08)
+setStatus('Starting…', 0.08)
 
 if not game:IsLoaded() then
 	game.Loaded:Wait()
 end
 
 if not shared.VapeDeveloper then
-	local commit
+	local cachedVersion = isfile('aetherv2/profiles/version.txt') and readfile('aetherv2/profiles/version.txt'):gsub('%s+', '') or ''
+	local remoteVersion
 	pcall(function()
-		commit = parseCommit(game:HttpGet('https://api.github.com/repos/plutoxqqqq/AetherV2/commits/main', true))
+		remoteVersion = game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..SOURCE..'/version.txt', true)
 	end)
-	if not commit then
-		local _, html = pcall(function()
-			return game:HttpGet('https://github.com/plutoxqqqq/AetherV2', true)
-		end)
-		commit = parseCommit(html)
+	if type(remoteVersion) == 'string' then
+		remoteVersion = remoteVersion:gsub('%s+$', '')
+		if remoteVersion:find('^%s*<!doctype html') or remoteVersion == '404: Not Found' then
+			remoteVersion = nil
+		end
+	else
+		remoteVersion = nil
 	end
-	commit = commit or 'main'
 
-	local cached = isfile('aetherv2/profiles/commit.txt') and readfile('aetherv2/profiles/commit.txt'):gsub('%s+', '') or ''
-	-- Only wipe when a real 40-char SHA changes. Never wipe just because fallback is "main".
-	if #commit == 40 and cached ~= '' and cached ~= commit then
-		setStatus('Updating cached files…', 0.14)
+	if remoteVersion and cachedVersion ~= '' and cachedVersion ~= remoteVersion then
+		setStatus('Updating…', 0.14)
 		wipeFolder('aetherv2')
 		wipeFolder('aetherv2/games')
 		wipeFolder('aetherv2/guis')
 		wipeFolder('aetherv2/libraries')
+		pcall(delfile, 'aetherv2/main.lua')
+		pcall(delfile, 'aetherv2/games/universal/pack.lua')
+		pcall(delfile, 'aetherv2/games/6872274481/pack.lua')
+		pcall(delfile, 'aetherv2/games/6872265039/pack.lua')
 	end
 
-	writefile('aetherv2/profiles/commit.txt', commit)
-	shared.AetherV2PublicRef = commit
+	if remoteVersion then
+		writefile('aetherv2/profiles/version.txt', remoteVersion)
+	end
+	writefile('aetherv2/profiles/commit.txt', SOURCE)
+	shared.AetherV2PublicRef = SOURCE
 end
 
 if isfile('aetherv2/main.lua') then
 	local cachedMain = readfile('aetherv2/main.lua')
-	if not cachedMain:find('loadPackedParallel', 1, true) then
+	if not cachedMain:find('loadPackedFast', 1, true) then
 		delfile('aetherv2/main.lua')
 	end
 end
 
-setStatus('Loading main script…', 0.22)
+setStatus('Loading…', 0.22)
 return loadstring(downloadFile('aetherv2/main.lua'), 'main')(license)
