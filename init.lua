@@ -36,8 +36,11 @@ local function wipeFolder(path)
 	if not isfolder(path) then return end
 	for _, file in listfiles(path) do
 		if file:find('loader') or file:find('init') then continue end
-		if isfile(file) and select(1, readfile(file):find('--This watermark is used to delete the file if its cached, remove it to make the file persist after vape updates.')) == 1 then
-			delfile(file)
+		if isfile(file) then
+			local ok, body = pcall(readfile, file)
+			if ok and type(body) == 'string' and (body:find('if canDebug then', 1, true) or select(1, body:find('--This watermark is used to delete the file if its cached, remove it to make the file persist after vape updates.')) == 1) then
+				pcall(delfile, file)
+			end
 		end
 	end
 end
@@ -142,8 +145,21 @@ if not game:IsLoaded() then
 	game.Loaded:Wait()
 end
 
+for _, stale in {
+	'aetherv2/games/6872274481/pack.lua',
+	'aetherv2/games/6872274481/Blatant/DamageBoost.lua',
+	'aetherv2/games/6872274481/Blatant/DeathAdderAimbot.lua',
+	'aetherv2/games/6872274481/Combat/BowAssist.lua',
+	'aetherv2/games/6872274481/Combat/HitregAdjuster.lua',
+	'aetherv2/games/6872274481/Combat/NoClickDelay.lua',
+} do
+	if isfile(stale) then
+		pcall(delfile, stale)
+	end
+end
+
 if not shared.VapeDeveloper then
-	local cachedVersion = isfile('aetherv2/profiles/version.txt') and readfile('aetherv2/profiles/version.txt'):gsub('%s+', '') or ''
+	local cachedVersion = isfile('aetherv2/profiles/version.txt') and readfile('aetherv2/profiles/version.txt') or ''
 	local remoteVersion
 	pcall(function()
 		remoteVersion = game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..SOURCE..'/version.txt', true)
@@ -157,7 +173,7 @@ if not shared.VapeDeveloper then
 		remoteVersion = nil
 	end
 
-	if remoteVersion and cachedVersion ~= '' and cachedVersion ~= remoteVersion then
+	if remoteVersion and cachedVersion:gsub('%s+', '') ~= remoteVersion:gsub('%s+', '') then
 		setStatus('Updating…', 0.14)
 		wipeFolder('aetherv2')
 		wipeFolder('aetherv2/games')
