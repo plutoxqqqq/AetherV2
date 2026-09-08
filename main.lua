@@ -1,7 +1,9 @@
 local license = ... or {}
 if type(license) ~= 'table' then license = {} end
 
-repeat task.wait() until game:IsLoaded()
+if not game:IsLoaded() then
+	game.Loaded:Wait()
+end
 if shared.vape then shared.vape:Uninject() end
 
 local vape
@@ -26,7 +28,7 @@ end
 local playersService = cloneref(game:GetService('Players'))
 local starterGui = cloneref(game:GetService('StarterGui'))
 
-local SOURCE_COMMIT = (isfile('aetherv2/profiles/commit.txt') and readfile('aetherv2/profiles/commit.txt'):gsub('%s+', '')) or 'main'
+local SOURCE_COMMIT = 'main'
 local BEDWARS_UNIVERSE = 2619619496
 local PLACE_ALIAS = {
 	[8444591321] = 6872274481,
@@ -35,7 +37,7 @@ local PLACE_ALIAS = {
 	[132768098780837] = 6872274481,
 	[16008862571] = 6872265039,
 }
-local DOWNLOAD_BATCH = 12
+local DOWNLOAD_BATCH = 24
 
 local function setPhase(text, progress)
 	if _G.AetherV2SetLoadingStatus then
@@ -113,40 +115,53 @@ end
 
 local function downloadParallel(folder, names, phaseStart, phaseSpan)
 	local bodies = table.create(#names)
-	local done, cursor, failed = 0, 0, 0
-	local function pump()
-		while cursor < #names do
-			cursor += 1
-			local idx, name = cursor, names[cursor]
-			task.spawn(function()
-				local ok, body = pcall(downloadFile, 'aetherv2/games/'..folder..'/'..name)
-				if ok then
-					bodies[idx] = body
-				else
-					failed += 1
-					warn('[AetherV2] skipped '..folder..'/'..name..': '..tostring(body))
-				end
-				done += 1
-				setPhase('Downloading '..folder..' ('..done..'/'..#names..')', phaseStart + (done / math.max(#names, 1)) * phaseSpan)
-			end)
-			if cursor % DOWNLOAD_BATCH == 0 then
-				repeat task.wait() until done >= cursor or (cursor - done) < DOWNLOAD_BATCH
+	local done, cursor = 0, 0
+	while cursor < #names do
+		cursor += 1
+		local idx, name = cursor, names[cursor]
+		task.spawn(function()
+			local ok, body = pcall(downloadFile, 'aetherv2/games/'..folder..'/'..name)
+			if ok then
+				bodies[idx] = body
+			else
+				warn('[AetherV2] skipped '..folder..'/'..name..': '..tostring(body))
 			end
+			done += 1
+			if done == 1 or done == #names or done % 8 == 0 then
+				setPhase('Downloading '..folder..' ('..done..'/'..#names..')', phaseStart + (done / math.max(#names, 1)) * phaseSpan)
+			end
+		end)
+		if cursor % DOWNLOAD_BATCH == 0 then
+			repeat task.wait() until done >= cursor or (cursor - done) < DOWNLOAD_BATCH
 		end
-		repeat task.wait() until done >= #names
 	end
-	pump()
-	return bodies, failed
+	repeat task.wait() until done >= #names
+	return bodies
 end
 
--- loadPackedParallel: download modules concurrently and compile each file on its own
+-- loadPackedFast: use a local pack.lua when present, otherwise download once and cache the pack
 local function loadPacked(folder)
+	local packPath = 'aetherv2/games/'..folder..'/pack.lua'
+	if isfile(packPath) then
+		setPhase('Loading '..folder, 0.72)
+		local chunk, err = loadstring(readfile(packPath), folder)
+		if chunk then
+			local ok, result = pcall(chunk, license)
+			if ok then
+				return true
+			end
+			warn('[AetherV2] pack run failed '..folder..': '..tostring(result))
+		else
+			warn('[AetherV2] pack compile failed '..folder..': '..tostring(err))
+		end
+		pcall(delfile, packPath)
+	end
+
 	local listPath = 'aetherv2/games/'..folder..'/files.txt'
-	local relList = 'games/'..folder..'/files.txt'
 	local list
 	if isfile(listPath) then
 		list = readfile(listPath)
-	elseif remoteExists(relList) then
+	elseif remoteExists('games/'..folder..'/files.txt') then
 		list = downloadFile(listPath)
 	else
 		return false, 'no files.txt'
@@ -156,27 +171,43 @@ local function loadPacked(folder)
 		return false, 'empty files.txt'
 	end
 	setPhase('Downloading '..folder, 0.4)
-	local bodies = select(1, downloadParallel(folder, names, 0.4, 0.35))
-	local ran = 0
-	for i, name in ipairs(names) do
-		local body = bodies[i]
-		if body then
-			setPhase('Loading '..folder..' ('..i..'/'..#names..')', 0.75 + (i / #names) * 0.1)
-			local chunk, err = loadstring(body, folder..'/'..name)
-			if not chunk then
-				warn('[AetherV2] compile failed '..folder..'/'..name..': '..tostring(err))
-			else
-				local ok, result = pcall(chunk, license)
-				if not ok then
-					warn('[AetherV2] run failed '..folder..'/'..name..': '..tostring(result))
+	local bodies = downloadParallel(folder, names, 0.4, 0.35)
+	local chunks = {}
+	for i = 1, #names do
+		if bodies[i] then
+			table.insert(chunks, bodies[i])
+		end
+	end
+	if #chunks == 0 then
+		return false, 'no chunks'
+	end
+	local packed = table.concat(chunks, '\n')
+	ensureParentFolder(packPath)
+	pcall(writefile, packPath, packed)
+	setPhase('Loading '..folder, 0.82)
+	local chunk, err = loadstring(packed, folder)
+	if not chunk then
+		warn('[AetherV2] compile failed '..folder..': '..tostring(err))
+		local ran = 0
+		for i, name in ipairs(names) do
+			local body = bodies[i]
+			if body then
+				local one, oneErr = loadstring(body, folder..'/'..name)
+				if one then
+					if pcall(one, license) then
+						ran += 1
+					end
 				else
-					ran += 1
+					warn('[AetherV2] compile failed '..folder..'/'..name..': '..tostring(oneErr))
 				end
 			end
 		end
+		return ran > 0
 	end
-	if ran == 0 then
-		return false, 'no chunks'
+	local ok, result = pcall(chunk, license)
+	if not ok then
+		warn('[AetherV2] run failed '..folder..': '..tostring(result))
+		return false, result
 	end
 	return true
 end
@@ -230,7 +261,7 @@ local function finishLoading()
 				if shared.VapeDeveloper then
 					loadstring(readfile('aetherv2/init.lua'), 'loader')()
 				else
-					loadstring(game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..readfile('aetherv2/profiles/commit.txt')..'/init.lua', true), 'loader')()
+					loadstring(game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/main/init.lua', true), 'loader')()
 				end
 			]]
 			if shared.VapeDeveloper then
@@ -246,14 +277,13 @@ local function finishLoading()
 
 	local bind = table.concat(vape.GUIBind and vape.GUIBind.Keys or vape.Keybind or {'RightShift'}, ' + '):upper()
 	local msg = vape.VapeButton and 'Press the button in the top right to open GUI' or 'Press '..bind..' to open GUI'
-	toast('Finished Loading', msg, 8)
 	if vape.CreateNotification then
 		pcall(function()
-			vape:CreateNotification('Finished Loading', msg, 6)
+			vape:CreateNotification('Finished Loading', msg, 4)
 		end)
 	end
 	setPhase('Loaded', 1)
-	task.delay(0.8, closeLoading)
+	closeLoading()
 end
 
 if not isfile('aetherv2/profiles/gui.txt') then
