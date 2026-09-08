@@ -201,5 +201,3 @@ run(function()
     })
     Clear = BowAssist:CreateToggle({Name = 'Clear shot only', Default = true, Tooltip = 'Stops assisting when the aim path is obstructed.'})
 end)
-
-if canDebug then
