@@ -10,7 +10,6 @@ Blatant/DamageBoost.lua
 Blatant/DeathAdderAimbot.lua
 Blatant/Fly.lua
 Blatant/HitBoxes.lua
-Blatant/InstantKill.lua
 Blatant/KeepSprint.lua
 Blatant/Killaura.lua
 Blatant/LongJump.lua
@@ -239,7 +238,6 @@ World/ShadowRemover.lua
 Utility/Legless.lua
 Utility/Headless.lua
 Inventory/AutoEnchant.lua
-Render/Water.lua
 Kits/CatExtender.lua
 Utility/AutoReportV2.lua
 Render/QueueCardMods.lua
@@ -249,4 +247,3 @@ Render/HotbarVisuals.lua
 Render/HealthbarVisuals.lua
 Utility/ClaimRewards.lua
 Combat/ReachCE.lua
-Kits/TrixieExploit.lua

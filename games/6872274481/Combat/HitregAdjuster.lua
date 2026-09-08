@@ -29,4 +29,3 @@ run(function()
 	})
 	Hitreg = HitregAdjuster:CreateSlider({Name = 'Hitreg', Min = 1, Max = 36, Default = 35, Suffix = ' hits / 10s'})
 end)
-end

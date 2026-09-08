@@ -55,4 +55,3 @@ run(function()
 	TargetPart = DeathAdderAimbot:CreateDropdown({Name = 'Part', List = {'RootPart', 'Head'}})
 	FOV = DeathAdderAimbot:CreateSlider({Name = 'FOV', Min = 1, Max = 1000, Default = 1000})
 end)
-end
