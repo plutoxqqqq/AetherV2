@@ -192,7 +192,7 @@ end
 
 if isfile('aetherv2/main.lua') then
 	local cachedMain = readfile('aetherv2/main.lua')
-	if not cachedMain:find('resolvePlace', 1, true) then
+	if not cachedMain:find('loadPackedParallel', 1, true) then
 		delfile('aetherv2/main.lua')
 	end
 end

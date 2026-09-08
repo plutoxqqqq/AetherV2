@@ -35,6 +35,7 @@ local PLACE_ALIAS = {
 	[132768098780837] = 6872274481,
 	[16008862571] = 6872265039,
 }
+local DOWNLOAD_BATCH = 12
 
 local function setPhase(text, progress)
 	if _G.AetherV2SetLoadingStatus then
@@ -61,17 +62,32 @@ local function toast(title, text, duration)
 	end)
 end
 
+local function ensureParentFolder(path)
+	local parent = path:match('^(.*)/[^/]+$')
+	if not parent or parent == '' then
+		return
+	end
+	local acc = ''
+	for part in string.gmatch(parent, '[^/]+') do
+		acc = acc == '' and part or (acc..'/'..part)
+		if not isfolder(acc) then
+			pcall(makefolder, acc)
+		end
+	end
+end
+
 local function downloadFile(path, func)
 	if not isfile(path) then
 		local suc, res = pcall(function()
 			return game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..SOURCE_COMMIT..'/'..select(1, path:gsub('aetherv2/', '')), true)
 		end)
-		if not suc or res == '404: Not Found' then
+		if not suc or res == '404: Not Found' or (type(res) == 'string' and res:find('^%s*<!doctype html')) then
 			error(res)
 		end
 		if path:find('.lua') then
 			res = '--This watermark is used to delete the file if its cached, remove it to make the file persist after vape updates.\n'..res
 		end
+		ensureParentFolder(path)
 		writefile(path, res)
 	end
 	return (func or readfile)(path)
@@ -84,6 +100,46 @@ local function remoteExists(rel)
 	return suc and type(res) == 'string' and res ~= '404: Not Found' and not res:find('^%s*<!doctype html')
 end
 
+local function parseFileList(list)
+	local names = {}
+	for line in string.gmatch(list, '[^\r\n]+') do
+		line = line:gsub('^%s+', ''):gsub('%s+$', '')
+		if line ~= '' and not line:find('^#') then
+			table.insert(names, line)
+		end
+	end
+	return names
+end
+
+local function downloadParallel(folder, names, phaseStart, phaseSpan)
+	local bodies = table.create(#names)
+	local done, cursor, failed = 0, 0, 0
+	local function pump()
+		while cursor < #names do
+			cursor += 1
+			local idx, name = cursor, names[cursor]
+			task.spawn(function()
+				local ok, body = pcall(downloadFile, 'aetherv2/games/'..folder..'/'..name)
+				if ok then
+					bodies[idx] = body
+				else
+					failed += 1
+					warn('[AetherV2] skipped '..folder..'/'..name..': '..tostring(body))
+				end
+				done += 1
+				setPhase('Downloading '..folder..' ('..done..'/'..#names..')', phaseStart + (done / math.max(#names, 1)) * phaseSpan)
+			end)
+			if cursor % DOWNLOAD_BATCH == 0 then
+				repeat task.wait() until done >= cursor or (cursor - done) < DOWNLOAD_BATCH
+			end
+		end
+		repeat task.wait() until done >= #names
+	end
+	pump()
+	return bodies, failed
+end
+
+-- loadPackedParallel: download modules concurrently and compile each file on its own
 local function loadPacked(folder)
 	local listPath = 'aetherv2/games/'..folder..'/files.txt'
 	local relList = 'games/'..folder..'/files.txt'
@@ -95,38 +151,32 @@ local function loadPacked(folder)
 	else
 		return false, 'no files.txt'
 	end
-	local names, chunks = {}, {}
-	for line in string.gmatch(list, '[^\r\n]+') do
-		line = line:gsub('^%s+', ''):gsub('%s+$', '')
-		if line ~= '' and not line:find('^#') then
-			table.insert(names, line)
-		end
-	end
+	local names = parseFileList(list)
 	if #names == 0 then
 		return false, 'empty files.txt'
 	end
+	setPhase('Downloading '..folder, 0.4)
+	local bodies = select(1, downloadParallel(folder, names, 0.4, 0.35))
+	local ran = 0
 	for i, name in ipairs(names) do
-		setPhase('Downloading '..folder..' ('..i..'/'..#names..')', 0.4 + (i / #names) * 0.35)
-		local ok, body = pcall(downloadFile, 'aetherv2/games/'..folder..'/'..name)
-		if ok then
-			table.insert(chunks, body)
-		else
-			warn('[AetherV2] skipped '..folder..'/'..name..': '..tostring(body))
+		local body = bodies[i]
+		if body then
+			setPhase('Loading '..folder..' ('..i..'/'..#names..')', 0.75 + (i / #names) * 0.1)
+			local chunk, err = loadstring(body, folder..'/'..name)
+			if not chunk then
+				warn('[AetherV2] compile failed '..folder..'/'..name..': '..tostring(err))
+			else
+				local ok, result = pcall(chunk, license)
+				if not ok then
+					warn('[AetherV2] run failed '..folder..'/'..name..': '..tostring(result))
+				else
+					ran += 1
+				end
+			end
 		end
 	end
-	if #chunks == 0 then
+	if ran == 0 then
 		return false, 'no chunks'
-	end
-	setPhase('Compiling '..folder, 0.8)
-	local chunk, err = loadstring(table.concat(chunks, '\n'), folder)
-	if not chunk then
-		warn('[AetherV2] compile failed '..folder..': '..tostring(err))
-		return false, err
-	end
-	local ok, result = pcall(chunk, license)
-	if not ok then
-		warn('[AetherV2] run failed '..folder..': '..tostring(result))
-		return false, result
 	end
 	return true
 end
