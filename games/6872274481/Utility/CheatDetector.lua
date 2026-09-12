@@ -25,6 +25,7 @@ run(function()
         {Name = 'Impossible hits', Children = {'Killaura', 'SilentAim', 'HitBoxes', 'Reach'}},
         {Name = 'Blatant modules', Children = {'PlayerAttach', 'AntiDeath', 'Phase', 'Invisible', 'HighJump', 'Speed'}},
         {Name = 'Bypasses', Children = {'NoFallDamage', 'VoidFlight', 'ExtremeSpeed'}},
+        {Name = 'Simple scans', Children = {'Teleport', 'Speed jump', 'Infinite fly', 'Invisible model'}},
         {Name = 'AutoKit'},
         {Name = 'Crashers', Children = {'Animation', 'Remote'}},
         {Name = 'Breaker'},
@@ -126,9 +127,14 @@ run(function()
         Animation = 3,
         Remote = 3,
         Breaker = 4,
-        ProjectileAim = 4
+        ProjectileAim = 4,
+        Teleport = 2,
+        ['Speed jump'] = 2,
+        InfiniteFly = 2,
+        ['Invisible model'] = 2
     }
 
+    local TPDist, SpeedDist
     local strikes = {}
     
     
@@ -185,8 +191,17 @@ run(function()
         if not CheatersFlagged[player] then
             CheatersFlagged[player] = true
             whitelist.customtags[player.Name] = {{text = 'CHEATER', color = Color3.new(1, 0, 0)}}
-            
-            
+            pcall(function()
+                if not isfolder or not writefile then return end
+                if not isfolder('aether') then makefolder('aether') end
+                local cache = {}
+                pcall(function()
+                    cache = httpService:JSONDecode(readfile('aether/exploiters.json'))
+                end)
+                cache[player.Name] = cache[player.Name] or {UserId = player.UserId, Hits = {}}
+                table.insert(cache[player.Name].Hits, {reason = reason, t = os.time()})
+                writefile('aether/exploiters.json', httpService:JSONEncode(cache))
+            end)
             notif('CheatDetector', `{player.Name} flagged for {reason:lower()}{detail and ' ('..detail..')' or ''}`, 10, 'alert')
         end
     end
@@ -416,7 +431,11 @@ run(function()
         Animation = 'Crashers',
         Remote = 'Crashers',
         Breaker = 'Breaker',
-        ProjectileAim = 'ProjectileAimbot and Aura'
+        ProjectileAim = 'ProjectileAimbot and Aura',
+        Teleport = 'Simple scans',
+        ['Speed jump'] = 'Simple scans',
+        InfiniteFly = 'Simple scans',
+        ['Invisible model'] = 'Simple scans'
     }
     
     local CHECK_TOGGLE = {
@@ -1277,6 +1296,110 @@ run(function()
         end))
     end
 
+    Pollers.Teleport = function()
+        local tracks = {}
+        return function(now, list)
+            for _, rec in list do
+                local plr = rec.Player
+                local track = tracks[plr]
+                if not track or track.Character ~= rec.Character then
+                    tracks[plr] = {Character = rec.Character, Position = rec.Position, Time = now, Distance = 0}
+                    continue
+                end
+                track.Distance += (rec.Position - track.Position).Magnitude
+                track.Position = rec.Position
+                if now - track.Time < 2.5 then continue end
+                local distance = track.Distance
+                track.Distance, track.Time = 0, now
+                if distance >= TPDist.Value and not rec.Teleported then
+                    strike(plr, 'Teleport', 'teleport', `moved {math.floor(distance)} studs between checks with no teleport behind it`)
+                end
+            end
+        end
+    end
+
+    Pollers['Speed jump'] = function()
+        local tracks = {}
+        return function(now, list)
+            for _, rec in list do
+                local plr = rec.Player
+                if not rec.Teleported then
+                    tracks[plr] = nil
+                    continue
+                end
+                local track = tracks[plr]
+                if not track or track.Character ~= rec.Character then
+                    tracks[plr] = {Character = rec.Character, Position = rec.Position, Time = now, Distance = 0}
+                    continue
+                end
+                track.Distance += (rec.Position - track.Position).Magnitude
+                track.Position = rec.Position
+                if now - track.Time < 2.5 then continue end
+                local distance = track.Distance
+                track.Distance, track.Time = 0, now
+                if distance >= SpeedDist.Value then
+                    strike(plr, 'Speed jump', 'teleport speed', `covered {math.floor(distance)} studs while a teleport was active`)
+                end
+            end
+        end
+    end
+
+    Pollers.InfiniteFly = function()
+        local tracks = {}
+        local params = RaycastParams.new()
+        params.FilterType = Enum.RaycastFilterType.Exclude
+        return function(now, list)
+            for _, rec in list do
+                local plr = rec.Player
+                if rec.Teleported or rec.Effects.Vertical then
+                    tracks[plr] = nil
+                    continue
+                end
+                local track = tracks[plr]
+                if not track or track.Character ~= rec.Character then
+                    tracks[plr] = {Character = rec.Character, Position = rec.Position, Time = now, Distance = 0}
+                    continue
+                end
+                track.Distance += (rec.Position - track.Position).Magnitude
+                track.Position = rec.Position
+                if now - track.Time < 2.5 then continue end
+                local distance = track.Distance
+                track.Distance, track.Time = 0, now
+                if distance <= 8 or rec.Velocity.Y <= -2 then continue end
+                params.FilterDescendantsInstances = {rec.Character, lplr.Character, gameCamera}
+                if not workspace:Raycast(rec.Position, Vector3.new(0, -80, 0), params) then
+                    strike(plr, 'InfiniteFly', 'infinite fly', 'hovering with no ground below')
+                end
+            end
+        end
+    end
+
+    Pollers['Invisible model'] = function()
+        local held = {}
+        local skip = 0
+        return function(now, list)
+            skip += 1
+            if skip % 5 ~= 0 then return end
+            for _, rec in list do
+                local plr, character = rec.Player, rec.Character
+                if rec.Effects.Invisible or rec.Velocity.Magnitude < 4 or not character then
+                    held[plr] = nil
+                    continue
+                end
+                local head = character:FindFirstChild('Head')
+                if head and head.Transparency >= 0.9 then
+                    held[plr] = (held[plr] or 0) + 1
+                    if held[plr] >= 3 then
+                        held[plr] = 0
+                        strike(plr, 'Invisible model', 'invisibility', 'moving with their head hidden')
+                    end
+                else
+                    held[plr] = nil
+                end
+            end
+        end
+    end
+
     
     
     
@@ -1423,7 +1546,11 @@ run(function()
         VoidFlight = 'A player held or moving below all playable ground for more than three seconds instead of naturally falling',
         ExtremeSpeed = 'Sustained movement over 40 studs/s without a kit movement effect, knockback, teleport, or launch',
         Animation = 'Animation starts many times a second, far past anything play produces',
-        Remote = 'Replicated actions - places, breaks, hits - many times a second'
+        Remote = 'Replicated actions - places, breaks, hits - many times a second',
+        Teleport = 'Moving hundreds of studs across the map between checks without the game reporting a teleport',
+        ['Speed jump'] = 'Covering a large distance between checks while the game reports an official teleport',
+        ['Infinite fly'] = 'Moving high in the air with no ground below and no vertical movement effect',
+        ['Invisible model'] = 'Moving with their head hidden and no invisibility effect of their own'
     }
 
     for _, group in GROUPS do
@@ -1461,5 +1588,26 @@ run(function()
             
             strikes[lplr] = nil
         end
+    })
+
+    TPDist = CheatDetector:CreateSlider({
+        Name = 'TP distance',
+        Min = 80,
+        Max = 800,
+        Default = 400,
+        Suffix = function(val)
+            return val == 1 and 'stud' or 'studs'
+        end,
+        Tooltip = 'How far someone must move between checks before the Teleport scan flags it'
+    })
+    SpeedDist = CheatDetector:CreateSlider({
+        Name = 'Speed distance',
+        Min = 15,
+        Max = 80,
+        Default = 25,
+        Suffix = function(val)
+            return val == 1 and 'stud' or 'studs'
+        end,
+        Tooltip = 'How far someone must move between checks while a teleport is active before the Speed jump scan flags it'
     })
 end)

@@ -16,7 +16,7 @@ run(function()
                 originalLevel = nil
             end
         end,
-        Tooltip = 'Client-sided player level spoof.'
+        Tooltip = 'Client-sided player level spoof'
     })
 
     SetPlayerLevel:CreateSlider({

@@ -311,6 +311,7 @@ run(function()
                         local meleeThreat = Melee.Enabled and grounded and math.abs(root.AssemblyLinearVelocity.Y) < 35 and entitylib.EntityPosition({
                             Range = Range.Value,
                             Players = Targets.Players.Enabled,
+                            Priority = Targets.Priority and Targets.Priority.Value,
                             NPCs = Targets.NPCs.Enabled,
                             Wallcheck = Targets.Walls.Enabled or nil,
                             Sort = sortmethods.Distance,

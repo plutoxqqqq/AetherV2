@@ -228,7 +228,7 @@ run(function()
 	Tooltip = 'Sit in the best gaming chair known to mankind',
     })
     Color = GamingChair:CreateColorSlider({
-	Name = 'Color',
+	Name = 'Colour',
 	Function = function(h, s, v)
 		if chairhighlight then
 			chairhighlight.OutlineColor = Color3.fromHSV(h, s, v)

@@ -41,6 +41,7 @@ run(function()
     end
     local function refreshObject(object, players)
         if not object:IsA('TextLabel') and not object:IsA('TextButton') then return end
+        if type(players) ~= 'table' then return end
         local text = object.Text
         for _, data in players do
                 local player = data.Player
@@ -65,6 +66,7 @@ run(function()
     end
     local function installHooks()
         local gamePlayer = require(replicatedStorage.TS.player['game-player'])
+        if type(gamePlayer) ~= 'table' then return end
         for name, fn in gamePlayer do
             if type(fn) == 'function' and (name:lower():find('name') or name:lower():find('level') or name:lower():find('disguise')) then
                 hooks[name] = fn
@@ -99,7 +101,9 @@ run(function()
                 end))
             else
                 local gamePlayer = bedwars.GamePlayer
-                for name, fn in hooks do gamePlayer[name] = fn end
+                if type(gamePlayer) == 'table' then
+                    for name, fn in hooks do gamePlayer[name] = fn end
+                end
                 table.clear(hooks)
                 for object, text in originalText do if object.Parent then object.Text = text end end
                 table.clear(originalText); refreshController()

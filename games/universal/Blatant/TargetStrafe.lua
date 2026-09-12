@@ -31,6 +31,7 @@ run(function()
 						Wallcheck = wallcheck,
 						Part = 'RootPart',
 						Players = Targets.Players.Enabled,
+						Priority = Targets.Priority and Targets.Priority.Value,
 						NPCs = Targets.NPCs.Enabled,
 					})
 

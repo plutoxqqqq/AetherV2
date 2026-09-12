@@ -376,7 +376,7 @@ run(function()
 		end
 	})
 	Armor = AutoBuy:CreateToggle({
-		Name = 'Buy Armor',
+		Name = 'Buy Armour',
 		Function = function(callback)
 			npctick = tick()
 			Functions[1] = callback and function(currencytable, shop)
@@ -450,7 +450,7 @@ run(function()
 	SmartCheck = AutoBuy:CreateToggle({
 		Name = 'Smart check',
 		Default = true,
-		Tooltip = 'Buys iron armor before iron axe'
+		Tooltip = 'Buys iron armour before iron axe'
 	})
 	AutoBuy:CreateTextList({
 		Name = 'Item',

@@ -14,7 +14,8 @@ run(function()
 			return closest and closest.Position
 		end
 		local ent = entitylib.EntityMouse({Range = FOV.Value, Part = 'RootPart', Wallcheck = Targets.Walls.Enabled,
-			Players = Targets.Players.Enabled, NPCs = Targets.NPCs.Enabled, Origin = origin, Sort = sortmethods[Sort.Value]})
+			Players = Targets.Players.Enabled,
+			Priority = Targets.Priority and Targets.Priority.Value, NPCs = Targets.NPCs.Enabled, Origin = origin, Sort = sortmethods[Sort.Value]})
 		if not ent then return end
 		targetinfo.Targets[ent] = tick() + 1
 		local tier = bedwars.SorcererBalance.getSorcererTierData(bedwars.SorcererBalance.getSorcererTier(lplr))
@@ -22,7 +23,7 @@ run(function()
 		return position + ent.RootPart.AssemblyLinearVelocity * ((position - origin).Magnitude / ((tier and tier.projectileVelocity) or 70))
 	end
 
-	DeathAdderAimbot = vape.Categories.Blatant:CreateModule({Name = 'DeathAdderAimbot', Function = function(enabled)
+	DeathAdderAimbot = kits:CreateModule({Name = 'DeathAdderAimbot', Function = function(enabled)
 		local controller = bedwars.SorcererController
 		if enabled then
 			if not controller or type(controller.getProjectileDirection) ~= 'function' then
@@ -43,7 +44,7 @@ run(function()
 				originalDirection, hookedDirection = nil, nil
 			end)
 		end
-	end, Tooltip = 'Silently leads Death Adder spells toward a player or enemy bed.'})
+	end, Tooltip = 'Silently leads Death Adder spells toward a player or enemy bed'})
 	Mode = DeathAdderAimbot:CreateDropdown({Name = 'Mode', List = {'Player', 'Bed'}, Function = function(value)
 		if BedRange then BedRange.Object.Visible = value == 'Bed'; FOV.Object.Visible = value == 'Player'; TargetPart.Object.Visible = value == 'Player'; Sort.Object.Visible = value == 'Player' end
 	end})

@@ -115,7 +115,7 @@ run(function()
 		end,
 	})
 	PlayerColor = Radar:CreateColorSlider({
-		Name = 'Player Color',
+		Name = 'Player Colour',
 		Function = function(hue, sat, val)
 			for ent, dot in Reference do
 				dot.BackgroundColor3 = entitylib.getEntityColor(ent) or Color3.fromHSV(hue, sat, val)
@@ -158,7 +158,7 @@ run(function()
 	barcorner.CornerRadius = UDim.new(0, 8)
 	barcorner.Parent = bar
 	Radar:CreateColorSlider({
-		Name = 'Bar Color',
+		Name = 'Bar Colour',
 		Function = function(hue, sat, val)
 			bar.BackgroundColor3 = Color3.fromHSV(hue, sat, val)
 		end,

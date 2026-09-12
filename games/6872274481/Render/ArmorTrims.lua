@@ -8,17 +8,17 @@ run(function()
 	local added = {}
 	local trims, colors, effects = {}, {}, {}
 	
-	for _, trim in bedwars.ArmorTrimType do
+	for _, trim in bedwars.ArmorTrimType or {} do
 		table.insert(trims, trim)
 	end
 	table.sort(trims)
 	
-	for _, color in bedwars.ArmorTrimColor do
+	for _, color in bedwars.ArmorTrimColor or {} do
 		table.insert(colors, color)
 	end
 	table.sort(colors)
 	
-	for _, effect in bedwars.ArmorTrimEffectType do
+	for _, effect in bedwars.ArmorTrimEffectType or {} do
 		table.insert(effects, effect)
 	end
 	table.sort(effects)
@@ -35,6 +35,7 @@ run(function()
 	local function applyTrim()
 		clearTrim()
 		if not ArmorChanger.Enabled or not lplr.Character then return end
+		if not bedwars.ArmorTrimController or type(bedwars.ArmorTrimController.attachArmorTrimEffects) ~= 'function' then return end
 	
 		local before = {}
 		for _, v in lplr.Character:GetDescendants() do
@@ -62,7 +63,7 @@ run(function()
 			end
 			applyTrim()
 		end,
-		Tooltip = 'Puts an armor trim on yourself, only you can see it'
+		Tooltip = 'Puts an armour trim on yourself, only you can see it'
 	})
 	Trim = ArmorChanger:CreateDropdown({
 		Name = 'Trim',
@@ -74,7 +75,7 @@ run(function()
 		end
 	})
 	Color = ArmorChanger:CreateDropdown({
-		Name = 'Color',
+		Name = 'Colour',
 		List = colors,
 		Function = function()
 			if ArmorChanger.Enabled then

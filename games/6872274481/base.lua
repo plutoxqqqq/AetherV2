@@ -526,6 +526,26 @@ local function getPlacedBlock(pos)
 end
 getgenv().getPlacedBlock = getPlacedBlock
 
+local windStacks = 0
+local function installWindStackHook()
+	local controller = bedwars.WindWalkerController
+	if not controller or type(controller.updateJump) ~= 'function' then return end
+	if getgenv().__AetherWindHooked == controller then return end
+	local original = controller.updateJump
+	controller.updateJump = function(self, count, ...)
+		windStacks = tonumber(count) or 0
+		return original(self, count, ...)
+	end
+	getgenv().__AetherWindHooked = controller
+end
+installWindStackHook()
+local function getWindStacks()
+	installWindStackHook()
+	return windStacks
+end
+getgenv().getWindStacks = getWindStacks
+getgenv().WIND_WALKER_MAX_STACKS = 5
+
 local function getBlocksInPoints(s, e)
 	local blocks, list = bedwars.BlockController:getStore(), {}
 	for x = s.X, e.X do
@@ -1396,7 +1416,7 @@ run(function()
 		__index = function(self, plr)
 			return {
 				async = function()
-					if plr and plr.Character then
+					if plr and plr.Character and bedwars.StatusEffectMeta and bedwars.EnchantMeta then
 						for i in plr.Character:GetAttributes() do
 							if i:find('StatusEffect_') and not i:find('_stacks') then
 								local name = bedwars.StatusEffectMeta[({i:gsub('StatusEffect_', '')})[1]]
@@ -1525,7 +1545,15 @@ run(function()
 		WarlockTarget = canDebug and getproto(Knit.Controllers.WarlockStaffController.KnitStart, 2) or function() end
 	}
 
-	local packages = httpService:JSONDecode(downloadFile('aetherv2/profiles/packages.json'))
+	local packages
+	local function getPackages()
+		-- 4 MB JSON decode on every load is pure startup cost unless a remote could
+		-- not be read from constants.
+		if not packages then
+			packages = httpService:JSONDecode(downloadFile('aetherv2/profiles/packages.json'))
+		end
+		return packages
+	end
 	local function dumpRemote(tab)
 		if not tab then return '' end
 		local ind
@@ -1540,8 +1568,13 @@ run(function()
 
 	for i, v in remoteNames do
 		local remote = dumpRemote(debug.getconstants(v))
-		if remote == '' and packages.remotes[i] then
-			remote = packages.remotes[i]
+		if remote == '' then
+			local ok, fallback = pcall(function()
+				return getPackages().remotes[i]
+			end)
+			if ok and type(fallback) == 'string' then
+				remote = fallback
+			end
 		end
 		if remote == '' then
 			notif('AetherV2', 'Failed to grab remote ('..i..')', 10, 'alert')
@@ -2418,6 +2451,7 @@ local AetherRuntimeContext = {
     getWool = getWool,
     getBestArmor = getBestArmor,
     getPlacedBlock = getPlacedBlock,
+    getWindStacks = getWindStacks,
     switchItem = switchItem,
     isnetworkowner = isnetworkowner,
     notif = notif,

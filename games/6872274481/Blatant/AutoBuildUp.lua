@@ -10,10 +10,10 @@ run(function()
 
     local function getBuildBlock()
         local hand = store.hand
-        if hand and hand.toolType == 'block' and hand.tool then return hand.tool.Name end
+        if hand and hand.toolType == 'block' and hand.tool and (hand.amount or 0) > 0 then return hand.tool.Name end
         if LimitItems.Enabled then return nil end
-        local wool = getWool()
-        if wool then return wool end
+        local wool, woolamount = getWool()
+        if wool and (woolamount or 0) > 0 then return wool end
         for _, item in store.inventory.inventory.items do
             local meta = bedwars.ItemMeta[item.itemType]
             if meta and meta.block and (item.amount or 0) > 0 then return item.itemType end
@@ -35,7 +35,13 @@ run(function()
         pending[key] = {retryAt = tick() + math.clamp(0.22 + lplr:GetNetworkPing(), 0.25, 0.55), attempts = request and request.attempts + 1 or 1}
         nextPlacement = tick() + math.max(0.125, lplr:GetNetworkPing() * 0.6)
         task.spawn(function()
-            bedwars.placeBlock(pos, block)
+            -- The block may have run out between resolving it and this thread running.
+            local resolved = getBuildBlock()
+            if not resolved or getPlacedBlock(pos) then
+                pending[key] = nil
+                return
+            end
+            bedwars.placeBlock(pos, resolved)
             task.delay(math.clamp(0.18 + lplr:GetNetworkPing(), 0.22, 0.5), function()
                 if not AutoBuildUp.Enabled then return end
                 if getPlacedBlock(pos) then
@@ -60,13 +66,13 @@ run(function()
                 if not root or not humanoid then return end
                 local holding = humanoid.Jump or inputService:IsKeyDown(Enum.KeyCode.Space) or inputService:IsKeyDown(Enum.KeyCode.ButtonA)
                 if not holding then return end
+                local block = getBuildBlock()
+                if not block then return end
                 local infinite = vape.Modules.InfiniteJump and vape.Modules.InfiniteJump.Enabled
                 if infinite and root.AssemblyLinearVelocity.Y < 22 then
                     root.AssemblyLinearVelocity = Vector3.new(root.AssemblyLinearVelocity.X, 28, root.AssemblyLinearVelocity.Z)
                 end
                 if tick() < nextPlacement then return end
-                local block = getBuildBlock()
-                if not block then return end
                 local feet = root.Position.Y - (character.HipHeight or 3)
                 local target = bedwars.BlockController:getBlockPosition(Vector3.new(root.Position.X, feet - 1.5, root.Position.Z)) * 3
                 if feet < target.Y + 1.5 or getPlacedBlock(target) then return end

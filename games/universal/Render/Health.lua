@@ -29,6 +29,6 @@ run(function()
 			until not Health.Enabled
 		end
 	end,
-	Tooltip = 'Displays your health in the center of your screen',
+	Tooltip = 'Displays your health in the centre of your screen',
     })
 end)

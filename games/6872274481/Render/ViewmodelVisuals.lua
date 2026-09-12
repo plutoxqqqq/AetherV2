@@ -53,7 +53,7 @@ run(function()
     })
 
     Color = ViewmodelVisuals:CreateColorSlider({
-        Name = 'Color',
+        Name = 'Colour',
         Default = Color3.new(1, 1, 1),
         Function = function(hue, sat, val, opacity)
             for _, v in Instances do
@@ -63,7 +63,7 @@ run(function()
         end
     })
     StrokeColor = ViewmodelVisuals:CreateColorSlider({
-        Name = 'Stroke Color',
+        Name = 'Stroke Colour',
         Default = Color3.new(),
         Function = function(hue, sat, val, opacity)
             for _, v in Instances do

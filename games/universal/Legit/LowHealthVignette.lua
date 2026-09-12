@@ -116,7 +116,7 @@ run(function()
         Tooltip = 'Shows a shield-aware screen-edge warning while your effective health is low'
     })
     Threshold = LowHealthVignette:CreateSlider({Name = 'Health percentage', Min = 1, Max = 100, Default = 30, Suffix = '%'})
-    WarningColor = LowHealthVignette:CreateColorSlider({Name = 'Color', DefaultValue = 0, DefaultOpacity = 1})
+    WarningColor = LowHealthVignette:CreateColorSlider({Name = 'Colour', DefaultValue = 0, DefaultOpacity = 1})
     Intensity = LowHealthVignette:CreateSlider({Name = 'Intensity', Min = 1, Max = 100, Default = 70, Suffix = '%'})
     Pulse = LowHealthVignette:CreateToggle({Name = 'Pulse', Default = true})
     Heartbeat = LowHealthVignette:CreateToggle({Name = 'Heartbeat'})

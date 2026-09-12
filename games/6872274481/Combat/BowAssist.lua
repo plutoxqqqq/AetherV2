@@ -50,6 +50,7 @@ run(function()
 			Part = AimPart.Value,
 			Wallcheck = Targets.Walls.Enabled,
 			Players = Targets.Players.Enabled,
+			Priority = Targets.Priority and Targets.Priority.Value,
 			NPCs = Targets.NPCs.Enabled,
 			Sort = sortmethods[Sort.Value],
 		})
@@ -134,7 +135,7 @@ run(function()
 	Players = true,
 	Walls = true,
     })
-    local methods = {'Damage', 'Distance'}
+    local methods = {'Distance', 'Damage'}
     for _, i in sortlist do
 	if not table.find(methods, i) then
 		table.insert(methods, i)
@@ -143,7 +144,7 @@ run(function()
     Sort = BowAssist:CreateDropdown({
 	Name = 'Target mode',
 	List = methods,
-	Default = 'Angle',
+	Default = 'Distance',
     })
     AimPart = BowAssist:CreateDropdown({Name = 'Part', List = {'RootPart', 'Head'}})
     Distance = BowAssist:CreateSlider({Name = 'Distance', Min = 1, Max = 300, Default = 200, Suffix = ' studs'})
@@ -155,7 +156,7 @@ run(function()
 	Suffix = 'sp/s',
 	Tooltip = 'How fast you will aim per second',
     })
-    Smoothness = BowAssist:CreateSlider({Name = 'Smoothness', Min = 1, Max = 20, Default = 2, Decimal = 10, Tooltip = 'Divides aim speed to soften camera movement.'})
+    Smoothness = BowAssist:CreateSlider({Name = 'Smoothness', Min = 1, Max = 20, Default = 2, Decimal = 10, Tooltip = 'Divides aim speed to soften camera movement'})
     Angle = BowAssist:CreateSlider({
 	Name = 'Max angle',
 	Min = 1,
@@ -199,5 +200,5 @@ run(function()
 	Default = { 'fireball', 'telepearl', 'gloop' },
 	Darker = true,
     })
-    Clear = BowAssist:CreateToggle({Name = 'Clear shot only', Default = true, Tooltip = 'Stops assisting when the aim path is obstructed.'})
+    Clear = BowAssist:CreateToggle({Name = 'Clear shot only', Default = true, Tooltip = 'Stops assisting when the aim path is obstructed'})
 end)

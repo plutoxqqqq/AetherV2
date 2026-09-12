@@ -28,8 +28,8 @@ run(function()
 				task.wait(5)
 			until not ClaimRewards.Enabled
 		end,
-		Tooltip = 'Claims unlocked BedWars milestone rewards through the normal reward remote.'
+		Tooltip = 'Claims unlocked BedWars milestone rewards through the normal reward remote'
 	})
-	CratesOnly = ClaimRewards:CreateToggle({Name = 'Crates only', Tooltip = 'Leaves kit and cosmetic choices unclaimed.'})
+	CratesOnly = ClaimRewards:CreateToggle({Name = 'Crates only', Tooltip = 'Leaves kit and cosmetic choices unclaimed'})
 	Notify = ClaimRewards:CreateToggle({Name = 'Notify', Default = true})
 end)

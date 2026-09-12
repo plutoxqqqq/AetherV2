@@ -2,6 +2,7 @@ run(function()
     local TerraAimbot
     local Range
     local Mode
+    local Sort
 
     local old
 
@@ -18,7 +19,8 @@ run(function()
                         Range = Range.Value,
                         Origin = origin,
                         Players = true,
-                        Wallcheck = true
+                        Wallcheck = true,
+                        Sort = sortmethods[Sort.Value]
                     })
 
                     if plr then
@@ -44,6 +46,16 @@ run(function()
         Name = 'Mode',
         List = {'Position', 'Mouse'},
         Default = 'Mouse'
+    })
+    local methods = {'Distance', 'Damage'}
+    for _, v in sortlist do
+        if not table.find(methods, v) then
+            table.insert(methods, v)
+        end
+    end
+    Sort = TerraAimbot:CreateDropdown({
+        Name = 'Target mode',
+        List = methods
     })
     Range = TerraAimbot:CreateSlider({
         Name = 'Range',

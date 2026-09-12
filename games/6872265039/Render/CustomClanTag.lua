@@ -81,7 +81,7 @@ run(function()
         })
         
         ClanModule:CreateColorSlider({
-            Name = "Tag Color",
+            Name = "Tag Colour",
             Function = function(h, s, v)
                 ClanColor = Color3.fromHSV(h, s, v)
                 updateClanTag()

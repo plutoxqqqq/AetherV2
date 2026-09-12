@@ -69,6 +69,7 @@ run(function()
 						Wallcheck = Targets.Walls.Enabled or nil,
 						Part = 'RootPart',
 						Players = Targets.Players.Enabled,
+						Priority = Targets.Priority and Targets.Priority.Value,
 						NPCs = Targets.NPCs.Enabled,
 						Limit = Max.Value,
 					})
@@ -216,13 +217,13 @@ run(function()
 	end,
     })
     BoxSwingColor = Killaura:CreateColorSlider({
-	Name = 'Target Color',
+	Name = 'Target Colour',
 	Darker = true,
 	DefaultOpacity = 0.5,
 	Visible = false,
     })
     BoxAttackColor = Killaura:CreateColorSlider({
-	Name = 'Attack Color',
+	Name = 'Attack Colour',
 	Darker = true,
 	DefaultOpacity = 0.5,
 	Visible = false,
@@ -287,7 +288,7 @@ run(function()
 	Visible = false,
     })
     ParticleColor1 = Killaura:CreateColorSlider({
-	Name = 'Color Begin',
+	Name = 'Colour Begin',
 	Function = function(hue, sat, val)
 		for _, v in Particles do
 			v.ParticleEmitter.Color = ColorSequence.new({
@@ -303,7 +304,7 @@ run(function()
 	Visible = false,
     })
     ParticleColor2 = Killaura:CreateColorSlider({
-	Name = 'Color End',
+	Name = 'Colour End',
 	Function = function(hue, sat, val)
 		for _, v in Particles do
 			v.ParticleEmitter.Color = ColorSequence.new({

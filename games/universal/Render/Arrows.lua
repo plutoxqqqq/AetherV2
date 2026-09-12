@@ -117,7 +117,7 @@ run(function()
 	end,
     })
     Color = Arrows:CreateColorSlider({
-	Name = 'Player Color',
+	Name = 'Player Colour',
 	Function = function(hue, sat, val)
 		if Arrows.Enabled then
 			ColorFunc(hue, sat, val)
