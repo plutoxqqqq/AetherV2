@@ -28,6 +28,12 @@ run(function()
 		if hand and hand.tool and isJadeHammer(hand) then
 			return {itemType = hand.itemType or hand.tool.Name, tool = hand.tool, amount = hand.amount or 1}
 		end
+		-- HandInvItem is the game's real hand and updates before the observed inventory.
+		local handValue = lplr.Character and lplr.Character:FindFirstChild('HandInvItem')
+		local tool = handValue and handValue.Value
+		if tool and isJadeHammer({tool = tool}) then
+			return {itemType = tool.Name, tool = tool, amount = 1}
+		end
 		return nil
 	end
 

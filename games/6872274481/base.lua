@@ -2877,12 +2877,14 @@ local function liveAbilityController()
     local controller = bedwars.AbilityController
     if not controller then return nil, Capabilities.Source.UNKNOWN, false end
     local knit = bedwars.Knit and bedwars.Knit.Controllers
-    if knit and (controller == knit.AbilityController or controller == knit.JadeHammerController) then
+    if knit and controller == knit.JadeHammerController then
         return controller, Capabilities.Source.CONTROLLER, true
     end
-    
-    
-    
+    -- The ability controller is resolved through Flamework, not Knit, so it never appears
+    -- in Knit.Controllers. canUseAbility/useAbility are its authoritative surface.
+    if type(controller.canUseAbility) == 'function' and type(controller.useAbility) == 'function' then
+        return controller, Capabilities.Source.CONTROLLER, true
+    end
     return controller, Capabilities.Source.FALLBACK, false
 end
 
@@ -2937,14 +2939,20 @@ end
 
 function Jade:Equip(hammer, timeout, cancelled)
     if not hammer or not hammer.tool then return false, 'missing-hammer' end
-    local held = store.hand
-    if held and held.tool == hammer.tool then return true, 'already-held' end
+    -- The game tracks the real hand in HandInvItem; store.hand is only the replicated
+    -- observed inventory and can lag behind (training rooms and fresh pickups especially).
+    local function held()
+        local handValue = lplr.Character and lplr.Character:FindFirstChild('HandInvItem')
+        if handValue and handValue.Value == hammer.tool then return true end
+        local current = store.hand
+        return (current and (current.tool == hammer.tool or current.itemType == hammer.itemType)) and true or false
+    end
+    if held() then return true, 'already-held' end
     safe('jade.switch', switchItem, hammer.tool, 0.05)
     local deadline = now() + (timeout or 0.8)
     repeat
         if cancelled and cancelled() then return false, 'cancelled' end
-        held = store.hand
-        if held and (held.tool == hammer.tool or held.itemType == hammer.itemType) then return true, 'replicated' end
+        if held() then return true, 'replicated' end
         task.wait(0.03)
     until now() >= deadline
     return false, 'held-tool-not-acknowledged'
@@ -3016,10 +3024,26 @@ function Jade:RequestActivation(hammer, ability, targetPosition, cancelled)
         if request.Sent then break end
     end
 
-    if not request.Sent and hammer.tool and type(hammer.tool.Activate) == 'function' then
+    if not request.Sent and hammer.tool and typeof(hammer.tool) == 'Instance' and hammer.tool:IsA('Tool') and type(hammer.tool.Activate) == 'function' then
         local ok = pcall(hammer.tool.Activate, hammer.tool)
         table.insert(request.Paths, {Path = 'Tool.Activate', OK = ok})
         request.Sent = ok
+    end
+
+    -- Prefer the ability controller over synthetic input: the game resolves it through
+    -- Flamework and useAbility is exactly what the ability UI calls.
+    local controller, source, authoritative = liveAbilityController()
+    if not request.Sent and controller and authoritative and type(controller.useAbility) == 'function' then
+        local ready = true
+        if type(controller.canUseAbility) == 'function' then
+            local okReady, isReady = pcall(controller.canUseAbility, controller, ability, {disableBlockedAbilityAlert = true})
+            ready = okReady and isReady ~= false
+        end
+        if ready then
+            local ok, result = pcall(controller.useAbility, controller, ability)
+            table.insert(request.Paths, {Path = 'AbilityController.useAbility', OK = ok, Result = result, Source = source})
+            request.Sent = ok and result ~= false
+        end
     end
 
     if not request.Sent and inputService then
@@ -3033,10 +3057,7 @@ function Jade:RequestActivation(hammer, ability, targetPosition, cancelled)
         request.Sent = ok
     end
 
-    
-    
-    local controller, source, authoritative = liveAbilityController()
-    if not request.Sent and controller and authoritative and type(controller.useAbility) == 'function' then
+    if not request.Sent and controller and type(controller.useAbility) == 'function' then
         local ok, result = pcall(controller.useAbility, controller, ability)
         table.insert(request.Paths, {Path = 'AbilityController.useAbility', OK = ok, Result = result, Source = source})
         request.Sent = ok and result ~= false

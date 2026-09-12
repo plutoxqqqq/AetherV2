@@ -193,8 +193,15 @@ run(function()
 	local function heldLongJumpMethod()
 		local hand = store.hand
 		local tool = hand and hand.tool
+		local itemType = hand and hand.itemType
+		if not tool then
+			-- HandInvItem is the game's real hand and can be ahead of the observed inventory.
+			local handValue = lplr.Character and lplr.Character:FindFirstChild('HandInvItem')
+			tool = handValue and handValue.Value
+			itemType = tool and tool.Name
+		end
 		if not tool then return nil end
-		local raw = hand.itemType or tool.Name
+		local raw = itemType or tool.Name
 		local normalized = tostring(raw):lower():gsub('[%s%-]+', '_')
 		local method = LongJumpMethods[raw] or LongJumpMethods[normalized]
 		local jadeName = isJadeHammerName(normalized)
@@ -204,7 +211,7 @@ run(function()
 		if jadeName and AetherMatchRuntime and AetherMatchRuntime.Jade then
 			item = AetherMatchRuntime.Jade:GetBestHammer() or item
 		end
-		item = item or {itemType = normalized, tool = tool, amount = hand.amount or 1}
+		item = item or {itemType = normalized, tool = tool, amount = hand and hand.amount or 1}
 		return method, item, normalized
 	end
 
