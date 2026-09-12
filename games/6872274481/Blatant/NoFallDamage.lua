@@ -246,7 +246,7 @@ run(function()
             if item then break end
         end
         if not item then return end
-        local ability = item.itemType..'_jump'
+        local ability = 'jade_hammer_jump'
         if bedwars.AbilityController:canUseAbility(ability) then
             return abilityClutch(item, ability, function(_, abilityId)
                 useToolAbility(abilityId, {direction = Vector3.yAxis, origin = root.Position})

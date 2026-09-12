@@ -52,18 +52,6 @@ local function buildInspector(module)
     end)
     registerOptionRefresher(function() if state.BindingModule~=module then bindButton.Text=moduleBindText(module) end end)
 
-    local displayRow=cardSurface(inspectorBody,58,3)
-    local displayTitle=label(displayRow,'Display name',11,true); displayTitle.Size=UDim2.new(0,92,0,20); displayTitle.Position=UDim2.fromOffset(12,7); displayTitle.ZIndex=115
-    local displayBox=create('TextBox',{Size=UDim2.new(1,-116,0,30),Position=UDim2.fromOffset(104,14),BackgroundColor3=COLORS.Surface,BackgroundTransparency=.26,Text=moduleDisplayName(module),PlaceholderText=tostring(module.Name or ''),PlaceholderColor3=COLORS.Tertiary,TextColor3=COLORS.Text,TextSize=10,Font=Enum.Font.Gotham,ClearTextOnFocus=false,BorderSizePixel=0,ZIndex=116},displayRow)
-    corner(displayBox,10); create('UIStroke',{Color=COLORS.White,Transparency=.92,Thickness=1},displayBox)
-    connect(displayBox.FocusLost,function(enter)
-        if enter and type(mainapi.SetModuleNickname)=='function' then
-            pcall(mainapi.SetModuleNickname,mainapi,module,displayBox.Text)
-            inspectorTitle.Text=moduleDisplayName(module)
-            if state.RenderPage then state.RenderPage() end
-        end
-    end)
-
     if type(module.SetHidden)=='function' then
         local hiddenRow=cardSurface(inspectorBody,54,4)
         local hiddenTitle=label(hiddenRow,'Hide from menu',11,true); hiddenTitle.Size=UDim2.new(1,-80,0,22); hiddenTitle.Position=UDim2.fromOffset(12,8); hiddenTitle.ZIndex=115

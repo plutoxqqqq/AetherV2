@@ -268,10 +268,6 @@ local CATEGORY_ICONS = {
 }
 
 local function moduleDisplayName(module)
-    if mainapi.GetModuleDisplayName then
-        local ok, result = pcall(mainapi.GetModuleDisplayName, mainapi, module)
-        if ok and type(result) == 'string' then return result end
-    end
     return tostring(module.Name or 'Module')
 end
 

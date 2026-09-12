@@ -88,3 +88,16 @@ run(function()
         Tooltip = 'Extends how far the Cat/Yamini pounce launches you'
     })
 end)
+
+run(function()
+    createKitExtender({
+        Name = 'YaminiWallKick',
+        Kit = 'cat',
+        Controller = 'CatController',
+        Method = 'dismountWall',
+        Impulse = function(root, direction, multiplier)
+            return Vector3.new(0, root.AssemblyMass * (multiplier - 1) * 25, 0)
+        end,
+        Tooltip = 'Extends how high dropping off a climbed wall throws you'
+    })
+end)

@@ -2376,7 +2376,7 @@ local Attacking
 
 
 local jadeHammerNames = {'jade_hammer_3', 'jade_hammer_2', 'jade_hammer_1', 'jade_hammer', 'jade_hammer_jump'}
-local jadeJumpAbilities = {'jade_hammer_3_jump', 'jade_hammer_2_jump', 'jade_hammer_1_jump', 'jade_hammer_jump'}
+local jadeJumpAbilities = {'jade_hammer_jump'}
 
 local function normalizeJadeName(value)
 	return type(value) == 'string' and value:lower():gsub('[%s%-]+', '_') or nil
@@ -2397,7 +2397,7 @@ local function getJadeAbility(item)
 	local function add(ability)
 		if ability and not seen[ability] then seen[ability] = true; table.insert(abilities, ability) end
 	end
-	if itemType ~= 'jade_hammer_jump' then add(itemType..'_jump') end
+	add('jade_hammer_jump')
 	for _, ability in jadeJumpAbilities do add(ability) end
 	for _, ability in abilities do
 		local ok, ready = pcall(bedwars.AbilityController.canUseAbility, bedwars.AbilityController, ability, {
@@ -2777,11 +2777,11 @@ end
 local Jade = {
     Compatibility = {'jade_hammer_3', 'jade_hammer_2', 'jade_hammer_1', 'jade_hammer', 'jade_hammer_jump'},
     AbilityMap = {
-        jade_hammer_3 = {'jade_hammer_3_jump', 'jade_hammer_jump'},
-        jade_hammer_2 = {'jade_hammer_2_jump', 'jade_hammer_jump'},
-        jade_hammer_1 = {'jade_hammer_jump', 'jade_hammer_1_jump'},
+        jade_hammer_3 = {'jade_hammer_jump'},
+        jade_hammer_2 = {'jade_hammer_jump'},
+        jade_hammer_1 = {'jade_hammer_jump'},
         jade_hammer = {'jade_hammer_jump'},
-        jade_hammer_jump = {'jade_hammer_jump', 'jade_hammer_3_jump', 'jade_hammer_2_jump', 'jade_hammer_1_jump'}
+        jade_hammer_jump = {'jade_hammer_jump'}
     },
     Last = {}
 }
@@ -2890,7 +2890,6 @@ function Jade:ResolveAbility(hammer)
         if type(value) == 'string' and value ~= '' and not seen[value] then seen[value] = true; table.insert(candidates, value) end
     end
     for _, value in ipairs(self.AbilityMap[itemType] or {}) do add(value) end
-    if itemType ~= 'jade_hammer_jump' then add(itemType..'_jump') end
     add('jade_hammer_jump')
 
     local meta = bedwars.ItemMeta and bedwars.ItemMeta[itemType]

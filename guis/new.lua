@@ -608,7 +608,7 @@ local function createMobileButton(buttonapi, position)
 	button.AnchorPoint = Vector2.new(0.5, 0.5)
 	button.BackgroundColor3 = buttonapi.Enabled and Color3.new(0, 0.7, 0) or Color3.new()
 	button.BackgroundTransparency = 0.5
-	button.Text = mainapi.GetModuleDisplayName and mainapi:GetModuleDisplayName(buttonapi) or buttonapi.Name
+	button.Text = buttonapi.Name
 	button.TextColor3 = Color3.new(1, 1, 1)
 	button.TextScaled = true
 	button.Font = Enum.Font.Gotham
@@ -838,120 +838,31 @@ end
 
 ensureDataFolders()
 
--- Module nicknames are a GUI preference, not module identity. Keeping them in their
--- own global file means configs continue to load, save, upload and download with the
--- immutable registration name used by mainapi.Modules.
-local moduleNamesPath = profileFolder..'/module-names.json'
-mainapi.ModuleNicknames = isfile(moduleNamesPath) and loadJson(moduleNamesPath) or {}
-if type(mainapi.ModuleNicknames) ~= 'table' then mainapi.ModuleNicknames = {} end
-for name, nickname in mainapi.ModuleNicknames do
-	if type(name) ~= 'string' or type(nickname) ~= 'string' or nickname:gsub('^%s*(.-)%s*$', '%1') == '' then
-		mainapi.ModuleNicknames[name] = nil
-	end
-end
 mainapi.ModuleSearchRefreshers = {}
-
-function mainapi:GetModuleDisplayName(module)
-	local defaultName = type(module) == 'table' and module.Name or tostring(module or '')
-	return self.ModuleNicknames[defaultName] or defaultName
-end
 
 function mainapi:ModuleMatchesSearch(module, query)
 	query = tostring(query or ''):lower()
-	local defaultName = tostring(module.Name or ''):lower()
-	local displayName = self:GetModuleDisplayName(module):lower()
+	local name = tostring(module.Name or ''):lower()
 	local compact = query:gsub('%s+', '')
-	return defaultName:find(query, 1, true) ~= nil
-		or displayName:find(query, 1, true) ~= nil
-		or defaultName:gsub('%s+', ''):find(compact, 1, true) ~= nil
-		or displayName:gsub('%s+', ''):find(compact, 1, true) ~= nil
+	return name:find(query, 1, true) ~= nil
+		or name:gsub('%s+', ''):find(compact, 1, true) ~= nil
 end
 
 function mainapi:RefreshModuleSearches()
 	for _, refresh in self.ModuleSearchRefreshers do pcall(refresh) end
 end
 
-function mainapi:SaveModuleNicknames()
-	ensureDataFolders()
-	pcall(writefile, moduleNamesPath, httpService:JSONEncode(self.ModuleNicknames))
-end
-
-function mainapi:SetModuleNickname(module, nickname, deferSave)
-	local defaultName = type(module) == 'table' and module.Name or tostring(module or '')
-	nickname = type(nickname) == 'string' and nickname:gsub('^%s*(.-)%s*$', '%1') or ''
-	self.ModuleNicknames[defaultName] = nickname ~= '' and nickname ~= defaultName and nickname or nil
-	if type(module) == 'table' and module.SetDisplayName then
-		module:SetDisplayName(self:GetModuleDisplayName(module))
-	end
-	if not deferSave then self:SaveModuleNicknames() end
-	self:RefreshModuleSearches()
-	if self.Loaded and self.UpdateTextGUI then pcall(self.UpdateTextGUI, self) end
-end
-
-function mainapi:ResetModuleNicknames()
-	table.clear(self.ModuleNicknames)
-	for _, collection in {self.Modules, self.Legit and self.Legit.Modules, self.Kits and self.Kits.Modules} do
-		for _, module in collection or {} do
-			if module.SetDisplayName then module:SetDisplayName(module.Name) end
-		end
-	end
-	self:SaveModuleNicknames()
-	self:RefreshModuleSearches()
-	if self.Loaded and self.UpdateTextGUI then pcall(self.UpdateTextGUI, self) end
-end
-
--- The title toggles immediately. Waiting to distinguish a double-click made every
--- module feel laggy, so renaming now uses Alt + right-click while an ordinary
--- right-click keeps opening the module's settings.
 function mainapi:BindModuleTitle(module, title, onSingleClick, onRightClick)
-	local hovered, editing = false, false
+	local hovered = false
 	title.MouseEnter:Connect(function() hovered = true end)
 	title.MouseLeave:Connect(function() hovered = false end)
-
-	local function editName()
-		if editing then return end
-		editing = true
-		local editor = Instance.new('TextBox')
-		editor.Name = 'ModuleNameEditor'
-		editor.Size = UDim2.fromOffset(math.max(title.AbsoluteSize.X, 120), math.max(title.AbsoluteSize.Y - 6, 24))
-		editor.Position = UDim2.fromOffset(0, math.floor((title.AbsoluteSize.Y - editor.Size.Y.Offset) / 2))
-		editor.BackgroundColor3 = color.Light(uipallet.Main, 0.05)
-		editor.BorderSizePixel = 0
-		editor.ClearTextOnFocus = false
-		editor.Text = self:GetModuleDisplayName(module)
-		editor.TextColor3 = uipallet.Text
-		editor.TextSize = title.TextSize
-		editor.FontFace = title.FontFace
-		editor.TextXAlignment = Enum.TextXAlignment.Left
-		editor.ZIndex = title.ZIndex + 3
-		editor.Parent = title
-		addCorner(editor, UDim.new(0, 4))
-		title.TextTransparency = 1
-		editor.FocusLost:Connect(function(enterPressed)
-			if enterPressed then self:SetModuleNickname(module, editor.Text) end
-			title.TextTransparency = 0
-			editing = false
-			editor:Destroy()
-		end)
-		task.defer(function()
-			editor:CaptureFocus()
-			editor.CursorPosition = #editor.Text + 1
-		end)
-	end
-
 	title.MouseButton1Click:Connect(function()
-		if editing then return end
 		if onSingleClick then onSingleClick() end
 	end)
 	title.MouseButton2Click:Connect(function()
-		if editing then return end
-		if inputService:IsKeyDown(Enum.KeyCode.LeftAlt) or inputService:IsKeyDown(Enum.KeyCode.RightAlt) then
-			editName()
-		elseif onRightClick then
-			onRightClick()
-		end
+		if onRightClick then onRightClick() end
 	end)
-	return function() return hovered or editing end
+	return function() return hovered end
 end
 
 local defaultConfigs = {}
@@ -4947,7 +4858,7 @@ function mainapi:CreateCategory(categorysettings)
 			Index = getTableSize(mainapi.Modules),
 			ExtraText = modulesettings.ExtraText,
 			Name = modulesettings.Name,
-			DisplayName = mainapi:GetModuleDisplayName(modulesettings.Name),
+			DisplayName = modulesettings.Name,
 			Category = categorysettings.Name
 		}
 
@@ -8389,7 +8300,7 @@ local function createPanel(config)
 			Options = {},
 			Bind = {},
 			Name = modulesettings.Name,
-			DisplayName = mainapi:GetModuleDisplayName(modulesettings.Name),
+			DisplayName = modulesettings.Name,
 			-- Panel is the window every option popup of this module anchors to. Legit
 			-- stays set for the handful of places that still branch on it by name.
 			Panel = window,
@@ -8967,21 +8878,14 @@ function mainapi:CreateChangelogs()
 	body.Size, body.Position, body.AutomaticSize = UDim2.new(1, -28, 0, 0), UDim2.fromOffset(14, 12), Enum.AutomaticSize.Y
 	body.BackgroundTransparency, body.RichText = 1, true
 	body.Text = [=[<b><font color="#d378ff">BedWars</font></b>
-<font color="#63dc82">[+]</font> Added ESP, one Render module covering beds, hives, crates, collectables, crops, generators, items, inventories, loot, pots, chests and traps.
-<font color="#63dc82">[+]</font> Added a Priority dropdown to every Target Settings window and wired it through every targeting module.
-<font color="#63dc82">[+]</font> Added Deposit and Withdraw hotkey boxes to AutoBank.
-<font color="#63dc82">[+]</font> Added a Delay slider to each AutoToxic trigger, replacing the shared one.
-<font color="#6aa9ff">[^]</font> Rewrote AutoClicker from the new reference; block CPS now reaches 20.
-<font color="#6aa9ff">[^]</font> Replaced Scaffold, OverlayEditor and AntiSuffocate with their reference versions.
-<font color="#6aa9ff">[^]</font> Rewrote InfiniteFly; it anchors you in place and flies with Space and LeftShift.
-<font color="#6aa9ff">[^]</font> Zephyr wind stacks now come from the game's own controller, so Speed, Fly and NoFallDamage react to real stacks.
-<font color="#6aa9ff">[^]</font> Merged HackerDetector into CheatDetector, with flags written to aether/exploiters.json.
-<font color="#ff6969">[-]</font> Removed the separate Bed, Beehive, Generator, Item, Loot, Storage and Trap ESP modules, and BlockSelectorColor.
-<font color="#ffd45e">[!]</font> Polished every module name and tooltip with British English and no trailing full stops.
-
-<b><font color="#d378ff">General</font></b>
-<font color="#63dc82">[+]</font> Added Priority support to the entity library.
-<font color="#6aa9ff">[^]</font> Version 3.10.0.]=]
+<font color="#63dc82">[+]</font> Added JadeInstantKill: locks your pitch, hops 200 studs above a target, jumps with the Jade Hammer and rides the slam onto them.
+<font color="#63dc82">[+]</font> Added the missing kit modules: AutoAbaddon, AutoArachne, AutoCogsworth, AutoElektra, AutoFlora, AutoMarrow, AutoSigrid and AutoTrixie.
+<font color="#63dc82">[+]</font> Added XurotExtender and YaminiWallKick, completing the kit movement extenders.
+<font color="#6aa9ff">[^]</font> Jade Hammer support now calls jade_hammer_jump for tiers I, II and III instead of the non-existent tiered abilities.
+<font color="#6aa9ff">[^]</font> Reworked the Jade Hammer paths in LongJump, NoFallDamage and JadeExtender around the real ability ID.
+<font color="#6aa9ff">[^]</font> Audited every Kits module ability and remote against the live game.
+<font color="#ff6969">[-]</font> Removed the module nickname system, Alt + right-click renaming, module-names.json and the Reset Module Names button.
+<font color="#6aa9ff">[^]</font> Version 3.10.1.]=]
 	body.TextColor3, body.TextSize, body.LineHeight = Color3.fromRGB(170, 170, 170), 13, 1.25
 	body.FontFace, body.TextXAlignment, body.TextYAlignment, body.TextWrapped, body.Parent = Font.fromEnum(Enum.Font.Roboto), Enum.TextXAlignment.Left, Enum.TextYAlignment.Top, true, notes
 	close.MouseButton1Click:Connect(function() window.Visible = false end)
@@ -9316,7 +9220,7 @@ function mainapi:Load(skipgui, profile)
 			local v = savedata.Modules[i]
 			if not v then
 				if object.Enabled then
-					if skipgui and self.ToggleNotifications.Enabled then self:CreateNotification('Module Toggled', self:GetModuleDisplayName(object).."<font color='#FFFFFF'> has been </font><font color='#FF5A5A'>Disabled</font><font color='#FFFFFF'>!</font>", 0.75) end
+					if skipgui and self.ToggleNotifications.Enabled then self:CreateNotification('Module Toggled', object.Name.."<font color='#FFFFFF'> has been </font><font color='#FF5A5A'>Disabled</font><font color='#FFFFFF'>!</font>", 0.75) end
 					object:Toggle(true)
 				end
 				continue
@@ -9326,7 +9230,7 @@ function mainapi:Load(skipgui, profile)
 			end
 			if (v.Enabled or false) ~= object.Enabled then
 				if skipgui then
-					if self.ToggleNotifications.Enabled then self:CreateNotification('Module Toggled', self:GetModuleDisplayName(object).."<font color='#FFFFFF'> has been </font>"..(v.Enabled and "<font color='#5AFF5A'>Enabled</font>" or "<font color='#FF5A5A'>Disabled</font>").."<font color='#FFFFFF'>!</font>", 0.75) end
+					if self.ToggleNotifications.Enabled then self:CreateNotification('Module Toggled', object.Name.."<font color='#FFFFFF'> has been </font>"..(v.Enabled and "<font color='#5AFF5A'>Enabled</font>" or "<font color='#FF5A5A'>Disabled</font>").."<font color='#FFFFFF'>!</font>", 0.75) end
 				end
 				object:Toggle(true)
 			end
@@ -10265,14 +10169,6 @@ general:CreateButton({
 ]]
 
 local modules = mainapi.Categories.Main:CreateSettingsPane({Name = 'Modules'})
-modules:CreateButton({
-	Name = 'Reset Module Names',
-	Function = function()
-		mainapi:ResetModuleNicknames()
-		mainapi:CreateNotification('AetherV2', 'Module names reset.', 4, 'info')
-	end,
-	Tooltip = 'Clears every visual module nickname and restores default names'
-})
 local supportedGameFiles = {
 	'142823291', '155615604', '606849621', '893973440', '5938036553', '6872265039',
 	'6872274481', '8444591321', '8542259458', '8542275097', '8560631822', '8592115909',
@@ -10365,7 +10261,7 @@ mainapi.NoModuleSpacing = guipane:CreateToggle({
 	Tooltip = 'Removes module\'s text spacing',
 	Function = function(callback)
 		for _, v in mainapi.Modules do
-			if v.SetDisplayName then v:SetDisplayName(mainapi:GetModuleDisplayName(v)) end
+			if v.SetDisplayName then v:SetDisplayName(v.Name) end
 		end
 	end
 })
@@ -11345,7 +11241,7 @@ function mainapi:UpdateTextGUI(afterload)
 				holdertext.Position = UDim2.fromOffset(right and 3 or 6, 2)
 				holdertext.BackgroundTransparency = 1
 				holdertext.BorderSizePixel = 0
-				holdertext.Text = ({mainapi:GetModuleDisplayName(v):gsub(' ', '')})[1]..(textguiextratext.Enabled and v.ExtraText and " <font color='#A8A8A8'>"..v.ExtraText()..'</font>' or '')
+				holdertext.Text = ({v.Name:gsub(' ', '')})[1]..(textguiextratext.Enabled and v.ExtraText and " <font color='#A8A8A8'>"..v.ExtraText()..'</font>' or '')
 				holdertext.TextSize = textguisize.Value
 				holdertext.FontFace = textguifont.Value
 				holdertext.RichText = true
@@ -11583,7 +11479,7 @@ function mainapi:Undo()
 	module:Toggle()
 	table.insert(self.RedoStack, module)
 	if self.ToggleNotifications and self.ToggleNotifications.Enabled then
-		self:CreateNotification('Undo', self:GetModuleDisplayName(module)..' toggle reverted', 0.75)
+		self:CreateNotification('Undo', module.Name..' toggle reverted', 0.75)
 	end
 end
 function mainapi:Redo()
@@ -11592,7 +11488,7 @@ function mainapi:Redo()
 	module:Toggle()
 	table.insert(self.UndoStack, module)
 	if self.ToggleNotifications and self.ToggleNotifications.Enabled then
-		self:CreateNotification('Redo', self:GetModuleDisplayName(module)..' toggle re-applied', 0.75)
+		self:CreateNotification('Redo', module.Name..' toggle re-applied', 0.75)
 	end
 end
 mainapi:Clean(inputService.InputBegan:Connect(function(inputObj)
@@ -11632,7 +11528,7 @@ local function keybindStart(inputObj)
 			if checkKeybinds(mainapi.HeldKeybinds, v.Bind, inputObj.KeyCode.Name) then
 				toggled = true
 				if mainapi.ToggleNotifications.Enabled then
-					mainapi:CreateNotification("<b>"..mainapi:GetModuleDisplayName(v).."</b>", not v.Enabled and "<font color='#5AFF5A'>Enabled</font>" or "<font color='#FF5A5A'>Disabled</font>", 0.75)
+						mainapi:CreateNotification("<b>"..v.Name.."</b>", not v.Enabled and "<font color='#5AFF5A'>Enabled</font>" or "<font color='#FF5A5A'>Disabled</font>", 0.75)
 				end
 				if mainapi.PushUndo then mainapi:PushUndo(v) end
 				v:Toggle(true)
@@ -11644,7 +11540,7 @@ local function keybindStart(inputObj)
 			for i, v in panel.Modules do
 				if v.Bind and checkKeybinds(mainapi.HeldKeybinds, v.Bind, inputObj.KeyCode.Name) then
 					if mainapi.ToggleNotifications.Enabled then
-						mainapi:CreateNotification("<b>"..mainapi:GetModuleDisplayName(v).."</b>", not v.Enabled and "<font color='#5AFF5A'>Enabled</font>" or "<font color='#FF5A5A'>Disabled</font>", 0.75)
+						mainapi:CreateNotification("<b>"..v.Name.."</b>", not v.Enabled and "<font color='#5AFF5A'>Enabled</font>" or "<font color='#FF5A5A'>Disabled</font>", 0.75)
 					end
 					v:Toggle()
 				end
@@ -12056,7 +11952,7 @@ end)()
 			if query == '' or action.Name:lower():find(query, 1, true) then table.insert(matches, action) end
 		end
 		local function itemName(item)
-			return item.Action and item.Name or mainapi:GetModuleDisplayName(item)
+			return item.Name
 		end
 		table.sort(matches, function(a, b) return itemName(a):lower() < itemName(b):lower() end)
 		firstMatch = matches[1]
