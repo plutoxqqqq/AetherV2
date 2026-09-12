@@ -96,7 +96,7 @@ run(function()
 		Color = Color3.fromRGB(250, 50, 56),
 	})
 	SessionInfo:CreateColorSlider({
-		Name = 'Background Color',
+		Name = 'Background Colour',
 		DefaultValue = 0,
 		DefaultOpacity = 0.5,
 		Function = function(hue, sat, val, opacity)
@@ -105,7 +105,7 @@ run(function()
 		end,
 	})
 	BorderColor = SessionInfo:CreateColorSlider({
-		Name = 'Border Color',
+		Name = 'Border Colour',
 		Function = function(hue, sat, val, opacity)
 			infostroke.Color = Color3.fromHSV(hue, sat, val)
 			infostroke.Transparency = 1 - opacity

@@ -379,6 +379,9 @@ run(function()
         
         if hasZephyrKit() == false then return end
 
+        local stacks = type(getWindStacks) == 'function' and getWindStacks() or 0
+        if stacks < 5 then return end
+
         local groundDistance = root.Position.Y - ground.Position.Y
         local bodyClearance = (humanoid.HipHeight or 2) + (root.Size.Y * 0.5)
         local remainingDistance = math.max(0, groundDistance - bodyClearance)
@@ -621,7 +624,7 @@ run(function()
     })
     Zephyr = NoFall:CreateToggle({
         Name = 'Zephyr',
-        Tooltip = 'Jumps before landing with Zephyr'
+        Tooltip = 'Uses the five stack triple jump to jump before you hit the ground'
     })
     TelepearlClutch = NoFall:CreateToggle({
         Name = 'Telepearl',

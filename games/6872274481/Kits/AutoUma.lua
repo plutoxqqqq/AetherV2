@@ -96,7 +96,7 @@ run(function()
 				until not AutoUma.Enabled
 			end
 		end,
-		Tooltip = 'Automatically throw spirits at item drops and opponents.'
+		Tooltip = 'Automatically throw spirits at item drops and opponents'
 	})
 	Range = AutoUma:CreateSlider({
 		Name = 'Range',

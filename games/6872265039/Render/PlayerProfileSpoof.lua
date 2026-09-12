@@ -112,7 +112,7 @@ run(function()
 		Function = function(callback)
 			if callback then ppStartLoop() else ppCleanup() end
 		end,
-		Tooltip = "Spoofs rank, RP bar color and leaderboard rank in your profile UI (client sided)"
+		Tooltip = "Spoofs rank, RP bar colour and leaderboard rank in your profile UI (client sided)"
 	})
 
 	PPSRankDropdown = PlayerProfileSpoof:CreateDropdown({

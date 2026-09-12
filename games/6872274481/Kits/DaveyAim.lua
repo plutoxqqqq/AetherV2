@@ -515,7 +515,7 @@ run(function()
 		Tooltip = 'Highlights the block you are landing on until you land'
 	})
 	LandingColor = DaveyAim:CreateColorSlider({
-		Name = 'Landing text color',
+		Name = 'Landing text colour',
 		DefaultHue = 0,
 		DefaultSat = 0.001,
 		DefaultValue = 1,

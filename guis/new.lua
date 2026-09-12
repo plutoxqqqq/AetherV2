@@ -2475,7 +2475,8 @@ components = {
 				Players = self.Players.Enabled,
 				NPCs = self.NPCs.Enabled,
 				Invisible = self.Invisible.Enabled,
-				Walls = self.Walls.Enabled
+				Walls = self.Walls.Enabled,
+				Priority = self.Priority.Value
 			}
 		end
 
@@ -2491,6 +2492,9 @@ components = {
 			end
 			if self.Walls.Enabled ~= tab.Walls then
 				self.Walls:Toggle()
+			end
+			if tab.Priority and self.Priority.Value ~= tab.Priority then
+				self.Priority:SetValue(tab.Priority)
 			end
 		end
 
@@ -2564,6 +2568,18 @@ components = {
 			end
 		}, window, {Options = {}})
 		optionapi.Walls.Object.Position = UDim2.fromOffset(0, 111)
+		optionapi.Priority = components.Dropdown({
+			Name = 'Priority',
+			List = {'Players', 'NPCs', 'None', 'Closest', 'Farthest', 'Lowest health', 'Highest health', 'Crosshair'},
+			Default = 'Players',
+			Function = optionsettings.Function,
+			Tooltip = 'Which target gets picked first when more than one is in range\nPlayers / NPCs - that kind wins, the modules own sorting breaks the tie\nClosest / Farthest - by range\nLowest / Highest health - finish someone off, or go for the healthy one\nCrosshair - whoever is nearest the middle of your screen'
+		}, window, {Options = {}})
+		optionapi.Priority.Object.Position = UDim2.fromOffset(0, 141)
+		window.Size = UDim2.fromOffset(220, 145 + optionapi.Priority.Object.Size.Y.Offset)
+		optionapi.Priority.Object:GetPropertyChangedSignal('Size'):Connect(function()
+			window.Size = UDim2.fromOffset(220, 145 + optionapi.Priority.Object.Size.Y.Offset)
+		end)
 		if optionsettings.Players then
 			optionapi.Players:Toggle()
 		end
@@ -7996,7 +8012,9 @@ function mainapi:CreateSearch()
 				stroke.Parent = result.Button
 			end
 			stroke.Color = Color3.fromHSV(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value)
-			stroke.Transparency = resultIndex == selectedResult and 0.2 or 1
+			-- Only mark the keyboard selection while the box is actually focused. A
+			-- permanent accent edge on an off module read as an enabled state.
+			stroke.Transparency = (resultIndex == selectedResult and search:IsFocused()) and 0.2 or 1
 		end
 		local selected = searchResults[selectedResult]
 		if selected and selected.Button.Parent then
@@ -8009,9 +8027,22 @@ function mainapi:CreateSearch()
 			end
 		end
 	end
+	local function centerModuleRow(module)
+		local frame = module.Object and module.Object.Parent
+		if not frame or not frame:IsA('ScrollingFrame') or not module.Object.Parent then return true end
+		local rowTop = module.Object.AbsolutePosition.Y - frame.AbsolutePosition.Y + frame.CanvasPosition.Y
+		local rowHeight = module.Object.AbsoluteSize.Y
+		local view = frame.AbsoluteSize.Y
+		local maximum = math.max(frame.CanvasSize.Y.Offset - view, 0)
+		local targetY = math.clamp(rowTop - math.max((view - rowHeight) * 0.5, 0), 0, maximum)
+		frame.CanvasPosition = Vector2.new(0, targetY)
+		local top = module.Object.AbsolutePosition.Y - frame.AbsolutePosition.Y
+		return top >= -1 and (top + rowHeight) <= (view + 1)
+	end
 	local function locateModule(module)
+		if not module or not module.Object then return end
 		local category = self.Categories[module.Category]
-		if not category or category.Type ~= 'Category' then return end
+		if not category or category.Type ~= 'Category' or not category.Object then return end
 		category.Object.Visible = true
 		if not category.Expanded then category:Expand() end
 		if module.Hidden and category.SetEditMode then
@@ -8022,10 +8053,6 @@ function mainapi:CreateSearch()
 		task.defer(function()
 			local frame = module.Object and module.Object.Parent
 			if not frame or not frame:IsA('ScrollingFrame') or not module.Object.Parent then return end
-			local rowTop = module.Object.AbsolutePosition.Y - frame.AbsolutePosition.Y + frame.CanvasPosition.Y
-			local targetY = rowTop - math.max((frame.AbsoluteSize.Y - module.Object.AbsoluteSize.Y) * 0.5, 0)
-			local maximum = math.max(frame.CanvasSize.Y.Offset - frame.AbsoluteSize.Y, 0)
-			frame.CanvasPosition = Vector2.new(0, math.clamp(targetY, 0, maximum))
 			local highlight = Instance.new('Frame')
 			highlight.Name = 'SearchLocateHighlight'
 			highlight.Size = UDim2.fromScale(1, 1)
@@ -8036,6 +8063,17 @@ function mainapi:CreateSearch()
 			highlight.Parent = module.Object
 			tween:Tween(highlight, TweenInfo.new(0.5), {BackgroundTransparency = 1})
 			task.delay(0.5, function() if highlight.Parent then highlight:Destroy() end end)
+
+			-- Opening settings and other modules' open settings move the canvas around,
+			-- so keep re-centring until the row is actually inside the viewport.
+			local attempts = 0
+			local function attempt()
+				attempts += 1
+				if not module.Object or not module.Object.Parent then return end
+				if centerModuleRow(module) or attempts >= 5 then return end
+				task.delay(0.08, attempt)
+			end
+			attempt()
 		end)
 	end
 	local function clearSearchResults()
@@ -8070,6 +8108,9 @@ function mainapi:CreateSearch()
 
 				button.MouseButton2Click:Connect(function()
 					locateModule(v)
+					-- Collapse the results overlay so the located module is not covered by it.
+					search.Text = ''
+					pcall(function() search:ReleaseFocus() end)
 				end)
 
 				button.Parent = children
@@ -8091,6 +8132,15 @@ function mainapi:CreateSearch()
 		task.delay(0.05, function()
 			updateSearch(query, generation)
 		end)
+	end)
+	search.FocusLost:Connect(function()
+		for _, result in searchResults do
+			local stroke = result.Button:FindFirstChild('SearchSelection')
+			if stroke then stroke.Transparency = 1 end
+		end
+	end)
+	search.Focused:Connect(function()
+		selectResult(selectedResult > 0 and selectedResult or 1)
 	end)
 	self:Clean(inputService.InputBegan:Connect(function(input)
 		if not search:IsFocused() then return end
@@ -8125,6 +8175,10 @@ function mainapi:CreateSearch()
 						button.UIGradient.Color = source.UIGradient.Color
 						button.UIGradient.Enabled = source.UIGradient.Enabled
 						button.Dots.Dots.ImageColor3 = source.Dots.Dots.ImageColor3
+						local buttonDivider, sourceDivider = button:FindFirstChild('Divider'), source:FindFirstChild('Divider')
+						if buttonDivider and sourceDivider then
+							buttonDivider.Visible = sourceDivider.Visible
+						end
 					end)
 				end
 			end
@@ -8913,19 +8967,21 @@ function mainapi:CreateChangelogs()
 	body.Size, body.Position, body.AutomaticSize = UDim2.new(1, -28, 0, 0), UDim2.fromOffset(14, 12), Enum.AutomaticSize.Y
 	body.BackgroundTransparency, body.RichText = 1, true
 	body.Text = [=[<b><font color="#d378ff">BedWars</font></b>
-<font color="#ff6969">[-]</font> Removed retired game-specific modules.
-<font color="#63dc82">[+]</font> Added “AutoEnchant” to Inventory, which automatically repairs and uses the enchanting table.
-<font color="#6aa9ff">[^]</font> Renamed DeathTP to “RecoveryTP”.
-<font color="#6aa9ff">[^]</font> Merged the visual modules into one highly customizable Render module named “Theme”.
-<font color="#ffd45e">[!]</font> Fixed Killaura not swinging faster with the Fury Potion.
-<font color="#ffd45e">[!]</font> Fixed StreamRemover and ACModView’s “Remove disguises”.
-<font color="#ff6969">[-]</font> Removed the standalone modules Atmosphere, TimeChanger, Shader, AuroraSky, StormMode, Bloom, AbyssalDepths, and IRLReplica.
-    Their functionality now exists in “Theme”.
+<font color="#63dc82">[+]</font> Added ESP, one Render module covering beds, hives, crates, collectables, crops, generators, items, inventories, loot, pots, chests and traps.
+<font color="#63dc82">[+]</font> Added a Priority dropdown to every Target Settings window and wired it through every targeting module.
+<font color="#63dc82">[+]</font> Added Deposit and Withdraw hotkey boxes to AutoBank.
+<font color="#63dc82">[+]</font> Added a Delay slider to each AutoToxic trigger, replacing the shared one.
+<font color="#6aa9ff">[^]</font> Rewrote AutoClicker from the new reference; block CPS now reaches 20.
+<font color="#6aa9ff">[^]</font> Replaced Scaffold, OverlayEditor and AntiSuffocate with their reference versions.
+<font color="#6aa9ff">[^]</font> Rewrote InfiniteFly; it anchors you in place and flies with Space and LeftShift.
+<font color="#6aa9ff">[^]</font> Zephyr wind stacks now come from the game's own controller, so Speed, Fly and NoFallDamage react to real stacks.
+<font color="#6aa9ff">[^]</font> Merged HackerDetector into CheatDetector, with flags written to aether/exploiters.json.
+<font color="#ff6969">[-]</font> Removed the separate Bed, Beehive, Generator, Item, Loot, Storage and Trap ESP modules, and BlockSelectorColor.
+<font color="#ffd45e">[!]</font> Polished every module name and tooltip with British English and no trailing full stops.
 
 <b><font color="#d378ff">General</font></b>
-<font color="#63dc82">[+]</font> Added LowHealthVignette to Legit, displaying a subtle screen-edge warning at low health.
-<font color="#6aa9ff">[^]</font> Expanded the Keystrokes overlay with mouse-click and spacebar support.
-<font color="#6aa9ff">[^]</font> Slightly improved startup times through auto-execute.]=]
+<font color="#63dc82">[+]</font> Added Priority support to the entity library.
+<font color="#6aa9ff">[^]</font> Version 3.10.0.]=]
 	body.TextColor3, body.TextSize, body.LineHeight = Color3.fromRGB(170, 170, 170), 13, 1.25
 	body.FontFace, body.TextXAlignment, body.TextYAlignment, body.TextWrapped, body.Parent = Font.fromEnum(Enum.Font.Roboto), Enum.TextXAlignment.Left, Enum.TextYAlignment.Top, true, notes
 	close.MouseButton1Click:Connect(function() window.Visible = false end)
@@ -10041,20 +10097,6 @@ local general = mainapi.Categories.Main:CreateSettingsPane({Name = 'General'})
 mainapi.MultiKeybind = general:CreateToggle({
 	Name = 'Enable Multi-Keybinding',
 	Tooltip = 'Allows multiple keys to be bound to a module (eg. G + H)'
-})
-general:CreateToggle({
-	Name = 'Disable Loading Screen',
-	Function = function(callback)
-		if not isfolder('aetherv2/profiles') then
-			makefolder('aetherv2/profiles')
-		end
-		writefile('aetherv2/profiles/disableloading.txt', callback and 'true' or 'false')
-		if callback and _G.AetherV2CloseLoadingScreen then
-			pcall(_G.AetherV2CloseLoadingScreen)
-		end
-	end,
-	Default = isfile('aetherv2/profiles/disableloading.txt') and readfile('aetherv2/profiles/disableloading.txt') == 'true',
-	Tooltip = 'Prevents AetherV2 from showing its startup loading screen'
 })
 local downgradeEntries = {}
 local versionPicker
@@ -12115,7 +12157,14 @@ end)()
 		tweenService:Create(spotScale, TweenInfo.new(0.28, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Scale = 1}):Play()
 		spotSearch.Text = ''
 		refreshSpot('')
-		task.defer(function() spotSearch:CaptureFocus() end)
+		task.defer(function()
+			spotSearch:CaptureFocus()
+			-- The key that opened the palette can land in the freshly focused box.
+			if spotSearch.Text == '`' then
+				spotSearch.Text = ''
+				refreshSpot('')
+			end
+		end)
 	end
 	local function closeSpot()
 		if not spotOpen then return end
@@ -12133,6 +12182,10 @@ end)()
 	-- of a fast query is real work to throw away.
 	local spotQueryToken = 0
 	spotSearch:GetPropertyChangedSignal('Text'):Connect(function()
+		if spotOpen and spotSearch.Text == '`' then
+			spotSearch.Text = ''
+			return
+		end
 		spotQueryToken += 1
 		local token = spotQueryToken
 		task.delay(0.05, function()

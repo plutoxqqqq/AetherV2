@@ -106,7 +106,7 @@ run(function()
         end)
     end
 
-    ShopQuickBuy = vape.Categories.Combat:CreateModule({
+    ShopQuickBuy = vape.Categories.Utility:CreateModule({
         Name = 'ShopClicker',
         Function = function(callback)
             if callback then

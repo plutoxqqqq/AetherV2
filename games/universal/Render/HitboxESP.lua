@@ -76,11 +76,11 @@ run(function()
 				end
 			end
 		end,
-		Tooltip = 'Displays player hitboxes as transparent coloured boxes.'
+		Tooltip = 'Displays player hitboxes as transparent coloured boxes'
 	})
 
 	Color = HitboxESP:CreateColorSlider({
-		Name = 'Color',
+		Name = 'Colour',
 		Function = function(hue, sat, val)
 			for ent, refs in Reference do
 				local color = entitylib.getEntityColor(ent) or Color3.fromHSV(hue, sat, val)

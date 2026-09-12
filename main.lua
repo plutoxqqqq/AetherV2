@@ -37,22 +37,7 @@ local PLACE_ALIAS = {
 	[132768098780837] = 6872274481,
 	[16008862571] = 6872265039,
 }
-local DOWNLOAD_BATCH = 24
-
-local function setPhase(text, progress)
-	if _G.AetherV2SetLoadingStatus then
-		pcall(_G.AetherV2SetLoadingStatus, text, progress)
-	end
-end
-
-local function closeLoading()
-	if _G.AetherV2CloseLoadingScreen then
-		pcall(_G.AetherV2CloseLoadingScreen)
-	elseif _G.AetherV2LoadingScreen then
-		pcall(function() _G.AetherV2LoadingScreen:Destroy() end)
-		_G.AetherV2LoadingScreen = nil
-	end
-end
+local DOWNLOAD_BATCH = 48
 
 local function toast(title, text, duration)
 	pcall(function()
@@ -127,9 +112,6 @@ local function downloadParallel(folder, names, phaseStart, phaseSpan)
 				warn('[AetherV2] skipped '..folder..'/'..name..': '..tostring(body))
 			end
 			done += 1
-			if done == 1 or done == #names or done % 8 == 0 then
-				setPhase('Downloading '..folder..' ('..done..'/'..#names..')', phaseStart + (done / math.max(#names, 1)) * phaseSpan)
-			end
 		end)
 		if cursor % DOWNLOAD_BATCH == 0 then
 			repeat task.wait() until done >= cursor or (cursor - done) < DOWNLOAD_BATCH
@@ -143,7 +125,6 @@ end
 local function loadPacked(folder)
 	local packPath = 'aetherv2/games/'..folder..'/pack.lua'
 	if isfile(packPath) then
-		setPhase('Loading '..folder, 0.72)
 		local chunk, err = loadstring(readfile(packPath), folder)
 		if chunk then
 			local ok, result = pcall(chunk, license)
@@ -170,8 +151,7 @@ local function loadPacked(folder)
 	if #names == 0 then
 		return false, 'empty files.txt'
 	end
-	setPhase('Downloading '..folder, 0.4)
-	local bodies = downloadParallel(folder, names, 0.4, 0.35)
+	local bodies = downloadParallel(folder, names, 0, 0)
 	local chunks = {}
 	for i = 1, #names do
 		if bodies[i] then
@@ -184,7 +164,6 @@ local function loadPacked(folder)
 	local packed = table.concat(chunks, '\n')
 	ensureParentFolder(packPath)
 	pcall(writefile, packPath, packed)
-	setPhase('Loading '..folder, 0.82)
 	local chunk, err = loadstring(packed, folder)
 	if not chunk then
 		warn('[AetherV2] compile failed '..folder..': '..tostring(err))
@@ -282,8 +261,6 @@ local function finishLoading()
 			vape:CreateNotification('Finished Loading', msg, 4)
 		end)
 	end
-	setPhase('Loaded', 1)
-	closeLoading()
 end
 
 if not isfile('aetherv2/profiles/gui.txt') then
@@ -294,13 +271,11 @@ local gui = 'new'
 if not isfolder('aetherv2/assets/'..gui) then
 	makefolder('aetherv2/assets/'..gui)
 end
-setPhase('Loading interface', 0.28)
 vape = loadstring(downloadFile('aetherv2/guis/'..gui..'.lua'), 'gui')(license)
 shared.vape = vape
 _G.vape = vape
 
 if not shared.VapeIndependent then
-	setPhase('Loading universal modules', 0.34)
 	if not loadPacked('universal') then
 		loadLegacy('universal')
 	end
@@ -308,7 +283,6 @@ if not shared.VapeIndependent then
 	if vape.Place == nil then
 		vape.Place = place
 	end
-	setPhase('Loading game modules ('..tostring(place)..')', 0.5)
 	if not loadPacked(tostring(place)) then
 		if not loadLegacy(tostring(place)) then
 			warn('[AetherV2] No game module for '..tostring(game.PlaceId)..' -> '..tostring(place))

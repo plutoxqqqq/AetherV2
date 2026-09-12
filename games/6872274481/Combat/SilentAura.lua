@@ -165,6 +165,7 @@ run(function()
                             Wallcheck = Targets.Walls.Enabled or nil,
                             Part = 'RootPart',
                             Players = Targets.Players.Enabled,
+                            Priority = Targets.Priority and Targets.Priority.Value,
                             NPCs = Targets.NPCs.Enabled,
                             Limit = 1,
                             Sort = sortmethods[Mode.Value or 'Distance'],
@@ -328,7 +329,7 @@ run(function()
     LegitAura = SilentAura:CreateToggle({Name = 'Swing only'})
     SilentAim = SilentAura:CreateToggle({
         Name = 'Silent Aim',
-        Tooltip = 'Silently aims while keeping natural-looking camera movement.',
+        Tooltip = 'Silently aims while keeping natural-looking camera movement',
         Default = true,
         Function = function(callback)
             Area.Object.Visible = not callback
@@ -350,12 +351,12 @@ run(function()
         end,
     })
     Targetcolor = SilentAura:CreateColorSlider({
-        Name = 'Target color',
+        Name = 'Target colour',
         Darker = true,
         DefaultOpacity = 0.5,
     })
     Attackcolor = SilentAura:CreateColorSlider({
-        Name = 'Attack color',
+        Name = 'Attack colour',
         Darker = true,
         DefaultOpacity = 0.5,
     })

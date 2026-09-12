@@ -56,6 +56,51 @@ local function sortDistance(a, b)
 	return a.Magnitude < b.Magnitude
 end
 
+entitylib.Priorities = {
+	Players = function(v)
+		return v.Entity.Player and 0 or 1
+	end,
+	NPCs = function(v)
+		return v.Entity.Player and 1 or 0
+	end,
+	Closest = function(v)
+		return v.Magnitude
+	end,
+	Farthest = function(v)
+		return -v.Magnitude
+	end,
+	['Lowest health'] = function(v)
+		return v.Entity.Health
+	end,
+	['Highest health'] = function(v)
+		return -v.Entity.Health
+	end,
+	Crosshair = function(v)
+		local pos, vis = gameCamera:WorldToViewportPoint(v.Entity.RootPart.Position)
+		return vis and (Vector2.new(pos.X, pos.Y) - (gameCamera.ViewportSize / 2)).Magnitude or math.huge
+	end
+}
+
+local rankedSort, rankedRank
+local function rankedCompare(a, b)
+	local ranka, rankb = rankedRank(a), rankedRank(b)
+	if ranka ~= rankb then
+		return ranka < rankb
+	end
+	return rankedSort(a, b)
+end
+
+entitylib.getSort = function(entitysettings)
+	local sort = entitysettings.Sort or sortDistance
+	local rank = entitylib.Priorities[entitysettings.Priority]
+	if not rank then
+		return sort
+	end
+
+	rankedSort, rankedRank = sort, rank
+	return rankedCompare
+end
+
 local function loopClean(tbl)
 	for i, v in tbl do
 		if type(v) == 'table' then
@@ -147,7 +192,7 @@ entitylib.EntityMouse = function(entitysettings)
 		end
 
 		if #sortingTable > 1 then
-			table.sort(sortingTable, entitysettings.Sort or sortDistance)
+			table.sort(sortingTable, entitylib.getSort(entitysettings))
 		end
 
 		for _, v in sortingTable do
@@ -189,10 +234,7 @@ entitylib.EntityPosition = function(entitysettings)
 		end
 
 		if #sortingTable > 1 then
-			table.sort(sortingTable, entitysettings.Sort or sortDistance)
-			if entitysettings.Priority then
-				table.sort(sortingTable, entitysettings.Priority)
-			end
+			table.sort(sortingTable, entitylib.getSort(entitysettings))
 		end
 
 		for _, v in sortingTable do
@@ -227,7 +269,7 @@ entitylib.AllPosition = function(entitysettings)
 		end
 
 		if #sortingTable > 1 then
-			table.sort(sortingTable, entitysettings.Sort or sortDistance)
+			table.sort(sortingTable, entitylib.getSort(entitysettings))
 		end
 
 		for _, v in sortingTable do

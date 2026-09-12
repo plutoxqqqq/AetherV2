@@ -78,7 +78,7 @@ run(function()
     })
 
     PlayerOutline:CreateColorSlider({
-        Name = 'Outline Color',
+        Name = 'Outline Colour',
         Function = function(h, s, v)
             outlineColor = Color3.fromHSV(h, s, v)
             for _, outline in outlines do

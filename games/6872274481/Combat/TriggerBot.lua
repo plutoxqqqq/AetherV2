@@ -17,7 +17,8 @@ run(function()
     local function meleeTarget(origin, range)
         if Angle.Value > 0 then
             local ent = entitylib.EntityMouse({Part = 'RootPart', Range = Angle.Value, MouseOrigin = gameCamera.ViewportSize / 2,
-                Players = Targets.Players.Enabled, NPCs = Targets.NPCs.Enabled, Wallcheck = Targets.Walls.Enabled, Origin = origin})
+                Players = Targets.Players.Enabled,
+                Priority = Targets.Priority and Targets.Priority.Value, NPCs = Targets.NPCs.Enabled, Wallcheck = Targets.Walls.Enabled, Origin = origin})
             return ent and (origin - ent.RootPart.Position).Magnitude <= range and ent or nil
         end
         local unit = lplr:GetMouse().UnitRay
@@ -169,8 +170,8 @@ run(function()
         Tooltip = 'Automatically swings when hovering over a entity'
     })
     Targets = TriggerBot:CreateTargets({Players = true, NPCs = true, Walls = true})
-    Range = TriggerBot:CreateSlider({Name = 'Range', Min = 1, Max = 18, Default = 18, Decimal = 10, Suffix = ' studs', Tooltip = 'Clamped by held weapon reach.'})
-    Angle = TriggerBot:CreateSlider({Name = 'Angle', Min = 0, Max = 1000, Default = 0, Tooltip = 'Targets near screen center instead of only the cursor ray.'})
+    Range = TriggerBot:CreateSlider({Name = 'Range', Min = 1, Max = 18, Default = 18, Decimal = 10, Suffix = ' studs', Tooltip = 'Clamped by held weapon reach'})
+    Angle = TriggerBot:CreateSlider({Name = 'Angle', Min = 0, Max = 1000, Default = 0, Tooltip = 'Targets near screen centre instead of only the cursor ray'})
     CPS = TriggerBot:CreateTwoSlider({
         Name = 'CPS',
         Min = 1,
@@ -202,5 +203,5 @@ run(function()
     for _, style in Enum.EasingStyle:GetEnumItems() do if not table.find(animations, style.Name) then table.insert(animations, style.Name) end end
     BoxTween = TriggerBot:CreateDropdown({Name = 'Box Animation', List = animations, Visible = false})
     BoxSpeed = TriggerBot:CreateSlider({Name = 'Animation Speed', Min = 0, Max = 10, Default = 0.9, Decimal = 30, Visible = false})
-    BoxColor = TriggerBot:CreateColorSlider({Name = 'Target Color', DefaultHue = 0.6, DefaultOpacity = 0.5, Visible = false})
+    BoxColor = TriggerBot:CreateColorSlider({Name = 'Target Colour', DefaultHue = 0.6, DefaultOpacity = 0.5, Visible = false})
 end)

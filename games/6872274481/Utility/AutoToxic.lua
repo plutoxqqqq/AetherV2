@@ -1,18 +1,17 @@
 run(function()
     local AutoToxic
     local GG
-    local Delay
     local TrollTriggers
     local trollCooldown = 0
-    local Toggles, Lists, said, dead = {}, {}, {}
+    local Toggles, Lists, Delays, said, dead = {}, {}, {}, {}, {}
 
     
     
     
     
-    local function doSend(text)
+    local function doSend(text, delay)
         if not text or text == '' then return end
-        local wait = Delay and Delay.Value or 0
+        local wait = delay and delay.Value or 0
         local function push()
             if textChatService.ChatVersion == Enum.ChatVersion.TextChatService then
                 textChatService.ChatInputBarConfiguration.TargetTextChannel:SendAsync(text)
@@ -27,7 +26,7 @@ run(function()
         end
     end
 
-    local function sendMessage(name, obj, default)
+    local function sendMessage(name, obj, default, delay)
         local tab = Lists[name].ListEnabled
         local custommsg = #tab > 0 and tab[math.random(1, #tab)] or default
         if not custommsg then return end
@@ -40,7 +39,7 @@ run(function()
         said[name] = custommsg
 
         custommsg = custommsg and custommsg:gsub('<obj>', obj or '') or ''
-        doSend(custommsg)
+        doSend(custommsg, delay)
     end
 
     AutoToxic = vape.Categories.Utility:CreateModule({
@@ -49,10 +48,10 @@ run(function()
             if callback then
                 AutoToxic:Clean(vapeEvents.BedwarsBedBreak.Event:Connect(function(bedTable)
                     if Toggles.BedDestroyed.Enabled and bedTable.brokenBedTeam.id == lplr:GetAttribute('Team') then
-                        sendMessage('BedDestroyed', (bedTable.player.DisplayName or bedTable.player.Name), 'how dare you >:( | <obj>')
+                        sendMessage('BedDestroyed', (bedTable.player.DisplayName or bedTable.player.Name), 'how dare you >:( | <obj>', Delays.BedDestroyed)
                     elseif Toggles.Bed.Enabled and bedTable.player.UserId == lplr.UserId then
                         local team = bedwars.QueueMeta[store.queueType].teams[tonumber(bedTable.brokenBedTeam.id)]
-                        sendMessage('Bed', team and team.displayName:lower() or 'white', 'nice bed lul | <obj>')
+                        sendMessage('Bed', team and team.displayName:lower() or 'white', 'nice bed lul | <obj>', Delays.Bed)
                     end
                 end))
                 AutoToxic:Clean(vapeEvents.EntityDeathEvent.Event:Connect(function(deathTable)
@@ -63,22 +62,22 @@ run(function()
                         if killed == lplr then
                             if (not dead) and killer ~= lplr and Toggles.Death.Enabled then
                                 dead = true
-                                sendMessage('Death', (killer.DisplayName or killer.Name), 'my gaming chair subscription expired :( | <obj>')
+                                sendMessage('Death', (killer.DisplayName or killer.Name), 'my gaming chair subscription expired :( | <obj>', Delays.Death)
                             end
                         elseif killer == lplr and Toggles.Kill.Enabled then
-                            sendMessage('Kill', (killed.DisplayName or killed.Name), 'vxp on top | <obj>')
+                            sendMessage('Kill', (killed.DisplayName or killed.Name), 'vxp on top | <obj>', Delays.Kill)
                         end
                     end
                 end))
                 AutoToxic:Clean(vapeEvents.MatchEndEvent.Event:Connect(function(winstuff)
                     if GG.Enabled then
-                        doSend('gg')
+                        doSend('gg', Delays.GG)
                     end
 
                     local myTeam = bedwars.Store:getState().Game.myTeam
                     if myTeam and myTeam.id == winstuff.winningTeamId or lplr.Neutral then
                         if Toggles.Win.Enabled then
-                            sendMessage('Win', nil, 'yall garbage')
+                            sendMessage('Win', nil, 'yall garbage', Delays.Win)
                         end
                     end
                 end))
@@ -117,18 +116,27 @@ run(function()
         end,
         Tooltip = 'Says a message after a certain action'
     })
+    local function makeDelay(name)
+        return AutoToxic:CreateSlider({
+            Name = name..' Delay',
+            Min = 0,
+            Max = 10,
+            Default = 0,
+            Decimal = 10,
+            Suffix = 's',
+            Darker = true,
+            Visible = false,
+            Tooltip = 'How long to wait after the triggering action before sending, 0 for instant'
+        })
+    end
     GG = AutoToxic:CreateToggle({
         Name = 'AutoGG',
-        Default = true
-    })
-    Delay = AutoToxic:CreateSlider({
-        Name = 'Delay',
-        Min = 0,
-        Max = 10,
-        Default = 0,
-        Decimal = 10,
-        Suffix = 's',
-        Tooltip = 'How long to wait after the triggering action before sending, 0 for instant'
+        Default = true,
+        Function = function(callback)
+            if Delays.GG then
+                Delays.GG.Object.Visible = callback
+            end
+        end
     })
     for _, v in {'Kill', 'Death', 'Bed', 'BedDestroyed', 'Win'} do
         Toggles[v] = AutoToxic:CreateToggle({
@@ -137,6 +145,9 @@ run(function()
                 if Lists[v] then
                     Lists[v].Object.Visible = callback
                 end
+                if Delays[v] then
+                    Delays[v].Object.Visible = callback
+                end
             end
         })
         Lists[v] = AutoToxic:CreateTextList({
@@ -144,7 +155,10 @@ run(function()
             Darker = true,
             Visible = false
         })
+        Delays[v] = makeDelay(v)
     end
+    Delays.GG = makeDelay('AutoGG')
+    Delays.GG.Object.Visible = GG.Enabled
     Toggles.Troll = AutoToxic:CreateToggle({
         Name = 'Troll ',
         Tooltip = 'Detects when someone calls you a hacker/cheater in chat and automatically replies',

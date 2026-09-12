@@ -148,7 +148,7 @@ run(function()
 	end,
     })
     FillColor = Chams:CreateColorSlider({
-	Name = 'Color',
+	Name = 'Colour',
 	Function = function(hue, sat, val)
 		for i, v in Reference do
 			local color = entitylib.getEntityColor(i) or Color3.fromHSV(hue, sat, val)
@@ -163,7 +163,7 @@ run(function()
 	end,
     })
     OutlineColor = Chams:CreateColorSlider({
-	Name = 'Outline Color',
+	Name = 'Outline Colour',
 	DefaultSat = 0,
 	Function = function(hue, sat, val)
 		for i, v in Reference do

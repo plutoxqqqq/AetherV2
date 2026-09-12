@@ -16,7 +16,7 @@ run(function()
                 task.defer(function() if FPSUnlocker.Enabled then FPSUnlocker:Toggle() end end)
             end
         end,
-        Tooltip = 'Changes the frame-rate cap when the executor supports setfpscap.'
+        Tooltip = 'Changes the frame-rate cap when the executor supports setfpscap'
     })
     Cap = FPSUnlocker:CreateSlider({
         Name = 'FPS cap',

@@ -94,7 +94,7 @@ run(function()
 				cameraTurn = nil
 			end
 		end,
-		Tooltip = 'Automatically jumps and rotates the camera for wallhopping.'
+		Tooltip = 'Automatically jumps and rotates the camera for wallhopping'
 	})
 
 	Offset = Wallhop:CreateSlider({
@@ -112,7 +112,7 @@ run(function()
 			if CameraTime and CameraTime.Object then CameraTime.Object.Visible = value == 'Legit' end
 			if value ~= 'Legit' then cameraTurn = nil end
 		end,
-		Tooltip = 'Instant applies the offset for one frame. Legit turns the camera over the selected time.'
+		Tooltip = 'Instant applies the offset for one frame. Legit turns the camera over the selected time'
 	})
 	CameraTime = Wallhop:CreateSlider({
 		Name = 'Camera Time',
@@ -122,6 +122,6 @@ run(function()
 		Decimal = 100,
 		Suffix = 's',
 		Visible = false,
-		Tooltip = 'How long Legit mode takes to reach the wallhop camera angle.'
+		Tooltip = 'How long Legit mode takes to reach the wallhop camera angle'
 	})
 end)

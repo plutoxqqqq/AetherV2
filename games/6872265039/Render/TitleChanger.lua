@@ -20,7 +20,7 @@ run(function()
 				old = nil
 			end
 		end,
-		Tooltip ='Client Sided Titles :D'
+		Tooltip = 'Client Sided Titles :D'
 	})
 	for _, v in pairs(bedwars.TitleTypes) do
 		TABLE[#TABLE+1] = v

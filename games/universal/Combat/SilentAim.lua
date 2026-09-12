@@ -375,7 +375,7 @@ run(function()
 	end,
     })
     CircleColor = SilentAim:CreateColorSlider({
-	Name = 'Circle Color',
+	Name = 'Circle Colour',
 	Function = function(hue, sat, val)
 		if CircleObject then
 			CircleObject.Color = Color3.fromHSV(hue, sat, val)

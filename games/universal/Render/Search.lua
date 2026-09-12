@@ -56,7 +56,7 @@ run(function()
 	end,
     })
     Color = Search:CreateColorSlider({
-	Name = 'Color',
+	Name = 'Colour',
 	Function = function(hue, sat, val)
 		for _, v in Reference do
 			v.Color3 = Color3.fromHSV(hue, sat, val)

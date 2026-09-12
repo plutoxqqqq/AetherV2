@@ -11,6 +11,7 @@ run(function()
 						Range = 14.4,
 						Part = 'RootPart',
 						Players = Targets.Players.Enabled,
+						Priority = Targets.Priority and Targets.Priority.Value,
 						NPCs = Targets.NPCs.Enabled
 					}) and bedwars.AbilityController:canUseAbility('midnight', {disableBlockedAbilityAlert = true}) then
 						bedwars.AbilityController:useAbility('midnight')

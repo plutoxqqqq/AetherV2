@@ -25,7 +25,7 @@ local sigridGeneration = 0
 
 InfiniteSigrid = (function()
     local module, created = register('Kits', 'InfiniteSigrid', {
-        Tooltip = 'Keeps the Elk mount active while the Elk Master kit is equipped.',
+        Tooltip = 'Keeps the Elk mount active while the Elk Master kit is equipped',
         Function = function(callback)
             sigridGeneration += 1
             local generation = sigridGeneration

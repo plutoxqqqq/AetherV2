@@ -19,6 +19,7 @@ run(function()
 							Range = Range.Value,
 							Part = 'RootPart',
 							Players = Targets.Players.Enabled,
+							Priority = Targets.Priority and Targets.Priority.Value,
 							NPCs = Targets.NPCs.Enabled,
 							Sort = sortmethods[Sort.Value]
 						}) do
@@ -44,7 +45,7 @@ run(function()
 				table.clear(attempted)
 			end
 		end,
-		Tooltip = 'Automatically executes low health players with Hannah.'
+		Tooltip = 'Automatically executes low health players with Hannah'
 	})
 	Targets = AutoHannah:CreateTargets({Players = true})
 	local methods = {'Health', 'Distance'}

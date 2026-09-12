@@ -83,7 +83,7 @@ run(function()
     holder = Instance.new('Frame'); holder.Size = UDim2.fromScale(1,1); holder.BackgroundTransparency = 1; holder.Parent = Keystrokes.Children
     local function rebuild() if Keystrokes.Enabled then build() else layout() end end
     Style = Keystrokes:CreateDropdown({Name = 'Key Style', List = {'Keyboard','Arrow'}, Function = rebuild})
-    Color = Keystrokes:CreateColorSlider({Name = 'Color', DefaultValue = 0, DefaultOpacity = 0.5, Function = function(h,s,v,o) for _, entry in keys do if not entry.Pressed then entry.Key.BackgroundColor3 = Color3.fromHSV(h,s,v); entry.Key.BackgroundTransparency = 1-o end end end})
+    Color = Keystrokes:CreateColorSlider({Name = 'Colour', DefaultValue = 0, DefaultOpacity = 0.5, Function = function(h,s,v,o) for _, entry in keys do if not entry.Pressed then entry.Key.BackgroundColor3 = Color3.fromHSV(h,s,v); entry.Key.BackgroundTransparency = 1-o end end end})
     ShowSpace = Keystrokes:CreateToggle({Name = 'Show Spacebar', Default = true, Function = rebuild})
     ShowMouse = Keystrokes:CreateToggle({Name = 'Show Mouse', Function = rebuild})
     ShowLeft = Keystrokes:CreateToggle({Name = 'Left Mouse', Default = true, Function = rebuild})

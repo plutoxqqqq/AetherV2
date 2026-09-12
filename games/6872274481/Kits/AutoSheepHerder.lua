@@ -27,7 +27,7 @@ run(function()
 				until not AutoSheep.Enabled
 			end
 		end,
-		Tooltip = 'Automatically tames sheep within range.'
+		Tooltip = 'Automatically tames sheep within range'
 	})
 	Range = AutoSheep:CreateSlider({
 		Name = 'Range',

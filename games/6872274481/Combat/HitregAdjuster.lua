@@ -25,7 +25,7 @@ run(function()
 				if restoreConnection then restoreConnection:Destroy(); restoreConnection = nil end
 			end)
 		end,
-		Tooltip = 'Adjusts manual and AutoClicker sword swing spacing without changing Killaura timing.'
+		Tooltip = 'Adjusts manual and AutoClicker sword swing spacing without changing Killaura timing'
 	})
 	Hitreg = HitregAdjuster:CreateSlider({Name = 'Hitreg', Min = 1, Max = 36, Default = 35, Suffix = ' hits / 10s'})
 end)

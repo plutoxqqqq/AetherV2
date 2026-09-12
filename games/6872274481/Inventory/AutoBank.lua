@@ -8,6 +8,8 @@ run(function()
     local BeforeDeath
     local HPThreshold
     local BeforeDeathWhitelist
+    local DepositKey
+    local WithdrawKey
     local UI
 
     
@@ -201,6 +203,21 @@ run(function()
         end)
         chestDepositBusy = false
         return true
+    end
+
+    local function parseHotkey(box)
+        if not box then return nil end
+        local text = tostring(box.Value or ''):gsub('%s+', ''):upper()
+        if text == '' then return nil end
+        local ok, key = pcall(function() return Enum.KeyCode[text] end)
+        return ok and key or nil
+    end
+
+    local function atOwnChest()
+        if not entitylib.isAlive then return nil end
+        local folder = ownPersonalFolder()
+        if folder and atPersonalChest() then return folder end
+        return nil
     end
 
     local function currentHealthPercent()
@@ -427,6 +444,23 @@ run(function()
 				AutoBank:Clean(lplr.CharacterAdded:Connect(bindDangerCharacter))
 				bindDangerCharacter(lplr.Character)
 
+				AutoBank:Clean(inputService.InputBegan:Connect(function(input)
+					if inputService:GetFocusedTextBox() then return end
+					local deposit, withdraw = parseHotkey(DepositKey), parseHotkey(WithdrawKey)
+					if not deposit and not withdraw then return end
+					if deposit and input.KeyCode == deposit then
+						local folder = atOwnChest()
+						if folder and not chestDepositBusy then
+							depositToChest(folder, Whitelist.ListEnabled)
+						end
+					elseif withdraw and input.KeyCode == withdraw then
+						local folder = atOwnChest()
+						if folder then
+							withdrawFromChest(folder, nil)
+						end
+					end
+				end))
+
                 repeat
                     local hotbar = lplr.PlayerGui:FindFirstChild('hotbar')
                     local hotbarFrame = hotbar and hotbar:FindFirstChild('1')
@@ -590,5 +624,15 @@ run(function()
                 UI.Visible = callback
             end
         end
+    })
+    DepositKey = AutoBank:CreateTextBox({
+        Name = 'Deposit key',
+        Placeholder = 'None',
+        Tooltip = 'Press while stood at your personal chest to instantly bank every whitelisted item'
+    })
+    WithdrawKey = AutoBank:CreateTextBox({
+        Name = 'Withdraw key',
+        Placeholder = 'None',
+        Tooltip = 'Press while stood at your personal chest to instantly pull every whitelisted item back out'
     })
 end)

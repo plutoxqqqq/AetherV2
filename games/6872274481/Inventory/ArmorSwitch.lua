@@ -14,6 +14,7 @@ run(function()
                             Part = 'RootPart',
                             Range = Range.Value,
                             Players = Targets.Players.Enabled,
+                            Priority = Targets.Priority and Targets.Priority.Value,
                             NPCs = Targets.NPCs.Enabled,
                             Wallcheck = Targets.Walls.Enabled
                         }) and true or false
@@ -43,7 +44,7 @@ run(function()
                 end
             end
         end,
-        Tooltip = 'Puts on / takes off armor when toggled for baiting'
+        Tooltip = 'Puts on / takes off armour when toggled for baiting'
     })
     Targets = ArmorSwitch:CreateTargets({
         Players = true,

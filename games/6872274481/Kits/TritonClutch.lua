@@ -583,7 +583,7 @@ local function registerTrixie(context)
                 restore()
             end
         end,
-        Tooltip = 'Extends Trixie Rift Warp by patching its live client range calculation. Server validation can still clamp unsupported distances.'
+        Tooltip = 'Extends Trixie Rift Warp by patching its live client range calculation. Server validation can still clamp unsupported distances'
     })
 
     if not created or not moduleOrError then

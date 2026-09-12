@@ -1,5 +1,6 @@
 run(function()
 	local DeathSpawn
+	local Delay
 	local generation = 0
 	local deathConnection
 	local characterConnection
@@ -58,9 +59,12 @@ run(function()
 			characterConnection = lplr.CharacterAdded:Connect(function(newCharacter)
 				if myGeneration ~= generation or not DeathSpawn.Enabled then return end
 
-				task.defer(function()
-					local newRoot = newCharacter:WaitForChild('HumanoidRootPart', 5)
-					if not newRoot then return end
+				task.delay(Delay.Value, function()
+					if myGeneration ~= generation or not DeathSpawn.Enabled then return end
+					if lplr.Character ~= newCharacter then return end
+					local newRoot = newCharacter:WaitForChild('HumanoidRootPart', 8)
+					local newHumanoid = newCharacter:WaitForChild('Humanoid', 8)
+					if not newRoot or not newHumanoid or newHumanoid.Health <= 0 then return end
 
 					newRoot.CFrame = CFrame.new(lastPosition) * lastRotation
 					newRoot.AssemblyLinearVelocity = Vector3.zero
@@ -97,6 +101,16 @@ run(function()
 
 			DeathSpawn:Clean(connection)
 		end,
-		Tooltip = 'Respawn at your last grounded position and rotation.'
+		Tooltip = 'Respawn at your last grounded position and rotation'
+	})
+
+	Delay = DeathSpawn:CreateSlider({
+		Name = 'Respawn Delay',
+		Min = 0,
+		Max = 5,
+		Default = 0.5,
+		Decimal = 10,
+		Suffix = 'seconds',
+		Tooltip = 'How long to wait after respawning before teleporting, so the character is fully spawned in'
 	})
 end)

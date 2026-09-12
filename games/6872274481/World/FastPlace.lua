@@ -21,7 +21,7 @@ run(function()
                 restore()
             end
         end,
-        Tooltip = 'Reduces only the placement cooldown; does not hook placement or alter range.'
+        Tooltip = 'Reduces only the placement cooldown; does not hook placement or alter range'
     })
     CPS = FastPlace:CreateSlider({
         Name = 'CPS', Min = 1, Max = 20, Default = 13,

@@ -106,13 +106,13 @@ run(function()
 
 	if QueueCard.CreateColorSlider then
 		QueueCard:CreateColorSlider({
-			Name = "Color 1",
+			Name = "Colour 1",
 			Function = function(h, s, v)
 				cfg.c1 = {H = h, S = s, V = v}
 			end
 		})
 		QueueCard:CreateColorSlider({
-			Name = "Color 2",
+			Name = "Colour 2",
 			Function = function(h, s, v)
 				cfg.c2 = {H = h, S = s, V = v}
 			end
