@@ -8878,7 +8878,7 @@ function mainapi:CreateChangelogs()
 	body.Size, body.Position, body.AutomaticSize = UDim2.new(1, -28, 0, 0), UDim2.fromOffset(14, 12), Enum.AutomaticSize.Y
 	body.BackgroundTransparency, body.RichText = 1, true
 	body.Text = [=[<b><font color="#d378ff">BedWars</font></b>
-<font color="#63dc82">[+]</font> Added JadeInstantKill: pins the camera to an invisible anchor on a fixed Y, hops 200 studs above a living target, bypasses the Jade Hammer cooldown and rides the slam onto them.
+<font color="#63dc82">[+]</font> Added JadeInstantKill: pins the camera to an invisible anchor on a fixed Y, hops 200 studs above a living target, bypasses the Jade Hammer cooldown, pauses a second after landing and rides the slam onto them.
 <font color="#63dc82">[+]</font> Added the missing kit modules: AutoAbaddon, AutoArachne, AutoCogsworth, AutoElektra, AutoFlora, AutoMarrow, AutoSigrid and AutoTrixie.
 <font color="#63dc82">[+]</font> Added XurotExtender and YaminiWallKick, completing the kit movement extenders.
 <font color="#63dc82">[+]</font> Restored the "Script has updated from vX to vY" notification after loading an update.

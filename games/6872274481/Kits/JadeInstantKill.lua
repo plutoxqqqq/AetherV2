@@ -267,8 +267,16 @@ run(function()
 			task.wait()
 		end
 
+		-- The slam is over the moment the character is back on the floor, so hold fire for
+		-- one second before looking for the next target. Firing itself ignores the tool
+		-- cooldown, so this is the only breather; executors where the cooldown checks cannot
+		-- be read fall back to the six second wait instead.
 		local remaining = cooldownRemaining()
-		nextUse = tick() + (type(remaining) == 'number' and math.max(remaining, 0.2) or COOLDOWN_FALLBACK)
+		if type(remaining) == 'number' then
+			nextUse = tick() + 1
+		else
+			nextUse = tick() + math.max(1, COOLDOWN_FALLBACK)
+		end
 		return true
 	end
 
