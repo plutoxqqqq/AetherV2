@@ -260,6 +260,26 @@ local function finishLoading()
 		pcall(function()
 			vape:CreateNotification('Finished Loading', msg, 4)
 		end)
+		local update = type(shared.updated) == 'table' and shared.updated or nil
+		if update and not update.Notified then
+			update.Notified = true
+			task.delay(1, function()
+				local text
+				if update.From and update.From ~= '' and update.To and update.To ~= '' and update.From ~= update.To then
+					text = 'Script has updated from v'..update.From..' to v'..update.To
+				elseif update.To and update.To ~= '' then
+					text = 'Script has updated to v'..update.To
+				else
+					text = 'Script has updated'
+				end
+				if update.Files and update.Files > 0 then
+					text = text..' ('..update.Files..' file'..(update.Files == 1 and '' or 's')..' changed)'
+				end
+				pcall(function()
+					vape:CreateNotification('AetherV2', text, 10, 'info')
+				end)
+			end)
+		end
 	end
 end
 

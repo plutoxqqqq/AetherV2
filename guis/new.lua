@@ -8881,6 +8881,8 @@ function mainapi:CreateChangelogs()
 <font color="#63dc82">[+]</font> Added JadeInstantKill: locks your pitch, hops 200 studs above a target, jumps with the Jade Hammer and rides the slam onto them.
 <font color="#63dc82">[+]</font> Added the missing kit modules: AutoAbaddon, AutoArachne, AutoCogsworth, AutoElektra, AutoFlora, AutoMarrow, AutoSigrid and AutoTrixie.
 <font color="#63dc82">[+]</font> Added XurotExtender and YaminiWallKick, completing the kit movement extenders.
+<font color="#63dc82">[+]</font> Restored the "Script has updated from vX to vY" notification after loading an update.
+<font color="#6aa9ff">[^]</font> Fixed Update Modules and Update / Reinject: they now refresh the split game packs, files.txt, caches and version pin instead of the removed monolith files.
 <font color="#6aa9ff">[^]</font> Jade Hammer support now calls jade_hammer_jump for tiers I, II and III instead of the non-existent tiered abilities.
 <font color="#6aa9ff">[^]</font> Reworked the Jade Hammer paths in LongJump, NoFallDamage and JadeExtender around the real ability ID.
 <font color="#6aa9ff">[^]</font> Audited every Kits module ability and remote against the live game.
@@ -9864,6 +9866,10 @@ mainapi:Clean(friends.ColorUpdate)
 ]]
 local reloadInProgress = false
 local function reloadAether(forceBootstrap)
+	-- The update center, command palette and debug button all mean "reinject now". Going
+	-- through init.lua is the only path that runs the cached-version wipe, otherwise the
+	-- loader keeps serving the previous pack from disk.
+	if forceBootstrap == nil then forceBootstrap = true end
 	if reloadInProgress then
 		mainapi:CreateNotification('AetherV2', 'A reinject is already in progress.', 4, 'warning')
 		return
@@ -10108,6 +10114,31 @@ general:CreateButton({
 	Function = reloadAether,
 	Tooltip = 'Reloads Aether for debugging purposes'
 })
+-- The monolith game files were split into per-module folders, so the updater now walks
+-- the same pack lists the loader uses and refreshes every file from one immutable commit.
+local UPDATE_PLACE_ALIAS = {
+	[8444591321] = 6872274481,
+	[8560631822] = 6872274481,
+	[8200754399] = 6872274481,
+	[132768098780837] = 6872274481,
+	[16008862571] = 6872265039,
+}
+local UPDATE_BEDWARS_UNIVERSE = 2619619496
+
+local function resolveUpdatePlace()
+	local id = game.PlaceId
+	if UPDATE_PLACE_ALIAS[id] then
+		return UPDATE_PLACE_ALIAS[id]
+	end
+	if game.GameId == UPDATE_BEDWARS_UNIVERSE then
+		if id == 6872265039 or id == 16008862571 then
+			return 6872265039
+		end
+		return 6872274481
+	end
+	return id
+end
+
 local updatingModules = false
 local function updateGameModules()
 	if updatingModules then
@@ -10120,38 +10151,90 @@ local function updateGameModules()
 			updatingModules = false
 			mainapi:CreateNotification('AetherV2', message, 6, kind)
 		end
-		local ok, result = pcall(function()
+		local ok, result, count = pcall(function()
+			local previousVersion = ''
+			if isfile('aetherv2/profiles/version.txt') then
+				local cachedBody = readfile('aetherv2/profiles/version.txt')
+				previousVersion = (cachedBody:match('version%s*=%s*([^\r\n]+)') or ''):gsub('%s+$', '')
+			end
 			-- Resolve one immutable latest-source commit, then download the universal and
-			-- PlaceId modules from that same commit so the pair stays in sync.
+			-- PlaceId packs from that same commit so the pair stays in sync.
 			local commitBody = game:HttpGet(remoteCommitUrl(sourceBranch()), true)
-			local commit = commitBody:match('^%s*(%x+)') or commitBody:match('"sha"%s*:%s*"(%x+)')
+			local commit = commitBody:match('"sha"%s*:%s*"(%x+)"') or commitBody:match('^%s*(%x+)')
 			if not commit or #commit < 40 then error('could not resolve the latest source commit') end
 			commit = commit:sub(1, 40)
 
-			local place = tostring(game.PlaceId)
-			local paths = {'games/universal.lua', 'games/'..place..'.lua'}
-			local downloads = {}
-			for _, path in paths do
-				local body = game:HttpGet(remoteSourceUrl(path, commit), true)
-				local lowered = body:sub(1, 300):lower()
-				if #body < 8 or lowered:find('<html', 1, true) or body:find('^404') then
-					error('no module exists for PlaceId '..place)
+			local place = resolveUpdatePlace()
+			local entries = {}
+			for _, folder in ipairs({'universal', tostring(place)}) do
+				local listBody = game:HttpGet(remoteSourceUrl('games/'..folder..'/files.txt', commit), true)
+				local loweredList = tostring(listBody):sub(1, 300):lower()
+				if #listBody < 8 or loweredList:find('404', 1, true) or loweredList:find('<html', 1, true) or loweredList:find('<!doctype', 1, true) then
+					error('no module list for '..folder)
+				end
+				-- The loader trusts a cached files.txt over the remote copy, so the list has to
+				-- be refreshed too or new modules stay invisible until a full version wipe.
+				ensureDownloadFolder('aetherv2/games/'..folder..'/files.txt')
+				writefile('aetherv2/games/'..folder..'/files.txt', listBody)
+				for line in tostring(listBody):gmatch('[^\r\n]+') do
+					local name = line:gsub('^%s+', ''):gsub('%s+$', '')
+					if name ~= '' and name:sub(1, 1) ~= '#' then
+						table.insert(entries, {Folder = folder, Name = name})
+					end
+				end
+			end
+			if #entries == 0 then error('no modules listed for PlaceId '..tostring(place)) end
+
+			local bodies = table.create(#entries)
+			local done, cursor = 0, 0
+			while cursor < #entries do
+				cursor += 1
+				local index = cursor
+				local entry = entries[index]
+				task.spawn(function()
+					local downloadOk, body = pcall(game.HttpGet, game, remoteSourceUrl('games/'..entry.Folder..'/'..entry.Name, commit), true)
+					if downloadOk then bodies[index] = body end
+					done += 1
+				end)
+				if cursor % 24 == 0 then
+					repeat task.wait() until done >= cursor or (cursor - done) < 24
+				end
+			end
+			repeat task.wait() until done >= #entries
+
+			local watermark = '--This watermark is used to delete the file if its cached, remove it to make the file persist after vape updates.\n'
+			for index, entry in ipairs(entries) do
+				local path = 'games/'..entry.Folder..'/'..entry.Name
+				local body = bodies[index]
+				local lowered = type(body) == 'string' and body:sub(1, 300):lower() or ''
+				if type(body) ~= 'string' or #body < 8 or lowered:find('404', 1, true) or lowered:find('<html', 1, true) or lowered:find('<!doctype', 1, true) then
+					error(path..' failed to download')
 				end
 				local chunk, compileError = loadstring(body, '@aetherv2/'..path)
 				if not chunk then error(path..' failed validation: '..tostring(compileError)) end
-				downloads[path] = body
-			end
-
-			local watermark = '--This watermark is used to delete the file if its cached, remove it to make the file persist after vape updates.\n'
-			for path, body in downloads do
+				ensureDownloadFolder('aetherv2/'..path)
 				writefile('aetherv2/'..path, watermark..body)
 			end
+
+			-- Cached packs would keep serving the old modules until a full wipe.
+			pcall(delfile, 'aetherv2/games/universal/pack.lua')
+			pcall(delfile, 'aetherv2/games/'..tostring(place)..'/pack.lua')
 			if isfile(versionPinPath) then delfile(versionPinPath) end
 			writefile('aetherv2/profiles/commit.txt', commit)
-			return place, commit
+
+			local versionBody = game:HttpGet(remoteSourceUrl('version.txt', commit), true)
+			local nextVersion = ''
+			if type(versionBody) == 'string' and #versionBody > 3 and not versionBody:find('^404') then
+				nextVersion = (versionBody:match('version%s*=%s*([^\r\n]+)') or ''):gsub('%s+$', '')
+				writefile('aetherv2/profiles/version.txt', versionBody:gsub('%s+$', ''))
+			end
+			if previousVersion ~= '' and nextVersion ~= '' and previousVersion ~= nextVersion then
+				shared.updated = {From = previousVersion, To = nextVersion, Files = #entries}
+			end
+			return place, #entries
 		end)
 		if ok then
-			finish('Updated universal and PlaceId '..result..' modules. Reinject to load the latest source.', 'info')
+			finish('Updated '..tostring(count)..' universal and PlaceId '..tostring(result)..' modules. Reinject to load the latest source.', 'info')
 		else
 			finish('Module update failed: '..tostring(result):gsub('^.-:%d+:%s*', ''), 'alert')
 		end

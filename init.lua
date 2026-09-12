@@ -84,6 +84,13 @@ if not shared.VapeDeveloper then
 	end
 
 	if remoteVersion and cachedVersion:gsub('%s+', '') ~= remoteVersion:gsub('%s+', '') then
+		-- Keep the old and new release labels around so main.lua can announce the update
+		-- once the GUI exists. main.lua clears the notice after showing it.
+		local previousVersion = (cachedVersion:match('version%s*=%s*([^\r\n]+)') or ''):gsub('%s+$', '')
+		local nextVersion = (remoteVersion:match('version%s*=%s*([^\r\n]+)') or ''):gsub('%s+$', '')
+		if previousVersion ~= '' then
+			shared.updated = {From = previousVersion, To = nextVersion}
+		end
 		wipeFolder('aetherv2')
 		wipeFolder('aetherv2/games')
 		wipeFolder('aetherv2/guis')
