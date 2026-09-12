@@ -192,13 +192,16 @@ run(function()
 
 	local function heldLongJumpMethod()
 		local hand = store.hand
-		local tool = hand and hand.tool
-		local itemType = hand and hand.itemType
-		if not tool then
-			-- HandInvItem is the game's real hand and can be ahead of the observed inventory.
-			local handValue = lplr.Character and lplr.Character:FindFirstChild('HandInvItem')
-			tool = handValue and handValue.Value
-			itemType = tool and tool.Name
+		-- The game tracks the real hand in HandInvItem; store.hand is the replicated
+		-- observed inventory and can lag behind it (training rooms and fresh pickups).
+		local handValue = lplr.Character and lplr.Character:FindFirstChild('HandInvItem')
+		local tool = handValue and handValue.Value or nil
+		local itemType
+		if tool then
+			itemType = tool.Name
+		else
+			tool = hand and hand.tool
+			itemType = hand and hand.itemType
 		end
 		if not tool then return nil end
 		local raw = itemType or tool.Name
