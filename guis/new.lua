@@ -9542,7 +9542,6 @@ local claimedShared = {
 	'vape',
 	'vapereload',
 	'VapeIndependent',
-	'updated',
 	'bindable',
 	'gg',
 	'ACMODVIEWENABLED',
