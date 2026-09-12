@@ -228,4 +228,3 @@ Utility/AutoReportV2.lua
 Render/QueueCardMods.lua
 Render/WeatherMods.lua
 Utility/ClaimRewards.lua
-Combat/ReachCE.lua
