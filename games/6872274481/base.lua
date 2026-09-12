@@ -2384,7 +2384,9 @@ end
 
 local function isJadeHammerName(value)
 	local normalized = normalizeJadeName(value)
-	return normalized ~= nil and (normalized == 'jade_hammer_jump' or normalized:match('^jade_hammer(_%d+)?$') ~= nil)
+	-- Luau patterns do not support optional captures like (_%d+)?, so match the tiered
+	-- name and the bare name as two separate checks.
+	return normalized ~= nil and (normalized == 'jade_hammer_jump' or normalized == 'jade_hammer' or normalized:match('^jade_hammer_%d+$') ~= nil)
 end
 
 local function getJadeAbility(item)
@@ -2800,7 +2802,9 @@ end
 
 function Jade:IsHammerName(value)
     local normalized = normalizeItemType(value)
-    return normalized == 'jade_hammer_jump' or (normalized ~= nil and normalized:match('^jade_hammer(_%d+)?$') ~= nil)
+    -- Luau patterns do not support optional captures like (_%d+)?, so match the tiered
+    -- name and the bare name as two separate checks.
+    return normalized == 'jade_hammer_jump' or normalized == 'jade_hammer' or (normalized ~= nil and normalized:match('^jade_hammer_%d+$') ~= nil)
 end
 
 function Jade:_candidateNames()

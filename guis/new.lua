@@ -8878,12 +8878,13 @@ function mainapi:CreateChangelogs()
 	body.Size, body.Position, body.AutomaticSize = UDim2.new(1, -28, 0, 0), UDim2.fromOffset(14, 12), Enum.AutomaticSize.Y
 	body.BackgroundTransparency, body.RichText = 1, true
 	body.Text = [=[<b><font color="#d378ff">BedWars</font></b>
-<font color="#63dc82">[+]</font> Added JadeInstantKill: locks your pitch, hops 200 studs above a target, jumps with the Jade Hammer and rides the slam onto them.
+<font color="#63dc82">[+]</font> Added JadeInstantKill: pins the camera to an invisible anchor on a fixed Y, hops 200 studs above a living target, bypasses the Jade Hammer cooldown and rides the slam onto them.
 <font color="#63dc82">[+]</font> Added the missing kit modules: AutoAbaddon, AutoArachne, AutoCogsworth, AutoElektra, AutoFlora, AutoMarrow, AutoSigrid and AutoTrixie.
 <font color="#63dc82">[+]</font> Added XurotExtender and YaminiWallKick, completing the kit movement extenders.
 <font color="#63dc82">[+]</font> Restored the "Script has updated from vX to vY" notification after loading an update.
 <font color="#6aa9ff">[^]</font> Fixed Update Modules and Update / Reinject: they now refresh the split game packs, files.txt, caches and version pin instead of the removed monolith files.
 <font color="#6aa9ff">[^]</font> Jade Hammer support now calls jade_hammer_jump for tiers I, II and III instead of the non-existent tiered abilities.
+<font color="#6aa9ff">[^]</font> Fixed Jade Hammer tier detection: Luau has no optional capture groups, so jade_hammer_1/2/3 were never recognised.
 <font color="#6aa9ff">[^]</font> Reworked the Jade Hammer paths in LongJump, NoFallDamage and JadeExtender around the real ability ID.
 <font color="#6aa9ff">[^]</font> Audited every Kits module ability and remote against the live game.
 <font color="#ff6969">[-]</font> Removed the module nickname system, Alt + right-click renaming, module-names.json and the Reset Module Names button.
