@@ -49,11 +49,14 @@ run(function()
 		if not target or not target.RootPart or not target.RootPart.Parent then return false end
 		local health = target.Health
 		if type(health) == 'number' and health <= 0 then return false end
+		-- NPC entities can carry a plain-table Humanoid, so only inspect a real one.
 		local humanoid = target.Humanoid
-		if humanoid and (humanoid.Health <= 0 or humanoid:GetState() == Enum.HumanoidStateType.Dead) then return false end
-		local character = target.Character
-		if character then
-			local attributeHealth = character:GetAttribute('Health')
+		if typeof(humanoid) == 'Instance' then
+			if humanoid.Health <= 0 or humanoid:GetState() == Enum.HumanoidStateType.Dead then return false end
+		end
+		if target.Player then
+			local character = target.Character
+			local attributeHealth = character and character:GetAttribute('Health')
 			if type(attributeHealth) == 'number' and attributeHealth <= 0 then return false end
 		end
 		return true
@@ -298,9 +301,10 @@ run(function()
 						if entitylib.isAlive and store.equippedKit == 'jade' and tick() >= nextUse then
 							if heldHammer() or inventoryHammer() then
 								nextUse = math.huge
-								local ran = runSequence(token)
-								if not ran then
-									nextUse = tick() + 0.5
+								-- One bad frame must never kill the search loop for the session.
+								local ok, ran = pcall(runSequence, token)
+								if not ok or not ran then
+									nextUse = tick() + 1
 								elseif nextUse == math.huge then
 									nextUse = tick() + COOLDOWN_FALLBACK
 								end
