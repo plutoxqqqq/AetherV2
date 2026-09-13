@@ -246,9 +246,7 @@ local function finishLoading()
 			pcall(function()
 				vape:Save()
 			end)
-			-- Frequent autosaves close the window where a manual rejoin or a crash loses
-			-- the newest toggles before the next save.
-			task.wait(6)
+			task.wait(10)
 		until not vape.Loaded
 	end)
 
@@ -372,9 +370,6 @@ if not shared.VapeIndependent then
 		loadLegacy('universal')
 	end
 	local place = resolvePlace()
-	-- ResolvedPlace lets the GUI mirror configs for aliased servers under one stable
-	-- key, so a new PlaceId alias can never look like a clean install.
-	vape.ResolvedPlace = place
 	if vape.Place == nil then
 		vape.Place = place
 	end

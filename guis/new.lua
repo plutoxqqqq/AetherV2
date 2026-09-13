@@ -790,159 +790,12 @@ local function ensureDataFolders()
 	ensureFolder(configFolder)
 end
 
-local function decodeBody(body)
-	if type(body) ~= 'string' or body == '' then return nil end
-	local ok, decoded
-	pcall(function()
-		decoded = httpService:JSONDecode(body)
-	end)
-	return ok and type(decoded) == 'table' and decoded or nil
+local function getConfigPath(profile)
+	return configFolder..'/'..profile..mainapi.Place..'.json'
 end
 
-local function getConfigPlaceKeys()
-	local keys, seen = {}, {}
-	local function add(value)
-		if value == nil then return end
-		local text = tostring(value)
-		if text ~= '' and not seen[text] then
-			seen[text] = true
-			table.insert(keys, text)
-		end
-	end
-	-- The resolved place id is the stable key for aliased BedWars servers. The raw
-	-- PlaceId stays second so existing configs keep loading on unaliased places.
-	add(mainapi.ResolvedPlace)
-	add(mainapi.Place)
-	return keys
-end
-
-local function getConfigPath(profile, place)
-	return configFolder..'/'..profile..tostring(place or mainapi.Place)..'.json'
-end
-
-local function getLegacyProfilePath(profile, place)
-	return profileFolder..'/'..profile..tostring(place or mainapi.Place)..'.txt'
-end
-
-local function configCandidates(profile)
-	local candidates = {}
-	for _, place in getConfigPlaceKeys() do
-		table.insert(candidates, getConfigPath(profile, place))
-	end
-	for _, place in getConfigPlaceKeys() do
-		table.insert(candidates, getLegacyProfilePath(profile, place))
-	end
-	return candidates
-end
-
-local function findConfigPath(profile)
-	local expected = getConfigPath(profile)
-	if isfile(expected) then return expected end
-	for _, candidate in configCandidates(profile) do
-		if isfile(candidate) then return candidate end
-	end
-	return expected
-end
-
--- Rotating backups: before a config file is replaced its previous contents are copied
--- into configs/.backups. A corrupt or empty primary file can then always be recovered
--- instead of the profile silently resetting.
-local backupFolder = configFolder..'/.backups'
-local lastBackup = {}
-local function backupFile(path, body)
-	if type(body) ~= 'string' or body == '' then return end
-	local now = os.time()
-	if lastBackup[path] and now - lastBackup[path] < 300 then return end
-	lastBackup[path] = now
-	ensureFolder(backupFolder)
-	local name = tostring(path):gsub('\\', '/'):match('([^/]+)$') or 'config.json'
-	pcall(writefile, backupFolder..'/'..name..'.'..tostring(now)..'.bak', body)
-	if listfiles then
-		local suc, files = pcall(listfiles, backupFolder)
-		if suc and type(files) == 'table' and #files > 80 then
-			table.sort(files)
-			for index = 1, #files - 80 do
-				pcall(delfile, files[index])
-			end
-		end
-	end
-end
-
-local function encodeJson(data)
-	local ok, body = pcall(function()
-		return httpService:JSONEncode(data)
-	end)
-	if not ok or type(body) ~= 'string' or body == '' then return nil end
-	if not decodeBody(body) then return nil end
-	return body
-end
-
-local function safeWrite(path, body)
-	if type(body) ~= 'string' or body == '' or not decodeBody(body) then return false end
-	local existing
-	if isfile(path) then
-		existing = select(2, pcall(readfile, path))
-	end
-	if existing == body then return true end
-	if type(existing) == 'string' and existing ~= '' then
-		backupFile(path, existing)
-	end
-	local ok = pcall(writefile, path, body)
-	if not ok then return false end
-	local verify = select(2, pcall(readfile, path))
-	if verify ~= body then
-		pcall(writefile, path, body)
-	end
-	return true
-end
-
-local function recoverConfig(profile, brokenPath)
-	if brokenPath and isfile(brokenPath) then
-		backupFile(brokenPath, select(2, pcall(readfile, brokenPath)))
-		local sibling = select(2, pcall(readfile, brokenPath..'.bak'))
-		local recovered = decodeBody(sibling)
-		if recovered then return recovered end
-	end
-	for _, candidate in configCandidates(profile) do
-		if isfile(candidate) then
-			local recovered = decodeBody(select(2, pcall(readfile, candidate)))
-			if recovered then return recovered end
-			backupFile(candidate, select(2, pcall(readfile, candidate)))
-		end
-	end
-	local names = {}
-	for _, place in getConfigPlaceKeys() do
-		table.insert(names, profile..place..'.json')
-	end
-	local best, bestStamp
-	local suc, files = pcall(listfiles, backupFolder)
-	if suc and type(files) == 'table' then
-		for _, path in files do
-			local file = tostring(path):gsub('\\', '/')
-			local base, stamp = file:match('/([^/]+)%.(%d+)%.bak$')
-			local number = tonumber(stamp)
-			if base and number and table.find(names, base) and (not bestStamp or number > bestStamp) then
-				best, bestStamp = path, number
-			end
-		end
-	end
-	if best then
-		return decodeBody(select(2, pcall(readfile, best)))
-	end
-	return nil
-end
-
-local ACTIVE_PROFILE_PATH = profileFolder..'/lastprofile.txt'
-local function readActiveProfile()
-	local ok, value = pcall(readfile, ACTIVE_PROFILE_PATH)
-	if ok and type(value) == 'string' then
-		value = value:gsub('^%s*(.-)%s*$', '%1')
-		if value ~= '' then return value end
-	end
-	return nil
-end
-local function writeActiveProfile(name)
-	pcall(writefile, ACTIVE_PROFILE_PATH, tostring(name))
+local function getLegacyProfilePath(profile)
+	return profileFolder..'/'..profile..mainapi.Place..'.txt'
 end
 
 local function refreshConfigProfiles()
@@ -960,16 +813,14 @@ local function refreshConfigProfiles()
 	end
 
 	if listfiles then
+		local suffix = tostring(mainapi.Place)..'.json'
 		local suc, files = pcall(listfiles, configFolder)
-		if suc and type(files) == 'table' then
+		if suc then
 			for _, path in files do
 				local file = tostring(path):gsub('\\', '/')
-				for _, place in getConfigPlaceKeys() do
-					local suffix = tostring(place)..'.json'
-					local name = file:match('/([^/]+)'..suffix:gsub('%.', '%%.')..'$')
-					if name then
-						addProfile(name)
-					end
+				local name = file:match('/([^/]+)'..suffix:gsub('%.', '%%.')..'$')
+				if name then
+					addProfile(name)
 				end
 			end
 		end
@@ -6199,7 +6050,7 @@ function mainapi:CreateCategoryList(categorysettings)
 		addTooltip(sortButton, 'Choose how D1 ranks the Public Config catalogue')
 
 		local function submitActiveConfig(details, updatePreset, direct)
-			local path = mainapi.Profile and findConfigPath(mainapi.Profile)
+			local path = mainapi.Profile and getConfigPath(mainapi.Profile)
 			if not path or not isfile(path) then
 				mainapi:CreateNotification('Configs', 'Save a config before submitting it.', 7, 'alert')
 				return false
@@ -7346,8 +7197,6 @@ function mainapi:CreateCategoryList(categorysettings)
 					if val ~= 'default' then
 						table.remove(mainapi.Profiles, ind)
 						if isfile(getConfigPath(val)) and delfile then
-							-- Never destroy the only copy: keep a rotating backup first.
-							backupFile(getConfigPath(val), select(2, pcall(readfile, getConfigPath(val))))
 							delfile(getConfigPath(val))
 						end
 						if mainapi.Profile == val then
@@ -9463,15 +9312,13 @@ function mainapi:Load(skipgui, profile)
 		object.Object.Position = UDim2.fromOffset(pos.X, pos.Y)
 	end
 
-	local guiPath = 'aetherv2/profiles/'..game.GameId..'.gui.txt'
-	if isfile(guiPath) then
-		guidata = loadJson(guiPath)
+	if isfile('aetherv2/profiles/'..game.GameId..'.gui.txt') then
+		guidata = loadJson('aetherv2/profiles/'..game.GameId..'.gui.txt')
 		if not guidata then
-			-- Keep the unreadable file (and a rotating backup) instead of deleting it, so a
-			-- later repair or manual recovery is still possible.
-			backupFile(guiPath, select(2, pcall(readfile, guiPath)))
+			-- Obvious bug fix: never delete the GUI file just because one decode failed.
+			-- Deleting it also lost the active-profile pointer on the next launch.
 			guidata = {Categories = {}}
-			self:CreateNotification('AetherV2', 'GUI settings were unreadable; a backup was kept.', 10, 'alert')
+			self:CreateNotification('AetherV2', 'Failed to load GUI settings, Try rejoining ur game', 10, 'alert')
 		end
 
 		if not skipgui then
@@ -9509,8 +9356,7 @@ function mainapi:Load(skipgui, profile)
 		end
 	end
 
-	self.Profile = profile or guidata.Profile or readActiveProfile() or 'default'
-	writeActiveProfile(self.Profile)
+	self.Profile = profile or guidata.Profile or 'default'
 	self.Profiles = guidata.Profiles or {{
 		Name = 'default', Bind = {}
 	}}
@@ -9521,22 +9367,22 @@ function mainapi:Load(skipgui, profile)
 		self.ProfileLabel.Size = UDim2.fromOffset(getfontsize(self.ProfileLabel.Text, self.ProfileLabel.TextSize, self.ProfileLabel.Font).X + 16, 24)
 	end
 
-	local configPath = findConfigPath(self.Profile)
-	local savedata
-	if isfile(configPath) then
-		savedata = loadJson(configPath)
-	end
-	if not savedata then
-		-- A missing or corrupt primary file must never reset the profile while a backup,
-		-- legacy mirror or alias-place copy still exists. Only a truly new profile falls
-		-- through to a fresh default config.
-		savedata = recoverConfig(self.Profile, configPath)
-		if savedata then
-			self:CreateNotification('AetherV2', 'Recovered '..self.Profile..' config from a backup.', 8, 'info')
-		end
+	local configPath = getConfigPath(self.Profile)
+	local legacyConfigPath = getLegacyProfilePath(self.Profile)
+	if not isfile(configPath) and isfile(legacyConfigPath) then
+		configPath = legacyConfigPath
 	end
 
-	if savedata then
+	if isfile(configPath) then
+		local savedata = loadJson(configPath)
+		if not savedata then
+			-- Obvious bug fix: an unreadable config used to set savecheck=false, which
+			-- disabled every later save for the whole session (including the teleport
+			-- save) and made the profile look like it had reset. Keep saving instead.
+			savedata = {Categories = {}, Modules = {}, Legit = {}, Kits = {}}
+			self:CreateNotification('AetherV2', 'Failed to load '..self.Profile..' config.', 10, 'alert')
+		end
+
 		savedata.Categories = savedata.Categories or {}
 		savedata.Modules = savedata.Modules or {}
 		savedata.Legit = savedata.Legit or {}
@@ -9815,10 +9661,9 @@ end
 
 function mainapi:Save(newprofile)
 	if not self.Loaded then return end
-	local targetProfile = (type(newprofile) == 'string' and newprofile ~= '') and newprofile or self.Profile
 	local guidata = {
 		Categories = {},
-		Profile = targetProfile,
+		Profile = newprofile or self.Profile,
 		Profiles = self.Profiles,
 		Keybind = self.Keybind
 	}
@@ -9886,31 +9731,11 @@ function mainapi:Save(newprofile)
 	end
 
 	ensureDataFolders()
-	-- Every file is encoded and validated independently. A single unreadable value must
-	-- never abort the save and leave the previous files behind as the only copies.
-	local guiBody = encodeJson(guidata)
-	if guiBody then
-		safeWrite('aetherv2/profiles/'..game.GameId..'.gui.txt', guiBody)
-	end
-	local profileBody = encodeJson(savedata)
-	if not profileBody then
-		self:CreateNotification('AetherV2', 'Config save failed: the active profile could not be encoded.', 8, 'alert')
-		return
-	end
-	local paths = {
-		getConfigPath(targetProfile),
-		getLegacyProfilePath(targetProfile)
-	}
-	-- Mirror the config under the resolved place id so aliased servers share one profile
-	-- instead of every alias creating a brand new empty config.
-	if mainapi.ResolvedPlace and tostring(mainapi.ResolvedPlace) ~= tostring(mainapi.Place) then
-		table.insert(paths, getConfigPath(targetProfile, mainapi.ResolvedPlace))
-		table.insert(paths, getLegacyProfilePath(targetProfile, mainapi.ResolvedPlace))
-	end
-	for _, path in paths do
-		safeWrite(path, profileBody)
-	end
-	writeActiveProfile(targetProfile)
+	writefile('aetherv2/profiles/'..game.GameId..'.gui.txt', httpService:JSONEncode(guidata))
+	writefile(getConfigPath(self.Profile), httpService:JSONEncode(savedata))
+	-- Keep the legacy profile mirror current so changing GUI implementations cannot
+	-- resurrect an older, partially saved copy of this profile.
+	writefile(getLegacyProfilePath(self.Profile), httpService:JSONEncode(savedata))
 end
 
 function mainapi:SaveOptions(object, savedoptions)
@@ -9918,13 +9743,7 @@ function mainapi:SaveOptions(object, savedoptions)
 	savedoptions = {}
 	for _, v in object.Options do
 		if not v.Save then continue end
-		-- Stage each option so one malformed value cannot poison the whole profile.
-		local staged = {}
-		if pcall(v.Save, v, staged) then
-			for key, value in staged do
-				savedoptions[key] = value
-			end
-		end
+		v:Save(savedoptions)
 	end
 	return savedoptions
 end
@@ -10168,15 +9987,6 @@ end))
 
 mainapi:Clean(clickgui:GetPropertyChangedSignal('Visible'):Connect(function()
 	mainapi:UpdateGUI(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value, true)
-	-- Closing the menu is the natural commit point for every toggle changed while it was
-	-- open, so a quick rejoin cannot lose the newest settings to the autosave window.
-	if not clickgui.Visible and mainapi.Loaded then
-		task.spawn(function()
-			pcall(function()
-				mainapi:Save()
-			end)
-		end)
-	end
 	if clickgui.Visible and inputService.MouseEnabled then
 		repeat
 			local visibleCheck = clickgui.Visible
