@@ -114,7 +114,7 @@ run(function()
 				until not AutoTriton.Enabled
 			end
 		end,
-		Tooltip = 'Automatically throws triton trident onto nearby ground after\nfalling a certain distance.'
+		Tooltip = 'Automatically throws triton trident onto nearby ground after\nfalling a certain distance'
 	})
 	Legit = AutoTriton:CreateToggle({
 		Name = 'Legit Switch',

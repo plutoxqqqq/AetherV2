@@ -229,7 +229,7 @@ run(function()
 		Name = 'Drop mode',
 		List = {'Player', 'Generator'},
 		Default = 'Player',
-		Tooltip = 'Where cyber items gets dropped to.'
+		Tooltip = 'Where cyber items gets dropped to'
 	})
 	Whitelist = AutoCyber:CreateTextList({
 		Name = 'Whitelist',
@@ -238,7 +238,7 @@ run(function()
 	Visual = AutoCyber:CreateToggle({
 		Name = 'Visualize',
 		Default = true,
-		Tooltip = 'Shows what item the drone is targeting and updates\non where how far the drone is to the item.'
+		Tooltip = 'Shows what item the drone is targeting and updates\non where how far the drone is to the item'
 	})
 	Steal = AutoCyber:CreateToggle({
 		Name = 'Steal split',

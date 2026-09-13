@@ -18,7 +18,7 @@ run(function()
     local addMovementOwner = aetherPortAddMovementOwner
     local createDecoy = aetherPortCreateDecoy
     local workspaceService = workspace
-    addMovementOwner('AntiHitBETA')
+    addMovementOwner('AntiHit')
 
 
 local AntiHitBETA
@@ -40,7 +40,7 @@ local function antiHitCleanup()
     antiHitBusy = false
     local movement = Runtime.Movement
     local current = movement and movement.Current
-    if current and current.Owner == 'AntiHitBETA' then current:Release() end
+    if current and current.Owner == 'AntiHit' then current:Release() end
 end
 
 local function executeAntiHit(generation)
@@ -49,7 +49,7 @@ local function executeAntiHit(generation)
     if not root then return end
     antiHitBusy = true
     local movement = Runtime.Movement
-    local lease = movement and movement:Acquire('AntiHitBETA', movement.Priorities.Emergency, 1.5, antiHitCleanup, true) or nil
+    local lease = movement and movement:Acquire('AntiHit', movement.Priorities.Emergency, 1.5, antiHitCleanup, true) or nil
     if movement and not lease then antiHitBusy = false; return end
     local originalY = root.Position.Y
     antiHitDecoy = createDecoy(true)
@@ -58,24 +58,24 @@ local function executeAntiHit(generation)
         if generation ~= antiHitGeneration or not AntiHitBETA.Enabled then return end
         root = rootOfLocal()
         if not root then return end
-        if (not movement or movement:CanWrite('AntiHitBETA')) and isnetworkowner(root) then
+        if (not movement or movement:CanWrite('AntiHit')) and isnetworkowner(root) then
             root.CFrame = CFrame.new(root.Position + Vector3.new(0, 25, 0)) * root.CFrame.Rotation
         end
         if not waitCancelable(delay, function() return generation ~= antiHitGeneration or not AntiHitBETA.Enabled end) then return end
         root = rootOfLocal()
-        if root and (not movement or movement:CanWrite('AntiHitBETA')) and isnetworkowner(root) then
+        if root and (not movement or movement:CanWrite('AntiHit')) and isnetworkowner(root) then
             root.CFrame = CFrame.new(root.Position.X, originalY + 5, root.Position.Z) * root.CFrame.Rotation
         end
         waitCancelable(delay, function() return generation ~= antiHitGeneration or not AntiHitBETA.Enabled end)
     end, debug and debug.traceback or tostring)
-    if not ok then Ports.Diagnostics.AntiHitBETA = {At = tick(), Error = tostring(err)} end
+    if not ok then Ports.Diagnostics.AntiHit = {At = tick(), Error = tostring(err)} end
     if antiHitDecoy then antiHitDecoy:Destroy(); antiHitDecoy = nil end
     if lease then lease:Release() end
     antiHitBusy = false
 end
 
-AntiHitBETA, antiHitCreated = register('Blatant', 'AntiHitBETA', {
-    Tooltip = 'BETA dodge port of AlSploit AntiHit using a short vertical displacement and decoy camera.',
+AntiHitBETA, antiHitCreated = register('Blatant', 'AntiHit', {
+    Tooltip = 'Dodges incoming melee hits with a short vertical displacement and a decoy camera',
     Function = function(callback)
         antiHitGeneration = antiHitGeneration + 1
         local generation = antiHitGeneration

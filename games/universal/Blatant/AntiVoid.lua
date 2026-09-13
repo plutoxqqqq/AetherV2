@@ -121,7 +121,7 @@ run(function()
 	end,
     })
     Color = AntiFall:CreateColorSlider({
-	Name = 'Color',
+	Name = 'Colour',
 	DefaultOpacity = 0.5,
 	Darker = true,
 	Function = function(h, s, v, o)

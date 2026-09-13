@@ -32,7 +32,10 @@ run(function()
     }
 
     local function safeSet(object, property, value) if value ~= nil then pcall(function() object[property] = value end) end end
-    local function colorValue(option) return Color3.fromHSV(option.Hue, option.Sat, option.Value) end
+    local function colorValue(option)
+        if not option then return Color3.new(1, 1, 1) end
+        return Color3.fromHSV(option.Hue or 0, option.Sat or 0, option.Value == nil and 1 or option.Value)
+    end
     local function remember(object, property, destination)
         if destination[property] == nil then pcall(function() destination[property] = object[property] end) end
     end
@@ -42,7 +45,16 @@ run(function()
     end
     local function restore()
         removeEffects()
-        for _, state in preserved do if state.Object then pcall(function() state.Object.Parent = state.Parent end) end end
+        for _, state in preserved do
+            if state.Object then
+                if state.Object.Parent ~= state.Parent then
+                    pcall(function() state.Object.Parent = state.Parent end)
+                end
+                if state.Enabled ~= nil then
+                    pcall(function() state.Object.Enabled = state.Enabled end)
+                end
+            end
+        end
         table.clear(preserved)
         for property, value in lightingOriginal do safeSet(lightingService, property, value) end
         table.clear(lightingOriginal)
@@ -74,6 +86,7 @@ run(function()
     local function apply()
         if not Theme or not Theme.Enabled or applying then return end
         applying = true
+        local ok, err = pcall(function()
         removeEffects()
         local profile = presets[Preset.Value] or presets.Default
         safeSet(lightingService, 'ClockTime', profileValue(profile, 'ClockTime', ClockTime.Value))
@@ -132,7 +145,11 @@ run(function()
 				end
 			end
 		end
+        end)
         applying = false
+        if not ok and Theme and Theme.Enabled then
+            warn('[AetherV2] Theme apply failed: '..tostring(err))
+        end
     end
     local function changed() if Theme and Theme.Enabled then apply() end end
 	local function populatePreset()
@@ -155,7 +172,15 @@ run(function()
     Theme = vape.Categories.Render:CreateModule({Name = 'Theme', Function = function(enabled)
         if enabled then
             for _, property in lightingProperties do remember(lightingService, property, lightingOriginal) end
-            for _, object in lightingService:GetChildren() do if effectClasses[object.ClassName] then table.insert(preserved, {Object = object, Parent = object.Parent}); object.Parent = game end end
+            for _, object in lightingService:GetChildren() do
+                if effectClasses[object.ClassName] then
+                    table.insert(preserved, {Object = object, Parent = object.Parent, Enabled = object.Enabled})
+                    local moved = pcall(function() object.Parent = game end)
+                    if not moved then
+                        pcall(function() object.Enabled = false end)
+                    end
+                end
+            end
             local terrain = workspace:FindFirstChildOfClass('Terrain')
 			if terrain then terrainOriginal = {Object = terrain, Properties = {}}; for _, property in terrainProperties do remember(terrain, property, terrainOriginal.Properties) end end
             local clouds = terrain and terrain:FindFirstChildOfClass('Clouds')
@@ -180,7 +205,7 @@ run(function()
         else restore() end
     end, Tooltip = 'One customizable world-lighting, atmosphere, sky and post-processing theme'})
     Preset = Theme:CreateDropdown({Name = 'Preset', List = {'Realistic','Blavish','Custom'}, Default = 'Realistic', Function = function() if UnderMapWater then populatePreset() end; changed() end})
-    Custom = Theme:CreateToggle({Name = 'Custom overrides', Tooltip = 'Use every slider and color below instead of the selected preset values', Function = changed})
+    Custom = Theme:CreateToggle({Name = 'Custom overrides', Tooltip = 'Use every slider and colour below instead of the selected preset values', Function = changed})
     LockTime = Theme:CreateToggle({Name = 'Lock time', Default = true, Function = changed})
     ClockTime = Theme:CreateSlider({Name = 'Clock time', Min = 0, Max = 24, Default = 14, Decimal = 10, Suffix = 'h', Function = changed})
     Brightness = Theme:CreateSlider({Name = 'Brightness', Min = 0, Max = 10, Default = 2, Decimal = 100, Function = changed})
@@ -193,8 +218,8 @@ run(function()
     Technology = Theme:CreateDropdown({Name = 'Technology', List = {'Automatic','Compatibility','Voxel','ShadowMap','Future'}, Default = 'Automatic', Function = changed})
     Ambient = Theme:CreateColorSlider({Name = 'Ambient', DefaultValue = .6, Function = changed})
     OutdoorAmbient = Theme:CreateColorSlider({Name = 'Outdoor ambient', DefaultValue = .6, Function = changed})
-    TopShift = Theme:CreateColorSlider({Name = 'Top color shift', DefaultValue = 0, Function = changed})
-    BottomShift = Theme:CreateColorSlider({Name = 'Bottom color shift', DefaultValue = 0, Function = changed})
+    TopShift = Theme:CreateColorSlider({Name = 'Top colour shift', DefaultValue = 0, Function = changed})
+    BottomShift = Theme:CreateColorSlider({Name = 'Bottom colour shift', DefaultValue = 0, Function = changed})
     SkyEnabled = Theme:CreateToggle({Name = 'Sky', Default = true, Function = changed})
     Skybox = Theme:CreateTextBox({Name = 'Skybox', Placeholder = 'rbxassetid://', Function = changed})
     SunTexture = Theme:CreateTextBox({Name = 'Sun texture', Placeholder = 'rbxasset://sky/sun.jpg', Function = changed})
@@ -203,7 +228,7 @@ run(function()
     SunSize = Theme:CreateSlider({Name = 'Sun size', Min = 0, Max = 21, Default = 21, Decimal = 10, Function = changed})
     MoonSize = Theme:CreateSlider({Name = 'Moon size', Min = 0, Max = 21, Default = 11, Decimal = 10, Function = changed})
     AtmosphereEnabled = Theme:CreateToggle({Name = 'Atmosphere', Default = true, Function = changed})
-    AtmosphereColor = Theme:CreateColorSlider({Name = 'Atmosphere color', DefaultValue = .55, Function = changed})
+    AtmosphereColor = Theme:CreateColorSlider({Name = 'Atmosphere colour', DefaultValue = .55, Function = changed})
     AtmosphereDecay = Theme:CreateColorSlider({Name = 'Atmosphere decay', DefaultValue = .5, Function = changed})
     Density = Theme:CreateSlider({Name = 'Atmosphere density', Min = 0, Max = 1, Default = .3, Decimal = 100, Function = changed})
     Offset = Theme:CreateSlider({Name = 'Atmosphere offset', Min = -1, Max = 1, Default = 0, Decimal = 100, Function = changed})
@@ -213,11 +238,11 @@ run(function()
     BloomIntensity = Theme:CreateSlider({Name = 'Bloom intensity', Min = 0, Max = 5, Default = .4, Decimal = 100, Function = changed})
     BloomSize = Theme:CreateSlider({Name = 'Bloom size', Min = 0, Max = 100, Default = 24, Function = changed})
     BloomThreshold = Theme:CreateSlider({Name = 'Bloom threshold', Min = 0, Max = 5, Default = 1.5, Decimal = 100, Function = changed})
-    ColorEnabled = Theme:CreateToggle({Name = 'Color correction', Default = true, Function = changed})
-    Tint = Theme:CreateColorSlider({Name = 'Tint', DefaultValue = 0, Function = changed})
+    ColorEnabled = Theme:CreateToggle({Name = 'Colour correction', Default = true, Function = changed})
+    Tint = Theme:CreateColorSlider({Name = 'Tint', DefaultSat = 0, DefaultValue = 1, Function = changed})
     Saturation = Theme:CreateSlider({Name = 'Saturation', Min = -2, Max = 2, Default = 0, Decimal = 100, Function = changed})
     Contrast = Theme:CreateSlider({Name = 'Contrast', Min = -2, Max = 2, Default = 0, Decimal = 100, Function = changed})
-    ColorBrightness = Theme:CreateSlider({Name = 'Color brightness', Min = -1, Max = 1, Default = 0, Decimal = 100, Function = changed})
+    ColorBrightness = Theme:CreateSlider({Name = 'Colour brightness', Min = -1, Max = 1, Default = 0, Decimal = 100, Function = changed})
     RaysEnabled = Theme:CreateToggle({Name = 'Sun rays', Function = changed})
     RaysIntensity = Theme:CreateSlider({Name = 'Ray intensity', Min = 0, Max = 1, Default = .1, Decimal = 100, Function = changed})
     RaysSpread = Theme:CreateSlider({Name = 'Ray spread', Min = 0, Max = 1, Default = .8, Decimal = 100, Function = changed})
@@ -231,13 +256,13 @@ run(function()
     CloudDensity = Theme:CreateSlider({Name = 'Cloud density', Min = 0, Max = 1, Default = .7, Decimal = 100, Function = changed})
     CloudSize = Theme:CreateSlider({Name = 'Cloud size', Min = .1, Max = 3, Default = 1, Decimal = 10, Function = changed})
     CloudTransparency = Theme:CreateSlider({Name = 'Cloud transparency', Min = 0, Max = 1, Default = .3, Decimal = 100, Function = changed})
-    CloudColor = Theme:CreateColorSlider({Name = 'Cloud color', DefaultValue = 0, Function = changed})
-    WaterColor = Theme:CreateColorSlider({Name = 'Water color', DefaultValue = .55, Function = changed})
+    CloudColor = Theme:CreateColorSlider({Name = 'Cloud colour', DefaultValue = 0, Function = changed})
+    WaterColor = Theme:CreateColorSlider({Name = 'Water colour', DefaultValue = .55, Function = changed})
     WaterReflectance = Theme:CreateSlider({Name = 'Water reflectance', Min = 0, Max = 1, Default = 1, Decimal = 100, Function = changed})
     WaterTransparency = Theme:CreateSlider({Name = 'Water transparency', Min = 0, Max = 1, Default = .3, Decimal = 100, Function = changed})
     WaterWaveSize = Theme:CreateSlider({Name = 'Water wave size', Min = 0, Max = 1, Default = .15, Decimal = 100, Function = changed})
     WaterWaveSpeed = Theme:CreateSlider({Name = 'Water wave speed', Min = 0, Max = 100, Default = 10, Decimal = 10, Function = changed})
-    UnderMapWater = Theme:CreateToggle({Name = 'Below-map water', Function = changed, Tooltip = 'Adds a removable visual water plane below the map without editing terrain voxels.'})
+    UnderMapWater = Theme:CreateToggle({Name = 'Below-map water', Function = changed, Tooltip = 'Adds a removable visual water plane below the map without editing terrain voxels'})
 	populatePreset()
     vape.Libraries.aetherTheme = Theme
 end)

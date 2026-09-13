@@ -57,9 +57,8 @@ run(function()
 		if SigridKit.Enabled and has({'elk_master', 'elk', 'rider', 'sigrid'}) and riding then return SigridSpeed.Value end
 		local soul = character and (character:GetAttribute('GrimReaperChannel') or character:GetAttribute('SoulForm') or character:GetAttribute('GrimReaperGhost') or character:FindFirstChild('GrimReaperChannel', true))
 		if GrimKit.Enabled and has({'grim_reaper', 'grim', 'soul'}) and soul then return GrimSpeed.Value end
-		local stacks = tonumber(lplr:GetAttribute('WindWalkerStacks') or lplr:GetAttribute('WindWalkerStack') or lplr:GetAttribute('WindStacks')
-			or (character and (character:GetAttribute('WindWalkerStacks') or character:GetAttribute('WindWalkerStack') or character:GetAttribute('WindStacks'))) or 0) or 0
-		if ZephyrKit.Enabled and has({'wind_walker', 'zephyr', 'wind'}) and stacks >= 1 then return ZephyrSpeed.Value end
+		local stacks = type(getWindStacks) == 'function' and getWindStacks() or 0
+		if ZephyrKit.Enabled and has({'wind_walker', 'zephyr'}) and stacks >= 1 then return ZephyrSpeed.Value end
 		return fallback
 	end
 

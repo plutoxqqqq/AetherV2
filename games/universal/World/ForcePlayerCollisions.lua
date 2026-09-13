@@ -159,7 +159,7 @@ run(function()
 			return Mode.Value
 		end,
 
-		Tooltip = 'Makes other players physically collidable.'
+		Tooltip = 'Makes other players physically collidable'
 	})
 
 	Mode = ForcePlayerCollisions:CreateDropdown({

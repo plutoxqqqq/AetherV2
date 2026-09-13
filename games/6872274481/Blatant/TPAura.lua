@@ -58,6 +58,7 @@ run(function()
             Origin = origin,
             Range = Range.Value,
             Players = Targets.Players.Enabled,
+            Priority = Targets.Priority and Targets.Priority.Value,
             NPCs = Targets.NPCs.Enabled,
             Wallcheck = Targets.Walls.Enabled or nil,
             Part = 'RootPart',

@@ -23,7 +23,7 @@ run(function()
 				bedwars.DaoController.dashForward = old
 			end
 		end,
-		Tooltip = 'Extends how far the yuzi dash launches you.'
+		Tooltip = 'Extends how far the yuzi dash launches you'
 	})
 	Multiplier = YuziExtender:CreateSlider({
 		Name = 'Multiplier',

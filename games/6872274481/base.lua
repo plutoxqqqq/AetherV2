@@ -63,9 +63,7 @@ local lplr = playersService.LocalPlayer
 local assetfunction = getcustomasset
 
 local vape = shared.vape
-if vape.Categories and not vape.Categories.Exploits then
-	vape.Categories.Exploits = vape.Categories.Blatant
-end
+-- The Exploits category was retired; its modules now register under Blatant.
 
 local entitylib = vape.Libraries.entity
 local targetinfo = vape.Libraries.targetinfo
@@ -525,6 +523,26 @@ local function getPlacedBlock(pos)
 	return bedwars.BlockController:getStore():getBlockAt(roundedPosition), roundedPosition
 end
 getgenv().getPlacedBlock = getPlacedBlock
+
+local windStacks = 0
+local function installWindStackHook()
+	local controller = bedwars.WindWalkerController
+	if not controller or type(controller.updateJump) ~= 'function' then return end
+	if getgenv().__AetherWindHooked == controller then return end
+	local original = controller.updateJump
+	controller.updateJump = function(self, count, ...)
+		windStacks = tonumber(count) or 0
+		return original(self, count, ...)
+	end
+	getgenv().__AetherWindHooked = controller
+end
+installWindStackHook()
+local function getWindStacks()
+	installWindStackHook()
+	return windStacks
+end
+getgenv().getWindStacks = getWindStacks
+getgenv().WIND_WALKER_MAX_STACKS = 5
 
 local function getBlocksInPoints(s, e)
 	local blocks, list = bedwars.BlockController:getStore(), {}
@@ -1264,6 +1282,15 @@ run(function()
 		AdetundeUtil = require(replicatedStorage.TS.games.bedwars.items['frosty-hammer']['frosty-hammer-util']).FrostyHammerUtil,
 		AnimationUtil = require(replicatedStorage['rbxts_include']['node_modules']['@easy-games']['game-core'].out['shared'].util['animation-util']).AnimationUtil,
 		AppController = require(replicatedStorage['rbxts_include']['node_modules']['@easy-games']['game-core'].out.client.controllers['app-controller']).AppController,
+		ArmorTrimColor = require(replicatedStorage.TS['armor-trim']['armor-trim-colors']).ArmorTrimColor,
+		ArmorTrimColorMeta = require(replicatedStorage.TS['armor-trim']['armor-trim-color-meta']).ArmorTrimColorMeta,
+		ArmorTrimEffectMeta = require(replicatedStorage.TS['armor-trim']['armor-trim-effect-meta']).ArmorTrimEffectMeta,
+		ArmorTrimEffectRankMeta = require(replicatedStorage.TS['armor-trim']['armor-trim-rank']).ArmorTrimEffectRankMeta,
+		ArmorTrimEffectType = require(replicatedStorage.TS['armor-trim']['armor-trim-effect-type']).ArmorTrimEffectType,
+		ArmorTrimMeta = require(replicatedStorage.TS['armor-trim']['armor-trim-meta']).ArmorTrimMeta,
+		ArmorTrimType = require(replicatedStorage.TS['armor-trim']['armor-trim-type']).ArmorTrimType,
+		ArmorTrimUtil = require(replicatedStorage.TS['armor-trim']['armor-trim-util']).ArmorTrimUtil,
+		AccessoryUtil = require(replicatedStorage.TS.util['accessory-util']).AccessoryUtil,
 		BedBreakEffectMeta = require(replicatedStorage.TS.locker['bed-break-effect']['bed-break-effect-meta']).BedBreakEffectMeta,
 		BedwarsKitMeta = require(replicatedStorage.TS.games.bedwars.kit['bedwars-kit-meta']).BedwarsKitMeta,
 		BedwarsKitSkin = canDebug and debug.getupvalue(require(replicatedStorage.TS.games.bedwars['kit-skin']['bedwars-kit-skin-meta']).getKitSkinMetadata, 1) or {},
@@ -1396,7 +1423,7 @@ run(function()
 		__index = function(self, plr)
 			return {
 				async = function()
-					if plr and plr.Character then
+					if plr and plr.Character and bedwars.StatusEffectMeta and bedwars.EnchantMeta then
 						for i in plr.Character:GetAttributes() do
 							if i:find('StatusEffect_') and not i:find('_stacks') then
 								local name = bedwars.StatusEffectMeta[({i:gsub('StatusEffect_', '')})[1]]
@@ -1525,7 +1552,15 @@ run(function()
 		WarlockTarget = canDebug and getproto(Knit.Controllers.WarlockStaffController.KnitStart, 2) or function() end
 	}
 
-	local packages = httpService:JSONDecode(downloadFile('aetherv2/profiles/packages.json'))
+	local packages
+	local function getPackages()
+		-- 4 MB JSON decode on every load is pure startup cost unless a remote could
+		-- not be read from constants.
+		if not packages then
+			packages = httpService:JSONDecode(downloadFile('aetherv2/profiles/packages.json'))
+		end
+		return packages
+	end
 	local function dumpRemote(tab)
 		if not tab then return '' end
 		local ind
@@ -1540,8 +1575,13 @@ run(function()
 
 	for i, v in remoteNames do
 		local remote = dumpRemote(debug.getconstants(v))
-		if remote == '' and packages.remotes[i] then
-			remote = packages.remotes[i]
+		if remote == '' then
+			local ok, fallback = pcall(function()
+				return getPackages().remotes[i]
+			end)
+			if ok and type(fallback) == 'string' then
+				remote = fallback
+			end
 		end
 		if remote == '' then
 			notif('AetherV2', 'Failed to grab remote ('..i..')', 10, 'alert')
@@ -2334,7 +2374,7 @@ local Attacking
 
 
 local jadeHammerNames = {'jade_hammer_3', 'jade_hammer_2', 'jade_hammer_1', 'jade_hammer', 'jade_hammer_jump'}
-local jadeJumpAbilities = {'jade_hammer_3_jump', 'jade_hammer_2_jump', 'jade_hammer_1_jump', 'jade_hammer_jump'}
+local jadeJumpAbilities = {'jade_hammer_jump'}
 
 local function normalizeJadeName(value)
 	return type(value) == 'string' and value:lower():gsub('[%s%-]+', '_') or nil
@@ -2342,7 +2382,9 @@ end
 
 local function isJadeHammerName(value)
 	local normalized = normalizeJadeName(value)
-	return normalized ~= nil and (normalized == 'jade_hammer_jump' or normalized:match('^jade_hammer(_%d+)?$') ~= nil)
+	-- Luau patterns do not support optional captures like (_%d+)?, so match the tiered
+	-- name and the bare name as two separate checks.
+	return normalized ~= nil and (normalized == 'jade_hammer_jump' or normalized == 'jade_hammer' or normalized:match('^jade_hammer_%d+$') ~= nil)
 end
 
 local function getJadeAbility(item)
@@ -2355,7 +2397,7 @@ local function getJadeAbility(item)
 	local function add(ability)
 		if ability and not seen[ability] then seen[ability] = true; table.insert(abilities, ability) end
 	end
-	if itemType ~= 'jade_hammer_jump' then add(itemType..'_jump') end
+	add('jade_hammer_jump')
 	for _, ability in jadeJumpAbilities do add(ability) end
 	for _, ability in abilities do
 		local ok, ready = pcall(bedwars.AbilityController.canUseAbility, bedwars.AbilityController, ability, {
@@ -2418,6 +2460,7 @@ local AetherRuntimeContext = {
     getWool = getWool,
     getBestArmor = getBestArmor,
     getPlacedBlock = getPlacedBlock,
+    getWindStacks = getWindStacks,
     switchItem = switchItem,
     isnetworkowner = isnetworkowner,
     notif = notif,
@@ -2734,11 +2777,11 @@ end
 local Jade = {
     Compatibility = {'jade_hammer_3', 'jade_hammer_2', 'jade_hammer_1', 'jade_hammer', 'jade_hammer_jump'},
     AbilityMap = {
-        jade_hammer_3 = {'jade_hammer_3_jump', 'jade_hammer_jump'},
-        jade_hammer_2 = {'jade_hammer_2_jump', 'jade_hammer_jump'},
-        jade_hammer_1 = {'jade_hammer_jump', 'jade_hammer_1_jump'},
+        jade_hammer_3 = {'jade_hammer_jump'},
+        jade_hammer_2 = {'jade_hammer_jump'},
+        jade_hammer_1 = {'jade_hammer_jump'},
         jade_hammer = {'jade_hammer_jump'},
-        jade_hammer_jump = {'jade_hammer_jump', 'jade_hammer_3_jump', 'jade_hammer_2_jump', 'jade_hammer_1_jump'}
+        jade_hammer_jump = {'jade_hammer_jump'}
     },
     Last = {}
 }
@@ -2757,7 +2800,9 @@ end
 
 function Jade:IsHammerName(value)
     local normalized = normalizeItemType(value)
-    return normalized == 'jade_hammer_jump' or (normalized ~= nil and normalized:match('^jade_hammer(_%d+)?$') ~= nil)
+    -- Luau patterns do not support optional captures like (_%d+)?, so match the tiered
+    -- name and the bare name as two separate checks.
+    return normalized == 'jade_hammer_jump' or normalized == 'jade_hammer' or (normalized ~= nil and normalized:match('^jade_hammer_%d+$') ~= nil)
 end
 
 function Jade:_candidateNames()
@@ -2830,12 +2875,14 @@ local function liveAbilityController()
     local controller = bedwars.AbilityController
     if not controller then return nil, Capabilities.Source.UNKNOWN, false end
     local knit = bedwars.Knit and bedwars.Knit.Controllers
-    if knit and (controller == knit.AbilityController or controller == knit.JadeHammerController) then
+    if knit and controller == knit.JadeHammerController then
         return controller, Capabilities.Source.CONTROLLER, true
     end
-    
-    
-    
+    -- The ability controller is resolved through Flamework, not Knit, so it never appears
+    -- in Knit.Controllers. canUseAbility/useAbility are its authoritative surface.
+    if type(controller.canUseAbility) == 'function' and type(controller.useAbility) == 'function' then
+        return controller, Capabilities.Source.CONTROLLER, true
+    end
     return controller, Capabilities.Source.FALLBACK, false
 end
 
@@ -2847,7 +2894,6 @@ function Jade:ResolveAbility(hammer)
         if type(value) == 'string' and value ~= '' and not seen[value] then seen[value] = true; table.insert(candidates, value) end
     end
     for _, value in ipairs(self.AbilityMap[itemType] or {}) do add(value) end
-    if itemType ~= 'jade_hammer_jump' then add(itemType..'_jump') end
     add('jade_hammer_jump')
 
     local meta = bedwars.ItemMeta and bedwars.ItemMeta[itemType]
@@ -2891,14 +2937,20 @@ end
 
 function Jade:Equip(hammer, timeout, cancelled)
     if not hammer or not hammer.tool then return false, 'missing-hammer' end
-    local held = store.hand
-    if held and held.tool == hammer.tool then return true, 'already-held' end
+    -- The game tracks the real hand in HandInvItem; store.hand is only the replicated
+    -- observed inventory and can lag behind (training rooms and fresh pickups especially).
+    local function held()
+        local handValue = lplr.Character and lplr.Character:FindFirstChild('HandInvItem')
+        if handValue and handValue.Value == hammer.tool then return true end
+        local current = store.hand
+        return (current and (current.tool == hammer.tool or current.itemType == hammer.itemType)) and true or false
+    end
+    if held() then return true, 'already-held' end
     safe('jade.switch', switchItem, hammer.tool, 0.05)
     local deadline = now() + (timeout or 0.8)
     repeat
         if cancelled and cancelled() then return false, 'cancelled' end
-        held = store.hand
-        if held and (held.tool == hammer.tool or held.itemType == hammer.itemType) then return true, 'replicated' end
+        if held() then return true, 'replicated' end
         task.wait(0.03)
     until now() >= deadline
     return false, 'held-tool-not-acknowledged'
@@ -2970,10 +3022,26 @@ function Jade:RequestActivation(hammer, ability, targetPosition, cancelled)
         if request.Sent then break end
     end
 
-    if not request.Sent and hammer.tool and type(hammer.tool.Activate) == 'function' then
+    if not request.Sent and hammer.tool and typeof(hammer.tool) == 'Instance' and hammer.tool:IsA('Tool') and type(hammer.tool.Activate) == 'function' then
         local ok = pcall(hammer.tool.Activate, hammer.tool)
         table.insert(request.Paths, {Path = 'Tool.Activate', OK = ok})
         request.Sent = ok
+    end
+
+    -- Prefer the ability controller over synthetic input: the game resolves it through
+    -- Flamework and useAbility is exactly what the ability UI calls.
+    local controller, source, authoritative = liveAbilityController()
+    if not request.Sent and controller and authoritative and type(controller.useAbility) == 'function' then
+        local ready = true
+        if type(controller.canUseAbility) == 'function' then
+            local okReady, isReady = pcall(controller.canUseAbility, controller, ability, {disableBlockedAbilityAlert = true})
+            ready = okReady and isReady ~= false
+        end
+        if ready then
+            local ok, result = pcall(controller.useAbility, controller, ability)
+            table.insert(request.Paths, {Path = 'AbilityController.useAbility', OK = ok, Result = result, Source = source})
+            request.Sent = ok and result ~= false
+        end
     end
 
     if not request.Sent and inputService then
@@ -2987,10 +3055,7 @@ function Jade:RequestActivation(hammer, ability, targetPosition, cancelled)
         request.Sent = ok
     end
 
-    
-    
-    local controller, source, authoritative = liveAbilityController()
-    if not request.Sent and controller and authoritative and type(controller.useAbility) == 'function' then
+    if not request.Sent and controller and type(controller.useAbility) == 'function' then
         local ok, result = pcall(controller.useAbility, controller, ability)
         table.insert(request.Paths, {Path = 'AbilityController.useAbility', OK = ok, Result = result, Source = source})
         request.Sent = ok and result ~= false

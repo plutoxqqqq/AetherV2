@@ -2,10 +2,6 @@ name: Resplit overlays and legit from monoliths
 
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - tools/split-games.py
-      - .github/workflows/resplit-overlays.yml
 
 permissions:
   contents: write

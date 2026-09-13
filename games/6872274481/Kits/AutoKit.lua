@@ -9,7 +9,7 @@ run(function()
 			if entitylib.isAlive then
 				local localPosition = entitylib.character.RootPart.Position
 				for _, v in objs do
-					if (vape.Modules.InfiniteFly or {}).Enabled or not AutoKit.Enabled then break end
+					if not AutoKit.Enabled then break end
 					local part = not v:IsA('Model') and v or (v.PrimaryPart or v:FindFirstChildWhichIsA('BasePart', true))
 					if part and (part.Position - localPosition).Magnitude <= (not Legit.Enabled and specific and math.huge or range) then
 						func(v)
@@ -357,7 +357,7 @@ run(function()
 				end
 			end
 		end,
-		Tooltip = 'Automatically uses kit abilities.'
+		Tooltip = 'Automatically uses kit abilities'
 	})
 	Legit = AutoKit:CreateToggle({Name = 'Legit Range'})
 	local function kitName(kit)

@@ -32,7 +32,7 @@ run(function()
 				until not AutoMarina.Enabled
 			end
 		end,
-		Tooltip = 'Automatically uses "electrify" ability when enemies are near jellies.'
+		Tooltip = 'Automatically uses "electrify" ability when enemies are near jellies'
 	})
 	Range = AutoMarina:CreateSlider({
 		Name = 'Range',

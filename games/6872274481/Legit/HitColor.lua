@@ -4,7 +4,7 @@ run(function()
     local done = {}
 
     HitColor = vape.Categories.Legit:CreateModule({
-        Name = 'HitColor',
+        Name = 'HitColour',
         Function = function(callback)
             if callback then
                 repeat
@@ -31,7 +31,7 @@ run(function()
         Tooltip = 'Customize the hit highlight options'
     })
     Color = HitColor:CreateColorSlider({
-        Name = 'Color',
+        Name = 'Colour',
         DefaultOpacity = 0.4
     })
 end)

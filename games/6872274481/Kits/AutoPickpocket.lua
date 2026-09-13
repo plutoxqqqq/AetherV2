@@ -42,7 +42,7 @@ run(function()
 				until not AutoPickpocket.Enabled
 			end
 		end,
-		Tooltip = 'Automatically pickpockets with milo kit.'
+		Tooltip = 'Automatically pickpockets with milo kit'
 	})
 	Targets = AutoPickpocket:CreateTargets({Players = true, Walls = true})
 

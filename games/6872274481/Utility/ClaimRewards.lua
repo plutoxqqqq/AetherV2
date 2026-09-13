@@ -44,8 +44,8 @@ run(function()
                 end
             end)
         end,
-        Tooltip = 'Claims unlocked level milestone rewards with the native reward remote.'
+        Tooltip = 'Claims unlocked level milestone rewards with the native reward remote'
     })
-    CratesOnly = ClaimRewards:CreateToggle({Name = 'Crates only', Tooltip = 'Only claim instant crate rewards.'})
+    CratesOnly = ClaimRewards:CreateToggle({Name = 'Crates only', Tooltip = 'Only claim instant crate rewards'})
     Notify = ClaimRewards:CreateToggle({Name = 'Notify', Default = true})
 end)

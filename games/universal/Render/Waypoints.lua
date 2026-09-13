@@ -70,7 +70,7 @@ run(function()
 	end,
     })
     Color = Waypoints:CreateColorSlider({
-	Name = 'Color',
+	Name = 'Colour',
 	Function = function(hue, sat, val)
 		for _, v in WaypointFolder:GetChildren() do
 			v.TextLabel.TextColor3 = Color3.fromHSV(hue, sat, val)

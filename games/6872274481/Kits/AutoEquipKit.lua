@@ -2,13 +2,13 @@ run(function()
 	local AutoEquipKit
 	local Kit
 
-	local kits, list = {}, {}
+	local kitIds, list = {}, {}
 
 	for i, v in bedwars.BedwarsKitMeta do
 		if v.name ~= 'None' then
 			table.insert(list, v.name)
 		end
-		kits[v.name] = i
+		kitIds[v.name] = i
 	end
 	table.sort(list)
 	table.insert(list, 1, 'None')
@@ -21,7 +21,7 @@ run(function()
 
 				repeat
 					if store.matchState == 2 and last == 1 and Kit.Value ~= 'None' then
-						bedwars.Handler:Get('BedwarsActivateKit'):Fire('CallServer', {kit = kits[Kit.Value]})
+						bedwars.Handler:Get('BedwarsActivateKit'):Fire('CallServer', {kit = kitIds[Kit.Value]})
 						notif('AutoEquipKit', `Equipped {Kit.Value} for the next round.`, 10, 'info')
 					end
 

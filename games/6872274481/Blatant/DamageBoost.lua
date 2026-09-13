@@ -22,5 +22,3 @@ run(function()
         Tooltip = 'Makes you go slightly faster when damaged'
     })
 end)
-
-if canDebug then

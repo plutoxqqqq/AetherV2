@@ -14,6 +14,20 @@ run(function()
     local PulseToBeat
     local PulseFrequency
     local PulseIntensity
+    local PulseType
+    local PulseAnimation
+    local PulseColor
+    local PulseRegions
+    local PULSE_EASINGS = {
+        ['Ease-in-out'] = 'InOut',
+        ['Ease-out'] = 'Out',
+        ['Ease-in'] = 'In',
+        ['Linear'] = 'Linear',
+        ['Quad'] = 'Quad',
+        ['Cubic'] = 'Cubic',
+        ['Bounce'] = 'Bounce',
+        ['Elastic'] = 'Elastic'
+    }
 
     local SONGS = 'aetherv2/songs'
     local SPOTIFY = 'aetherv2/spotify'
@@ -21,7 +35,8 @@ run(function()
     local sound
     local tracks, index = {}, 0
     local hudName, hudTime, hudBarFill, hudBackground
-    local pulseOverlay
+    local pulseWhole, pulseEdges = nil, {}
+    local pulseFovBase, pulseFovTween
     local lastScan = 0
     local scanKey = ''
     local lastPlay = 0
@@ -131,39 +146,90 @@ run(function()
         end
     end
 
-    local function setPulseVisible(transparency)
-        if pulseOverlay then
-            pulseOverlay.BackgroundTransparency = math.clamp(transparency, 0, 1)
+    local function setPulseTransparency(transparency)
+        local value = math.clamp(transparency, 0, 1)
+        if pulseWhole then
+            pulseWhole.BackgroundTransparency = value
+        end
+        for _, edge in ipairs(pulseEdges) do
+            edge.BackgroundTransparency = value
+        end
+    end
+
+    local function stopFovPulse()
+        if pulseFovTween then
+            pulseFovTween:Cancel()
+            pulseFovTween = nil
+        end
+        if pulseFovBase then
+            pcall(function() gameCamera.FieldOfView = pulseFovBase end)
+            pulseFovBase = nil
         end
     end
 
     local function resetPulse()
-        setPulseVisible(1)
+        setPulseTransparency(1)
+        stopFovPulse()
         beatCooldown = 0
         loudnessAverage = 0
     end
 
     local function frequencyDelay()
-        if not PulseFrequency then return 0.45 end
+        if not PulseFrequency then return 0.25 end
         if PulseFrequency.Value == 'Less' then return 0.8 end
-        if PulseFrequency.Value == 'Regular' then return 0.25 end
-        return 0.45
+        if PulseFrequency.Value == 'Frequent' then return 0.15 end
+        return 0.25
     end
 
     local function pulseFromBeat(loudness)
-        if not PulseToBeat.Enabled or not sound or not sound.IsPlaying or not pulseOverlay then return end
+        if not PulseToBeat.Enabled or not sound or not sound.IsPlaying then return end
         local now = os.clock()
         if now < beatCooldown then return end
 
-        
-        
         loudnessAverage = loudnessAverage == 0 and loudness or (loudnessAverage * 0.92 + loudness * 0.08)
         local threshold = math.max(loudnessAverage * 1.45, 120)
         if loudness < threshold then return end
 
         local peak = math.clamp((loudness - threshold) / math.max(threshold, 1), 0, 1)
-        local intensity = (PulseIntensity.Value / 100) * (0.35 + peak * 0.65)
-        pulseOverlay.BackgroundTransparency = 1 - math.clamp(intensity, 0, 1)
+        local strength = math.clamp((PulseIntensity and PulseIntensity.Value or 55) / 100 * (0.35 + peak * 0.65), 0, 1)
+        local kind = PulseType and PulseType.Value or 'FOV'
+        if kind == 'FOV' then
+            local camera = workspace.CurrentCamera
+            if camera then
+                if not pulseFovBase then
+                    pulseFovBase = (bedwars.FovController and bedwars.FovController:getFOV()) or camera.FieldOfView
+                end
+                if pulseFovTween then
+                    pulseFovTween:Cancel()
+                    pulseFovTween = nil
+                end
+                local base = pulseFovBase or camera.FieldOfView
+                camera.FieldOfView = base
+                local styleName = PULSE_EASINGS[(PulseAnimation and PulseAnimation.Value) or 'Ease-in-out'] or 'Quad'
+                pulseFovTween = tweenService:Create(camera, TweenInfo.new(0.12, Enum.EasingStyle[styleName], Enum.EasingDirection.Out), {
+                    FieldOfView = base + 6 + strength * 14
+                })
+                pulseFovTween:Play()
+                task.delay(0.12, function()
+                    if not PulseToBeat.Enabled or kind ~= 'FOV' then return end
+                    local cam = workspace.CurrentCamera
+                    if not cam or not pulseFovBase then return end
+                    pulseFovTween = tweenService:Create(cam, TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+                        FieldOfView = pulseFovBase
+                    })
+                    pulseFovTween:Play()
+                end)
+            end
+        else
+            local colour = PulseColor and Color3.fromHSV(PulseColor.Hue or 0, PulseColor.Sat or 0, PulseColor.Value == nil and 1 or PulseColor.Value) or Color3.new(1, 1, 1)
+            if pulseWhole then
+                pulseWhole.BackgroundColor3 = colour
+            end
+            for _, edge in ipairs(pulseEdges) do
+                edge.BackgroundColor3 = colour
+            end
+            setPulseTransparency(1 - strength)
+        end
         beatCooldown = now + frequencyDelay()
     end
 
@@ -264,8 +330,8 @@ run(function()
                         resetPulse()
                     end
 
-                    if pulseOverlay and pulseOverlay.BackgroundTransparency < 1 then
-                        pulseOverlay.BackgroundTransparency = math.min(1, pulseOverlay.BackgroundTransparency + 0.08)
+                    if pulseWhole and pulseWhole.BackgroundTransparency < 1 then
+                        setPulseTransparency(math.min(1, pulseWhole.BackgroundTransparency + 0.08))
                     end
                 end))
 
@@ -373,16 +439,43 @@ run(function()
     end
 
     
-    pulseOverlay = Instance.new('Frame')
-    pulseOverlay.Name = 'AetherMP3BeatPulse'
-    pulseOverlay.Size = UDim2.fromScale(1, 1)
-    pulseOverlay.Position = UDim2.fromScale(0, 0)
-    pulseOverlay.BackgroundColor3 = Color3.new(1, 1, 1)
-    pulseOverlay.BackgroundTransparency = 1
-    pulseOverlay.BorderSizePixel = 0
-    pulseOverlay.ZIndex = 40
-    pulseOverlay.Visible = false
-    pulseOverlay.Parent = vape.gui
+    pulseWhole = Instance.new('Frame')
+    pulseWhole.Name = 'AetherMP3BeatPulse'
+    pulseWhole.Size = UDim2.fromScale(1, 1)
+    pulseWhole.Position = UDim2.fromScale(0, 0)
+    pulseWhole.BackgroundColor3 = Color3.new(1, 1, 1)
+    pulseWhole.BackgroundTransparency = 1
+    pulseWhole.BorderSizePixel = 0
+    pulseWhole.ZIndex = 40
+    pulseWhole.Visible = false
+    pulseWhole.Parent = vape.gui
+
+    -- Border edges, same shape as the LowHealthVignette edges.
+    for _, spec in ipairs({
+        {Name = 'Top', Size = UDim2.new(1, 0, 0.18, 0), Position = UDim2.fromScale(0, 0), Rotation = 90},
+        {Name = 'Bottom', Size = UDim2.new(1, 0, 0.18, 0), Position = UDim2.fromScale(0, 0.82), Rotation = 270},
+        {Name = 'Left', Size = UDim2.new(0.14, 0, 0.64, 0), Position = UDim2.fromScale(0, 0.18), Rotation = 0},
+        {Name = 'Right', Size = UDim2.new(0.14, 0, 0.64, 0), Position = UDim2.fromScale(0.86, 0.18), Rotation = 180}
+    }) do
+        local edge = Instance.new('Frame')
+        edge.Name = spec.Name
+        edge.Size = spec.Size
+        edge.Position = spec.Position
+        edge.BackgroundColor3 = Color3.new(1, 1, 1)
+        edge.BackgroundTransparency = 1
+        edge.BorderSizePixel = 0
+        edge.ZIndex = 40
+        edge.Visible = false
+        edge.Parent = pulseWhole
+        local gradient = Instance.new('UIGradient')
+        gradient.Rotation = spec.Rotation
+        gradient.Transparency = NumberSequence.new({
+            NumberSequenceKeypoint.new(0, 0),
+            NumberSequenceKeypoint.new(1, 1)
+        })
+        gradient.Parent = edge
+        table.insert(pulseEdges, edge)
+    end
 
     MP3Player:CreateButton({
         Name = 'Play / Pause',
@@ -515,27 +608,53 @@ run(function()
         Tooltip = 'Show elapsed and total time'
     })
     HUDColor = MP3Player:CreateColorSlider({
-        Name = 'HUD color',
+        Name = 'HUD colour',
         Darker = true,
         DefaultOpacity = 0.55,
         Function = refreshHUD
     })
+    local function refreshPulseOptions()
+        local on = PulseToBeat and PulseToBeat.Enabled
+        local kind = PulseType and PulseType.Value or 'FOV'
+        local regions = PulseRegions and PulseRegions.Value or 'Whole'
+        if PulseFrequency and PulseFrequency.Object then PulseFrequency.Object.Visible = on end
+        if PulseType and PulseType.Object then PulseType.Object.Visible = on end
+        if PulseIntensity and PulseIntensity.Object then PulseIntensity.Object.Visible = on and kind == 'FOV' end
+        if PulseAnimation and PulseAnimation.Object then PulseAnimation.Object.Visible = on and kind == 'FOV' end
+        if PulseColor and PulseColor.Object then PulseColor.Object.Visible = on and kind == 'Colour' end
+        if PulseRegions and PulseRegions.Object then PulseRegions.Object.Visible = on and kind == 'Colour' end
+        if pulseWhole then
+            pulseWhole.Visible = on and kind == 'Colour'
+            pulseWhole.BackgroundTransparency = 1
+        end
+        for _, edge in ipairs(pulseEdges) do
+            edge.Visible = on and kind == 'Colour' and regions == 'Border'
+            edge.BackgroundTransparency = 1
+        end
+        if not on then resetPulse() end
+    end
+
     PulseToBeat = MP3Player:CreateToggle({
         Name = 'Pulse to Beat',
-        Function = function(callback)
-            if PulseFrequency and PulseFrequency.Object then PulseFrequency.Object.Visible = callback end
-            if PulseIntensity and PulseIntensity.Object then PulseIntensity.Object.Visible = callback end
-            if pulseOverlay then pulseOverlay.Visible = callback end
-            if not callback then resetPulse() end
+        Function = function()
+            refreshPulseOptions()
         end,
         Tooltip = 'Pulse the screen in time with peaks in the current song'
     })
     PulseFrequency = MP3Player:CreateDropdown({
         Name = 'Frequency',
-        List = { 'Less', 'Normal', 'Regular' },
-        Default = 'Normal',
+        List = { 'Regular', 'Frequent', 'Less' },
+        Default = 'Regular',
         Darker = true,
-        Tooltip = 'Less - fewer pulses; Normal - balanced; Regular - reacts more often',
+        Tooltip = 'Less - fewer pulses; Regular - balanced; Frequent - reacts more often',
+    })
+    PulseType = MP3Player:CreateDropdown({
+        Name = 'Type',
+        List = { 'FOV', 'Colour' },
+        Default = 'FOV',
+        Darker = true,
+        Function = refreshPulseOptions,
+        Tooltip = 'FOV smoothly bumps the camera field of view on the beat; Colour pulses an overlay',
     })
     PulseIntensity = MP3Player:CreateSlider({
         Name = 'Intensity',
@@ -544,8 +663,29 @@ run(function()
         Default = 55,
         Suffix = '%',
         Darker = true,
-        Tooltip = 'Controls how strong the screen pulse is',
+        Tooltip = 'How strong the FOV bump is',
     })
-    PulseFrequency.Object.Visible = false
-    PulseIntensity.Object.Visible = false
+    PulseAnimation = MP3Player:CreateDropdown({
+        Name = 'Animation',
+        List = { 'Ease-in-out', 'Ease-out', 'Ease-in', 'Linear', 'Quad', 'Cubic', 'Bounce', 'Elastic' },
+        Default = 'Ease-in-out',
+        Darker = true,
+        Tooltip = 'Easing used for the FOV bump',
+    })
+    PulseColor = MP3Player:CreateColorSlider({
+        Name = 'Pulse Colour',
+        Darker = true,
+        DefaultSat = 0,
+        DefaultValue = 1,
+        Tooltip = 'Colour used by the Colour pulse type',
+    })
+    PulseRegions = MP3Player:CreateDropdown({
+        Name = 'Regions',
+        List = { 'Whole', 'Border' },
+        Default = 'Whole',
+        Darker = true,
+        Function = refreshPulseOptions,
+        Tooltip = 'Whole pulses the whole screen; Border only colours the screen edges',
+    })
+    refreshPulseOptions()
 end)

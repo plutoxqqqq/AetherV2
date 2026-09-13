@@ -16,6 +16,7 @@ run(function()
 					if tool and (not Limit.Enabled or store.hand.tool == tool) and (Delay.Value <= 0 or os.clock() - clock >= Delay.Value) and entitylib.EntityPosition({
 						Range = Range.Value,
 						Players = Targets.Players.Enabled,
+						Priority = Targets.Priority and Targets.Priority.Value,
 						NPCs = Targets.NPCs.Enabled
 					}) then
 						bedwars.Handler:Get('HellBladeRelease'):Fire('SendToServer', {

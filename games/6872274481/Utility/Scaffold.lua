@@ -1,24 +1,16 @@
 run(function()
 	local Scaffold
-	local Count
 	local Expand
 	local Tower
 	local Downwards
 	local Diagonal
 	local LimitItem
 	local Mouse
-	local BridgeWidth
-	local KeepY
-	local LevelBridge
-	local JumpBridge
-	local BlockPreference
-	local RestoreSlot
 	local FillColor
 	local OutlineColor
 	local adjacent, lastpos, label, visualBlock = {}, Vector3.zero
 	local visualTween, visualPos
 	local visualSpeed = 0.1
-	local lockedY, restoreSlot, nextJump = nil, nil, 0
 
 	for x = -3, 3, 3 do
 		for y = -3, 3, 3 do
@@ -37,6 +29,7 @@ run(function()
 		local check = poscheck + (pos - poscheck).Unit * 100
 		return Vector3.new(math.clamp(check.X, startpos.X, endpos.X), math.clamp(check.Y, startpos.Y, endpos.Y), math.clamp(check.Z, startpos.Z, endpos.Z))
 	end
+	getgenv().nearCorner = nearCorner
 
 	local function blockProximity(pos)
 		local mag, returned = 60
@@ -51,6 +44,7 @@ run(function()
 		table.clear(tab)
 		return returned
 	end
+	getgenv().blockProximity = blockProximity
 
 	local function checkAdjacent(pos)
 		for _, v in adjacent do
@@ -60,60 +54,38 @@ run(function()
 		end
 		return false
 	end
+	getgenv().checkAdjacent = checkAdjacent
 
-	local function getScaffoldBlock()
-		if store.hand.toolType == 'block' then
-			return store.hand.tool.Name, store.hand.amount
-		elseif (not LimitItem.Enabled) then
-			local items = (store.inventory.inventory or {}).items or {}
-			if BlockPreference.Value == 'Wool first' then
-				local wool, amount = getWool()
-				if wool then return wool, amount end
-			end
-			local chosen
-			for _, item in items do
-				local meta = bedwars.ItemMeta[item.itemType]
-				if meta and meta.block and (not chosen or (BlockPreference.Value == 'Highest count' and (item.amount or 0) > (chosen.amount or 0))) then
-					chosen = item
-					if BlockPreference.Value == 'Nearest slot' then break end
-				end
-			end
-			if chosen then return chosen.itemType, chosen.amount end
-		end
-
-		return nil, 0
-	end
-
-	local function clearVisuals()
+	local function clearVisual()
 		if visualTween then
 			visualTween:Cancel()
 			visualTween = nil
 		end
 		if visualBlock then
 			visualBlock.Parent = nil
+			visualBlock:Destroy()
+			visualBlock = nil
 		end
 		visualPos = nil
 	end
 
-	local function updateVisual(pos)
-		if not visualBlock or not pos then return end
-
-		local blockpos = bedwars.BlockController:getBlockPosition(pos) * 3
-		if visualPos == blockpos then return end
-
-		if visualTween then
-			visualTween:Cancel()
-			visualTween = nil
+	local function getScaffoldBlock()
+		if store.hand.toolType == 'block' then
+			return store.hand.tool.Name, store.hand.amount
+		elseif (not LimitItem.Enabled) then
+			local wool, amount = getWool()
+			if wool then
+				return wool, amount
+			else
+				for _, v in store.inventory.inventory.items do
+					if bedwars.ItemMeta[v.itemType].block then
+						return v.itemType, v.amount
+					end
+				end
+			end
 		end
 
-		if visualBlock.Parent == gameCamera then
-			visualTween = tweenService:Create(visualBlock, TweenInfo.new(visualSpeed, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {CFrame = CFrame.new(blockpos)})
-			visualTween:Play()
-		else
-			visualBlock.CFrame = CFrame.new(blockpos)
-			visualBlock.Parent = gameCamera
-		end
-		visualPos = blockpos
+		return nil, 0
 	end
 
 	Scaffold = vape.Categories.Utility:CreateModule({
@@ -124,7 +96,6 @@ run(function()
 			end
 
 			if callback then
-				lockedY, restoreSlot, nextJump = nil, nil, 0
 				repeat
 					if entitylib.isAlive then
 						local wool, amount = getScaffoldBlock()
@@ -143,34 +114,12 @@ run(function()
 
 						if wool then
 							local root = entitylib.character.RootPart
-							
-							
-							if store.hand.toolType ~= 'block' then
-								for slot, entry in store.inventory.hotbar or {} do
-									if entry.item and entry.item.itemType == wool then
-										restoreSlot = restoreSlot or store.inventory.hotbarSlot
-										hotbarSwitch(slot - 1)
-										break
-									end
-								end
-							end
 							if Tower.Enabled and inputService:IsKeyDown(Enum.KeyCode.Space) and (not inputService:GetFocusedTextBox()) then
-								root.Velocity = Vector3.new(root.Velocity.X, 38, root.Velocity.Z)
-							end
-							if JumpBridge.Enabled and not Tower.Enabled and entitylib.character.Humanoid.FloorMaterial ~= Enum.Material.Air and entitylib.character.Humanoid.MoveDirection.Magnitude > 0.05 and tick() >= nextJump then
-								entitylib.character.Humanoid.Jump = true
-								nextJump = tick() + 0.24
+								root.AssemblyLinearVelocity = Vector3.new(root.AssemblyLinearVelocity.X, 38, root.AssemblyLinearVelocity.Z)
 							end
 
 							for i = Expand.Value, 1, -1 do
 								local currentpos = roundPos(root.Position - Vector3.new(0, entitylib.character.HipHeight + (Downwards.Enabled and inputService:IsKeyDown(Enum.KeyCode.LeftShift) and 4.5 or 1.5), 0) + entitylib.character.Humanoid.MoveDirection * (i * 3))
-								local downwards = Downwards.Enabled and inputService:IsKeyDown(Enum.KeyCode.LeftShift)
-								if (KeepY.Enabled or LevelBridge.Enabled) and not downwards then
-									lockedY = lockedY or currentpos.Y
-									currentpos = Vector3.new(currentpos.X, lockedY, currentpos.Z)
-								else
-									lockedY = currentpos.Y
-								end
 								if Diagonal.Enabled then
 									if math.abs(math.round(math.deg(math.atan2(-entitylib.character.Humanoid.MoveDirection.X, -entitylib.character.Humanoid.MoveDirection.Z)) / 45) * 45) % 90 == 45 then
 										local dt = (lastpos - currentpos)
@@ -180,24 +129,30 @@ run(function()
 									end
 								end
 
-								updateVisual(currentpos)
-								local positions = {currentpos}
-								if BridgeWidth.Value > 1 then
-									local direction = entitylib.character.Humanoid.MoveDirection
-									if direction.Magnitude < 0.05 then direction = root.CFrame.LookVector end
-									local side = Vector3.new(-direction.Z, 0, direction.X)
-									if side.Magnitude > 0 then
-										side = side.Unit * 3
-										for offset = 1, BridgeWidth.Value - 1 do
-											table.insert(positions, currentpos + side * ((offset % 2 == 0 and -1 or 1) * math.ceil(offset / 2)))
+								if visualBlock and currentpos then
+									local visual = bedwars.BlockController:getBlockPosition(currentpos) * 3
+									if visualPos ~= visual then
+										if visualTween then
+											visualTween:Cancel()
+											visualTween = nil
 										end
+
+										if visualBlock.Parent == gameCamera then
+											visualTween = tweenService:Create(visualBlock, TweenInfo.new(visualSpeed, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {CFrame = CFrame.new(visual)})
+											visualTween:Play()
+										else
+											visualBlock.CFrame = CFrame.new(visual)
+											visualBlock.Parent = gameCamera
+										end
+										visualPos = visual
 									end
 								end
-								for _, placepos in positions do
-									local block, blockpos = getPlacedBlock(placepos)
-									if not block then
-										blockpos = checkAdjacent(blockpos * 3) and blockpos * 3 or blockProximity(placepos)
-										if blockpos then Scaffold:Delay(0, function() bedwars.placeBlock(blockpos, wool, false) end) end
+
+								local block, blockpos = getPlacedBlock(currentpos)
+								if not block then
+									blockpos = checkAdjacent(blockpos * 3) and blockpos * 3 or blockProximity(currentpos)
+									if blockpos then
+										task.delay(0, bedwars.placeBlock, blockpos, wool, false)
 									end
 								end
 								lastpos = currentpos
@@ -206,25 +161,17 @@ run(function()
 					end
 					task.wait(0.03)
 				until not Scaffold.Enabled
-				clearVisuals()
-				if RestoreSlot.Enabled and restoreSlot ~= nil then hotbarSwitch(restoreSlot) end
-				restoreSlot, lockedY = nil, nil
+				clearVisual()
 			end
 		end,
-		Tooltip = 'Helps you make bridges/scaffold walk.'
+		Tooltip = 'Helps you make bridges and scaffold walk'
 	})
+
 	Expand = Scaffold:CreateSlider({
 		Name = 'Expand',
 		Min = 1,
 		Max = 6
 	})
-	BridgeWidth = Scaffold:CreateSlider({
-		Name = 'Bridge width', Min = 1, Max = 3, Default = 1,
-		Tooltip = 'Places up to three blocks across while bridging'
-	})
-	KeepY = Scaffold:CreateToggle({Name = 'Keep Y', Default = true, Tooltip = 'Keeps a level bridge unless downwards mode is held'})
-	LevelBridge = Scaffold:CreateToggle({Name = 'Level bridge', Default = false, Tooltip = 'Locks Scaffold to the starting bridge level'})
-	JumpBridge = Scaffold:CreateToggle({Name = 'Jump bridge', Tooltip = 'Repeats natural jumps while moving on a bridge'})
 	Tower = Scaffold:CreateToggle({
 		Name = 'Tower',
 		Default = true
@@ -238,15 +185,9 @@ run(function()
 		Default = true
 	})
 	LimitItem = Scaffold:CreateToggle({Name = 'Limit to items'})
-	BlockPreference = Scaffold:CreateDropdown({
-		Name = 'Block preference', List = {'Wool first', 'Nearest slot', 'Highest count'}, Default = 'Wool first',
-		Tooltip = 'Chooses which inventory block Scaffold should use'
-	})
-	RestoreSlot = Scaffold:CreateToggle({Name = 'Restore slot', Default = true, Tooltip = 'Returns to the slot held before automatic block selection'})
 	Mouse = Scaffold:CreateToggle({Name = 'Require mouse down'})
 	Scaffold:CreateToggle({
 		Name = 'Visual',
-		Tooltip = 'Renders an overlay on the block about to be placed',
 		Function = function(callback)
 			FillColor.Object.Visible = callback
 			OutlineColor.Object.Visible = callback
@@ -269,14 +210,13 @@ run(function()
 				selection.Parent = visualBlock
 				bedwars.QueryUtil:setQueryIgnored(visualBlock, true)
 			else
-				clearVisuals()
-				if visualBlock then visualBlock:Destroy() end
-				visualBlock = nil
+				clearVisual()
 			end
-		end
+		end,
+		Tooltip = 'Renders an overlay on the block about to be placed'
 	})
 	FillColor = Scaffold:CreateColorSlider({
-		Name = 'Fill Color',
+		Name = 'Fill colour',
 		DefaultSat = 0,
 		DefaultOpacity = 0.4,
 		Darker = true,
@@ -289,7 +229,7 @@ run(function()
 		end
 	})
 	OutlineColor = Scaffold:CreateColorSlider({
-		Name = 'Outline Color',
+		Name = 'Outline colour',
 		DefaultValue = 0,
 		Darker = true,
 		Visible = false,
@@ -300,7 +240,7 @@ run(function()
 			end
 		end
 	})
-	Count = Scaffold:CreateToggle({
+	Scaffold:CreateToggle({
 		Name = 'Block Count',
 		Function = function(callback)
 			if callback then

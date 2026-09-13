@@ -175,7 +175,7 @@ run(function()
 	Default = true,
     })
     Color = BedPlates:CreateColorSlider({
-	Name = 'Background Color',
+	Name = 'Background Colour',
 	DefaultValue = 0,
 	DefaultOpacity = 0.5,
 	Function = function(hue, sat, val, opacity)
@@ -197,7 +197,7 @@ run(function()
 	Default = true,
     })
     LayerColor = BedPlates:CreateColorSlider({
-	Name = 'Counter Text Color',
+	Name = 'Counter Text Colour',
 	DefaultSat = 0,
 	DefaultValue = 1,
 	Function = function()

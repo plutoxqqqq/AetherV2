@@ -54,7 +54,7 @@ run(function()
 				bedwars.LaunchPadController.attemptLaunch = old
 			end
 		end,
-		Tooltip = 'Automatically handles Gingerbread Man launch pads.'
+		Tooltip = 'Automatically handles Gingerbread Man launch pads'
 	})
 	Break = AutoGingerbread:CreateToggle({
 		Name = 'Break launch pad',

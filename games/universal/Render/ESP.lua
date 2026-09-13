@@ -496,7 +496,7 @@ run(function()
 	end,
     })
     Color = ESP:CreateColorSlider({
-	Name = 'Player Color',
+	Name = 'Player Colour',
 	Function = function(hue, sat, val)
 		if ESP.Enabled and ColorFunc[methodused] then
 			ColorFunc[methodused](hue, sat, val)

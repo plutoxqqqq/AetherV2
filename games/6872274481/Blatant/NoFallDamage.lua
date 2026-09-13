@@ -246,7 +246,7 @@ run(function()
             if item then break end
         end
         if not item then return end
-        local ability = item.itemType..'_jump'
+        local ability = 'jade_hammer_jump'
         if bedwars.AbilityController:canUseAbility(ability) then
             return abilityClutch(item, ability, function(_, abilityId)
                 useToolAbility(abilityId, {direction = Vector3.yAxis, origin = root.Position})
@@ -378,6 +378,9 @@ run(function()
         
         
         if hasZephyrKit() == false then return end
+
+        local stacks = type(getWindStacks) == 'function' and getWindStacks() or 0
+        if stacks < 5 then return end
 
         local groundDistance = root.Position.Y - ground.Position.Y
         local bodyClearance = (humanoid.HipHeight or 2) + (root.Size.Y * 0.5)
@@ -621,7 +624,7 @@ run(function()
     })
     Zephyr = NoFall:CreateToggle({
         Name = 'Zephyr',
-        Tooltip = 'Jumps before landing with Zephyr'
+        Tooltip = 'Uses the five stack triple jump to jump before you hit the ground'
     })
     TelepearlClutch = NoFall:CreateToggle({
         Name = 'Telepearl',

@@ -1,82 +1,50 @@
 run(function()
 	local FastClimb
-	local WalkSpeed
 	local ClimbSpeed
-	local applied = false
-	local savedWalkSpeed
 
-	local function restore()
-		if not applied then return end
-		applied = false
-		if entitylib.isAlive then
-			local hum = entitylib.character and entitylib.character.Humanoid
-			if hum and savedWalkSpeed then
-				hum.WalkSpeed = savedWalkSpeed
-			end
+	local function localHumanoid()
+		local character = lplr.Character
+		local humanoid = character and character:FindFirstChildOfClass('Humanoid')
+		if humanoid and humanoid.Health > 0 then
+			return humanoid
 		end
-		savedWalkSpeed = nil
+	end
+
+	local function applyClimbSpeed()
+		local humanoid = localHumanoid()
+		if humanoid and humanoid.ClimbSpeed ~= ClimbSpeed.Value then
+			humanoid.ClimbSpeed = ClimbSpeed.Value
+		end
 	end
 
 	FastClimb = vape.Categories.Blatant:CreateModule({
 		Name = 'FastClimb',
 		Function = function(callback)
 			if callback then
-				FastClimb:Clean(runService.PreSimulation:Connect(function()
-					if not entitylib.isAlive then
-						restore()
-						return
-					end
-
-					local character = entitylib.character
-					local hum = character and character.Humanoid
-					local root = character and character.RootPart
-					if not hum or not root then
-						restore()
-						return
-					end
-
-					if hum:GetState() ~= Enum.HumanoidStateType.Climbing then
-						restore()
-						return
-					end
-
-					if not applied then
-						savedWalkSpeed = hum.WalkSpeed
-						applied = true
-					end
-
-					hum.WalkSpeed = WalkSpeed.Value
-
-					local vel = root.AssemblyLinearVelocity
-					local y = ClimbSpeed.Value
-					if vel.Y < -0.05 then
-						y = -ClimbSpeed.Value
-					end
-					root.AssemblyLinearVelocity = Vector3.new(vel.X, y, vel.Z)
+				FastClimb:Clean(lplr.CharacterAdded:Connect(function()
+					task.wait(0.1)
+					applyClimbSpeed()
 				end))
-				FastClimb:Clean(restore)
+
+				-- The game rewrites ClimbSpeed from its own movement state, so a one shot
+				-- assignment only held for a frame. Keep it applied while the module is on.
+				FastClimb:Clean(runService.Heartbeat:Connect(applyClimbSpeed))
+				applyClimbSpeed()
 			else
-				restore()
+				local humanoid = localHumanoid()
+				if humanoid then
+					humanoid.ClimbSpeed = 12
+				end
 			end
 		end,
-		Tooltip = 'Boosts walkspeed and velocity only while climbing.'
-	})
-
-	WalkSpeed = FastClimb:CreateSlider({
-		Name = 'Walk Speed',
-		Min = 1,
-		Max = 100,
-		Default = 20,
-		Suffix = 'studs/s'
+		Tooltip = 'Increases climbing speed'
 	})
 
 	ClimbSpeed = FastClimb:CreateSlider({
 		Name = 'Climb Speed',
 		Min = 1,
 		Max = 100,
-		Default = 50,
+		Default = 32,
 		Suffix = 'studs/s'
 	})
 end)
-
--- blatant/Fly.lua

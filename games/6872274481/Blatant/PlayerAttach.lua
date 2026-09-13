@@ -18,6 +18,7 @@ run(function()
                             Wallcheck = Targets.Walls.Enabled or nil,
                             Part = 'RootPart',
                             Players = Targets.Players.Enabled,
+                            Priority = Targets.Priority and Targets.Priority.Value,
                             NPCs = Targets.NPCs.Enabled,
                             Limit = 1,
                             Sort = function(a, b)

@@ -112,7 +112,7 @@ run(function()
     })
 
     Color = CustomTags:CreateColorSlider({
-	Name = 'Color',
+	Name = 'Colour',
 	Function = function()
 		if CustomTags.Enabled then
 			CompleteTagEffect()

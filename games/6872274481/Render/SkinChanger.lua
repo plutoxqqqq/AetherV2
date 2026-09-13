@@ -18,12 +18,15 @@ run(function()
 		return label ~= '' and prettify(label) or prettify(skin)
 	end
 
-	for _, skin in bedwars.ItemSkinType do
-		local meta = bedwars.getItemSkinMeta(skin)
-		local item = meta and meta.itemType and bedwars.ItemMeta[meta.itemType]
-		if item and not item.block then
-			skins[meta.itemType] = skins[meta.itemType] or {}
-			skins[meta.itemType][getLabel(meta.itemType, skin)] = skin
+	local getItemSkinMeta = bedwars.getItemSkinMeta
+	if type(getItemSkinMeta) == 'function' then
+		for _, skin in bedwars.ItemSkinType or {} do
+			local meta = getItemSkinMeta(skin)
+			local item = meta and meta.itemType and bedwars.ItemMeta[meta.itemType]
+			if item and not item.block then
+				skins[meta.itemType] = skins[meta.itemType] or {}
+				skins[meta.itemType][getLabel(meta.itemType, skin)] = skin
+			end
 		end
 	end
 

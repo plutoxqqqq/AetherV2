@@ -59,13 +59,16 @@ run(function()
 		elseif Mode.Value == 'ServerHop' then
 			serverHop()
 		elseif Mode.Value == 'Profile' then
-			vape.Save = function() end
 			if vape.Profile ~= Profile.Value then
+				-- Keep saving alive: persist the current profile, then switch. The old
+				-- permanent Save disable silently discarded every later autosave.
+				pcall(function()
+					vape:Save()
+				end)
 				vape.Profile = Profile.Value
 				vape:Load(true, Profile.Value)
 			end
 		elseif Mode.Value == 'AutoConfig' then
-			vape.Save = function() end
 			for _, v in vape.Modules do
 				if v.Enabled then
 					v:Toggle()

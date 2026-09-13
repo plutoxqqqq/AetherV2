@@ -23,7 +23,7 @@ run(function()
         end
     })
     ReachDisplay:CreateColorSlider({
-        Name = 'Color',
+        Name = 'Colour',
         DefaultValue = 0,
         DefaultOpacity = 0.5,
         Function = function(hue, sat, val, opacity)

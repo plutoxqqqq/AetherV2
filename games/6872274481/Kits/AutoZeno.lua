@@ -65,6 +65,7 @@ run(function()
 								Range = math.max(castRange, shockwave and ShockwaveRange.Value or 0),
 								Part = 'RootPart',
 								Players = Targets.Players.Enabled,
+								Priority = Targets.Priority and Targets.Priority.Value,
 								NPCs = Targets.NPCs.Enabled,
 								Sort = sortmethods[TargetMode.Value]
 							})

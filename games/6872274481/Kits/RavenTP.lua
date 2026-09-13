@@ -36,6 +36,6 @@ run(function()
 				end
 			end
 		end,
-		Tooltip = 'Spawns and teleports a raven to a player\nnear your mouse.'
+		Tooltip = 'Spawns and teleports a raven to a player\nnear your mouse'
 	})
 end)

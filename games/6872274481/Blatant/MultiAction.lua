@@ -198,8 +198,8 @@ local function installMultiActionHooks()
 end
 
 MultiAction = (function()
-    local module, created = register('Exploits', 'MultiAction', {
-        Tooltip = 'Separates compatible local action locks without changing progress, speed, cooldowns, inputs, or remotes.',
+	local module, created = register('Blatant', 'MultiAction', {
+        Tooltip = 'Separates compatible local action locks without changing progress, speed, cooldowns, inputs, or remotes',
         Function = function(enabled)
             restoreMultiActionHooks()
             if not enabled then return end
@@ -223,12 +223,12 @@ MultiAction = (function()
         MultiActionActions = module:CreateTextList({
             Name = 'Allowed actions',
             Default = multiActionActionNames,
-            Tooltip = 'Enable only Hotbar switching, Melee attacking, or Block placement.'
+            Tooltip = 'Enable only Hotbar switching, Melee attacking, or Block placement'
         })
         MultiActionContexts = module:CreateTextList({
             Name = 'Active contexts',
             Default = multiActionContextNames,
-            Tooltip = 'Enable Projectile charging, Consuming, or Ability aiming.'
+            Tooltip = 'Enable Projectile charging, Consuming, or Ability aiming'
         })
         module:Clean(function()
             restoreMultiActionHooks()

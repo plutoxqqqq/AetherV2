@@ -20,7 +20,7 @@ run(function()
         end
     end
 
-    LongJumpBypass = vape.Categories.Exploits:CreateModule({
+	LongJumpBypass = vape.Categories.Blatant:CreateModule({
         Name = 'LongJumpBypass',
         Function = function(callback)
             if callback then
