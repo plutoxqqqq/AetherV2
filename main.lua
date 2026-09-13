@@ -121,28 +121,44 @@ local function downloadParallel(folder, names, phaseStart, phaseSpan)
 	return bodies
 end
 
+-- A missing remote pack.lua can come back as an empty body rather than a 404, and an
+-- empty concatenation still compiles (it is only comments), so size and a code marker are
+-- required before a pack is trusted. Without this the loader silently "succeeded" and the
+-- modules were never registered.
+local function packLooksValid(body)
+	if type(body) ~= 'string' or #body < 4096 then return false end
+	local head = body:sub(1, 8192)
+	return head:find('run(function', 1, true) ~= nil
+		or head:find('CreateModule', 1, true) ~= nil
+		or head:find('vape', 1, true) ~= nil
+end
+
 -- loadPackedFast: use a local pack.lua when present, otherwise download once and cache the pack
 local function loadPacked(folder)
 	local packPath = 'aetherv2/games/'..folder..'/pack.lua'
 	if isfile(packPath) then
-		local chunk, err = loadstring(readfile(packPath), folder)
-		if chunk then
-			local ok, result = pcall(chunk, license)
-			if ok then
-				return true
+		local cached = select(2, pcall(readfile, packPath))
+		if packLooksValid(cached) then
+			local chunk, err = loadstring(cached, folder)
+			if chunk then
+				local ok, result = pcall(chunk, license)
+				if ok then
+					return true
+				end
+				warn('[AetherV2] pack run failed '..folder..': '..tostring(result))
+			else
+				warn('[AetherV2] pack compile failed '..folder..': '..tostring(err))
 			end
-			warn('[AetherV2] pack run failed '..folder..': '..tostring(result))
 		else
-			warn('[AetherV2] pack compile failed '..folder..': '..tostring(err))
+			warn('[AetherV2] discarding invalid pack cache '..folder)
 		end
 		pcall(delfile, packPath)
 	end
 
 	-- A committed pack.lua turns a cold start from hundreds of HTTP requests into one.
-	-- Cached local packs are handled above; this branch only runs on a fresh install.
 	if not isfile(packPath) then
 		local fetched, body = pcall(downloadFile, packPath)
-		if fetched and type(body) == 'string' and #body > 32 then
+		if fetched and packLooksValid(body) then
 			local remoteChunk, remoteErr = loadstring(body, folder)
 			if remoteChunk then
 				local ran, result = pcall(remoteChunk, license)
@@ -153,8 +169,8 @@ local function loadPacked(folder)
 			else
 				warn('[AetherV2] remote pack compile failed '..folder..': '..tostring(remoteErr))
 			end
-			pcall(delfile, packPath)
 		end
+		pcall(delfile, packPath)
 	end
 
 	local listPath = 'aetherv2/games/'..folder..'/files.txt'
@@ -181,6 +197,9 @@ local function loadPacked(folder)
 		return false, 'no chunks'
 	end
 	local packed = table.concat(chunks, '\n')
+	if not packLooksValid(packed) then
+		return false, 'assembled pack failed validation'
+	end
 	ensureParentFolder(packPath)
 	pcall(writefile, packPath, packed)
 	local chunk, err = loadstring(packed, folder)
