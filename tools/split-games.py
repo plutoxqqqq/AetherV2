@@ -26,7 +26,7 @@ CAT_MAP = {
     "utility": "Utility",
     "world": "World",
     "inventory": "Inventory",
-    "exploits": "Exploits",
+    "exploits": "Blatant",
     "kits": "Kits",
     "minigames": "Kits",
     "visuals": "Render",

@@ -48,13 +48,17 @@ run(function()
         elseif Mode.Value == 'Requeue' then
             bedwars.QueueController:joinQueue(store.queueType)
         elseif Mode.Value == 'Profile' then
-            vape.Save = function() end
             if vape.Profile ~= Profile.Value then
+                -- Persist the real profile before switching. Disabling Save permanently
+                -- used to make every later autosave, profile change and teleport save a
+                -- silent no-op, which is what reset settings on the next rejoin.
+                pcall(function()
+                    vape:Save()
+                end)
                 vape:Load(true, Profile.Value)
             end
         elseif Mode.Value == 'AutoConfig' then
             local safe = {'AutoClicker', 'Reach', 'Sprint', 'HitFix', 'StaffDetector'}
-            vape.Save = function() end
             for i, v in vape.Modules do
                 if not (table.find(safe, i) or v.Category == 'Render') then
                     if v.Enabled then

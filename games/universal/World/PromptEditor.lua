@@ -1,5 +1,6 @@
 run(function()
 	local PromptEditor
+	local Mode
 	local Range
 	local Hold
 	local Instant
@@ -24,9 +25,12 @@ run(function()
 
 	local function applyPrompt(prompt)
 		if typeof(prompt) ~= 'Instance' or not prompt:IsA('ProximityPrompt') or not remember(prompt) then return end
+		local original = originals[prompt]
 		applying[prompt] = true
 		pcall(function()
-			prompt.MaxActivationDistance = Range.Value
+			-- 'Set' replaces the activation range outright; 'Expand' adds the slider value
+			-- to the game's own range so unusual prompts keep their relative reach.
+			prompt.MaxActivationDistance = Mode.Value == 'Expand' and (original.Distance + Range.Value) or Range.Value
 			prompt.HoldDuration = Instant.Enabled and 0 or Hold.Value
 			prompt.RequiresLineOfSight = not ThroughWalls.Enabled
 		end)
@@ -81,6 +85,7 @@ run(function()
 			end
 		end
 	})
+	Mode = PromptEditor:CreateDropdown({Name = 'Mode', List = {'Set', 'Expand'}, Function = refresh})
 	Range = PromptEditor:CreateSlider({Name = 'Range', Min = 1, Max = 100, Default = 32, Suffix = ' studs', Function = refresh})
 	Hold = PromptEditor:CreateSlider({Name = 'Hold duration', Min = 0, Max = 10, Default = 1, Decimal = 100, Suffix = 's', Function = refresh})
 	Instant = PromptEditor:CreateToggle({Name = 'Instant', Tooltip = 'Sets prompt hold duration to zero', Function = refresh})

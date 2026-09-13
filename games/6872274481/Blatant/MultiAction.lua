@@ -198,7 +198,7 @@ local function installMultiActionHooks()
 end
 
 MultiAction = (function()
-    local module, created = register('Exploits', 'MultiAction', {
+	local module, created = register('Blatant', 'MultiAction', {
         Tooltip = 'Separates compatible local action locks without changing progress, speed, cooldowns, inputs, or remotes',
         Function = function(enabled)
             restoreMultiActionHooks()

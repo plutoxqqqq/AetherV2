@@ -129,7 +129,6 @@ run(function()
 						and entitylib.character.Humanoid.MoveDirection ~= Vector3.zero
 					local flying = vape.Modules.Fly and vape.Modules.Fly.Enabled
 						or vape.Modules.LongJump and vape.Modules.LongJump.Enabled
-						or vape.Modules.InfiniteFly and vape.Modules.InfiniteFly.Enabled
 					if movingsound.TimePosition > 1.9 then
 						movingsound.TimePosition = 0.2
 					end

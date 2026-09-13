@@ -36,6 +36,11 @@ local function wipeFolder(path)
 	if not isfolder(path) then return end
 	for _, file in listfiles(path) do
 		if file:find('loader') or file:find('init') then continue end
+		-- User data is never part of a code update. Some executors return recursive
+		-- listfiles results, so explicitly skip profiles/configs paths here as a second
+		-- layer of defence on top of the callers only wiping code folders.
+		local normalized = tostring(file):gsub('\\', '/')
+		if normalized:find('/profiles/', 1, true) or normalized:find('/configs/', 1, true) then continue end
 		if isfile(file) then
 			local ok, body = pcall(readfile, file)
 			if ok and type(body) == 'string' and (body:find('if canDebug then', 1, true) or select(1, body:find('--This watermark is used to delete the file if its cached, remove it to make the file persist after vape updates.')) == 1) then
@@ -55,18 +60,9 @@ if not game:IsLoaded() then
 	game.Loaded:Wait()
 end
 
-for _, stale in {
-	'aetherv2/games/6872274481/pack.lua',
-	'aetherv2/games/6872274481/Blatant/DamageBoost.lua',
-	'aetherv2/games/6872274481/Blatant/DeathAdderAimbot.lua',
-	'aetherv2/games/6872274481/Combat/BowAssist.lua',
-	'aetherv2/games/6872274481/Combat/HitregAdjuster.lua',
-	'aetherv2/games/6872274481/Combat/NoClickDelay.lua',
-} do
-	if isfile(stale) then
-		pcall(delfile, stale)
-	end
-end
+-- Each launch used to delete modules that files.txt still listed, forcing them to be
+-- re-downloaded every single time. The pack only ever loads files.txt entries, so stale
+-- cache files are harmless and are no longer touched here.
 
 if not shared.VapeDeveloper then
 	local cachedVersion = isfile('aetherv2/profiles/version.txt') and readfile('aetherv2/profiles/version.txt') or ''

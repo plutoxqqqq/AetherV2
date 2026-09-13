@@ -138,6 +138,25 @@ local function loadPacked(folder)
 		pcall(delfile, packPath)
 	end
 
+	-- A committed pack.lua turns a cold start from hundreds of HTTP requests into one.
+	-- Cached local packs are handled above; this branch only runs on a fresh install.
+	if not isfile(packPath) then
+		local fetched, body = pcall(downloadFile, packPath)
+		if fetched and type(body) == 'string' and #body > 32 then
+			local remoteChunk, remoteErr = loadstring(body, folder)
+			if remoteChunk then
+				local ran, result = pcall(remoteChunk, license)
+				if ran then
+					return true
+				end
+				warn('[AetherV2] remote pack run failed '..folder..': '..tostring(result))
+			else
+				warn('[AetherV2] remote pack compile failed '..folder..': '..tostring(remoteErr))
+			end
+			pcall(delfile, packPath)
+		end
+	end
+
 	local listPath = 'aetherv2/games/'..folder..'/files.txt'
 	local list
 	if isfile(listPath) then
@@ -227,7 +246,9 @@ local function finishLoading()
 			pcall(function()
 				vape:Save()
 			end)
-			task.wait(10)
+			-- Frequent autosaves close the window where a manual rejoin or a crash loses
+			-- the newest toggles before the next save.
+			task.wait(6)
 		until not vape.Loaded
 	end)
 
@@ -249,7 +270,11 @@ local function finishLoading()
 			if shared.VapeCustomProfile then
 				teleportScript = 'shared.VapeCustomProfile = "'..shared.VapeCustomProfile..'"\n'..teleportScript
 			end
-			vape:Save()
+			-- Saving must never prevent the reinject from being queued. If the config write
+			-- fails, the load-time repair path will preserve the previous file instead.
+			pcall(function()
+				vape:Save()
+			end)
 			queue_on_teleport(teleportScript)
 		end
 	end))
@@ -292,6 +317,53 @@ if not isfolder('aetherv2/assets/'..gui) then
 	makefolder('aetherv2/assets/'..gui)
 end
 vape = loadstring(downloadFile('aetherv2/guis/'..gui..'.lua'), 'gui')(license)
+if type(vape) ~= 'table' then
+	error('[AetherV2] The '..tostring(gui)..' frontend did not return a controller')
+end
+-- A stale cached frontend (or a frontend that failed partway through) can be missing the
+-- maid helpers the game packs depend on. Supply functional fallbacks so a single missing
+-- method can never abort pack loading or finishLoading again.
+if type(vape.Clean) ~= 'function' or type(vape.Remove) ~= 'function' then
+	local fallbackConnections = {}
+	if type(vape.Clean) ~= 'function' then
+		vape.Clean = function(_, ...)
+			for index = 1, select('#', ...) do
+				local item = select(index, ...)
+				if item ~= nil then
+					table.insert(fallbackConnections, item)
+				end
+			end
+		end
+		vape.CleanFallback = function()
+			for _, item in fallbackConnections do
+				pcall(function()
+					if typeof(item) == 'Instance' then
+						item:Destroy()
+					elseif type(item) == 'table' and type(item.Disconnect) == 'function' then
+						item:Disconnect()
+					elseif type(item) == 'thread' then
+						task.cancel(item)
+					elseif type(item) == 'function' then
+						item()
+					end
+				end)
+			end
+			table.clear(fallbackConnections)
+		end
+	end
+	if type(vape.Remove) ~= 'function' then
+		vape.Remove = function(self, name)
+			local module = type(self) == 'table' and self.Modules and self.Modules[name]
+			if not module then return end
+			if type(module.Toggle) == 'function' and module.Enabled then
+				pcall(module.Toggle, module, false)
+			end
+			if typeof(module.Object) == 'Instance' then
+				pcall(function() module.Object:Destroy() end)
+			end
+		end
+	end
+end
 shared.vape = vape
 _G.vape = vape
 
@@ -300,6 +372,9 @@ if not shared.VapeIndependent then
 		loadLegacy('universal')
 	end
 	local place = resolvePlace()
+	-- ResolvedPlace lets the GUI mirror configs for aliased servers under one stable
+	-- key, so a new PlaceId alias can never look like a clean install.
+	vape.ResolvedPlace = place
 	if vape.Place == nil then
 		vape.Place = place
 	end

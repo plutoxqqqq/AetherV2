@@ -790,12 +790,159 @@ local function ensureDataFolders()
 	ensureFolder(configFolder)
 end
 
-local function getConfigPath(profile)
-	return configFolder..'/'..profile..mainapi.Place..'.json'
+local function decodeBody(body)
+	if type(body) ~= 'string' or body == '' then return nil end
+	local ok, decoded
+	pcall(function()
+		decoded = httpService:JSONDecode(body)
+	end)
+	return ok and type(decoded) == 'table' and decoded or nil
 end
 
-local function getLegacyProfilePath(profile)
-	return profileFolder..'/'..profile..mainapi.Place..'.txt'
+local function getConfigPlaceKeys()
+	local keys, seen = {}, {}
+	local function add(value)
+		if value == nil then return end
+		local text = tostring(value)
+		if text ~= '' and not seen[text] then
+			seen[text] = true
+			table.insert(keys, text)
+		end
+	end
+	-- The resolved place id is the stable key for aliased BedWars servers. The raw
+	-- PlaceId stays second so existing configs keep loading on unaliased places.
+	add(mainapi.ResolvedPlace)
+	add(mainapi.Place)
+	return keys
+end
+
+local function getConfigPath(profile, place)
+	return configFolder..'/'..profile..tostring(place or mainapi.Place)..'.json'
+end
+
+local function getLegacyProfilePath(profile, place)
+	return profileFolder..'/'..profile..tostring(place or mainapi.Place)..'.txt'
+end
+
+local function configCandidates(profile)
+	local candidates = {}
+	for _, place in getConfigPlaceKeys() do
+		table.insert(candidates, getConfigPath(profile, place))
+	end
+	for _, place in getConfigPlaceKeys() do
+		table.insert(candidates, getLegacyProfilePath(profile, place))
+	end
+	return candidates
+end
+
+local function findConfigPath(profile)
+	local expected = getConfigPath(profile)
+	if isfile(expected) then return expected end
+	for _, candidate in configCandidates(profile) do
+		if isfile(candidate) then return candidate end
+	end
+	return expected
+end
+
+-- Rotating backups: before a config file is replaced its previous contents are copied
+-- into configs/.backups. A corrupt or empty primary file can then always be recovered
+-- instead of the profile silently resetting.
+local backupFolder = configFolder..'/.backups'
+local lastBackup = {}
+local function backupFile(path, body)
+	if type(body) ~= 'string' or body == '' then return end
+	local now = os.time()
+	if lastBackup[path] and now - lastBackup[path] < 300 then return end
+	lastBackup[path] = now
+	ensureFolder(backupFolder)
+	local name = tostring(path):gsub('\\', '/'):match('([^/]+)$') or 'config.json'
+	pcall(writefile, backupFolder..'/'..name..'.'..tostring(now)..'.bak', body)
+	if listfiles then
+		local suc, files = pcall(listfiles, backupFolder)
+		if suc and type(files) == 'table' and #files > 80 then
+			table.sort(files)
+			for index = 1, #files - 80 do
+				pcall(delfile, files[index])
+			end
+		end
+	end
+end
+
+local function encodeJson(data)
+	local ok, body = pcall(function()
+		return httpService:JSONEncode(data)
+	end)
+	if not ok or type(body) ~= 'string' or body == '' then return nil end
+	if not decodeBody(body) then return nil end
+	return body
+end
+
+local function safeWrite(path, body)
+	if type(body) ~= 'string' or body == '' or not decodeBody(body) then return false end
+	local existing
+	if isfile(path) then
+		existing = select(2, pcall(readfile, path))
+	end
+	if existing == body then return true end
+	if type(existing) == 'string' and existing ~= '' then
+		backupFile(path, existing)
+	end
+	local ok = pcall(writefile, path, body)
+	if not ok then return false end
+	local verify = select(2, pcall(readfile, path))
+	if verify ~= body then
+		pcall(writefile, path, body)
+	end
+	return true
+end
+
+local function recoverConfig(profile, brokenPath)
+	if brokenPath and isfile(brokenPath) then
+		backupFile(brokenPath, select(2, pcall(readfile, brokenPath)))
+		local sibling = select(2, pcall(readfile, brokenPath..'.bak'))
+		local recovered = decodeBody(sibling)
+		if recovered then return recovered end
+	end
+	for _, candidate in configCandidates(profile) do
+		if isfile(candidate) then
+			local recovered = decodeBody(select(2, pcall(readfile, candidate)))
+			if recovered then return recovered end
+			backupFile(candidate, select(2, pcall(readfile, candidate)))
+		end
+	end
+	local names = {}
+	for _, place in getConfigPlaceKeys() do
+		table.insert(names, profile..place..'.json')
+	end
+	local best, bestStamp
+	local suc, files = pcall(listfiles, backupFolder)
+	if suc and type(files) == 'table' then
+		for _, path in files do
+			local file = tostring(path):gsub('\\', '/')
+			local base, stamp = file:match('/([^/]+)%.(%d+)%.bak$')
+			local number = tonumber(stamp)
+			if base and number and table.find(names, base) and (not bestStamp or number > bestStamp) then
+				best, bestStamp = path, number
+			end
+		end
+	end
+	if best then
+		return decodeBody(select(2, pcall(readfile, best)))
+	end
+	return nil
+end
+
+local ACTIVE_PROFILE_PATH = profileFolder..'/lastprofile.txt'
+local function readActiveProfile()
+	local ok, value = pcall(readfile, ACTIVE_PROFILE_PATH)
+	if ok and type(value) == 'string' then
+		value = value:gsub('^%s*(.-)%s*$', '%1')
+		if value ~= '' then return value end
+	end
+	return nil
+end
+local function writeActiveProfile(name)
+	pcall(writefile, ACTIVE_PROFILE_PATH, tostring(name))
 end
 
 local function refreshConfigProfiles()
@@ -813,14 +960,16 @@ local function refreshConfigProfiles()
 	end
 
 	if listfiles then
-		local suffix = tostring(mainapi.Place)..'.json'
 		local suc, files = pcall(listfiles, configFolder)
-		if suc then
+		if suc and type(files) == 'table' then
 			for _, path in files do
 				local file = tostring(path):gsub('\\', '/')
-				local name = file:match('/([^/]+)'..suffix:gsub('%.', '%%.')..'$')
-				if name then
-					addProfile(name)
+				for _, place in getConfigPlaceKeys() do
+					local suffix = tostring(place)..'.json'
+					local name = file:match('/([^/]+)'..suffix:gsub('%.', '%%.')..'$')
+					if name then
+						addProfile(name)
+					end
 				end
 			end
 		end
@@ -5965,12 +6114,23 @@ function mainapi:CreateCategoryList(categorysettings)
 		local function backendURL()
 			return configapi.Presets.Backend()
 		end
+		local ADMIN_KEY_PATH = 'aetherv2/profiles/configadminkey.txt'
+		local function adminKey()
+			local key = getgenv and getgenv().AetherConfigAdminKey
+			if (type(key) ~= 'string' or key == '') and isfile(ADMIN_KEY_PATH) then
+				key = readfile(ADMIN_KEY_PATH)
+			end
+			return type(key) == 'string' and key:gsub('^%s*(.-)%s*$', '%1') or ''
+		end
+		local function hasAdminKey()
+			return adminKey() ~= ''
+		end
 		local function backendRequest(method, route, body, admin)
 			local base = backendURL()
 			if base == '' or not requestFunction then return false, 'A config backend has not been configured.' end
 			local headers = {['Content-Type'] = 'application/json'}
 			if admin then
-				local key = isfile('aetherv2/profiles/configadminkey.txt') and readfile('aetherv2/profiles/configadminkey.txt') or ''
+				local key = adminKey()
 				if key == '' then return false, 'The maintainer key is missing.' end
 				headers.Authorization = 'Bearer '..key
 			end
@@ -6003,6 +6163,7 @@ function mainapi:CreateCategoryList(categorysettings)
 			return button
 		end
 		local submitConfig = submissionButton('Submit', 'Submit config', UDim2.fromOffset(0, 2), 110)
+		local directPublish = submissionButton('Publish', 'Publish now', UDim2.fromOffset(116, 2), 104)
 		local review = submissionButton('Review', 'Review queue', UDim2.new(1, -110, 0, 2), 110)
 		local sortModes = {
 			{Key = 'trending', Label = 'Trending'},
@@ -6014,12 +6175,13 @@ function mainapi:CreateCategoryList(categorysettings)
 		local sortIndex = 1
 		local sortButton = submissionButton('Sort', 'Sort: '..sortModes[sortIndex].Label, UDim2.fromOffset(298, 52), 176, dl)
 		local refreshButton = submissionButton('Refresh', '↻', UDim2.fromOffset(480, 52), 30, dl)
-		-- The queue button is part of the existing repo-config window, but only the
-		-- repository owner should see it. The backend key remains the actual security
-		-- boundary; this check merely avoids presenting a dead admin control to users.
+		-- The maintainer key is the security boundary. Anyone can open the queue, but the
+		-- window asks for the key when one is missing and every write is key-gated server
+		-- side. This removes the old hardcoded Roblox-name list that silently hid the queue
+		-- from legitimate reviewers using a different account.
 		local localPlayer = cloneref(game:GetService('Players')).LocalPlayer
-		local reviewAccounts = {aetherv2owner = true, plutoxqqqqqq = true}
-		review.Visible = reviewAccounts[localPlayer.Name:lower()] == true
+		review.Visible = true
+		directPublish.Visible = hasAdminKey()
 		addTooltip(submitConfig, 'Submits the active config for in-game review')
 		addTooltip(review, 'Lists the configs waiting on a maintainer decision')
 		local function responseMessage(response, fallback)
@@ -6036,8 +6198,8 @@ function mainapi:CreateCategoryList(categorysettings)
 		end)
 		addTooltip(sortButton, 'Choose how D1 ranks the Public Config catalogue')
 
-		local function submitActiveConfig(details, updatePreset)
-			local path = mainapi.Profile and getConfigPath(mainapi.Profile)
+		local function submitActiveConfig(details, updatePreset, direct)
+			local path = mainapi.Profile and findConfigPath(mainapi.Profile)
 			if not path or not isfile(path) then
 				mainapi:CreateNotification('Configs', 'Save a config before submitting it.', 7, 'alert')
 				return false
@@ -6056,7 +6218,7 @@ function mainapi:CreateCategoryList(categorysettings)
 				mainapi:CreateNotification('Configs', 'The original submission receipt is not available on this install.', 8, 'alert')
 				return false
 			end
-			local route = updatePreset
+			local route = direct and '/public-configs' or updatePreset
 				and ('/public-configs/'..httpService:UrlEncode(tostring(updatePreset.file))..'/updates')
 				or '/submissions'
 			local payload = {
@@ -6064,21 +6226,32 @@ function mainapi:CreateCategoryList(categorysettings)
 				submitter = player.Name,
 				userId = player.UserId,
 				ownerToken = owner and owner.token or nil,
-				changelog = updatePreset and details.changelog or nil,
+				changelog = (updatePreset or direct) and details.changelog or nil,
 				game = tostring(mainapi.Place),
 				config = config,
 				gui = guiData
 			}
-			if not updatePreset or details.editDetails then
+			if direct or not updatePreset or details.editDetails then
 				payload.displayName = details.displayName
 				payload.creator = details.creator
 				payload.description = details.description
 				payload.tags = details.tags
 				payload.category = details.category
 			end
-			local ok, response = backendRequest('POST', route, payload)
-			local successMessage = updatePreset and ('Update submitted for v'..tostring(type(response) == 'table' and response.targetVersion or '?')..' review.') or 'Config submitted for review.'
+			local ok, response = backendRequest('POST', route, payload, direct)
+			local successMessage
+			if direct then
+				successMessage = 'Config published directly to Public Configs.'
+			elseif updatePreset then
+				successMessage = 'Update submitted for v'..tostring(type(response) == 'table' and response.targetVersion or '?')..' review.'
+			else
+				successMessage = 'Config submitted for review.'
+			end
 			mainapi:CreateNotification('Configs', ok and successMessage or responseMessage(response, 'Config submission failed.'), 8, ok and 'info' or 'alert')
+			if direct and ok then
+				if refresh then refresh() end
+				return true
+			end
 			if ok and type(response) == 'table' and response.id then
 				local receiptPath = profileFolder..'/configsubmissions.json'
 				local receipts = isfile(receiptPath) and loadJson(receiptPath) or {}
@@ -6177,6 +6350,7 @@ function mainapi:CreateCategoryList(categorysettings)
 		end
 		local confirmSubmit = submissionButton('Confirm', 'Send for review', UDim2.new(1, -144, 0, 324), 130, submitWindow)
 		local submitModePreset
+		local submitModeDirect
 		local function trimmed(text)
 			return tostring(text or ''):match('^%s*(.-)%s*$')
 		end
@@ -6212,26 +6386,34 @@ function mainapi:CreateCategoryList(categorysettings)
 				tags = tags,
 				category = selectedTagMap.Closet and 'Closet' or selectedTagMap['Semi-Closet'] and 'Semi-Closet' or selectedTagMap.Blatant and 'Blatant' or nil,
 				editDetails = true
-			}, submitModePreset) then submitWindow.Visible = false end
+			}, submitModePreset, submitModeDirect) then submitWindow.Visible = false end
 		end)
 		table.insert(mainapi.Windows, submitWindow)
-		local function openSubmitWindow(preset, existingChangelog)
+		local function openSubmitWindow(preset, existingChangelog, direct)
 			submitModePreset = preset
-			submitTitle.Text = preset and ('Edit '..tostring(preset.name)..' update') or 'Submit current config'
+			submitModeDirect = direct == true
+			submitTitle.Text = submitModeDirect and 'Publish current config' or (preset and ('Edit '..tostring(preset.name)..' update') or 'Submit current config')
 			fields.displayName.Text = preset and tostring(preset.name or mainapi.Profile) or tostring(mainapi.Profile or '')
-			fields.creator.Text = preset and tostring(preset.credits or localPlayer.Name) or localPlayer.Name
+			fields.creator.Text = (preset and tostring(preset.credits)) or localPlayer.Name
 			fields.description.Text = preset and tostring(preset.description or '') or ''
 			fields.changelog.Text = tostring(existingChangelog or '')
 			fields.changelog.Visible = preset ~= nil
 			setSelectedTags(preset and preset.tags or {})
 			local actionY = preset and 388 or 324
 			confirmSubmit.Position = UDim2.new(1, -144, 0, actionY)
-			confirmSubmit.Text = preset and 'Save & submit' or 'Send for review'
+			confirmSubmit.Text = submitModeDirect and 'Publish now' or (preset and 'Save & submit' or 'Send for review')
 			submitWindow.Size = UDim2.fromOffset(430, preset and 432 or 368)
 			submitWindow.Position = UDim2.new(0.5, -215, 0.5, preset and -216 or -184)
 			submitWindow.Visible = true
 		end
 		submitConfig.MouseButton1Click:Connect(function() openSubmitWindow(nil) end)
+		directPublish.MouseButton1Click:Connect(function()
+			if not hasAdminKey() then
+				mainapi:CreateNotification('Configs', 'Set the maintainer key before publishing directly.', 7, 'alert')
+				return
+			end
+			openSubmitWindow(nil, nil, true)
+		end)
 
 		-- Owner updates are deliberately short: current local profile + changelog.
 		-- Public metadata is preserved unless Edit details opens the full form above.
@@ -6384,27 +6566,63 @@ function mainapi:CreateCategoryList(categorysettings)
 		local reviewClose = addCloseButton(reviewWindow)
 		reviewClose.MouseButton1Click:Connect(function() reviewWindow.Visible = false end)
 		local reviewList = Instance.new('ScrollingFrame')
-		reviewList.Size, reviewList.Position = UDim2.new(1, -20, 1, -52), UDim2.fromOffset(10, 44)
 		reviewList.BackgroundTransparency, reviewList.ScrollBarThickness, reviewList.CanvasSize, reviewList.Parent = 1, 2, UDim2.new(), reviewWindow
 		local reviewLayout = Instance.new('UIListLayout')
 		reviewLayout.Padding, reviewLayout.Parent = UDim.new(0, 6), reviewList
 		reviewLayout:GetPropertyChangedSignal('AbsoluteContentSize'):Connect(function() reviewList.CanvasSize = UDim2.fromOffset(0, reviewLayout.AbsoluteContentSize.Y / scale.Scale) end)
 		table.insert(mainapi.Windows, reviewWindow)
+
+		-- The key is entered here when a reviewer install has none. The password-style
+		-- field is never saved anywhere except configadminkey.txt.
+		local keyBar = Instance.new('Frame')
+		keyBar.Name, keyBar.Size, keyBar.Position, keyBar.BackgroundTransparency, keyBar.Parent = 'MaintainerKey', UDim2.new(1, -20, 0, 28), UDim2.fromOffset(10, 42), 1, reviewWindow
+		local keyBox = Instance.new('TextBox')
+		keyBox.Size, keyBox.Position, keyBox.BackgroundColor3 = UDim2.new(1, -92, 0, 28), UDim2.fromOffset(0, 0), color.Light(uipallet.Main, 0.04)
+		keyBox.Text, keyBox.PlaceholderText, keyBox.TextColor3, keyBox.PlaceholderColor3, keyBox.TextSize, keyBox.FontFace = '', 'Maintainer key', uipallet.Text, color.Dark(uipallet.Text, 0.35), 12, uipallet.Font
+		keyBox.ClearTextOnFocus, keyBox.Parent = false, keyBar
+		addCorner(keyBox)
+		local keySave = submissionButton('SaveKey', 'Save key', UDim2.new(1, -88, 0, 0), 84, keyBar)
+		keySave.AnchorPoint = Vector2.new(1, 0)
+
+		local function setReviewListMetrics()
+			local offset = hasAdminKey() and 44 or 78
+			reviewList.Position = UDim2.fromOffset(10, offset)
+			reviewList.Size = UDim2.new(1, -20, 1, -(offset + 8))
+			keyBar.Visible = not hasAdminKey()
+		end
+
+		local openEditWindow
 		local function refreshReviews()
-			for _, child in reviewList:GetChildren() do if child:IsA('Frame') then child:Destroy() end end
+			for _, child in reviewList:GetChildren() do if child:IsA('Frame') or child:IsA('TextLabel') then child:Destroy() end end
+			setReviewListMetrics()
+			if not hasAdminKey() then
+				local notice = Instance.new('TextLabel')
+				notice.Size, notice.BackgroundTransparency, notice.TextWrapped, notice.Parent = UDim2.new(1, 0, 0, 44), 1, true, reviewList
+				notice.Text, notice.TextColor3, notice.TextSize, notice.FontFace = 'Paste the maintainer key above and save it to load the review queue.', color.Dark(uipallet.Text, 0.3), 12, uipallet.Font
+				notice.TextXAlignment, notice.TextYAlignment = Enum.TextXAlignment.Left, Enum.TextYAlignment.Top
+				return
+			end
 			local ok, response = backendRequest('GET', '/submissions?status=pending', nil, true)
 			if not ok then mainapi:CreateNotification('Configs', responseMessage(response, 'Could not load the review queue.'), 8, 'alert'); return end
 			local submissions = type(response) == 'table' and (response.submissions or response) or {}
+			if type(submissions) ~= 'table' or #submissions == 0 then
+				local empty = Instance.new('TextLabel')
+				empty.Size, empty.BackgroundTransparency, empty.Parent = UDim2.new(1, 0, 0, 40), 1, reviewList
+				empty.Text, empty.TextColor3, empty.TextSize, empty.FontFace = 'No pending configs.', color.Dark(uipallet.Text, 0.3), 12, uipallet.Font
+				empty.TextXAlignment = Enum.TextXAlignment.Left
+				return
+			end
 			for _, submission in submissions do
 				local row = Instance.new('Frame')
-				row.Size, row.BackgroundColor3, row.Parent = UDim2.new(1, 0, 0, 82), color.Light(uipallet.Main, 0.02), reviewList
+				row.Name = tostring(submission.id)
+				row.Size, row.BackgroundColor3, row.Parent = UDim2.new(1, 0, 0, 112), color.Light(uipallet.Main, 0.02), reviewList
 				addCorner(row)
-				if submission.description then
-					addTooltip(row, tostring(submission.description)..(submission.changelog and ('\n\nChangelog: '..tostring(submission.changelog)) or ''), 360)
-				end
+				local summary = tostring(submission.description or '')
+				if submission.changelog then summary = summary..(summary ~= '' and '\n\n' or '')..'Changelog: '..tostring(submission.changelog) end
+				if summary ~= '' then addTooltip(row, summary, 360) end
 				local label = Instance.new('TextLabel')
-				label.Size, label.Position, label.BackgroundTransparency = UDim2.new(1, -230, 0, 36), UDim2.fromOffset(10, 0), 1
-				label.Text, label.TextColor3, label.TextSize, label.FontFace = tostring(submission.displayName or submission.name or 'Config')..' '..(submission.targetVersion and ('v'..tostring(submission.targetVersion)..' ') or '')..'— '..tostring(submission.submitter or '?'), uipallet.Text, 12, uipallet.Font
+				label.Size, label.Position, label.BackgroundTransparency = UDim2.new(1, -250, 0, 36), UDim2.fromOffset(10, 0), 1
+				label.Text, label.TextColor3, label.TextSize, label.FontFace = tostring(submission.displayName or submission.name or 'Config')..' '..(submission.targetVersion and ('v'..tostring(submission.targetVersion)..' ') or '')..(submission.submissionType == 'update' and '(update) ' or '')..'— '..tostring(submission.submitter or '?'), uipallet.Text, 12, uipallet.Font
 				label.TextXAlignment, label.Parent = Enum.TextXAlignment.Left, row
 				local reason = Instance.new('TextBox')
 				reason.Size, reason.Position = UDim2.new(1, -20, 0, 30), UDim2.fromOffset(10, 42)
@@ -6412,17 +6630,35 @@ function mainapi:CreateCategoryList(categorysettings)
 				reason.Text, reason.PlaceholderText, reason.TextSize, reason.FontFace = '', 'Rejection reason (shown to the submitter)', 11, uipallet.Font
 				reason.ClearTextOnFocus, reason.Parent = false, row
 				addCorner(reason)
-				local download = submissionButton('Download', 'Download', UDim2.new(1, -146, 0, 4), 58, row)
-				download.AnchorPoint = Vector2.new(1, 0)
-				download.MouseButton1Click:Connect(function()
-					local success, result = importJsonConfig(httpService:JSONEncode(submission), tostring(submission.name or submission.id or 'submission'))
+				local function rowButton(name, text, x, width, y)
+					local button = submissionButton(name, text, UDim2.new(1, x, 0, y or 4), width, row)
+					button.AnchorPoint = Vector2.new(1, 0)
+					return button
+				end
+				rowButton('Download', 'Download', -232, 54).MouseButton1Click:Connect(function()
+					local success, result = importJsonConfig(httpService:JSONEncode(submission), tostring(submission.displayName or submission.name or submission.id or 'submission'))
 					if success then refreshConfigProfiles(); categoryapi:ChangeValue() end
 					mainapi:CreateNotification('Configs', success and ('Installed '..tostring(result)..' for local review.') or tostring(result), 7, success and 'info' or 'alert')
 				end)
+				rowButton('Edit', 'Edit', -174, 54).MouseButton1Click:Connect(function() openEditWindow(submission) end)
+				local banned = submission.banned == true
+				rowButton('Ban', banned and 'Unban' or 'Ban', -116, 56).MouseButton1Click:Connect(function()
+					local success, result = backendRequest('PATCH', '/submissions/'..httpService:UrlEncode(tostring(submission.id)), {
+						action = banned and 'unban' or 'ban',
+						userId = submission.userId,
+						username = submission.submitter,
+						reason = reason.Text
+					}, true)
+					mainapi:CreateNotification('Configs', success and (banned and 'Submitter unbanned.' or 'Submitter banned.') or responseMessage(result, 'Ban update failed.'), 7, success and 'info' or 'alert')
+					if success then refreshReviews() end
+				end)
+				rowButton('Delete', 'Delete', -56, 52).MouseButton1Click:Connect(function()
+					local success, result = backendRequest('DELETE', '/submissions/'..httpService:UrlEncode(tostring(submission.id)), nil, true)
+					mainapi:CreateNotification('Configs', success and 'Submission deleted.' or responseMessage(result, 'Delete failed.'), 7, success and 'info' or 'alert')
+					if success then refreshReviews() end
+				end)
 				local function decide(action, x, text)
-					local button = submissionButton(action, text, UDim2.new(1, x, 0, 4), 62, row)
-					button.AnchorPoint = Vector2.new(1, 0)
-					button.MouseButton1Click:Connect(function()
+					rowButton(action, text, x, 62, 78).MouseButton1Click:Connect(function()
 						local success, result = backendRequest('PATCH', '/submissions/'..httpService:UrlEncode(tostring(submission.id)), {
 							action = action,
 							reason = action == 'reject' and reason.Text or nil
@@ -6435,6 +6671,136 @@ function mainapi:CreateCategoryList(categorysettings)
 				decide('accept', -76, 'Accept'); decide('reject', -8, 'Reject')
 			end
 		end
+
+		-- Metadata + JSON editor for a pending submission. Saving sends a single PATCH so the
+		-- reviewer can rewrite anything before accepting.
+		local editWindow = Instance.new('Frame')
+		editWindow.Name, editWindow.Size, editWindow.Position = 'ConfigEdit', UDim2.fromOffset(440, 452), UDim2.new(0.5, -220, 0.5, -226)
+		editWindow.BackgroundColor3, editWindow.Visible, editWindow.Parent = uipallet.Main, false, scaledgui
+		addBlur(editWindow); addCorner(editWindow); addWindowStroke(editWindow); makeDraggable(editWindow)
+		local editTitle = Instance.new('TextLabel')
+		editTitle.Size, editTitle.Position, editTitle.BackgroundTransparency = UDim2.new(1, -50, 0, 34), UDim2.fromOffset(14, 0), 1
+		editTitle.Text, editTitle.TextColor3, editTitle.TextSize, editTitle.FontFace = 'Edit pending config', uipallet.Text, 14, uipallet.FontSemiBold
+		editTitle.TextXAlignment, editTitle.Parent = Enum.TextXAlignment.Left, editWindow
+		addCloseButton(editWindow).MouseButton1Click:Connect(function() editWindow.Visible = false end)
+		local editFields = {}
+		local function editField(key, placeholder, y, height, limit)
+			local box = Instance.new('TextBox')
+			box.Name, box.Size, box.Position = key, UDim2.new(1, -28, 0, height), UDim2.fromOffset(14, y)
+			box.BackgroundColor3, box.TextColor3, box.PlaceholderColor3 = color.Light(uipallet.Main, 0.04), uipallet.Text, color.Dark(uipallet.Text, 0.35)
+			box.PlaceholderText, box.Text, box.TextSize, box.FontFace = placeholder, '', 12, uipallet.Font
+			box.ClearTextOnFocus, box.Parent = false, editWindow
+			pcall(function() box.MaxVisibleGraphemes = limit end)
+			addCorner(box); editFields[key] = box
+		end
+		editField('displayName', 'Public display name', 40, 30, 50)
+		editField('creator', 'Creator / credit', 74, 30, 50)
+		editField('category', 'Category (Closet, Semi-closet, Blatant)', 108, 30, 40)
+		editField('tags', 'Tags, comma separated', 142, 30, 200)
+		editField('description', 'Description', 176, 56, 300)
+		editField('changelog', 'Changelog', 236, 56, 300)
+		local editConfigButton = submissionButton('EditJson', 'Edit config JSON', UDim2.fromOffset(14, 300), 150, editWindow)
+		local editSave = submissionButton('SaveEdit', 'Save changes', UDim2.new(1, -144, 0, 402), 130, editWindow)
+		local editState = {Submission = nil, Config = nil}
+		local jsonWindow = Instance.new('Frame')
+		jsonWindow.Name, jsonWindow.Size, jsonWindow.Position = 'ConfigJsonEdit', UDim2.fromOffset(560, 440), UDim2.new(0.5, -280, 0.5, -220)
+		jsonWindow.BackgroundColor3, jsonWindow.Visible, jsonWindow.Parent = uipallet.Main, false, scaledgui
+		addBlur(jsonWindow); addCorner(jsonWindow); addWindowStroke(jsonWindow); makeDraggable(jsonWindow)
+		local jsonTitle = editTitle:Clone()
+		jsonTitle.Text, jsonTitle.Parent = 'Edit config JSON', jsonWindow
+		addCloseButton(jsonWindow).MouseButton1Click:Connect(function() jsonWindow.Visible = false end)
+		local jsonScroll = Instance.new('ScrollingFrame')
+		jsonScroll.Size, jsonScroll.Position, jsonScroll.BackgroundColor3 = UDim2.new(1, -28, 1, -92), UDim2.fromOffset(14, 40), color.Light(uipallet.Main, 0.03)
+		jsonScroll.BorderSizePixel, jsonScroll.ScrollBarThickness, jsonScroll.CanvasSize, jsonScroll.Parent = 0, 2, UDim2.new(), jsonWindow
+		addCorner(jsonScroll)
+		local jsonBox = Instance.new('TextBox')
+		jsonBox.Size, jsonBox.Position, jsonBox.BackgroundTransparency = UDim2.new(1, -16, 0, 0), UDim2.fromOffset(8, 8), 1
+		jsonBox.TextWrapped, jsonBox.MultiLine, jsonBox.ClearTextOnFocus, jsonBox.Text, jsonBox.TextColor3, jsonBox.TextSize, jsonBox.FontFace = true, true, false, '', uipallet.Text, 11, uipallet.Font
+		jsonBox.AutomaticSize, jsonBox.Parent = Enum.AutomaticSize.XY, jsonScroll
+		local jsonCancel = submissionButton('JsonCancel', 'Cancel', UDim2.fromOffset(14, 384), 100, jsonWindow)
+		local jsonSave = submissionButton('JsonSave', 'Save JSON', UDim2.new(1, -128, 0, 384), 114, jsonWindow)
+		table.insert(mainapi.Windows, editWindow)
+		table.insert(mainapi.Windows, jsonWindow)
+		editConfigButton.MouseButton1Click:Connect(function()
+			if not editState.Config then
+				mainapi:CreateNotification('Configs', 'No config payload is attached to this submission.', 7, 'alert')
+				return
+			end
+			local encoded = select(2, pcall(function() return httpService:JSONEncode(editState.Config) end))
+			jsonBox.Text = type(encoded) == 'string' and encoded or '{}'
+			jsonWindow.Visible = true
+		end)
+		jsonCancel.MouseButton1Click:Connect(function() jsonWindow.Visible = false end)
+		jsonSave.MouseButton1Click:Connect(function()
+			local decoded = select(2, pcall(function() return httpService:JSONDecode(jsonBox.Text) end))
+			if type(decoded) ~= 'table' then
+				mainapi:CreateNotification('Configs', 'The config JSON is invalid.', 7, 'alert')
+				return
+			end
+			editState.Config = decoded
+			jsonWindow.Visible = false
+			mainapi:CreateNotification('Configs', 'Config JSON updated. Press Save changes to apply.', 6, 'info')
+		end)
+		openEditWindow = function(submission, publishedFile)
+			editState.Submission = submission
+			editState.Published = publishedFile
+			editState.Config = submission.config
+			editTitle.Text = (publishedFile and 'Edit public ' or 'Edit ')..tostring(submission.displayName or submission.name or 'config')
+			editFields.displayName.Text = tostring(submission.displayName or submission.name or '')
+			editFields.creator.Text = tostring(submission.creator or submission.credits or submission.submitter or '')
+			editFields.category.Text = tostring(submission.category or '')
+			editFields.tags.Text = type(submission.tags) == 'table' and table.concat(submission.tags, ', ') or ''
+			editFields.description.Text = tostring(submission.description or '')
+			editFields.changelog.Text = tostring(submission.changelog or '')
+			editWindow.Visible = true
+		end
+		editSave.MouseButton1Click:Connect(function()
+			if not editState.Submission then return end
+			local tags = {}
+			for tag in tostring(editFields.tags.Text):gmatch('[^,]+') do
+				tag = tag:gsub('^%s*(.-)%s*$', '%1')
+				if tag ~= '' then table.insert(tags, tag) end
+			end
+			local route, payload
+			if editState.Published then
+				route = '/public-configs/'..httpService:UrlEncode(tostring(editState.Published))
+				payload = {
+					name = editFields.displayName.Text,
+					credits = editFields.creator.Text,
+					tags = tags,
+					description = editFields.description.Text,
+					config = editState.Config
+				}
+			else
+				route = '/submissions/'..httpService:UrlEncode(tostring(editState.Submission.id))
+				payload = {
+					action = 'edit',
+					displayName = editFields.displayName.Text,
+					creator = editFields.creator.Text,
+					category = editFields.category.Text,
+					tags = tags,
+					description = editFields.description.Text,
+					changelog = editFields.changelog.Text,
+					config = editState.Config
+				}
+			end
+			local success, result = backendRequest('PATCH', route, payload, true)
+			mainapi:CreateNotification('Configs', success and 'Submission updated.' or responseMessage(result, 'Could not update the submission.'), 7, success and 'info' or 'alert')
+			if success then
+				editWindow.Visible = false
+				refreshReviews()
+			end
+		end)
+		keySave.MouseButton1Click:Connect(function()
+			local value = tostring(keyBox.Text):gsub('^%s*(.-)%s*$', '%1')
+			if value == '' then return end
+			ensureDataFolders()
+			pcall(writefile, ADMIN_KEY_PATH, value)
+			keyBox.Text = ''
+			directPublish.Visible = true
+			mainapi:CreateNotification('Configs', 'Maintainer key saved.', 5, 'info')
+			refreshReviews()
+		end)
 		review.MouseButton1Click:Connect(function() reviewWindow.Visible = true; refreshReviews() end)
 
 		-- Repaints the Load button of every row so exactly one of them reads Active.
@@ -6517,9 +6883,11 @@ function mainapi:CreateCategoryList(categorysettings)
 		detailsBody.TextColor3, detailsBody.TextSize, detailsBody.FontFace, detailsBody.Parent = color.Dark(uipallet.Text, 0.12), 12, uipallet.Font, detailsScroll
 		local detailsLike = submissionButton('Like', 'Like', UDim2.fromOffset(14, 370), 86, detailsWindow)
 		local detailsDislike = submissionButton('Dislike', 'Dislike', UDim2.fromOffset(106, 370), 86, detailsWindow)
+		local detailsEdit = submissionButton('EditPublic', 'Edit', UDim2.fromOffset(198, 370), 86, detailsWindow)
 		local detailsDelete = submissionButton('Delete', 'Delete', UDim2.new(1, -100, 0, 370), 86, detailsWindow)
 		detailsDelete.BackgroundColor3 = Color3.fromRGB(155, 61, 67)
-		detailsDelete.Visible = localPlayer.Name:lower() == 'plutoxqqqqq'
+		detailsEdit.Visible = hasAdminKey()
+		detailsDelete.Visible = hasAdminKey()
 		table.insert(mainapi.Windows, detailsWindow)
 
 		local deleteWindow = Instance.new('Frame')
@@ -6592,6 +6960,32 @@ function mainapi:CreateCategoryList(categorysettings)
 		end
 		detailsLike.MouseButton1Click:Connect(function() if activeDetailsPreset and rate then rate(activeDetailsPreset, 'like') end end)
 		detailsDislike.MouseButton1Click:Connect(function() if activeDetailsPreset and rate then rate(activeDetailsPreset, 'dislike') end end)
+		detailsEdit.MouseButton1Click:Connect(function()
+			if not activeDetailsPreset then return end
+			local preset = activeDetailsPreset
+			openEditWindow({
+				displayName = preset.name,
+				name = preset.name,
+				credits = preset.credits,
+				description = preset.description,
+				tags = preset.tags
+			}, preset.file)
+			task.spawn(function()
+				local ok, body = pcall(function()
+					return configapi.Presets.Fetch(preset.file)
+				end)
+				if not ok or type(body) ~= 'string' then return end
+				local wrapper = select(2, pcall(httpService.JSONDecode, httpService, body))
+				if type(wrapper) ~= 'table' then return end
+				local config = wrapper.config
+				if type(config) == 'string' then
+					config = select(2, pcall(httpService.JSONDecode, httpService, config))
+				end
+				if editState.Published == preset.file and type(config) == 'table' then
+					editState.Config = config
+				end
+			end)
+		end)
 		detailsDelete.MouseButton1Click:Connect(function()
 			if not activeDetailsPreset then return end
 			deleteTarget = activeDetailsPreset
@@ -6952,6 +7346,8 @@ function mainapi:CreateCategoryList(categorysettings)
 					if val ~= 'default' then
 						table.remove(mainapi.Profiles, ind)
 						if isfile(getConfigPath(val)) and delfile then
+							-- Never destroy the only copy: keep a rotating backup first.
+							backupFile(getConfigPath(val), select(2, pcall(readfile, getConfigPath(val))))
 							delfile(getConfigPath(val))
 						end
 						if mainapi.Profile == val then
@@ -7779,15 +8175,15 @@ function mainapi:CreateWelcome()
 end
 
 function mainapi:CreateSearch()
-	local normalWidth = 260
+	local normalWidth = 220
 	local function mobileActive()
 		return inputService.TouchEnabled or shared.AetherMobileMode == true
 	end
 	local xscale = mobileActive() and 0.1 or 0.5
 	local searchbkg = Instance.new('Frame')
 	searchbkg.Name = 'Search'
-	-- Wider than the 220 of a module row so both panel buttons fit beside the text box.
-	-- The results list centres the 220-wide clones inside it.
+	-- Compact 220-wide bar matching the reference component. The panel switches sit on the
+	-- left and the magnifier on the right, and the results list grows the bar as needed.
 	searchbkg.Size = UDim2.fromOffset(mobileActive() and 300 or normalWidth, 37)
 	searchbkg.Position = UDim2.new(xscale, 0, 0, 13)
 	searchbkg.AnchorPoint = Vector2.new(xscale, 0)
@@ -7803,10 +8199,24 @@ function mainapi:CreateSearch()
 	searchicon.Parent = searchbkg
 	-- Kits sits to the LEFT of Legit. Same construction, different asset and a window of
 	-- its own; the two buttons share no state whatsoever.
+	local legiticon = Instance.new('ImageButton')
+	legiticon.Name = 'Legit'
+	legiticon.Size = UDim2.fromOffset(29, 16)
+	legiticon.Position = UDim2.fromOffset(8, 11)
+	legiticon.BackgroundTransparency = 1
+	legiticon.Image = getcustomasset('aetherv2/assets/new/legit.png')
+	legiticon.Parent = searchbkg
+	local legitdivider = Instance.new('Frame')
+	legitdivider.Name = 'LegitDivider'
+	legitdivider.Size = UDim2.fromOffset(2, 12)
+	legitdivider.Position = UDim2.fromOffset(43, 13)
+	legitdivider.BackgroundColor3 = color.Light(uipallet.Main, 0.14)
+	legitdivider.BorderSizePixel = 0
+	legitdivider.Parent = searchbkg
 	local kitsicon = Instance.new('ImageButton')
 	kitsicon.Name = 'Kits'
 	kitsicon.Size = UDim2.fromOffset(29, 16)
-	kitsicon.Position = UDim2.fromOffset(8, 11)
+	kitsicon.Position = UDim2.fromOffset(51, 11)
 	kitsicon.BackgroundTransparency = 1
 	kitsicon.Image = getcustomasset('aetherv2/assets/new/friendstab.png')
 	kitsicon.ScaleType = Enum.ScaleType.Fit
@@ -7814,29 +8224,15 @@ function mainapi:CreateSearch()
 	local kitsdivider = Instance.new('Frame')
 	kitsdivider.Name = 'KitsDivider'
 	kitsdivider.Size = UDim2.fromOffset(2, 12)
-	kitsdivider.Position = UDim2.fromOffset(43, 13)
+	kitsdivider.Position = UDim2.fromOffset(86, 13)
 	kitsdivider.BackgroundColor3 = color.Light(uipallet.Main, 0.14)
 	kitsdivider.BorderSizePixel = 0
 	kitsdivider.Parent = searchbkg
-	local legiticon = Instance.new('ImageButton')
-	legiticon.Name = 'Legit'
-	legiticon.Size = UDim2.fromOffset(29, 16)
-	legiticon.Position = UDim2.fromOffset(51, 11)
-	legiticon.BackgroundTransparency = 1
-	legiticon.Image = getcustomasset('aetherv2/assets/new/legit.png')
-	legiticon.Parent = searchbkg
-	local legitdivider = Instance.new('Frame')
-	legitdivider.Name = 'LegitDivider'
-	legitdivider.Size = UDim2.fromOffset(2, 12)
-	legitdivider.Position = UDim2.fromOffset(86, 13)
-	legitdivider.BackgroundColor3 = color.Light(uipallet.Main, 0.14)
-	legitdivider.BorderSizePixel = 0
-	legitdivider.Parent = searchbkg
 	addBlur(searchbkg)
 	addCorner(searchbkg)
 	local search = Instance.new('TextBox')
-	search.Size = UDim2.new(1, -93, 0, 37)
-	search.Position = UDim2.fromOffset(93, 0)
+	search.Size = UDim2.new(1, -50, 0, 37)
+	search.Position = UDim2.fromOffset(50, 0)
 	search.BackgroundTransparency = 1
 	search.Text = ''
 	search.PlaceholderText = ''
@@ -7878,7 +8274,7 @@ function mainapi:CreateSearch()
 	-- mode' settings toggles.
 	local function updateSearchLayout()
 		local x = 8
-		for _, entry in {{Button = kitsicon, Divider = kitsdivider}, {Button = legiticon, Divider = legitdivider}} do
+		for _, entry in {{Button = legiticon, Divider = legitdivider}, {Button = kitsicon, Divider = kitsdivider}} do
 			if entry.Button.Visible then
 				entry.Button.Position = UDim2.fromOffset(x, 11)
 				entry.Divider.Position = UDim2.fromOffset(x + 35, 13)
@@ -9067,13 +9463,15 @@ function mainapi:Load(skipgui, profile)
 		object.Object.Position = UDim2.fromOffset(pos.X, pos.Y)
 	end
 
-	if isfile('aetherv2/profiles/'..game.GameId..'.gui.txt') then
-		guidata = loadJson('aetherv2/profiles/'..game.GameId..'.gui.txt')
+	local guiPath = 'aetherv2/profiles/'..game.GameId..'.gui.txt'
+	if isfile(guiPath) then
+		guidata = loadJson(guiPath)
 		if not guidata then
+			-- Keep the unreadable file (and a rotating backup) instead of deleting it, so a
+			-- later repair or manual recovery is still possible.
+			backupFile(guiPath, select(2, pcall(readfile, guiPath)))
 			guidata = {Categories = {}}
-			self:CreateNotification('AetherV2', 'Failed to load GUI settings, Try rejoining ur game', 10, 'alert')
-			delfile('aetherv2/profiles/'..game.GameId..'.gui.txt')
-			savecheck = false
+			self:CreateNotification('AetherV2', 'GUI settings were unreadable; a backup was kept.', 10, 'alert')
 		end
 
 		if not skipgui then
@@ -9111,7 +9509,8 @@ function mainapi:Load(skipgui, profile)
 		end
 	end
 
-	self.Profile = profile or guidata.Profile or 'default'
+	self.Profile = profile or guidata.Profile or readActiveProfile() or 'default'
+	writeActiveProfile(self.Profile)
 	self.Profiles = guidata.Profiles or {{
 		Name = 'default', Bind = {}
 	}}
@@ -9122,20 +9521,22 @@ function mainapi:Load(skipgui, profile)
 		self.ProfileLabel.Size = UDim2.fromOffset(getfontsize(self.ProfileLabel.Text, self.ProfileLabel.TextSize, self.ProfileLabel.Font).X + 16, 24)
 	end
 
-	local configPath = getConfigPath(self.Profile)
-	local legacyConfigPath = getLegacyProfilePath(self.Profile)
-	if not isfile(configPath) and isfile(legacyConfigPath) then
-		configPath = legacyConfigPath
+	local configPath = findConfigPath(self.Profile)
+	local savedata
+	if isfile(configPath) then
+		savedata = loadJson(configPath)
+	end
+	if not savedata then
+		-- A missing or corrupt primary file must never reset the profile while a backup,
+		-- legacy mirror or alias-place copy still exists. Only a truly new profile falls
+		-- through to a fresh default config.
+		savedata = recoverConfig(self.Profile, configPath)
+		if savedata then
+			self:CreateNotification('AetherV2', 'Recovered '..self.Profile..' config from a backup.', 8, 'info')
+		end
 	end
 
-	if isfile(configPath) then
-		local savedata = loadJson(configPath)
-		if not savedata then
-			savedata = {Categories = {}, Modules = {}, Legit = {}, Kits = {}}
-			self:CreateNotification('AetherV2', 'Failed to load '..self.Profile..' config.', 10, 'alert')
-			savecheck = false
-		end
-
+	if savedata then
 		savedata.Categories = savedata.Categories or {}
 		savedata.Modules = savedata.Modules or {}
 		savedata.Legit = savedata.Legit or {}
@@ -9383,7 +9784,8 @@ function mainapi:LoadOptions(object, savedoptions)
 	for i, v in savedoptions do
 		local option = object.Options[i]
 		if not option then continue end
-		option:Load(v)
+		-- One bad saved option must not abort the rest of the profile load.
+		pcall(option.Load, option, v)
 	end
 end
 
@@ -9413,9 +9815,10 @@ end
 
 function mainapi:Save(newprofile)
 	if not self.Loaded then return end
+	local targetProfile = (type(newprofile) == 'string' and newprofile ~= '') and newprofile or self.Profile
 	local guidata = {
 		Categories = {},
-		Profile = newprofile or self.Profile,
+		Profile = targetProfile,
 		Profiles = self.Profiles,
 		Keybind = self.Keybind
 	}
@@ -9483,11 +9886,31 @@ function mainapi:Save(newprofile)
 	end
 
 	ensureDataFolders()
-	writefile('aetherv2/profiles/'..game.GameId..'.gui.txt', httpService:JSONEncode(guidata))
-	writefile(getConfigPath(self.Profile), httpService:JSONEncode(savedata))
-	-- Keep the legacy profile mirror current so changing GUI implementations cannot
-	-- resurrect an older, partially saved copy of this profile.
-	writefile(getLegacyProfilePath(self.Profile), httpService:JSONEncode(savedata))
+	-- Every file is encoded and validated independently. A single unreadable value must
+	-- never abort the save and leave the previous files behind as the only copies.
+	local guiBody = encodeJson(guidata)
+	if guiBody then
+		safeWrite('aetherv2/profiles/'..game.GameId..'.gui.txt', guiBody)
+	end
+	local profileBody = encodeJson(savedata)
+	if not profileBody then
+		self:CreateNotification('AetherV2', 'Config save failed: the active profile could not be encoded.', 8, 'alert')
+		return
+	end
+	local paths = {
+		getConfigPath(targetProfile),
+		getLegacyProfilePath(targetProfile)
+	}
+	-- Mirror the config under the resolved place id so aliased servers share one profile
+	-- instead of every alias creating a brand new empty config.
+	if mainapi.ResolvedPlace and tostring(mainapi.ResolvedPlace) ~= tostring(mainapi.Place) then
+		table.insert(paths, getConfigPath(targetProfile, mainapi.ResolvedPlace))
+		table.insert(paths, getLegacyProfilePath(targetProfile, mainapi.ResolvedPlace))
+	end
+	for _, path in paths do
+		safeWrite(path, profileBody)
+	end
+	writeActiveProfile(targetProfile)
 end
 
 function mainapi:SaveOptions(object, savedoptions)
@@ -9495,7 +9918,13 @@ function mainapi:SaveOptions(object, savedoptions)
 	savedoptions = {}
 	for _, v in object.Options do
 		if not v.Save then continue end
-		v:Save(savedoptions)
+		-- Stage each option so one malformed value cannot poison the whole profile.
+		local staged = {}
+		if pcall(v.Save, v, staged) then
+			for key, value in staged do
+				savedoptions[key] = value
+			end
+		end
 	end
 	return savedoptions
 end
@@ -9739,6 +10168,15 @@ end))
 
 mainapi:Clean(clickgui:GetPropertyChangedSignal('Visible'):Connect(function()
 	mainapi:UpdateGUI(mainapi.GUIColor.Hue, mainapi.GUIColor.Sat, mainapi.GUIColor.Value, true)
+	-- Closing the menu is the natural commit point for every toggle changed while it was
+	-- open, so a quick rejoin cannot lose the newest settings to the autosave window.
+	if not clickgui.Visible and mainapi.Loaded then
+		task.spawn(function()
+			pcall(function()
+				mainapi:Save()
+			end)
+		end)
+	end
 	if clickgui.Visible and inputService.MouseEnabled then
 		repeat
 			local visibleCheck = clickgui.Visible
@@ -9768,11 +10206,6 @@ mainapi:CreateCategory({
 })
 mainapi:CreateCategory({
 	Name = 'Blatant',
-	Icon = getcustomasset('aetherv2/assets/new/blatanticon.png'),
-	Size = UDim2.fromOffset(14, 14)
-})
-mainapi:CreateCategory({
-	Name = 'Exploits',
 	Icon = getcustomasset('aetherv2/assets/new/blatanticon.png'),
 	Size = UDim2.fromOffset(14, 14)
 })
@@ -10471,12 +10904,11 @@ guipane:CreateButton({
 			GUICategory = 1,
 			CombatCategory = 2,
 			BlatantCategory = 3,
-			ExploitsCategory = 4,
-			RenderCategory = 5,
-			LegitCategory = 6,
-			UtilityCategory = 7,
-			WorldCategory = 8,
-			InventoryCategory = 9,
+			RenderCategory = 4,
+			LegitCategory = 5,
+			UtilityCategory = 6,
+			WorldCategory = 7,
+			InventoryCategory = 8,
 			MinigamesCategory = 10,
 			FriendsCategory = 10,
 			ProfilesCategory = 11

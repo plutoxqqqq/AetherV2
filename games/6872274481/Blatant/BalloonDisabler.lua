@@ -47,7 +47,7 @@ local function restoreBalloonController()
 end
 
 BalloonDisabler = (function()
-    local module, created = register('Exploits', 'BalloonDisabler', {
+	local module, created = register('Blatant', 'BalloonDisabler', {
         Tooltip = 'Disables the local balloon anticheat controller while a balloon is equipped',
         Function = function(callback)
             restoreBalloonController()

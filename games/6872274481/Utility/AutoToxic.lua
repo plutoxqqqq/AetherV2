@@ -138,6 +138,10 @@ run(function()
             end
         end
     })
+    -- Created immediately after its toggle, so the delay sits under AutoGG instead of
+    -- after the entire action list at the bottom of the module.
+    Delays.GG = makeDelay('AutoGG')
+    Delays.GG.Object.Visible = GG.Enabled
     for _, v in {'Kill', 'Death', 'Bed', 'BedDestroyed', 'Win'} do
         Toggles[v] = AutoToxic:CreateToggle({
             Name = v..' ',
@@ -157,8 +161,6 @@ run(function()
         })
         Delays[v] = makeDelay(v)
     end
-    Delays.GG = makeDelay('AutoGG')
-    Delays.GG.Object.Visible = GG.Enabled
     Toggles.Troll = AutoToxic:CreateToggle({
         Name = 'Troll ',
         Tooltip = 'Detects when someone calls you a hacker/cheater in chat and automatically replies',

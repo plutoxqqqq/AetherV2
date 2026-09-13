@@ -9,7 +9,6 @@ Combat/TriggerBot.lua
 Blatant/AntiVoid.lua
 Blatant/AirWalk.lua
 Blatant/Desync.lua
-Blatant/InfiniteFly.lua
 Blatant/HighJump.lua
 Blatant/HitBoxes.lua
 Blatant/InfiniteJump.lua
@@ -51,6 +50,7 @@ Utility/StaffDetector.lua
 Utility/StateSpoofer.lua
 World/Anti-AFK.lua
 World/PromptEditor.lua
+World/PromptAura.lua
 World/Freecam.lua
 World/ForcePlayerCollisions.lua
 World/Gravity.lua

@@ -57,11 +57,17 @@ run(function()
 		Tooltip = 'Renders beds, hives, crates, collectables, crops, generators, items, inventories, loot, pots, chests and traps'
 	})
 
+	local sectionOrder = 0
 	local function addSection(section, name, tooltip, settings)
+		-- Each section is a collapsible group: its toggle is ordered before its children and
+		-- starts collapsed, so the module opens as a short list of headers instead of a wall
+		-- of every setting at once.
+		sectionOrder += 1
+		local base = sectionOrder * 100
 		local toggle = ESP:CreateToggle({
 			Name = name,
 			Tooltip = tooltip,
-			Default = true,
+			Default = false,
 			Function = function(callback)
 				if ESP.Enabled then
 					section:Set(callback)
@@ -73,6 +79,15 @@ run(function()
 				end
 			end
 		})
+		if toggle.Object then
+			toggle.Object.LayoutOrder = base
+		end
+		for index, setting in settings or {} do
+			if setting and setting.Object then
+				setting.Object.LayoutOrder = base + index
+				setting.Object.Visible = toggle.Enabled == true
+			end
+		end
 		section.Toggle = toggle
 		return toggle
 	end

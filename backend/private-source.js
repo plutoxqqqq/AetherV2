@@ -1,7 +1,7 @@
 'use strict';
 
 // Keep the premium proxy implementation isolated from the startup wrapper so stats/bot
-// changes cannot accidentally rewrite source authorization, cloud configs, or session checks.
+// changes cannot accidentally rewrite source authorization or session checks.
 const core = require('./private-source-core');
 
 const number = (value, fallback, min, max) => {

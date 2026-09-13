@@ -53,11 +53,12 @@ run(function()
 		deathConnection = humanoid.Died:Connect(function()
 			if myGeneration ~= generation or not DeathSpawn.Enabled then return end
 			if not lastPosition then return end
+			local savedPosition, savedRotation = lastPosition, lastRotation
 
 			disconnect(characterConnection)
-
-			characterConnection = lplr.CharacterAdded:Connect(function(newCharacter)
+			local function apply(newCharacter)
 				if myGeneration ~= generation or not DeathSpawn.Enabled then return end
+				if lplr.Character ~= newCharacter then return end
 
 				task.delay(Delay.Value, function()
 					if myGeneration ~= generation or not DeathSpawn.Enabled then return end
@@ -66,12 +67,26 @@ run(function()
 					local newHumanoid = newCharacter:WaitForChild('Humanoid', 8)
 					if not newRoot or not newHumanoid or newHumanoid.Health <= 0 then return end
 
-					newRoot.CFrame = CFrame.new(lastPosition) * lastRotation
-					newRoot.AssemblyLinearVelocity = Vector3.zero
-					newRoot.AssemblyAngularVelocity = Vector3.zero
+					local target = CFrame.new(savedPosition) * (savedRotation or CFrame.new())
+					-- The server owns a freshly respawned character for the first frames, so a
+					-- single CFrame write is immediately overwritten. Re-assert briefly instead.
+					task.spawn(function()
+						for _ = 1, 8 do
+							if myGeneration ~= generation or not DeathSpawn.Enabled then return end
+							if lplr.Character ~= newCharacter or not newRoot.Parent then return end
+							newRoot.CFrame = target
+							newRoot.AssemblyLinearVelocity = Vector3.zero
+							newRoot.AssemblyAngularVelocity = Vector3.zero
+							task.wait(0.1)
+						end
+					end)
 				end)
-			end)
+			end
 
+			-- CharacterAdded can fire between the death and this connection, so handle an
+			-- already-present character as well as the next one.
+			if lplr.Character then apply(lplr.Character) end
+			characterConnection = lplr.CharacterAdded:Connect(apply)
 			DeathSpawn:Clean(characterConnection)
 		end)
 

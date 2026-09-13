@@ -13,6 +13,27 @@ run(function()
 	rayCheck.FilterDescendantsInstances = {workspace:FindFirstChild('Map')}
 
 	local launchHook
+	local suppressedAids = {}
+
+	-- BowAssist shares the projectile launch hook and physically turns the camera and
+	-- viewmodel. Leaving it on while SilentAim runs is what produced the visible snap, so
+	-- it is suspended for as long as SilentAim is active and restored afterwards.
+	local function suspendAid(name)
+		local module = vape.Modules and vape.Modules[name]
+		if module and module.Enabled then
+			suppressedAids[name] = true
+			module:Toggle()
+		end
+	end
+	local function resumeAids()
+		for name in suppressedAids do
+			local module = vape.Modules and vape.Modules[name]
+			if module and not module.Enabled then
+				module:Toggle()
+			end
+		end
+		table.clear(suppressedAids)
+	end
 
 	local function resolveTargetPart(ent, requested, projectileType)
 		local character = ent and ent.Character
@@ -113,6 +134,7 @@ run(function()
 					SilentAim:Toggle()
 					return
 				end
+				suspendAid('BowAssist')
 				launchHook = bedwars.ProjectileLaunchHook:Add('SilentAim', 15, function(nextLaunch, ...)
 					local launch = nextLaunch(...)
 					local projmeta, worldmeta = select(2, ...), select(3, ...)
@@ -122,10 +144,12 @@ run(function()
 				end)
 				SilentAim:Clean(function()
 					if launchHook then launchHook(); launchHook = nil end
+					resumeAids()
 				end)
 			elseif launchHook then
 				launchHook()
 				launchHook = nil
+				resumeAids()
 			end
 		end,
 		Tooltip = 'Redirects the projectile you fire toward a target without ever moving your aim'

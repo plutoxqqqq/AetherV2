@@ -1155,12 +1155,6 @@
    "The 'only while active' part is deliberate: re-asserting an ability the game has ended is what locks a character server-side."
   ]
  },
- "InfiniteFly": {
-  "lines": [
-   "Keeps you alive over the void by withholding replication, dropping to real ground long enough for the landing to register, then returning.",
-   "Does not combine with FakeLag - both fight over the same replication window."
-  ]
- },
  "InfiniteJump": {
   "lines": [
    "Lets you jump again in mid-air, without limit.",

@@ -63,9 +63,7 @@ local lplr = playersService.LocalPlayer
 local assetfunction = getcustomasset
 
 local vape = shared.vape
-if vape.Categories and not vape.Categories.Exploits then
-	vape.Categories.Exploits = vape.Categories.Blatant
-end
+-- The Exploits category was retired; its modules now register under Blatant.
 
 local entitylib = vape.Libraries.entity
 local targetinfo = vape.Libraries.targetinfo

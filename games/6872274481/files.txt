@@ -35,9 +35,9 @@ Combat/SilentAura.lua
 Combat/Sprint.lua
 Combat/TriggerBot.lua
 Combat/Velocity.lua
-Exploits/BalloonDisabler.lua
-Exploits/LongJumpBypass.lua
-Exploits/MultiAction.lua
+Blatant/BalloonDisabler.lua
+Blatant/LongJumpBypass.lua
+Blatant/MultiAction.lua
 Inventory/ArmorSwitch.lua
 Inventory/AutoBank.lua
 Inventory/AutoBuy.lua
