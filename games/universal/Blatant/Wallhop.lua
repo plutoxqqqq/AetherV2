@@ -22,6 +22,8 @@ run(function()
 		if not cameraTurn then return false end
 
 		local alpha = math.clamp((os.clock() - cameraTurn.StartedAt) / cameraTurn.Duration, 0, 1)
+		-- Ease in and out so the turn has no visible snap at either end.  Apply only the
+		-- incremental yaw, which preserves both the live camera position and player input.
 		local progress = alpha * alpha * (3 - (2 * alpha))
 		local delta = progress - cameraTurn.Progress
 		if delta ~= 0 then
@@ -34,15 +36,22 @@ run(function()
 
 	local function doCheck()
 		if updateCamera() then return end
-		if not entitylib.isAlive then return end
+
+		if not entitylib.isAlive then
+			return
+		end
 
 		local hum = entitylib.character.Humanoid
 		local root = entitylib.character.RootPart
-		if hum.MoveDirection.Magnitude <= 0 then return end
-		if root.AssemblyLinearVelocity.Y >= 0 or hum.FloorMaterial ~= Enum.Material.Air then return end
+		if hum.MoveDirection.Magnitude <= 0 then
+			return
+		end
+		if root.AssemblyLinearVelocity.Y >= 0 or hum.FloorMaterial ~= Enum.Material.Air then
+			return
+		end
 
 		params.CollisionGroup = root.CollisionGroup
-		params.FilterDescendantsInstances = {lplr.Character}
+		params.FilterDescendantsInstances = { lplr.Character }
 
 		local parts = workspace:GetPartBoundsInBox(
 			CFrame.new(root.Position - Vector3.new(0, entitylib.character.HipHeight / 2, 0)),
@@ -62,6 +71,7 @@ run(function()
 		end
 
 		if wall and os.clock() - timeout > 0.2 then
+			-- The original logic only rotated the camera. Actually request a jump here.
 			hum.Jump = true
 			hum:ChangeState(Enum.HumanoidStateType.Jumping)
 
@@ -80,7 +90,7 @@ run(function()
 		end
 	end
 
-	Wallhop = vape.Categories.World:CreateModule({
+	Wallhop = vape.Categories.Blatant:CreateModule({
 		Name = 'Wallhop',
 		Function = function(callback)
 			if callback then
@@ -94,7 +104,7 @@ run(function()
 				cameraTurn = nil
 			end
 		end,
-		Tooltip = 'Automatically jumps and rotates the camera for wallhopping'
+		Tooltip = 'Automatically jumps and rotates the camera for wallhopping.'
 	})
 
 	Offset = Wallhop:CreateSlider({
@@ -112,7 +122,7 @@ run(function()
 			if CameraTime and CameraTime.Object then CameraTime.Object.Visible = value == 'Legit' end
 			if value ~= 'Legit' then cameraTurn = nil end
 		end,
-		Tooltip = 'Instant applies the offset for one frame. Legit turns the camera over the selected time'
+		Tooltip = 'Instant applies the offset for one frame. Legit turns the camera over the selected time.'
 	})
 	CameraTime = Wallhop:CreateSlider({
 		Name = 'Camera Time',
@@ -122,6 +132,11 @@ run(function()
 		Decimal = 100,
 		Suffix = 's',
 		Visible = false,
-		Tooltip = 'How long Legit mode takes to reach the wallhop camera angle'
+		Tooltip = 'How long Legit mode takes to reach the wallhop camera angle.'
 	})
 end)
+
+
+--[[
+    Render
+]]

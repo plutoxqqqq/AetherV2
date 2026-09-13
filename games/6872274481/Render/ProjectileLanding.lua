@@ -6,8 +6,6 @@ run(function()
 	local lastLaunch
 	local states, watchers = {}, {}
 	local aimVisual
-	local drawStart = 0
-	local oldStartCharging, oldStopCharging
 	local rayParams = RaycastParams.new()
 	rayParams.FilterType = Enum.RaycastFilterType.Exclude
 	rayParams.RespectCanCollide = true
@@ -115,13 +113,8 @@ run(function()
 		for _, ent in entitylib.List do
 			if ent.Character then table.insert(ignored, ent.Character) end
 		end
-		-- Your own live projectiles used to swallow the aim preview right after a shot.
-		for projectile in states do
-			if projectile.Parent then table.insert(ignored, projectile) end
-		end
 		rayParams.FilterDescendantsInstances = ignored
-		local start = origin + velocity.Unit * 0.6
-		return prediction.TraceTrajectory(start, velocity, projectileAcceleration(gravity), rayParams, lifetime, {
+		return prediction.TraceTrajectory(origin, velocity, projectileAcceleration(gravity), rayParams, lifetime, {
 			Radius = 0.45,
 			SegmentLength = 1,
 			MaximumSteps = 600,
@@ -213,7 +206,7 @@ run(function()
 				Origin = result.positionFrom,
 				Velocity = result.initialVelocity,
 				Gravity = result.gravitationalAcceleration or workspace.Gravity,
-				Lifetime = tonumber(result.lifetimeSec or result.deltaT) or 7,
+				Lifetime = tonumber(result.lifetimeSec) or 7,
 				Time = tick()
 			}
 		end
@@ -230,40 +223,20 @@ run(function()
 		for _, item in inventory and inventory.items or {} do
 			if table.find(source.ammoItemTypes or {}, item.itemType) then ammo = item.itemType; break end
 		end
-		if not ammo and source.ammoItemTypes and #source.ammoItemTypes > 0 then return end
-		local projectileType = ammo or store.hand.tool.Name
+		local projectileType = ammo
 		if type(source.projectileType) == 'function' then
-			local ok, value = pcall(source.projectileType, source, ammo or store.hand.tool.Name)
-			if not ok or type(value) ~= 'string' then
-				ok, value = pcall(source.projectileType, ammo or store.hand.tool.Name)
-			end
-			if ok and type(value) == 'string' then projectileType = value end
+			local ok, value = pcall(source.projectileType, ammo)
+			if ok then projectileType = value end
 		end
 		local meta = bedwars.ProjectileMeta[projectileType] or {}
-		local baseSpeed = tonumber(meta.launchVelocity or source.launchVelocity) or 100
-		local scalar = tonumber(source.minStrengthScalar) or 1
-		local ratio = 1
-		if source.maxStrengthChargeSec and drawStart > 0 then
-			ratio = math.clamp((tick() - drawStart) / source.maxStrengthChargeSec, 0, 1)
-		end
-		local speed = baseSpeed * (scalar + (1 - scalar) * ratio) * (tonumber(source.velocityMultiplier) or 1)
-		local direction
-		if isFirstPerson() then
-			direction = gameCamera.CFrame.LookVector
-		else
-			local viewport = gameCamera.ViewportSize
-			direction = gameCamera:ViewportPointToRay(viewport.X / 2, viewport.Y / 2).Direction.Unit
-		end
-		local origin = gameCamera.CFrame.Position + direction * 1.5
+		local speed = (tonumber(meta.launchVelocity or source.launchVelocity) or 100) * (tonumber(source.velocityMultiplier) or 1)
+		local origin = gameCamera.CFrame.Position
 		pcall(function()
 			local value = bedwars.ProjectileController:getLaunchPosition(gameCamera.CFrame)
-			if typeof(value) == 'Vector3' then
-				origin = value + direction * 1.2
-			elseif typeof(value) == 'CFrame' then
-				origin = value.Position + direction * 1.2
-			end
+			if typeof(value) == 'Vector3' then origin = value elseif typeof(value) == 'CFrame' then origin = value.Position end
 		end)
-		return origin, direction * speed,
+		local mouseRay = lplr:GetMouse().UnitRay
+		return origin, mouseRay.Direction.Unit * speed,
 			(tonumber(meta.gravitationalAcceleration) or workspace.Gravity) * (tonumber(source.gravityMultiplier) or 1),
 			tonumber(meta.lifetimeSec) or 7
 	end
@@ -277,10 +250,6 @@ run(function()
 			else
 				updateVisual(state.Visual, trace(part.Position, part.AssemblyLinearVelocity, state.Gravity, remaining, projectile))
 			end
-		end
-
-		if aimingInput and not aimVisual and ProjectileLanding and ProjectileLanding.Enabled then
-			aimVisual = newVisual('ProjectileLandingAimMarker')
 		end
 
 		local result
@@ -309,28 +278,6 @@ run(function()
 		Function = function(enabled)
 			if not enabled then clear(); return end
 			aimVisual = newVisual('ProjectileLandingAimMarker')
-			if bedwars.DefaultProjectileSourceController then
-				oldStartCharging = bedwars.DefaultProjectileSourceController.onStartCharging
-				oldStopCharging = bedwars.DefaultProjectileSourceController.onStopCharging
-				if type(oldStartCharging) == 'function' then
-					bedwars.DefaultProjectileSourceController.onStartCharging = function(self, ...)
-						drawStart = tick()
-						return oldStartCharging(self, ...)
-					end
-				end
-				if type(oldStopCharging) == 'function' then
-					bedwars.DefaultProjectileSourceController.onStopCharging = function(self, ...)
-						drawStart = 0
-						return oldStopCharging(self, ...)
-					end
-				end
-				ProjectileLanding:Clean(function()
-					if oldStartCharging then bedwars.DefaultProjectileSourceController.onStartCharging = oldStartCharging end
-					if oldStopCharging then bedwars.DefaultProjectileSourceController.onStopCharging = oldStopCharging end
-					oldStartCharging, oldStopCharging = nil, nil
-					drawStart = 0
-				end)
-			end
 			if bedwars.ProjectileLaunchHook then
 				launchHook = bedwars.ProjectileLaunchHook:Add('ProjectileLanding', 1, recordLaunch)
 				ProjectileLanding:Clean(function()
@@ -354,5 +301,5 @@ run(function()
 		end,
 		Tooltip = 'Predicts held and local projectile landings with bounded deterministic trajectory simulation'
 	})
-	MarkerColor = ProjectileLanding:CreateColorSlider({Name = 'Marker Colour', DefaultOpacity = 0})
+	MarkerColor = ProjectileLanding:CreateColorSlider({Name = 'Marker Color', DefaultOpacity = 0})
 end)

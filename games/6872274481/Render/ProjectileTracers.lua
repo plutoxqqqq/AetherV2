@@ -67,7 +67,7 @@ run(function()
 	List = materials
     })
     Color = BulletTracers:CreateColorSlider({
-	Name = 'Tracer Colour',
+	Name = 'Tracer Color',
 	DefaultOpacity = 0.5
     })
     Thickness = BulletTracers:CreateSlider({

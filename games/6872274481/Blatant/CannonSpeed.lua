@@ -11,7 +11,7 @@ run(function()
 		return pcall(debug.setconstant, controller.launchSelf, 15, value)
 	end
 
-	CannonSpeed = kits:CreateModule({
+	CannonSpeed = vape.Categories.Blatant:CreateModule({
 		Name = 'CannonSpeed',
 		Function = function(enabled)
 			if enabled then

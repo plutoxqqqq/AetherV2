@@ -9,6 +9,7 @@ Combat/TriggerBot.lua
 Blatant/AntiVoid.lua
 Blatant/AirWalk.lua
 Blatant/Desync.lua
+Blatant/InfiniteFly.lua
 Blatant/HighJump.lua
 Blatant/HitBoxes.lua
 Blatant/InfiniteJump.lua
@@ -16,6 +17,7 @@ Blatant/Killaura.lua
 Blatant/NoFallDamage.lua
 Blatant/Step.lua
 Blatant/LongJump.lua
+Blatant/MouseTP.lua
 Blatant/NoClip.lua
 Blatant/Speed.lua
 Blatant/Spider.lua
@@ -23,7 +25,7 @@ Blatant/SpinBot.lua
 Blatant/Jesus.lua
 Blatant/TargetStrafe.lua
 Blatant/Timer.lua
-World/Wallhop.lua
+Blatant/Wallhop.lua
 Render/Arrows.lua
 Render/Chams.lua
 Render/ESP.lua
@@ -50,7 +52,6 @@ Utility/StaffDetector.lua
 Utility/StateSpoofer.lua
 World/Anti-AFK.lua
 World/PromptEditor.lua
-World/PromptAura.lua
 World/Freecam.lua
 World/ForcePlayerCollisions.lua
 World/Gravity.lua

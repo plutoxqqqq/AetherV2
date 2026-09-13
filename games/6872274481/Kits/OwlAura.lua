@@ -1,7 +1,6 @@
 run(function()
     local OwlAura
     local Targets
-    local Mode
     local Range
 
     local function getProjectileMeta()
@@ -36,10 +35,9 @@ run(function()
                                 Range = Range.Value,
                                 Part = 'RootPart',
                                 Players = Targets.Players.Enabled,
-                                Priority = Targets.Priority and Targets.Priority.Value,
                                 NPCs = Targets.NPCs.Enabled,
                                 Wallcheck = Targets.Walls.Enabled,
-                                Sort = sortmethods[Mode.Value],
+                                Sort = sortmethods.Health,
                             })
 
                             if plr then
@@ -76,17 +74,6 @@ run(function()
     Targets = OwlAura:CreateTargets({
         Players = true,
         Wallcheck = true,
-    })
-    local methods = {'Distance', 'Damage'}
-    for _, v in sortlist do
-        if not table.find(methods, v) then
-            table.insert(methods, v)
-        end
-    end
-    Mode = OwlAura:CreateDropdown({
-        Name = 'Target mode',
-        List = methods,
-        Default = 'Distance'
     })
     Range = OwlAura:CreateSlider({
         Name = 'Range',

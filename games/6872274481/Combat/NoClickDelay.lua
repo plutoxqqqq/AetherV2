@@ -65,3 +65,6 @@ run(function()
 		Tooltip = 'Removes the same cap on the drill tablet'
 	})
 end)
+
+run(function()
+    if canDebug then

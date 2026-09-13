@@ -268,15 +268,8 @@ run(function()
                                     anims.Random = {{CFrame = CFrame.Angles(math.rad(math.random(1, 360)), math.rad(math.random(1, 360)), math.rad(math.random(1, 360))), Time = 0.12}}
                                 end
 
-                                -- Animation speed must scale every pose, including the first,
-                                -- otherwise the value only affected the poses the hitreg timer
-                                -- did not already overwrite and never changed the visible swing.
-                                local speed = math.max(tonumber(AnimationSpeed.Value) or 1, 0.1)
                                 for _, v in anims[AnimationMode.Value] do
-                                    local duration = first
-                                        and (AnimationTween.Enabled and 0.001 or (0.1 / speed))
-                                        or ((hitRegAnimationTime or v.Time) / speed)
-                                    AnimTween = tweenService:Create(gameCamera.Viewmodel.RightHand.RightWrist, TweenInfo.new(duration, Enum.EasingStyle.Linear), {
+									AnimTween = tweenService:Create(gameCamera.Viewmodel.RightHand.RightWrist, TweenInfo.new(first and (AnimationTween.Enabled and 0.001 or 0.1) or (hitRegAnimationTime or v.Time) / AnimationSpeed.Value, Enum.EasingStyle.Linear), {
                                         C0 = armC0 * v.CFrame
                                     })
                                     AnimTween:Play()
@@ -327,7 +320,6 @@ run(function()
 							Wallcheck = Targets.Walls.Enabled or nil,
 							Part = 'RootPart',
 							Players = Targets.Players.Enabled,
-							Priority = Targets.Priority and Targets.Priority.Value,
 							NPCs = Targets.NPCs.Enabled,
 							Limit = MaxTargets.Value,
 							Sort = targetSort()
@@ -482,7 +474,7 @@ run(function()
                 end
             end
         end,
-		Tooltip = 'Attack players around you\nwithout aiming at them'
+		Tooltip = 'Attack players around you\nwithout aiming at them.'
     })
     Targets = Killaura:CreateTargets({
         Players = true,
@@ -611,13 +603,13 @@ run(function()
         end
     })
     BoxSwingColor = Killaura:CreateColorSlider({
-        Name = 'Target Colour',
+        Name = 'Target Color',
         Darker = true,
         DefaultOpacity = 0.5,
         Visible = false
     })
     BoxAttackColor = Killaura:CreateColorSlider({
-        Name = 'Attack Colour',
+        Name = 'Attack Color',
         Darker = true,
         DefaultOpacity = 0.5,
         Visible = false
@@ -676,7 +668,7 @@ run(function()
         Visible = false
     })
     ParticleColor1 = Killaura:CreateColorSlider({
-        Name = 'Colour Begin',
+        Name = 'Color Begin',
         Function = function(hue, sat, val)
             for _, v in Particles do
                 v.ParticleEmitter.Color = ColorSequence.new({
@@ -689,7 +681,7 @@ run(function()
         Visible = false
     })
     ParticleColor2 = Killaura:CreateColorSlider({
-        Name = 'Colour End',
+        Name = 'Color End',
         Function = function(hue, sat, val)
             for _, v in Particles do
                 v.ParticleEmitter.Color = ColorSequence.new({
@@ -740,7 +732,7 @@ run(function()
     })
     AnimationSpeed = Killaura:CreateSlider({
         Name = 'Animation Speed',
-        Min = 0.1,
+        Min = 0,
         Max = 2,
         Default = 1,
         Decimal = 10,

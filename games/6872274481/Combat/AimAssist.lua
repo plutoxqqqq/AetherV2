@@ -108,7 +108,6 @@ run(function()
 			Part = 'RootPart',
 			Wallcheck = Targets.Walls.Enabled,
 			Players = Targets.Players.Enabled,
-			Priority = Targets.Priority and Targets.Priority.Value,
 			NPCs = Targets.NPCs.Enabled,
 			Sort = sortmethods[Sort.Value],
 		})
@@ -178,10 +177,10 @@ run(function()
     Mode = AimAssist:CreateDropdown({
 	Name = 'Mode',
 	List = modes,
-	Tooltip = 'Simple - Smooth aiming\nAdaptive - Advanced tracking with adaptive behaviour',
+	Tooltip = 'Simple - Smooth aiming\nAdaptive - Advanced tracking with adaptive behavior',
 	Default = modes[1],
     })
-    local methods = {'Angle', 'Damage', 'Distance'}
+    local methods = {'Damage', 'Distance'}
     for _, i in sortlist do
 	if not table.find(methods, i) then
 		table.insert(methods, i)

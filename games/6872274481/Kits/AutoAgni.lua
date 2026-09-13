@@ -50,7 +50,6 @@ run(function()
 							Range = Range.Value,
 							Part = 'RootPart',
 							Players = Targets.Players.Enabled,
-							Priority = Targets.Priority and Targets.Priority.Value,
 							NPCs = Targets.NPCs.Enabled,
 							Wallcheck = Targets.Walls.Enabled or nil,
 							Sort = sortmethods.Distance

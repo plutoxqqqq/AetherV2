@@ -214,21 +214,14 @@ run(function()
 		return AC_MOD_View:getPlayerParty(plr)
 	end
 
-	function AC_MOD_View:syncStreamRemover()
-		local remover = vape.Modules and vape.Modules.StreamRemover
-		if not remover then return end
-		local want = self.disable_disguises == true
-		if remover.Enabled ~= want then
-			-- Remember that this module turned StreamRemover on so disabling ACMODView
-			-- restores the previous state instead of leaving it stuck on.
-			if want then self.streamRemoverOwned = true end
-			remover:Toggle()
-		end
-	end
-
 	function AC_MOD_View:toggleDisableDisguises()
 		if not self.Enabled then return end
-		self:syncStreamRemover()
+		
+		
+		local remover = vape.Modules and vape.Modules.StreamRemover
+		if remover and remover.Enabled ~= (self.disable_disguises == true) then
+			remover:Toggle()
+		end
 	end
 
 	function AC_MOD_View:refreshCore()
@@ -245,11 +238,6 @@ run(function()
 
 	function AC_MOD_View:init()
 		self.Enabled = true
-		-- Read the toggle's real state so the saved option and the StreamRemover state
-		-- cannot disagree (the toggle defaulted on while the flag defaulted off).
-		if self.disableDisguisesToggle then
-			self.disable_disguises = self.disableDisguisesToggle.Enabled == true
-		end
 		self.controller.hasAnyPermissions = function(self)
 			return true
 		end
@@ -298,11 +286,7 @@ run(function()
 		self.teamData = {}
 		self.cacheDirty = true
 
-		if self.streamRemoverOwned then
-			local remover = vape.Modules and vape.Modules.StreamRemover
-			if remover and remover.Enabled then remover:Toggle() end
-			self.streamRemoverOwned = false
-		end
+		self:toggleDisableDisguises()
 	end
 
 	shared.ACMODVIEWENABLED = false
@@ -322,11 +306,8 @@ run(function()
 		Name = "Remove Disguises",
 		Function = function(call)
 			AC_MOD_View.disable_disguises = call
-			if AC_MOD_View.Enabled then
-				AC_MOD_View:syncStreamRemover()
-			end
+			AC_MOD_View:toggleDisableDisguises()
 		end,
 		Default = true
 	})
-	AC_MOD_View.disable_disguises = true
 end)

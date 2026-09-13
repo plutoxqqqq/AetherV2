@@ -1,9 +1,8 @@
 run(function()
     local StreamRemover
-    local hooks, controllerHooks, originalText = {}, {}, setmetatable({}, {__mode = 'k'})
+    local hooks, originalText = {}, setmetatable({}, {__mode = 'k'})
     local refreshQueued = false
     local replacementCache = {}
-    local runService = cloneref(game:GetService('RunService'))
     local function playerFromArgs(...)
         for i = 1, select('#', ...) do
             local value = select(i, ...)
@@ -42,7 +41,6 @@ run(function()
     end
     local function refreshObject(object, players)
         if not object:IsA('TextLabel') and not object:IsA('TextButton') then return end
-        if type(players) ~= 'table' then return end
         local text = object.Text
         for _, data in players do
                 local player = data.Player
@@ -65,42 +63,8 @@ run(function()
             if StreamRemover.Enabled then replacements(); refreshController(); refreshGui(lplr.PlayerGui) end
         end)
     end
-    local function installControllerHooks()
-        local controller = (bedwars.Knit and bedwars.Knit.Controllers and bedwars.Knit.Controllers.StreamerModeController) or bedwars.StreamerModeController
-        if type(controller) ~= 'table' then return end
-        local names = {'getDisplayName', 'getPlayerName', 'getUserName', 'getLevel', 'getPlayerLevel', 'getDisguisedName', 'isEnabled', 'isStreamerMode', 'isStreamerModeEnabled', 'isDisguised', 'shouldHide', 'shouldDisguise'}
-        for _, name in names do
-            local fn = controller[name]
-            if type(fn) == 'function' and not controllerHooks[name] then
-                controllerHooks[name] = fn
-                controller[name] = function(self, ...)
-                    local lower = name:lower()
-                    if lower:find('isenabled') or lower:find('isstreamer') or lower:find('shouldhide') or lower:find('shoulddisguise') then
-                        return false
-                    end
-                    if lower:find('isdisguised') then return false end
-                    local player = playerFromArgs(...)
-                    if player then
-                        if lower:find('level') then
-                            return tonumber(player:GetAttribute('PlayerLevel')) or fn(self, ...)
-                        end
-                        if lower:find('display') or lower:find('disguised') then return player.DisplayName end
-                        if lower:find('user') or lower:find('name') then return player.Name end
-                    end
-                    return fn(self, ...)
-                end
-            end
-        end
-    end
-    local function restoreControllerHooks()
-        local controller = (bedwars.Knit and bedwars.Knit.Controllers and bedwars.Knit.Controllers.StreamerModeController) or bedwars.StreamerModeController
-        if type(controller) ~= 'table' then return end
-        for name, fn in controllerHooks do controller[name] = fn end
-        table.clear(controllerHooks)
-    end
     local function installHooks()
         local gamePlayer = require(replicatedStorage.TS.player['game-player'])
-        if type(gamePlayer) ~= 'table' then return end
         for name, fn in gamePlayer do
             if type(fn) == 'function' and (name:lower():find('name') or name:lower():find('level') or name:lower():find('disguise')) then
                 hooks[name] = fn
@@ -112,26 +76,12 @@ run(function()
             end
         end
         bedwars.GamePlayer = gamePlayer
-        installControllerHooks()
     end
     StreamRemover = vape.Categories.Render:CreateModule({
         Name = 'StreamRemover',
         Function = function(enabled)
             if enabled then
                 installHooks(); replacements(); refreshController(); refreshGui(lplr.PlayerGui)
-                -- React re-renders keep overwriting labels with the disguised text without
-                -- changing any attribute, so re-scan once a second while enabled.
-                local lastRefresh = 0
-                StreamRemover:Clean(runService.Heartbeat:Connect(function()
-                    local now = os.clock()
-                    if now - lastRefresh < 1 then return end
-                    lastRefresh = now
-                    if StreamRemover.Enabled then
-                        replacements()
-                        refreshController()
-                        refreshGui(lplr.PlayerGui)
-                    end
-                end))
                 local function watch(player)
                     for _, attribute in {'DisguiseDisplayName', 'DisguiseUsername', 'PlayerLevel'} do
                         StreamRemover:Clean(player:GetAttributeChangedSignal(attribute):Connect(queueRefresh))
@@ -149,11 +99,8 @@ run(function()
                 end))
             else
                 local gamePlayer = bedwars.GamePlayer
-                if type(gamePlayer) == 'table' then
-                    for name, fn in hooks do gamePlayer[name] = fn end
-                end
+                for name, fn in hooks do gamePlayer[name] = fn end
                 table.clear(hooks)
-                restoreControllerHooks()
                 for object, text in originalText do if object.Parent then object.Text = text end end
                 table.clear(originalText); refreshController()
             end

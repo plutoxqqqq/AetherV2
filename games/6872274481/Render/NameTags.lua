@@ -410,7 +410,7 @@ run(function()
 	end,
     })
     Color = NameTags:CreateColorSlider({
-	Name = 'Player Colour',
+	Name = 'Player Color',
 	Function = function(hue, sat, val)
 		if NameTags.Enabled and ColorFunc[methodused] then
 			ColorFunc[methodused](hue, sat, val)

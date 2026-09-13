@@ -26,7 +26,7 @@ run(function()
 	end,
     })
     Memory:CreateColorSlider({
-	Name = 'Colour',
+	Name = 'Color',
 	DefaultValue = 0,
 	DefaultOpacity = 0.5,
 	Function = function(hue, sat, val, opacity)

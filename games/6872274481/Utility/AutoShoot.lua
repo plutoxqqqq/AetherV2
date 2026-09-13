@@ -22,7 +22,6 @@ run(function()
 			Part = 'RootPart',
 			Range = 22,
 			Players = Targets.Players.Enabled,
-			Priority = Targets.Priority and Targets.Priority.Value,
 			NPCs = Targets.NPCs.Enabled,
 			Wallcheck = Targets.Walls.Enabled,
 			Limit = 10,

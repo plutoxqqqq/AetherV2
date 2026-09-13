@@ -151,7 +151,7 @@ run(function()
 	end,
     })
     Color = Tracers:CreateColorSlider({
-	Name = 'Player Colour',
+	Name = 'Player Color',
 	Function = function(hue, sat, val)
 		if Tracers.Enabled then
 			ColorFunc(hue, sat, val)
@@ -170,7 +170,7 @@ run(function()
 	Decimal = 10,
     })
     DistanceColor = Tracers:CreateToggle({
-	Name = 'Colour by distance',
+	Name = 'Color by distance',
 	Function = function()
 		if Tracers.Enabled then
 			Tracers:Toggle()

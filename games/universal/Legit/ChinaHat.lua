@@ -69,7 +69,7 @@ run(function()
 	end,
     })
     Color = ChinaHat:CreateColorSlider({
-	Name = 'Hat Colour',
+	Name = 'Hat Color',
 	DefaultOpacity = 0.7,
 	Function = function(hue, sat, val, opacity)
 		if hat then

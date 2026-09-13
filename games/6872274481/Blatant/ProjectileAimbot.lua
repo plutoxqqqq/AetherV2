@@ -65,7 +65,6 @@ run(function()
 						Part = 'RootPart',
 						Range = FOV.Value,
 						Players = Targets.Players.Enabled,
-						Priority = Targets.Priority and Targets.Priority.Value,
 						NPCs = Targets.NPCs.Enabled,
 						Wallcheck = Targets.Walls.Enabled,
 						Origin = origin,
@@ -166,7 +165,7 @@ run(function()
 		Name = 'Aim change',
 		Default = true,
 		Darker = true,
-		Tooltip = 'Changes your trajectory to match charge percentage'
+		Tooltip = 'Changes your trajectory to match charge percentage.'
 	})
 	OtherProjectiles = ProjectileAimbot:CreateToggle({
 		Name = 'Other Projectiles',

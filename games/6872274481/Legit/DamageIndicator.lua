@@ -52,7 +52,7 @@ run(function()
         end
     })
     Color = DamageIndicator:CreateColorSlider({
-        Name = 'Colour',
+        Name = 'Color',
         Function = function(hue, sat, val)
             if DamageIndicator.Enabled then
                 tab.baseColor = Color3.fromHSV(hue, sat, val)

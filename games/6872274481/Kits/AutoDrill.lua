@@ -96,7 +96,6 @@ run(function()
 									Range = Legit.Enabled and 10 or Range.Value,
 									Part = 'RootPart',
 									Players = Targets.Players.Enabled,
-									Priority = Targets.Priority and Targets.Priority.Value,
 									NPCs = Targets.NPCs.Enabled,
 									Sort = sortmethods[Sort.Value]
 								})
@@ -117,7 +116,7 @@ run(function()
 				table.clear(collectDebounce)
 			end
 		end,
-		Tooltip = 'Automatically collects resources and attacks with placed drills'
+		Tooltip = 'Automatically collects resources and attacks with placed drills.'
 	})
 	AutoCollect = AutoDrill:CreateToggle({
 		Name = 'Auto collect',

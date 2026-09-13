@@ -38,7 +38,6 @@ run(function()
 						Range = FOV.Value,
 						Part = Part.Value,
 						Players = Targets.Players.Enabled,
-						Priority = Targets.Priority and Targets.Priority.Value,
 						NPCs = Targets.NPCs.Enabled,
 						Wallcheck = Targets.Walls.Enabled,
 						Origin = gameCamera.CFrame.Position,
@@ -130,7 +129,7 @@ run(function()
 	end,
     })
     CircleColor = AimAssist:CreateColorSlider({
-	Name = 'Circle Colour',
+	Name = 'Circle Color',
 	Function = function(hue, sat, val)
 		if CircleObject then
 			CircleObject.Color = Color3.fromHSV(hue, sat, val)

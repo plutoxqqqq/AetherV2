@@ -18,7 +18,6 @@ run(function()
 							Range = UseTornado.Enabled and TornadoRange.Value > Range.Value and TornadoRange.Value or Range.Value,
 							Wallcheck = Targets.Walls.Enabled,
 							Players = Targets.Players.Enabled,
-							Priority = Targets.Priority and Targets.Priority.Value,
 							NPCs = Targets.NPCs.Enabled,
 							Sort = sortmethods[Sorts.Value]
 						})
@@ -36,7 +35,7 @@ run(function()
 				until not AutoRamil.Enabled
 			end
 		end,
-		Tooltip = 'Automatically use ramil abilities on certain conditions'
+		Tooltip = 'Automatically use ramil abilities on certain conditions.'
 	})
 	Targets = AutoRamil:CreateTargets({
 		Players = true,

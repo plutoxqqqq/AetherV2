@@ -519,8 +519,3 @@ local Fly
 local LongJump
 
 getgenv().used_init = true
-
-
---[[
-    Combat
-]]

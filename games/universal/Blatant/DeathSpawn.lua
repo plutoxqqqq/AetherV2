@@ -1,131 +1,101 @@
 run(function()
-	local DeathSpawn
-	local Delay
-	local generation = 0
-	local deathConnection
-	local characterConnection
-	local groundConnection
+    local DeathSpawn
+    local generation = 0
+    local deathConnection
+    local characterConnection
 
-	local lastPosition
-	local lastRotation
+    local function disconnect(connection)
+        if connection then
+            connection:Disconnect()
+        end
+    end
 
-	local function disconnect(connection)
-		if connection then
-			connection:Disconnect()
-		end
-	end
+    local function clearConnections()
+        disconnect(deathConnection)
+        disconnect(characterConnection)
+        deathConnection = nil
+        characterConnection = nil
+    end
 
-	local function clearConnections()
-		disconnect(deathConnection)
-		disconnect(characterConnection)
-		disconnect(groundConnection)
+    local function getHumanoid(character)
+        return character and character:FindFirstChildOfClass('Humanoid')
+    end
 
-		deathConnection = nil
-		characterConnection = nil
-		groundConnection = nil
-	end
+    local function getRoot(character)
+        return character and character:FindFirstChild('HumanoidRootPart')
+    end
 
-	local function hookCharacter(character, myGeneration)
-		if myGeneration ~= generation or not DeathSpawn.Enabled then return end
+    local function saveTransform(character)
+        local root = getRoot(character)
+        if not root then return nil end
 
-		local humanoid = character:FindFirstChildOfClass('Humanoid')
-			or character:WaitForChild('Humanoid', 5)
-		local root = character:FindFirstChild('HumanoidRootPart')
-			or character:WaitForChild('HumanoidRootPart', 5)
+        return root.Position, root.CFrame.Rotation
+    end
 
-		if not humanoid or not root then return end
+    local function placeCharacter(character, position, rotation)
+        local root = getRoot(character) or character:WaitForChild('HumanoidRootPart', 5)
+        if not root or not position then return end
 
-		disconnect(deathConnection)
-		disconnect(groundConnection)
+        -- Always attempt the placement as soon as the replacement character exists.
+        root.CFrame = CFrame.new(position) * (rotation or CFrame.identity)
+        root.AssemblyLinearVelocity = Vector3.zero
+    end
 
-		-- Save the last position only while standing on something.
-		groundConnection = game:GetService('RunService').Heartbeat:Connect(function()
-			if myGeneration ~= generation or not DeathSpawn.Enabled then return end
+    local function hookCharacter(character, myGeneration)
+        if myGeneration ~= generation or not DeathSpawn.Enabled then return end
 
-			if humanoid.FloorMaterial ~= Enum.Material.Air then
-				lastPosition = root.Position
-				lastRotation = root.CFrame.Rotation
-			end
-		end)
+        local humanoid = getHumanoid(character) or character:WaitForChild('Humanoid', 5)
+        local root = getRoot(character) or character:WaitForChild('HumanoidRootPart', 5)
+        if not humanoid or not root then return end
 
-		DeathSpawn:Clean(groundConnection)
+        disconnect(deathConnection)
+        deathConnection = humanoid.Died:Connect(function()
+            if myGeneration ~= generation or not DeathSpawn.Enabled then return end
 
-		deathConnection = humanoid.Died:Connect(function()
-			if myGeneration ~= generation or not DeathSpawn.Enabled then return end
-			if not lastPosition then return end
-			local savedPosition, savedRotation = lastPosition, lastRotation
+            -- Capture the exact position and rotation at the moment of death.
+            local position, rotation = saveTransform(character)
+            if not position then return end
 
-			disconnect(characterConnection)
-			local function apply(newCharacter)
-				if myGeneration ~= generation or not DeathSpawn.Enabled then return end
-				if lplr.Character ~= newCharacter then return end
+            disconnect(characterConnection)
+            characterConnection = lplr.CharacterAdded:Connect(function(newCharacter)
+                if myGeneration ~= generation or not DeathSpawn.Enabled then return end
 
-				task.delay(Delay.Value, function()
-					if myGeneration ~= generation or not DeathSpawn.Enabled then return end
-					if lplr.Character ~= newCharacter then return end
-					local newRoot = newCharacter:WaitForChild('HumanoidRootPart', 8)
-					local newHumanoid = newCharacter:WaitForChild('Humanoid', 8)
-					if not newRoot or not newHumanoid or newHumanoid.Health <= 0 then return end
+                task.defer(function()
+                    if myGeneration ~= generation or not DeathSpawn.Enabled then return end
+                    placeCharacter(newCharacter, position, rotation)
+                end)
+            end)
 
-					local target = CFrame.new(savedPosition) * (savedRotation or CFrame.new())
-					-- The server owns a freshly respawned character for the first frames, so a
-					-- single CFrame write is immediately overwritten. Re-assert briefly instead.
-					task.spawn(function()
-						for _ = 1, 8 do
-							if myGeneration ~= generation or not DeathSpawn.Enabled then return end
-							if lplr.Character ~= newCharacter or not newRoot.Parent then return end
-							newRoot.CFrame = target
-							newRoot.AssemblyLinearVelocity = Vector3.zero
-							newRoot.AssemblyAngularVelocity = Vector3.zero
-							task.wait(0.1)
-						end
-					end)
-				end)
-			end
+            DeathSpawn:Clean(characterConnection)
 
-			-- CharacterAdded can fire between the death and this connection, so handle an
-			-- already-present character as well as the next one.
-			if lplr.Character then apply(lplr.Character) end
-			characterConnection = lplr.CharacterAdded:Connect(apply)
-			DeathSpawn:Clean(characterConnection)
-		end)
+            -- Roblox normally creates the replacement character automatically.
+            -- If the current character remains present, keep attempting to restore
+            -- the saved transform until CharacterAdded supplies the replacement.
+        end)
 
-		DeathSpawn:Clean(deathConnection)
-	end
+        DeathSpawn:Clean(deathConnection)
+    end
 
-	DeathSpawn = vape.Categories.Blatant:CreateModule({
-		Name = 'DeathSpawn',
-		Function = function(callback)
-			generation += 1
-			local myGeneration = generation
+    DeathSpawn = vape.Categories.Blatant:CreateModule({
+        Name = 'DeathSpawn',
+        Function = function(callback)
+            generation += 1
+            local myGeneration = generation
+            clearConnections()
 
-			clearConnections()
+            if not callback then return end
 
-			if not callback then return end
+            if lplr.Character then
+                hookCharacter(lplr.Character, myGeneration)
+            end
 
-			lastPosition = nil
-			lastRotation = nil
-
-			if lplr.Character then
-				hookCharacter(lplr.Character, myGeneration)
-			end
-
-			local connection = lplr.CharacterAdded:Connect(function(character)
-				hookCharacter(character, myGeneration)
-			end)
-
-			DeathSpawn:Clean(connection)
-		end,
-		Tooltip = 'Respawn at your last grounded position and rotation'
-	})
-
-	Delay = DeathSpawn:CreateSlider({
-		Name = 'Respawn Delay',
-		Min = 0,
-		Max = 5,
-		Default = 0.5,
-		Decimal = 10,
-		Suffix = 'seconds',
-		Tooltip = 'How long to wait after respawning before teleporting, so the character is fully spawned in'
-	})
+            local connection = lplr.CharacterAdded:Connect(function(character)
+                if myGeneration ~= generation or not DeathSpawn.Enabled then return end
+                hookCharacter(character, myGeneration)
+            end)
+            DeathSpawn:Clean(connection)
+        end,
+        Tooltip = 'Respawn at the position and rotation where you died.'
+    })
 end)
+-- blatant/FastClimb.lua

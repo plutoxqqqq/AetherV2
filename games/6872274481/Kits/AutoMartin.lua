@@ -18,7 +18,6 @@ run(function()
 						Part = 'RootPart',
 						Wallcheck = Targets.Walls.Enabled,
 						Players = Targets.Players.Enabled,
-						Priority = Targets.Priority and Targets.Priority.Value,
 						NPCs = Targets.NPCs.Enabled,
 						Sort = sortmethods.Distance
 					}) and bedwars.AbilityController:canUseAbility('cactus_fire', {disableBlockedAbilityAlert = true}) then
@@ -29,7 +28,7 @@ run(function()
 				until not AutoMartin.Enabled
 			end
 		end,
-		Tooltip = 'Automatically uses "Wild growth" ability when within range'
+		Tooltip = 'Automatically uses "Wild growth" ability when within range.'
 	})
 	Targets = AutoMartin:CreateTargets({
 		Players = true,

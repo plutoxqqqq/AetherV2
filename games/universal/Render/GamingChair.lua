@@ -129,6 +129,7 @@ run(function()
 						and entitylib.character.Humanoid.MoveDirection ~= Vector3.zero
 					local flying = vape.Modules.Fly and vape.Modules.Fly.Enabled
 						or vape.Modules.LongJump and vape.Modules.LongJump.Enabled
+						or vape.Modules.InfiniteFly and vape.Modules.InfiniteFly.Enabled
 					if movingsound.TimePosition > 1.9 then
 						movingsound.TimePosition = 0.2
 					end
@@ -227,7 +228,7 @@ run(function()
 	Tooltip = 'Sit in the best gaming chair known to mankind',
     })
     Color = GamingChair:CreateColorSlider({
-	Name = 'Colour',
+	Name = 'Color',
 	Function = function(h, s, v)
 		if chairhighlight then
 			chairhighlight.OutlineColor = Color3.fromHSV(h, s, v)

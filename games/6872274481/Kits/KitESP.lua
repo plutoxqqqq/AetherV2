@@ -103,7 +103,7 @@ run(function()
 	Default = true,
     })
     Color = KitESP:CreateColorSlider({
-	Name = 'Background Colour',
+	Name = 'Background Color',
 	DefaultValue = 0,
 	DefaultOpacity = 0.5,
 	Function = function(hue, sat, val, opacity)

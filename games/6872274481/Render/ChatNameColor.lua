@@ -16,7 +16,7 @@ run(function()
     end
 
     ChatNameColor = vape.Categories.Render:CreateModule({
-        Name = 'ChatNameColour',
+        Name = 'ChatNameColor',
         Tooltip = 'Changes your chat name colour while enabled',
         Function = function(enabled)
             if enabled then
