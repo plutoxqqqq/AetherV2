@@ -124,7 +124,7 @@ run(function()
 					message = lines[ind] or lines[1]
 					ind = (ind % #lines) + 1
 				else
-					message = #lines > 0 and lines[math.random(1, #lines)] or 'vxpe on top'
+					message = #lines > 0 and lines[math.random(1, #lines)] or 'aether on top'
 				end
 
 				if type(message) == 'string' and message ~= '' then
