@@ -36,7 +36,6 @@ Combat/Sprint.lua
 Combat/TriggerBot.lua
 Combat/Velocity.lua
 Blatant/BalloonDisabler.lua
-Blatant/LongJumpBypass.lua
 Blatant/MultiAction.lua
 Inventory/ArmorSwitch.lua
 Inventory/AutoBank.lua
@@ -115,6 +114,7 @@ Kits/AutoVanessa.lua
 Kits/AutoVoidHunter.lua
 Kits/AutoVoidKnight.lua
 Kits/AutoWarden.lua
+Kits/AutoWarrior.lua
 Kits/AutoWhim.lua
 Kits/AutoWhisper.lua
 Kits/AutoXurot.lua

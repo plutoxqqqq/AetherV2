@@ -1312,11 +1312,6 @@
    "Launches you a long way in your movement direction on jump."
   ]
  },
- "LongJumpBypass": {
-  "lines": [
-   "Gets a long jump past the checks that would otherwise reject it."
-  ]
- },
  "LootESP": {
   "lines": [
    "Draws iron, emeralds and diamonds through walls."

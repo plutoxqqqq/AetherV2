@@ -3,8 +3,6 @@ run(function()
     local CameraDir
     local LimitItems
     local ChangeDir
-    local LongJumpBypass
-    local BypassBoost
     local start
     local JumpTick, JumpSpeed, Direction = tick(), 0
     local jumpWasActive = false

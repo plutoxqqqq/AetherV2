@@ -57,7 +57,9 @@ run(function()
 			return
 		end
 		visual.Marker.CFrame = CFrame.new(result.Position + Vector3.new(0, 0.55, 0))
-		visual.Marker.Transparency = math.clamp(MarkerColor.Opacity or 0, 0, 1)
+		-- Opacity is the 0-1 "how visible is this" value every other colour option uses, so it is
+		-- inverted into transparency; copying it straight across made 0 fully opaque and 1 invisible.
+		visual.Marker.Transparency = 1 - math.clamp(MarkerColor.Opacity or 0, 0, 1)
 		local ent = entityForInstance(result.Instance)
 		local model = ent and ent.Character
 		if model ~= visual.HighlightModel then
@@ -233,9 +235,12 @@ run(function()
 		if not ammo and source.ammoItemTypes and #source.ammoItemTypes > 0 then return end
 		local projectileType = ammo or store.hand.tool.Name
 		if type(source.projectileType) == 'function' then
-			local ok, value = pcall(source.projectileType, source, ammo or store.hand.tool.Name)
+			-- The game's own meta calls this with a single argument (see getBow in the pack base), so
+			-- that form is tried first: passing the meta as well returns a wrong name instead of
+			-- failing, which used to leave the preview looking up a projectile that does not exist.
+			local ok, value = pcall(source.projectileType, ammo or store.hand.tool.Name)
 			if not ok or type(value) ~= 'string' then
-				ok, value = pcall(source.projectileType, ammo or store.hand.tool.Name)
+				ok, value = pcall(source.projectileType, source, ammo or store.hand.tool.Name)
 			end
 			if ok and type(value) == 'string' then projectileType = value end
 		end
@@ -354,5 +359,5 @@ run(function()
 		end,
 		Tooltip = 'Predicts held and local projectile landings with bounded deterministic trajectory simulation'
 	})
-	MarkerColor = ProjectileLanding:CreateColorSlider({Name = 'Marker Colour', DefaultOpacity = 0})
+	MarkerColor = ProjectileLanding:CreateColorSlider({Name = 'Marker Colour', DefaultOpacity = 0.6})
 end)

@@ -8,7 +8,6 @@ run(function()
 	local BedwarsCheck
 	local GUI
 	local SmartCheck
-	local ShopAnywhere
 	local OpenShop
 	local Custom = {}
 	local CustomPost = {}
@@ -18,7 +17,6 @@ run(function()
 	local purchaseRules = {}
 	local rulesPath = 'aetherv2/profiles/autobuy-rules.json'
 	local rulesWindow
-	local lastShopPrompt, lastShopPromptAt
 
 	local swords = {
 		'wood_sword',
@@ -64,33 +62,8 @@ run(function()
 		return not matched
 	end
 
-	-- Shop anywhere deliberately reaches for the nearest item shop with no range limit; every
-	-- other lookup in the pack uses the shared 20 studs through util.Shop.
-	local function nearestItemShop()
-		return util.Shop.Nearby('item', math.huge)
-	end
-
-	local function shopPrompt(entry)
-		local root = entry and entry.RootPart
-		if not root or not root.Parent then return nil end
-		return root:FindFirstChildWhichIsA('ProximityPrompt', true)
-			or root.Parent:FindFirstChildWhichIsA('ProximityPrompt', true)
-	end
-
-	local function activateShop(entry)
-		local prompt = shopPrompt(entry)
-		local extender = ((getgenv and getgenv()) or _G).AetherInteractExtender
-		if not prompt or type(extender) ~= 'table' or type(extender.Activate) ~= 'function' then
-			return false, 'shop prompt unavailable'
-		end
-		if prompt == lastShopPrompt and tick() - lastShopPromptAt < 0.5 then return true end
-		local ok, reason = extender.Activate(prompt)
-		if ok then
-			lastShopPrompt, lastShopPromptAt = prompt, tick()
-		end
-		return ok, reason
-	end
-
+	-- The shopkeeper only counts while it is within the shared 20 studs util.Shop uses, so a
+	-- purchase can never be sent to a shop the player is nowhere near.
 	local function getShopNPC()
 		local shop, items, upgrades, newid = nil, false, false, nil
 		local entry = util.Shop.Nearby()
@@ -99,14 +72,6 @@ run(function()
 			items = entry.Shop
 			upgrades = entry.Upgrades
 			newid = entry.Shop and entry.Id or nil
-		end
-		
-		
-		if not shop and ShopAnywhere and ShopAnywhere.Enabled then
-			local entry = nearestItemShop()
-			if entry and activateShop(entry) then
-				return entry.Upgrades or entry.Shop, entry.Shop ~= nil, entry.Upgrades ~= nil, entry.Shop and entry.Id or nil
-			end
 		end
 		return shop, items, upgrades, newid
 	end
@@ -277,10 +242,6 @@ run(function()
 	})
 
 	AutoBuy:CreateButton({Name = 'Purchase preferences', Function = openPreferences})
-	ShopAnywhere = AutoBuy:CreateToggle({
-		Name = 'Shop anywhere',
-		Tooltip = 'Uses InteractExtender to open the nearest item shop before buying'
-	})
 	Sword = AutoBuy:CreateToggle({
 		Name = 'Buy Sword',
 		Function = function(callback)
@@ -387,8 +348,4 @@ run(function()
 			end
 		end
 	})
-	local shopApi = {activateShop = activateShop, nearestItemShop = nearestItemShop}
-	shared.AetherShopRuntime = shopApi
-	vape:Clean(function() if shared.AetherShopRuntime == shopApi then shared.AetherShopRuntime = nil end end)
-
 end)

@@ -10,8 +10,6 @@ run(function()
     local BeforeDeath
     local HPThreshold
     local BeforeDeathWhitelist
-    local DepositKey
-    local WithdrawKey
     local UI
 
     local util = vape.Libraries.bedwarsutil
@@ -210,74 +208,6 @@ run(function()
         return true
     end
 
-    ---------------------------------------------------------------------------
-    -- Skybox mode banks the whitelist only and keeps its own backoff timers, exactly as it
-    -- always has; Legit mode below banks everything. Only the chest plumbing is shared.
-    ---------------------------------------------------------------------------
-    local function depositToChest(folder, allowedItems)
-        if chestDepositBusy then return false end
-        allowedItems = allowedItems or Whitelist.ListEnabled
-        local wanted = {}
-        for _, item in store.inventory.inventory.items do
-            local name = item.itemType or (item.tool and item.tool.Name)
-            if name and item.tool and table.find(allowedItems, name) and (dropCooldowns[name] or 0) < os.clock() then
-                table.insert(wanted, {Name = name, Tool = item.tool})
-            end
-        end
-        if #wanted == 0 then return false end
-
-        chestDepositBusy = true
-        local deposited = false
-        util.Chest.Observe(folder, function()
-            for _, entry in wanted do
-                if not AutoBank.Enabled then break end
-                if util.Chest.Give(folder, entry.Tool) then
-                    deposited = true
-                else
-                    -- Back off that one item instead of hammering it.
-                    dropCooldowns[entry.Name] = os.clock() + 5
-                end
-            end
-        end)
-        chestDepositBusy = false
-        return deposited
-    end
-
-    local function withdrawFromChest(folder, itemType)
-        local contents = util.Chest.Entries(folder)
-        if #contents == 0 then return end
-
-        local requestBudget = 8
-        util.Chest.Observe(folder, function()
-            for _, entry in contents do
-                if not AutoBank.Enabled or requestBudget <= 0 then break end
-                if table.find(Whitelist.ListEnabled, entry.Name) and (not itemType or entry.Name == itemType) then
-                    local amount = math.max(entry:GetAttribute('Amount') or 1, 1)
-                    for _ = 1, amount do
-                        if not AutoBank.Enabled or not entry.Parent or requestBudget <= 0 then break end
-                        util.Chest.Take(folder, entry)
-                        requestBudget -= 1
-                    end
-                end
-            end
-        end)
-    end
-
-    local function parseHotkey(box)
-        if not box then return nil end
-        local text = tostring(box.Value or ''):gsub('%s+', ''):upper()
-        if text == '' then return nil end
-        local ok, key = pcall(function() return Enum.KeyCode[text] end)
-        return ok and key or nil
-    end
-
-    local function atOwnChest()
-        if not entitylib.isAlive then return nil end
-        local folder = ownPersonalFolder()
-        if folder and atPersonalChest() then return folder end
-        return nil
-    end
-
     local currentHealthPercent = util.Health.Percent
 
 	local function queueEmergencyDrop(item, token, bankPosition, bankCharacter)
@@ -417,23 +347,6 @@ run(function()
         if not util.Queue.Await(AutoBank) then return end
         local pendingRedeposit = false
 
-        AutoBank:Clean(inputService.InputBegan:Connect(function(input)
-            if inputService:GetFocusedTextBox() then return end
-            local deposit, withdraw = parseHotkey(DepositKey), parseHotkey(WithdrawKey)
-            if not deposit and not withdraw then return end
-            if deposit and input.KeyCode == deposit then
-                local folder = atOwnChest()
-                if folder and not chestDepositBusy then
-                    depositAllToChest(folder)
-                end
-            elseif withdraw and input.KeyCode == withdraw then
-                local folder = atOwnChest()
-                if folder then
-                    withdrawAllFromChest(folder)
-                end
-            end
-        end))
-
         repeat
             if entitylib.isAlive and store.matchState ~= 2 then
                 local folder = ownPersonalFolder()
@@ -460,7 +373,7 @@ run(function()
     
     local function applyModeOptions()
         local legit = Mode.Value == 'Legit'
-        for _, option in {ChestRange, Withdraw, OnlyWhenLow, LowHealth, DepositKey, WithdrawKey} do
+        for _, option in {ChestRange, Withdraw, OnlyWhenLow, LowHealth} do
             if option and option.Object then option.Object.Visible = legit end
         end
         for _, option in {Whitelist, DisplayResources, BeforeDeath} do
@@ -562,23 +475,6 @@ run(function()
 				AutoBank:Clean(disconnectDangerConnections)
 				AutoBank:Clean(lplr.CharacterAdded:Connect(bindDangerCharacter))
 				bindDangerCharacter(lplr.Character)
-
-				AutoBank:Clean(inputService.InputBegan:Connect(function(input)
-					if inputService:GetFocusedTextBox() then return end
-					local deposit, withdraw = parseHotkey(DepositKey), parseHotkey(WithdrawKey)
-					if not deposit and not withdraw then return end
-					if deposit and input.KeyCode == deposit then
-						local folder = atOwnChest()
-						if folder and not chestDepositBusy then
-							depositToChest(folder, Whitelist.ListEnabled)
-						end
-					elseif withdraw and input.KeyCode == withdraw then
-						local folder = atOwnChest()
-						if folder then
-							withdrawFromChest(folder, nil)
-						end
-					end
-				end))
 
                 repeat
                     local hotbar = lplr.PlayerGui:FindFirstChild('hotbar')
@@ -768,16 +664,5 @@ run(function()
             end
         end
     })
-    DepositKey = AutoBank:CreateTextBox({
-        Name = 'Deposit key',
-        Placeholder = 'None',
-        Tooltip = 'Press while stood at your personal chest to instantly bank everything you are carrying'
-    })
-    WithdrawKey = AutoBank:CreateTextBox({
-        Name = 'Withdraw key',
-        Placeholder = 'None',
-        Tooltip = 'Press while stood at your personal chest to instantly pull everything back out'
-    })
-
     applyModeOptions()
 end)

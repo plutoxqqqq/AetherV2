@@ -1828,4 +1828,302 @@ module.SolveTrajectory = function(origin, projectileSpeed, gravity, targetPos, t
 	end
 	return targetPos, targetPos
 end
+-------------------------------------------------------------------------------
+-- Aim preview / intercept solving
+-------------------------------------------------------------------------------
+-- Restored after a sync dropped them: ProjectileLanding traces held and live
+-- projectiles with TraceTrajectory, and the BedWars base solves Telepearl and other
+-- straight-line throws with SolveIntercept. Each keeps its own helpers so it cannot
+-- drift when the motion model above changes.
+
+local function finiteScalar(value)
+	return type(value) == 'number' and value == value and value > -math.huge and value < math.huge
+end
+
+local function finiteNumber(value)
+	return type(value) == 'number' and value == value and value > -math.huge and value < math.huge
+end
+
+local function finiteVector(value)
+	return typeof(value) == 'Vector3'
+		and finiteNumber(value.X)
+		and finiteNumber(value.Y)
+		and finiteNumber(value.Z)
+end
+
+-- Deterministically advances a projectile through its exact kinematic curve and tests every
+-- chord against the world.  Callers supply acceleration as a world-space vector so this also
+-- works for projectiles whose gravity is not the Workspace default.  The bounded step count is
+-- important for previews: a stale projectile with a very long lifetime must never turn into an
+-- unbounded render-thread raycast loop.
+function module.TraceTrajectory(origin, initialVelocity, acceleration, raycastParams, lifetime, options)
+	options = type(options) == 'table' and options or {}
+	if not finiteVector(origin) or not finiteVector(initialVelocity) or not finiteVector(acceleration) then return nil end
+	lifetime = tonumber(lifetime) or 5
+	if not finiteNumber(lifetime) or lifetime <= 0 then return nil end
+	lifetime = math.min(lifetime, tonumber(options.MaximumLifetime) or 10)
+
+	local segmentLength = math.max(tonumber(options.SegmentLength) or 1.25, 0.1)
+	local minimumStep = math.max(tonumber(options.MinimumStep) or (1 / 240), 1 / 1000)
+	local maximumStep = math.max(tonumber(options.MaximumStep) or (1 / 30), minimumStep)
+	local maximumSteps = math.max(math.floor(tonumber(options.MaximumSteps) or 720), 1)
+	local radius = math.max(tonumber(options.Radius) or 0, 0)
+	local collisionTest = type(options.CollisionTest) == 'function' and options.CollisionTest or nil
+
+	local function positionAt(time)
+		return origin + initialVelocity * time + acceleration * (0.5 * time * time)
+	end
+
+	local time, previous = 0, origin
+	for _ = 1, maximumSteps do
+		if time >= lifetime then break end
+		local instantaneousSpeed = (initialVelocity + acceleration * time).Magnitude
+		local step = math.clamp(segmentLength / math.max(instantaneousSpeed, 1), minimumStep, maximumStep)
+		local nextTime = math.min(time + step, lifetime)
+		local nextPosition = positionAt(nextTime)
+		local displacement = nextPosition - previous
+		local customPosition, customInstance
+		if collisionTest then
+			local ok, hitPosition, hitInstance = pcall(collisionTest, previous, nextPosition, time, nextTime)
+			if ok and finiteVector(hitPosition) then
+				customPosition, customInstance = hitPosition, hitInstance
+			end
+		end
+
+		local worldResult
+		if displacement.Magnitude > eps then
+			if radius > 0 and workspace.Spherecast then
+				local ok, result = pcall(workspace.Spherecast, workspace, previous, radius, displacement, raycastParams)
+				if ok then worldResult = result end
+			end
+			if not worldResult then
+				local ok, result = pcall(workspace.Raycast, workspace, previous, displacement, raycastParams)
+				if ok then worldResult = result end
+			end
+		end
+
+		if customPosition or worldResult then
+			local worldPosition = worldResult and worldResult.Position
+			local useCustom = customPosition and (not worldPosition
+				or (customPosition - previous).Magnitude <= (worldPosition - previous).Magnitude)
+			local hitPosition = useCustom and customPosition or worldPosition
+			local alpha = displacement.Magnitude > eps
+				and math.clamp((hitPosition - previous).Magnitude / displacement.Magnitude, 0, 1)
+				or 0
+			return {
+				Position = hitPosition,
+				Instance = useCustom and customInstance or worldResult.Instance,
+				Normal = not useCustom and worldResult.Normal or nil,
+				Material = not useCustom and worldResult.Material or nil,
+				Time = time + (nextTime - time) * alpha,
+				Velocity = initialVelocity + acceleration * (time + (nextTime - time) * alpha),
+				RaycastResult = not useCustom and worldResult or nil,
+				Expired = false
+			}
+		end
+
+		time, previous = nextTime, nextPosition
+	end
+
+	return {
+		Position = positionAt(lifetime),
+		Instance = nil,
+		Time = lifetime,
+		Velocity = initialVelocity + acceleration * lifetime,
+		Expired = true
+	}
+end
+
+local function interceptResidual(relativePosition, relativeVelocity, halfRelativeAcceleration, speed, time)
+	local offset = relativePosition + relativeVelocity * time + halfRelativeAcceleration * (time * time)
+	return offset:Dot(offset) - (speed * speed * time * time)
+end
+
+-- Solves |r + v*t + 0.5*(at-ap)*t^2| = projectileSpeed*t.  The result uses
+-- the same speed supplied by the caller, so the solved angle and transmitted
+-- velocity cannot drift apart.
+function module.SolveIntercept(origin, projectileSpeed, projectileAcceleration, targetPosition, targetVelocity, targetAcceleration, minimumTime, maximumTime)
+	if not finiteVector(origin) or not finiteVector(projectileAcceleration)
+		or not finiteVector(targetPosition) or not finiteVector(targetVelocity)
+		or not finiteVector(targetAcceleration) or not finiteNumber(projectileSpeed)
+		or projectileSpeed <= eps then return nil end
+
+	minimumTime = tonumber(minimumTime)
+	if not finiteScalar(minimumTime) or minimumTime < 0 then minimumTime = 0 end
+	minimumTime = math.max(minimumTime, eps)
+	maximumTime = tonumber(maximumTime) or 10
+	if not finiteNumber(maximumTime) or maximumTime < minimumTime then return nil end
+
+	local relativePosition = targetPosition - origin
+	local halfRelativeAcceleration = (targetAcceleration - projectileAcceleration) * 0.5
+	local bestTime
+	local function residualTolerance(root)
+		local scale = math.max(projectileSpeed * projectileSpeed * root * root, 1)
+		return math.max(0.0025, scale * 1e-5)
+	end
+	local function acceptRoot(root)
+		if not finiteNumber(root) or root < minimumTime or root > maximumTime then return end
+		local residual = math.abs(interceptResidual(
+			relativePosition,
+			targetVelocity,
+			halfRelativeAcceleration,
+			projectileSpeed,
+			root
+		))
+		if residual <= residualTolerance(root)
+			and (not bestTime or root < bestTime) then
+			bestTime = root
+		end
+	end
+
+	local c4 = halfRelativeAcceleration:Dot(halfRelativeAcceleration)
+	local c3 = 2 * targetVelocity:Dot(halfRelativeAcceleration)
+	local c2 = targetVelocity:Dot(targetVelocity)
+		+ 2 * relativePosition:Dot(halfRelativeAcceleration)
+		- projectileSpeed * projectileSpeed
+	local c1 = 2 * relativePosition:Dot(targetVelocity)
+	local c0 = relativePosition:Dot(relativePosition)
+	local coefficientScale = math.max(math.abs(c4), math.abs(c3), math.abs(c2), math.abs(c1), math.abs(c0))
+	if coefficientScale <= 0 then return nil end
+	local coefficientEpsilon = coefficientScale * 1e-12
+	if math.abs(c4) > coefficientEpsilon then
+		-- A closed-form quartic is an optimization, not a hard dependency.  A
+		-- degenerate resolvent or executor math edge case must fall through to the
+		-- bounded numerical search instead of aborting the caller's target query.
+		local solved, roots = pcall(module.solveQuartic, c4, c3, c2, c1, c0)
+		if solved and type(roots) == 'table' then
+			for _, root in roots do
+				acceptRoot(root)
+			end
+		end
+	elseif math.abs(c2) > coefficientEpsilon then
+		local root0, root1 = solveQuadric(c2, c1, c0)
+		acceptRoot(root0)
+		acceptRoot(root1)
+	elseif math.abs(c1) > coefficientEpsilon then
+		acceptRoot(-c0 / c1)
+	end
+
+	-- Numerical fallback covers near-degenerate quartics and floating-point
+	-- roots rejected by the closed form at very short ranges.
+	if not bestTime then
+		local steps = 192
+		local times, values = {}, {}
+		for step = 0, steps do
+			local time = minimumTime + ((maximumTime - minimumTime) * step / steps)
+			times[step + 1] = time
+			values[step + 1] = interceptResidual(
+				relativePosition,
+				targetVelocity,
+				halfRelativeAcceleration,
+				projectileSpeed,
+				time
+			)
+		end
+		local function refineSignChange(low, high, lowValue)
+			for _ = 1, 32 do
+				local middle = (low + high) * 0.5
+				local middleValue = interceptResidual(relativePosition, targetVelocity, halfRelativeAcceleration, projectileSpeed, middle)
+				if math.abs(middleValue) <= residualTolerance(middle) then return middle end
+				if (lowValue <= 0) == (middleValue <= 0) then
+					low, lowValue = middle, middleValue
+				else
+					high = middle
+				end
+			end
+			return (low + high) * 0.5
+		end
+		local function refineTangent(low, high)
+			for _ = 1, 32 do
+				local left = low + (high - low) / 3
+				local right = high - (high - low) / 3
+				local leftValue = math.abs(interceptResidual(relativePosition, targetVelocity, halfRelativeAcceleration, projectileSpeed, left))
+				local rightValue = math.abs(interceptResidual(relativePosition, targetVelocity, halfRelativeAcceleration, projectileSpeed, right))
+				if leftValue <= rightValue then high = right else low = left end
+			end
+			return (low + high) * 0.5
+		end
+		for index = 1, #times do
+			local value = values[index]
+			if math.abs(value) <= residualTolerance(times[index]) then acceptRoot(times[index]) end
+			if index > 1 then
+				local previousValue = values[index - 1]
+				if (previousValue < 0 and value > 0) or (previousValue > 0 and value < 0) then
+					acceptRoot(refineSignChange(times[index - 1], times[index], previousValue))
+				end
+			end
+			if index > 1 and index < #times then
+				local previousAbs, nextAbs = math.abs(values[index - 1]), math.abs(values[index + 1])
+				if math.abs(value) <= previousAbs and math.abs(value) <= nextAbs then
+					acceptRoot(refineTangent(times[index - 1], times[index + 1]))
+				end
+			end
+		end
+	end
+	if not bestTime then return nil end
+
+	local displacement = relativePosition
+		+ targetVelocity * bestTime
+		+ halfRelativeAcceleration * (bestTime * bestTime)
+	if displacement.Magnitude <= eps then return nil end
+	local initialVelocity = displacement / bestTime
+	return {
+		AimPosition = origin + initialVelocity,
+		FlightTime = bestTime,
+		ImpactPosition = targetPosition
+			+ targetVelocity * bestTime
+			+ targetAcceleration * (0.5 * bestTime * bestTime),
+		InitialVelocity = initialVelocity
+	}
+end
+
+function module.SolveTrajectory(origin, projectileSpeed, gravity, targetPos, targetVelocity, playerGravity, playerHeight, playerJump, params)
+	if typeof(origin) ~= 'Vector3' or typeof(targetPos) ~= 'Vector3'
+		or typeof(targetVelocity) ~= 'Vector3' or not finiteScalar(projectileSpeed)
+		or projectileSpeed <= eps then return end
+	gravity = math.abs(tonumber(gravity) or 0)
+	if not finiteScalar(gravity) then return end
+	local numericHeight = tonumber(playerHeight)
+	if numericHeight ~= nil and (not finiteScalar(numericHeight) or numericHeight < 0) then
+		numericHeight = nil
+	end
+
+	local velocity = targetVelocity
+	local grounded = false
+	if numericHeight and numericHeight > 0 then
+		local success, ray = pcall(workspace.Raycast, workspace, targetPos,
+			Vector3.new(0, -numericHeight - 0.5, 0), params)
+		grounded = success and ray ~= nil and velocity.Y <= 0.1
+	end
+	if grounded then
+		-- A floor hit means the target is supported; its vertical velocity is
+		-- zero, not the distance to the floor.  The old code injected that
+		-- distance as a downward speed and systematically aimed low.
+		velocity = Vector3.new(velocity.X, 0, velocity.Z)
+	end
+
+	local targetAcceleration = Vector3.zero
+	-- Once the floor probe says the target is airborne, gravity still applies at
+	-- the apex where Y velocity is zero.  The previous velocity/jump gate made
+	-- that single frame look stationary and caused a systematic low shot.
+	local targetGravity = tonumber(playerGravity)
+	if not grounded and finiteScalar(targetGravity) and targetGravity > 0 then
+		targetAcceleration = Vector3.new(0, -targetGravity, 0)
+	end
+	local solution = module.SolveIntercept(
+		origin,
+		projectileSpeed,
+		Vector3.new(0, -gravity, 0),
+		targetPos,
+		velocity,
+		targetAcceleration,
+		0,
+		10
+	)
+	if solution and solution.InitialVelocity.Magnitude > eps then
+		return solution.AimPosition, solution.InitialVelocity.Unit, solution.FlightTime
+	end
+	return nil
+end
+
 return module

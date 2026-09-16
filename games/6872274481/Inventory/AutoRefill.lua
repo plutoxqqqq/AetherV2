@@ -31,6 +31,36 @@ run(function()
 		end)
 	end
 
+	-- A purchase is reserved the moment it is sent and stays reserved until the store catches up
+	-- with it. Without that, a pass that started again before the inventory sync landed read the
+	-- pre-purchase total, worked out the same shortfall a second time and bought it again, which
+	-- is what made a refill overshoot. The reservation is dropped as soon as the observed total
+	-- reaches what was expected, or after a timeout in case the purchase never went through.
+	local RESERVATION_TIMEOUT = 3
+	local reserved = {}
+
+	local function reserveFamily(family, units)
+		local record = reserved[family]
+		if record then
+			record.Units += units
+			return
+		end
+		reserved[family] = {Baseline = countFamily(family), Units = units, Clock = os.clock()}
+	end
+
+	-- The authoritative count: what the inventory shows, plus anything bought but not yet synced.
+	local function heldFamily(family)
+		local observed = countFamily(family)
+		local record = reserved[family]
+		if not record then return observed end
+
+		if observed >= record.Baseline + record.Units or os.clock() - record.Clock > RESERVATION_TIMEOUT then
+			reserved[family] = nil
+			return observed
+		end
+		return math.max(observed, record.Baseline + record.Units)
+	end
+
 	-- The shop only ever sells the neutral wool entry; the server hands back the wool of
 	-- your own team, exactly like the manual shop does.
 	local function purchaseType(family)
@@ -43,10 +73,12 @@ run(function()
 
 		local amount = math.max(tonumber(item.amount) or 1, 1)
 		local price = math.max(tonumber(item.price) or 0, 0)
-		local current = countFamily(family)
+		local current = heldFamily(family)
 		local needed = math.max(target - current, 0)
 		if needed <= 0 then return false end
 
+		-- The fewest bundles that still reach the target. A purchase hands over `amount` items, so
+		-- rounding up is what reaches it, and it can never overshoot by more than one bundle.
 		local purchases = math.ceil(needed / amount)
 
 		-- Stack caps first, then whatever the currency on hand can actually pay for.
@@ -69,6 +101,7 @@ run(function()
 		for _ = 1, purchases do
 			util.Shop.Purchase(item, shopId, currencytable, {Label = 'AutoRefill'})
 		end
+		reserveFamily(family, purchases * amount)
 		return true
 	end
 
@@ -79,7 +112,7 @@ run(function()
 			if active[family] and slider then
 				local minimum = tonumber(slider.ValueMin) or 0
 				local target = tonumber(slider.ValueMax) or 0
-				if minimum > 0 and countFamily(family) < minimum then
+				if minimum > 0 and heldFamily(family) < minimum then
 					refillFamily(family, target, shopId, currencytable)
 				end
 			end
@@ -129,7 +162,11 @@ run(function()
 	AutoRefill = vape.Categories.Inventory:CreateModule({
 		Name = 'AutoRefill',
 		Function = function(callback)
-			if not callback then return end
+			if not callback then
+				-- Reservations describe purchases in flight for this session only.
+				table.clear(reserved)
+				return
+			end
 
 			if not util.Queue.Await(AutoRefill) then return end
 
@@ -141,7 +178,9 @@ run(function()
 					local shopId = util.Shop.Id('item')
 					if shopId then
 						refillPass(shopId)
-						nextPass = tick() + 0.5
+						-- Long enough for the purchases this pass sent to land in the store, so the next one
+						-- starts from real totals rather than the ones the reservation is still covering.
+						nextPass = tick() + 0.75
 					end
 				end
 				task.wait(util.PollInterval)

@@ -39,9 +39,9 @@ run(function()
     local TargetSkilled
     local AttackMode
 	local Particles, Boxes = {}, {}
-    local anims, AnimDelay, AnimTween, armC0 = vape.Libraries.auraanims, tick()
-	local AttackRemote
+    local anims, AnimDelay, AnimTween, armC0 = vape.Libraries.auraanims, tick()    local AttackRemote
 	local lastRemoteRefresh = 0
+	local animationHooked = false
 	local function refreshAttackRemote()
 		local ok, remote = pcall(function()
 			return bedwars.Client:Get(remotes.AttackEntity).instance
@@ -197,6 +197,16 @@ run(function()
 	local function furyType()
 		return bedwars.StatusEffectMeta.FURY_POTION or 'fury_potion'
 	end
+	-- Airborne targets are the ones this option is about: 100% never skips, anything lower is the
+	-- chance an airborne target gets taken at all. The slider existed but was never read.
+	local function passesAirChance(ent)
+		local chance = tonumber(ChanceSlider.Value) or 100
+		if chance >= 100 then return true end
+		local humanoid = ent.Humanoid
+		if not humanoid or humanoid.FloorMaterial ~= Enum.Material.Air then return true end
+		return math.random(1, 100) <= chance
+	end
+
 	local function hasFuryPotion()
 		local character = lplr.Character
 		if not character then return false end
@@ -208,8 +218,14 @@ run(function()
 		furyAttribute = ok and attribute or furyAttribute
 		return furyAttribute ~= nil and character:GetAttribute(furyAttribute) ~= nil
 	end
+	local furyScanAt = 0
 	local function getFuryMultiplier()
 		if furyBalance then return furyBalance.FURY_POTION_ATTACK_SPEED_MULTIPLIER or 1 end
+		-- This runs on every attack frame while the balance module is missing, and a full
+		-- replicatedStorage descendant walk is far too much work for that. Five seconds is short
+		-- enough to pick it up as soon as the game replicates it.
+		if tick() < furyScanAt then return 1 end
+		furyScanAt = tick() + 5
 		for _, module in replicatedStorage:GetDescendants() do
 			if module:IsA('ModuleScript') and module.Name:lower():find('black%-marketeer%-balance') then
 				local ok, balance = pcall(require, module)
@@ -251,8 +267,9 @@ run(function()
                             }
                         }
                     }
-					debug.setupvalue(oldSwing or bedwars.SwordController.playSwordEffect, 7, fake)
+					debug.setupvalue(bedwars.SwordController.playSwordEffect, 7, fake)
                     debug.setupvalue(bedwars.ScytheController.playLocalAnimation, 3, fake)
+					animationHooked = true
 
                     task.spawn(function()
                         local started = false
@@ -338,14 +355,10 @@ run(function()
                             switchItem(sword.tool, 0)
 							local selfpos = entitylib.character.RootPart.Position
 							local localfacing = entitylib.character.RootPart.CFrame.LookVector * Vector3.new(1, 0, 1)
-							if localfacing.Magnitude > 0.001 then localfacing = localfacing.Unit end
-
-                            
-                            
-                            
-                            local inrange, hittable = {}, {}
+							if localfacing.Magnitude > 0.001 then localfacing = localfacing.Unit end							local inrange, hittable = {}, {}
 							for _, v in plrs do
 								if not v.RootPart or not v.RootPart.Parent then continue end
+								if not passesAirChance(v) then continue end
 								local delta = (v.RootPart.Position - selfpos)
 								local flatDelta = delta * Vector3.new(1, 0, 1)
 								local angle = flatDelta.Magnitude > 0.001 and math.acos(math.clamp(localfacing:Dot(flatDelta.Unit), -1, 1)) or 0
@@ -378,6 +391,10 @@ run(function()
                                 end
                             end
 
+							-- The target the aura is actually committing to, not whichever entity happened to be
+							-- first in the swing list; AimAssist's "use killaura target" reads this.
+							store.KillauraTarget = focus and focus.Entity or (inrange[1] and inrange[1].Entity) or nil
+
 							for _, entry in inrange do
                                 local v, delta = entry.Entity, entry.Delta
 
@@ -389,7 +406,6 @@ run(function()
 
                                 if not Attacking then
                                     Attacking = true
-                                    store.KillauraTarget = focus and focus.Entity or v
 								if not Swing.Enabled and AnimDelay < tick() and not LegitAura.Enabled then
 										AnimDelay = tick() + math.max(hitRegAnimationTime or SwingTime.Value, 0.05)
 										pcall(function()
@@ -471,8 +487,14 @@ run(function()
                 for _, v in Particles do
                     v.Parent = nil
                 end
-                debug.setupvalue(oldSwing or bedwars.SwordController.playSwordEffect, 7, bedwars.Knit)
-                debug.setupvalue(bedwars.ScytheController.playLocalAnimation, 3, bedwars.Knit)
+                -- Only put the controllers back when the custom animation actually replaced them:
+                -- doing it unconditionally rewrote a live upvalue of the game's sword effect even
+                -- when the Animation toggle was off, which broke the vanilla swing effect.
+                if animationHooked then
+                    debug.setupvalue(bedwars.SwordController.playSwordEffect, 7, bedwars.Knit)
+                    debug.setupvalue(bedwars.ScytheController.playLocalAnimation, 3, bedwars.Knit)
+                    animationHooked = false
+                end
                 Attacking = false
                 if armC0 then
                     AnimTween = tweenService:Create(gameCamera.Viewmodel.RightHand.RightWrist, TweenInfo.new(AnimationTween.Enabled and 0.001 or 0.3, Enum.EasingStyle.Exponential), {
