@@ -159,6 +159,7 @@ Kits/YaminiExtender.lua
 Kits/YuziExtender.lua
 Legit/BedAlarm.lua
 Legit/BedBreakEffect.lua
+Legit/BlurryTextures.lua
 Legit/CleanKit.lua
 Legit/Crosshair.lua
 Legit/DamageIndicator.lua
