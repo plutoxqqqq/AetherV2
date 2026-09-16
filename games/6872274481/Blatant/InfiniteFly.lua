@@ -87,7 +87,12 @@ run(function()
 		GroundSampleInterval = 0.05, -- seconds between ordinary ground samples
 		FarGroundInterval = 0.25, -- seconds between long-range (void) ground samples
 		GroundProbeRange = 400, -- studs searched for ordinary ground
-		VoidProbeRange = 1600, -- studs searched when the void is the question
+		-- A shape cast is capped by the engine at 1024 studs, so the long range has to stay
+		-- under that: asking for more raises "Attempt to shapecast with distance ...", which
+		-- used to abort the frame and switch the module straight back off. `CastLimit` is
+		-- the hard ceiling every probe is clamped to (see `castDistance`).
+		VoidProbeRange = 1000, -- studs searched when the void is the question
+		CastLimit = 1024, -- studs; engine maximum shape cast distance
 		LandingNormalY = 0.6, -- minimum upward normal accepted as a landing surface
 		ProbeLift = 0.3, -- studs the ground probe starts above the feet, so it never starts
 		-- inside the surface the character is already standing on
@@ -116,6 +121,14 @@ run(function()
 
 	-- The controller acts below the observed lower bound, not at it.
 	local AIRBORNE_TRIGGER = TUNING.ObservedAirtimeLowerBound - TUNING.AirborneSafetyMargin
+
+	-- Shape casts are capped by the engine; a request past the cap throws instead of returning
+	-- a miss, so every cast distance is clamped before it reaches the world.
+	local function castDistance(distance)
+		distance = tonumber(distance) or 0
+		if distance <= 0 then return 0 end
+		return math.min(distance, TUNING.CastLimit)
+	end
 
 	local State = {
 		Disabled = 'DISABLED',
@@ -413,6 +426,7 @@ run(function()
 		local origin = root.Position
 		local lift = TUNING.ProbeLift
 		local box = root.Size
+		range = castDistance(range)
 		local halfHeight = box.Y * 0.5
 		local bestDistance, bestNormal, bestInstance
 		for index = 1, #probes do
@@ -456,6 +470,8 @@ run(function()
 	local function slideStep(root, character, step)
 		local distance = step.Magnitude
 		if distance < 1e-4 then return step, false end
+		distance = castDistance(distance)
+		step = step.Unit * distance
 		local direction = step.Unit
 		local skin = TUNING.WallSkin
 		refreshFilter(character)

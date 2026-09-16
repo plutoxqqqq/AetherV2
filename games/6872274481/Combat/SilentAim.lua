@@ -16,25 +16,27 @@ run(function()
 	
 	-- ProjectileFire(tool, ammo, projectile, shootPosition, rootPosition, velocity, shotId, draw, timestamp)
 	-- - the order every caller in the pack itself uses (see fireProjectile in base.lua, and the
-	-- kit modules that fire directly). The packed table starts at the remote, so the projectile
-	-- name is 4, the launch position is 5 and the launch velocity is 7. Reading these as
-	-- (4, 6, 3) is what left shots unredirected or sent a position where a velocity belongs.
+	-- kit modules that fire directly). The namecall hook drops the remote that starts the vararg
+	-- list, so the packed table lines up one-to-one with that call: 1 tool, 2 ammo,
+	-- 3 projectile, 4 shoot position, 5 root position, 6 velocity. Off-by-one reads here are
+	-- what left shots unredirected or sent a position where a velocity belongs.
 	local function locateLaunch(args)
-		local projType, origin, velocity, velocityIndex = args[4], args[5], args[7], 7
+		local projType, origin, velocity, velocityIndex = args[3], args[4], args[6], 6
 		if type(projType) == 'string' and typeof(origin) == 'Vector3' and typeof(velocity) == 'Vector3' then
 			return projType, origin, velocity, velocityIndex
 		end
 		-- Changed layout: find the pieces by type instead of by position. The launch vectors
 		-- always arrive in order - shoot position, root position, velocity - so the third one is
-		-- the velocity, and the projectile name is a known meta name before the first vector.
+		-- the velocity. The projectile name is the nearest known meta name *before* the shoot
+		-- position, walked backwards so an ammo name sitting one slot earlier cannot win.
 		local vectors = {}
-		for index = 2, args.n do
+		for index = 1, args.n do
 			if typeof(args[index]) == 'Vector3' then table.insert(vectors, index) end
 		end
 		if #vectors < 3 then return end
 		velocityIndex = vectors[3]
 		origin, velocity = args[vectors[1]], args[velocityIndex]
-		for index = 2, vectors[1] do
+		for index = vectors[1] - 1, 1, -1 do
 			local value = args[index]
 			if type(value) == 'string' and bedwars.ProjectileMeta[value] then
 				projType = value
