@@ -7,167 +7,144 @@ run(function()
 	local FOV
 	local OtherProjectiles
 	local Blacklist
-
+	
 	local rayCheck = RaycastParams.new()
 	rayCheck.FilterType = Enum.RaycastFilterType.Include
-	rayCheck.FilterDescendantsInstances = {workspace:FindFirstChild('Map')}
-
-	local launchHook
-	local suppressedAids = {}
-
-	-- BowAssist shares the projectile launch hook and physically turns the camera and
-	-- viewmodel. Leaving it on while SilentAim runs is what produced the visible snap, so
-	-- it is suspended for as long as SilentAim is active and restored afterwards.
-	local function suspendAid(name)
-		local module = vape.Modules and vape.Modules[name]
-		if module and module.Enabled then
-			suppressedAids[name] = true
-			module:Toggle()
+	
+	local namecall
+	local lastWarn = 0
+	
+	local function solveSilent(args)
+		local origin, velocity, projType = args[4], args[6], args[3]
+		if typeof(origin) ~= 'Vector3' or typeof(velocity) ~= 'Vector3' or type(projType) ~= 'string' then
+			return
 		end
-	end
-	local function resumeAids()
-		for name in suppressedAids do
-			local module = vape.Modules and vape.Modules[name]
-			if module and not module.Enabled then
-				module:Toggle()
-			end
+	
+		if (not OtherProjectiles.Enabled) and not projType:find('arrow') then
+			return
 		end
-		table.clear(suppressedAids)
-	end
-
-	local function resolveTargetPart(ent, requested, projectileType)
-		local character = ent and ent.Character
-		local root = ent and (ent.RootPart or ent.HumanoidRootPart) or character and character.PrimaryPart
-		if not character then return root end
-		local function first(...)
-			for index = 1, select('#', ...) do
-				local partName = select(index, ...)
-				local part = partName and character:FindFirstChild(partName)
-				if part and part:IsA('BasePart') then return part end
-			end
-			return root
+	
+		if table.find(Blacklist.ListEnabled or {}, ((projType == 'glue_trap' or projType == 'glue_projectile') and 'gloop' or projType)) then
+			return
 		end
-		if requested == 'Dynamic' then
-			requested = tostring(projectileType or ''):lower():find('headhunter', 1, true) and 'Head' or 'RootPart'
+	
+		local meta = bedwars.ProjectileMeta[projType]
+		if not meta then return end
+	
+		local speed = velocity.Magnitude
+		if speed <= 0 then return end
+	
+		local map = workspace:FindFirstChild('Map')
+		if map ~= rayCheck.FilterDescendantsInstances[1] then
+			rayCheck.FilterDescendantsInstances = map and {map} or {}
 		end
-		if requested == 'Head' then return first('Head') end
-		if requested == 'Torso' then return first('UpperTorso', 'Torso', 'LowerTorso') end
-		if requested == 'Left arm' then return first('LeftHand', 'LeftLowerArm', 'LeftUpperArm', 'Left Arm') end
-		if requested == 'Right arm' then return first('RightHand', 'RightLowerArm', 'RightUpperArm', 'Right Arm') end
-		if requested == 'Left leg' then return first('LeftFoot', 'LeftLowerLeg', 'LeftUpperLeg', 'Left Leg') end
-		if requested == 'Right leg' then return first('RightFoot', 'RightLowerLeg', 'RightUpperLeg', 'Right Leg') end
-		if requested == 'Random' then
-			local available = {first('Head'), first('UpperTorso', 'Torso'), first('LeftHand', 'Left Arm'), first('RightHand', 'Right Arm'), first('LeftFoot', 'Left Leg'), first('RightFoot', 'Right Leg')}
-			local filtered = {}
-			for _, part in ipairs(available) do if part and part ~= root then table.insert(filtered, part) end end
-			return #filtered > 0 and filtered[math.random(1, #filtered)] or root
-		end
-		return root
-	end
-
-	local function chooseTarget(origin, projectileType)
-		local ent = entitylib.EntityMouse({
+		local gravity = meta.gravitationalAcceleration or 196.2
+	
+		local plr = entitylib.EntityMouse({
 			Part = 'RootPart',
 			Range = FOV.Value,
 			Players = Targets.Players.Enabled,
-			Priority = Targets.Priority and Targets.Priority.Value,
 			NPCs = Targets.NPCs.Enabled,
+			Priority = Targets.Priority.Value,
 			Wallcheck = Targets.Walls.Enabled,
-			Origin = origin,
-			Sort = sortmethods[Sort.Value]
+			Sort = sortmethods[Sort.Value or 'Distance'],
+			MouseOrigin = gameCamera.ViewportSize / 2,
+			Origin = origin
 		})
-		if not ent then return end
-		local part = resolveTargetPart(ent, TargetPart.Value, projectileType)
-		if not part or not part.Parent then return end
-		return ent, part
-	end
-
-	local function solveShot(launch, projmeta, worldmeta)
-		if type(launch) ~= 'table' or typeof(launch.positionFrom) ~= 'Vector3'
-			or typeof(launch.initialVelocity) ~= 'Vector3' or not projmeta then
-			return
+		if not plr then return end
+	
+		local targetpart = getTargetPart(plr, TargetPart.Value)
+		local targetpos
+		if TargetPart.Value == 'Closest' then
+			local center, magnitude = gameCamera.ViewportSize / 2, 9e9
+			for _, v in plr.Character:GetChildren() do
+				if v:IsA('BasePart') then
+					local position, vis = gameCamera:WorldToViewportPoint(v.Position)
+					if vis then
+						local mag = (center - Vector2.new(position.X, position.Y)).Magnitude
+						if mag < magnitude then
+							magnitude, targetpos = mag, v.Position
+						end
+					end
+				end
+			end
+			targetpos = targetpos or plr.Character.PrimaryPart and plr.Character.PrimaryPart.Position
+		elseif TargetPart.Value == 'Dynamic' then
+			local tool = store.hand.tool
+			if tool and tool.Name:find('headhunter') and plr.Character:FindFirstChild('Head') then
+				targetpos = plr.Character.Head.Position
+			else
+				targetpos = plr.Character.PrimaryPart and plr.Character.PrimaryPart.Position
+			end
 		end
-
-		local projectileType = tostring(projmeta.projectile or '')
-		if projectileType == '' then return end
-		if (not OtherProjectiles.Enabled) and not projectileType:find('arrow') then return end
-
-		local blacklistName = (projectileType == 'glue_trap' or projectileType == 'glue_projectile') and 'gloop' or projectileType
-		if table.find(Blacklist.ListEnabled or {}, blacklistName) then return end
-
-		local origin = launch.positionFrom
-		local ent, part = chooseTarget(origin, projectileType)
-		if not ent or not part then return end
-
-		local ok, meta = pcall(projmeta.getProjectileMeta, projmeta)
-		meta = ok and meta or bedwars.ProjectileMeta[projectileType]
-		if type(meta) ~= 'table' then return end
-
-		local lifetime = (worldmeta and meta.predictionLifetimeSec or meta.lifetimeSec or 3)
-		local gravity = launch.gravitationalAcceleration or ((meta.gravitationalAcceleration or 196.2) * (projmeta.gravityMultiplier or 1))
-		local speed = tonumber(meta.launchVelocity) or launch.initialVelocity.Magnitude
-		if not speed or speed <= 0 then return end
-
-		local solution = solveBedwarsProjectile(origin, speed, gravity, ent, part.Position, {
-			Lifetime = lifetime,
-			PredictionScale = Prediction.Value,
-			Stationary = projectileType == 'telepearl',
-			RaycastParams = rayCheck
-		})
-		if not solution then return end
-
-		store.hitchance.SilentAim = {Value = getHitChance(ent, (part.Position - origin).Magnitude / math.max(speed, 1)), Clock = tick()}
-		targetinfo.Targets[ent] = tick() + 1
-		launch.initialVelocity = solution.Velocity
-		launch.positionFrom = origin
-		launch.deltaT = lifetime
-		launch.gravitationalAcceleration = gravity
-		return launch
+	
+		targetpos = targetpos or targetpart and targetpart.Position
+		if not targetpos then return end
+		local playerGravity = workspace.Gravity
+		local balloons = plr.Character:GetAttribute('InflatedBalloons')
+		if balloons and balloons > 0 then
+			playerGravity = workspace.Gravity * (1 - (balloons >= 4 and 1.2 or balloons >= 3 and 1 or 0.975))
+		end
+	
+		if plr.Character.PrimaryPart and plr.Character.PrimaryPart:FindFirstChild('rbxassetid://8200754399') then
+			playerGravity = 6
+		end
+	
+		if plr.Player and plr.Player:GetAttribute('IsOwlTarget') then
+			for _, v in collectionService:GetTagged('Owl') do
+				if v:GetAttribute('Target') == plr.Player.UserId and v:GetAttribute('Status') == 2 then
+					playerGravity = 0
+				end
+			end
+		end
+	
+		local pearl = projType == 'telepearl'
+		local targetVelocity = pearl and Vector3.zero or plr.RootPart.AssemblyLinearVelocity
+		local targetAirborne = not pearl and plr.Humanoid.FloorMaterial == Enum.Material.Air or math.abs(targetVelocity.Y) > 0.01
+		local calc, _, travelTime = prediction.SolveTrajectory(origin, speed * Prediction.Value, gravity, targetpos, targetVelocity, playerGravity, plr.HipHeight, plr.Jumping and 42.6 or nil, rayCheck, targetAirborne, plr.RootPart.Position, plr.RootPart, nil, true)
+		if not calc or not travelTime or travelTime > (meta.lifetimeSec or 3) then return end
+	
+		targetinfo.Targets[plr] = tick() + 1
+		store.hitchance.SilentAim = {Value = getHitChance(plr, travelTime), Clock = tick()}
+		return CFrame.lookAt(origin, calc).LookVector * speed
 	end
-
+	
 	SilentAim = vape.Categories.Combat:CreateModule({
 		Name = 'SilentAim',
 		Function = function(callback)
-			if callback then
-				if vape.Modules.ProjectileAimbot and vape.Modules.ProjectileAimbot.Enabled then
-					notif('SilentAim', 'Disable ProjectileAimbot before enabling SilentAim.', 5, 'warning')
-					SilentAim:Toggle()
-					return
-				end
-				suspendAid('BowAssist')
-				launchHook = bedwars.ProjectileLaunchHook:Add('SilentAim', 15, function(nextLaunch, ...)
-					local launch = nextLaunch(...)
-					local projmeta, worldmeta = select(2, ...), select(3, ...)
-					local ok, result = pcall(solveShot, launch, projmeta, worldmeta)
-					if ok and result then launch = result end
-					return launch
-				end)
-				SilentAim:Clean(function()
-					if launchHook then launchHook(); launchHook = nil end
-					resumeAids()
-				end)
-			elseif launchHook then
-				launchHook()
-				launchHook = nil
-				resumeAids()
+			if callback and not namecall then
+				namecall = hookmetamethod(game, '__namecall', newcclosure(function(...)
+					if SilentAim.Enabled and not checkcaller() and getnamecallmethod() == 'InvokeServer' and tostring(...) == 'ProjectileFire' then
+						local self = ...
+						local args = table.pack(select(2, ...))
+						local success, newVelocity = pcall(solveSilent, args)
+						if success and typeof(newVelocity) == 'Vector3' then
+							args[6] = newVelocity
+						elseif not success and shared.VapeDeveloper and tick() > lastWarn then
+							lastWarn = tick() + 5
+							warn('[catvape] silentaim solve failed: '..tostring(newVelocity))
+						end
+						return self.InvokeServer(self, table.unpack(args, 1, args.n))
+					end
+					return namecall(...)
+				end))
 			end
 		end,
-		Tooltip = 'Redirects the projectile you fire toward a target without ever moving your aim'
+		Tooltip = 'Redirects only the projectile values sent to the server, so enemies get hit while your shot flies exactly where you aimed on your own screen'
 	})
-
+	
 	Targets = SilentAim:CreateTargets({
 		Players = true,
 		Walls = true
 	})
 	TargetPart = SilentAim:CreateDropdown({
 		Name = 'Part',
-		List = {'RootPart', 'Head', 'Torso', 'Left arm', 'Right arm', 'Left leg', 'Right leg', 'Random', 'Dynamic'},
-		Tooltip = 'Dynamic aims at the head with a headhunter, since that is the only bow that pays extra for one, and at the body with everything else'
+		List = {'RootPart', 'Head', 'Torso', 'Left arm', 'Right arm', 'Left leg', 'Right leg', 'Random', 'Dynamic', 'Closest'}
 	})
 	local methods = {'Damage', 'Distance'}
-	for _, i in sortlist do
-		if not table.find(methods, i) then
-			table.insert(methods, i)
+	for _, v in sortlist do
+		if not table.find(methods, v) then
+			table.insert(methods, v)
 		end
 	end
 	Sort = SilentAim:CreateDropdown({
@@ -190,9 +167,9 @@ run(function()
 	})
 	OtherProjectiles = SilentAim:CreateToggle({
 		Name = 'Other Projectiles',
-		Function = function(call)
-			if Blacklist and Blacklist.Object then
-				Blacklist.Object.Visible = call
+		Function = function(callback)
+			if Blacklist then
+				Blacklist.Object.Visible = callback
 			end
 		end,
 		Default = true
