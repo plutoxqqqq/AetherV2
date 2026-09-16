@@ -10,6 +10,9 @@ run(function()
     -- Two JumpRequests this close together are the same press: held spacebar and the landing
     -- frame both fire a second request that used to be counted as a fresh jump.
     local JUMP_DEBOUNCE = 0.09
+    -- Hold mode reads the key itself. A held spacebar does not reliably repeat JumpRequest, so
+    -- waiting for the engine to ask again is what made a held key stop jumping mid-air.
+    local held = false
 
     --[[
         TP Down, ported from Fly.
@@ -31,6 +34,10 @@ run(function()
     local function isGrounded()
         local humanoid = entitylib.isAlive and entitylib.character and entitylib.character.Humanoid
         return humanoid ~= nil and humanoid.FloorMaterial ~= Enum.Material.Air
+    end
+
+    local function isJumpKey(keyCode)
+        return keyCode == Enum.KeyCode.Space or keyCode == Enum.KeyCode.ButtonA
     end
 
     local function tpDownStep()
@@ -74,11 +81,12 @@ run(function()
 
     InfiniteJump = vape.Categories.Blatant:CreateModule({
 	Name = 'InfiniteJump',
-	Tooltip = 'Allows you to jump infinitely',
+	Tooltip = 'Jump again in mid-air, either for as long as you hold the key or a fixed number of times per airtime',
 	Function = function(callback: boolean)
 		if callback then
 			jumps = 0
 			lastJump = 0
+			held = false
 			groundTick, tpTick, tpToggle, oldy = tick(), tick(), true, nil
 
 			InfiniteJump:Clean(runService.PreSimulation:Connect(function()
@@ -87,6 +95,29 @@ run(function()
 				-- "per airtime" rather than per life.
 				if isGrounded() then jumps = 0 end
 				if TP.Enabled then tpDownStep() end
+				-- Hold mode: the key is the whole condition, so the module asks for the next jump
+				-- itself rather than hoping the engine repeats the request. Only in the air, so
+				-- the first hop stays the game's own jump.
+				if Mode.Value == 'Hold' and held and not isGrounded() then
+					if tick() - lastJump >= JUMP_DEBOUNCE then
+						local humanoid = entitylib.character.Humanoid
+						if humanoid then
+							lastJump = tick()
+							humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+						end
+					end
+				end
+			end))
+
+			InfiniteJump:Clean(inputService.InputBegan:Connect(function(input)
+				if isJumpKey(input.KeyCode) then held = true end
+			end))
+			InfiniteJump:Clean(inputService.InputEnded:Connect(function(input)
+				if isJumpKey(input.KeyCode) then held = false end
+			end))
+			-- Releasing focus with the key down used to leave Hold mode jumping forever.
+			InfiniteJump:Clean(inputService.WindowFocusReleased:Connect(function()
+				held = false
 			end))
 
 			InfiniteJump:Clean(inputService.JumpRequest:Connect(function()
@@ -103,47 +134,50 @@ run(function()
 					return
 				end
 
+				if Mode.Value ~= 'Jump' then return end
 				-- A second request in the same beat is held spacebar or the landing frame, not a
 				-- new jump. Counting it was the old double jump.
 				if tick() - lastJump < JUMP_DEBOUNCE then return end
 
-				if Mode.Value == 'Velocity' then
-					if jumps >= MaxJumps.Value then return end
-					jumps += 1
-					lastJump = tick()
-					local power = math.sqrt(2 * workspace.Gravity * humanoid.JumpHeight)
-					root.Velocity = Vector3.new(root.Velocity.X, power, root.Velocity.Z)
-				else
-					lastJump = tick()
-					humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-				end
+				if jumps >= MaxJumps.Value then return end
+				jumps += 1
+				lastJump = tick()
+				humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
 			end))
+		else
+			held = false
 		end
 	end,
 	ExtraText = function()
 		if TP.Enabled then return 'TP Down' end
-		if Mode.Value == 'Velocity' then return jumps .. '/' .. tostring(MaxJumps.Value) end
+		if Mode.Value == 'Jump' then return jumps .. '/' .. tostring(MaxJumps.Value) end
 		return Mode.Value
 	end,
     })
     Mode = InfiniteJump:CreateDropdown({
 	Name = 'Mode',
-	List = { 'Jump', 'Velocity' },
+	-- Jump first on purpose: the dropdown falls back to the first entry when a saved value is
+	-- not in the list, and a config saved while the retired Velocity mode existed says exactly
+	-- that. Jump is the closest thing to it, so that config keeps a capped number of jumps
+	-- instead of silently switching the player to Hold.
+	List = { 'Jump', 'Hold' },
+	Default = 'Jump',
 	Function = function(value)
-		-- The cap only exists for Velocity mode; hiding it in Jump mode keeps the option list
+		-- The cap only exists for Jump mode; hiding it in Hold mode keeps the option list
 		-- honest about what actually reads it.
 		if MaxJumps and MaxJumps.Object then
-			MaxJumps.Object.Visible = value == 'Velocity'
+			MaxJumps.Object.Visible = value == 'Jump'
 		end
 	end,
+	Tooltip = 'Jump: a fixed number of mid-air jumps per airtime, set by Max jumps.\nHold: keeps applying jumps for as long as the key is down',
     })
     MaxJumps = InfiniteJump:CreateSlider({
 	Name = 'Max jumps',
 	Min = 1,
 	Max = 20,
 	Default = 2,
-	Tooltip = 'How many jumps you get before touching the ground again, counted from the moment you leave it. 2 is a double jump; the counter refills on every landing',
-	Visible = Mode.Value == 'Velocity',
+	Tooltip = 'Jump mode only: how many jumps you get before touching the ground again, counted from the moment you leave it. 2 is a double jump; the counter refills on every landing',
+	Visible = Mode.Value == 'Jump',
     })
     TP = InfiniteJump:CreateToggle({
 	Name = 'TP Down',

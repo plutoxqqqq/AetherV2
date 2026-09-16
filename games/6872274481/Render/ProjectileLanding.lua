@@ -12,6 +12,13 @@ run(function()
 	rayParams.FilterType = Enum.RaycastFilterType.Exclude
 	rayParams.RespectCanCollide = true
 
+	-- Colour options across AetherV2 store visibility in Opacity (0 = invisible) and this marker
+	-- once stored its transparency there instead, so a config saved back then restores
+	-- Opacity = 0: the sphere was created every frame and never drawn. Anything below a hair is
+	-- read as "never configured" and the visible default is used.
+	local MIN_MARKER_ALPHA = 0.05
+	local DEFAULT_MARKER_ALPHA = 0.6
+
 	local function newVisual(name)
 		local marker = Instance.new('Part')
 		marker.Name = name
@@ -58,8 +65,11 @@ run(function()
 		end
 		visual.Marker.CFrame = CFrame.new(result.Position + Vector3.new(0, 0.55, 0))
 		-- Opacity is the 0-1 "how visible is this" value every other colour option uses, so it is
-		-- inverted into transparency; copying it straight across made 0 fully opaque and 1 invisible.
-		visual.Marker.Transparency = 1 - math.clamp(MarkerColor.Opacity or 0, 0, 1)
+		-- inverted into transparency. It is not used to decide *whether* the marker exists: a
+		-- slider at 0 means the option was never set, not that the prediction should vanish.
+		local alpha = math.clamp(tonumber(MarkerColor.Opacity) or 0, 0, 1)
+		if alpha < MIN_MARKER_ALPHA then alpha = DEFAULT_MARKER_ALPHA end
+		visual.Marker.Transparency = 1 - alpha
 		local ent = entityForInstance(result.Instance)
 		local model = ent and ent.Character
 		if model ~= visual.HighlightModel then
@@ -207,6 +217,22 @@ run(function()
 		end
 	end
 
+	-- Is a projectile being drawn right now? Three sources, because no single one is reliable:
+	-- the input event (a missed event used to leave the marker dead), the game's own charge state
+	-- (onStartCharging), and the buttons polled directly. Button state is the authority while the
+	-- key is down, so a missed release cannot leave the preview hanging either.
+	local function isDrawing()
+		if drawStart > 0 and tick() - drawStart < 30 then return true end
+		local ok, held = pcall(function()
+			return inputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1)
+		end)
+		if ok and held then return true end
+		ok, held = pcall(function()
+			return inputService:IsGamepadButtonDown(Enum.KeyCode.ButtonR2)
+		end)
+		return ok and held == true
+	end
+
 	local function recordLaunch(nextLaunch, ...)
 		local result = nextLaunch(...)
 		if type(result) == 'table' and typeof(result.positionFrom) == 'Vector3'
@@ -284,13 +310,15 @@ run(function()
 			end
 		end
 
-		if aimingInput and not aimVisual and ProjectileLanding and ProjectileLanding.Enabled then
+		local drawing = aimingInput or isDrawing()
+		if drawing and not aimVisual and ProjectileLanding and ProjectileLanding.Enabled then
 			aimVisual = newVisual('ProjectileLandingAimMarker')
 		end
 
 		local result
-		if aimingInput then
+		if drawing then
 			if lastLaunch and tick() - lastLaunch.Time <= 0.25 then
+				-- The shot that just left: follow it from the values it was actually launched with.
 				result = trace(lastLaunch.Origin, lastLaunch.Velocity, lastLaunch.Gravity, lastLaunch.Lifetime)
 			else
 				local origin, velocity, gravity, lifetime = fallbackLaunch()
@@ -343,8 +371,12 @@ run(function()
 				end)
 			end
 			ProjectileLanding:Clean(workspace.ChildAdded:Connect(watchProjectile))
-			ProjectileLanding:Clean(inputService.InputBegan:Connect(function(input, processed)
-				if not processed then setAiming(input, true) end
+			ProjectileLanding:Clean(inputService.InputBegan:Connect(function(input)
+				-- gameProcessedEvent is true for the click that activates a projectile tool, which is
+				-- exactly the click that starts a draw, so it must not filter here. A focused text box
+				-- is the case that does matter.
+				if inputService:GetFocusedTextBox() then return end
+				setAiming(input, true)
 			end))
 			ProjectileLanding:Clean(inputService.InputEnded:Connect(function(input) setAiming(input, false) end))
 			for _, child in workspace:GetChildren() do watchProjectile(child) end

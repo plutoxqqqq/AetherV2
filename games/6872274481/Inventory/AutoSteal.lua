@@ -45,17 +45,18 @@ run(function()
         return util.Chest.IsPersonal(chest)
     end
 
+    -- Looting one folder. The server has to be told which chest is being observed, and every
+    -- transfer has to happen inside that window: the takes used to be spawned, so they ran after
+    -- the window had already closed with SetObservedChest(nil) and went nowhere.
     local function lootFolder(folder, items)
         if not folder or isPersonalFolder(folder) then return end
         local own = ownPersonalFolder()
         if own and folder == own then return end
         util.Chest.Observe(folder, function()
             for _, entry in util.Chest.Entries(folder) do
-                task.spawn(function()
-                    if util.Chest.Take(folder, entry) and items then
-                        table.insert(items, entry.Name)
-                    end
-                end)
+                if util.Chest.Take(folder, entry) and items then
+                    table.insert(items, entry.Name)
+                end
             end
         end)
     end
@@ -80,14 +81,20 @@ run(function()
             repeat
                 if entitylib.isAlive and store.matchState ~= 2 then
                     local localPosition = entitylib.character.RootPart.Position
-                    if (tick() - Start) >= Delay.Value and (not GUI.Enabled or bedwars.AppController:isAppOpen('ChestApp')) then
-                        
+                    local chestScreenOpen = bedwars.AppController and bedwars.AppController:isAppOpen('ChestApp') or false
+                    -- GUI Check is chest-steal mode: loot only while a chest screen is open. The
+                    -- other half is the fix for banking: with it off, a chest screen being open
+                    -- means the player is using a chest, and looting a different one from there
+                    -- moved the server's observed chest out from under them, so their own deposits
+                    -- landed in the map chest and were looted straight back out again.
+                    local canLoot = GUI.Enabled and chestScreenOpen or not GUI.Enabled and not chestScreenOpen
+                    if (tick() - Start) >= Delay.Value and canLoot then
                         for _, v in crates do
                             if not isPersonal(v) and (localPosition - v.Position).Magnitude <= Range.Value then
                                 lootFolder(getFolder(v), items)
                             end
                         end
-                        
+
                         if Chests.Enabled and ((not Skywars.Enabled) or (store.queueType and store.queueType:find('skywars'))) then
                             for _, v in chests do
                                 if not isPersonal(v) and (localPosition - v.Position).Magnitude <= Range.Value then
@@ -95,29 +102,24 @@ run(function()
                                 end
                             end
                         end
-                        
+
+                        -- Depositing uses the same observed-chest window AutoBank does. Give() on
+                        -- its own depended on whatever chest happened to be observed at the time.
                         local own = Bank.Enabled and #items > 0 and ownPersonalFolder() or nil
                         if own and util.Chest.InRange(Range.Value, localPosition) then
-                                    
-                                    
-                                    
-                                    
-                                    
-                                    for _, name in table.clone(items) do
-                                        local item = getItem(name)
-                                        if item then
-                                            task.spawn(function()
-                                                if util.Chest.Give(own, item.tool) then
-                                                    local index = table.find(items, name)
-                                                    if index then
-                                                        table.remove(items, index)
-                                                    end
-                                                end
-                                            end)
+                            util.Chest.Observe(own, function()
+                                for _, name in table.clone(items) do
+                                    local item = getItem(name)
+                                    if item and util.Chest.Give(own, item.tool) then
+                                        local index = table.find(items, name)
+                                        if index then
+                                            table.remove(items, index)
                                         end
                                     end
+                                end
+                            end)
                         end
-                        Start = tick()
+                    Start = tick()
                     end
                 end
                 task.wait(0.1)

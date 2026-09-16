@@ -14,9 +14,40 @@ run(function()
 	local namecall
 	local lastWarn = 0
 	
+	-- ProjectileFire(tool, ammo, projectile, shootPosition, rootPosition, velocity, shotId, draw, timestamp)
+	-- - the order every caller in the pack itself uses (see fireProjectile in base.lua, and the
+	-- kit modules that fire directly). The packed table starts at the remote, so the projectile
+	-- name is 4, the launch position is 5 and the launch velocity is 7. Reading these as
+	-- (4, 6, 3) is what left shots unredirected or sent a position where a velocity belongs.
+	local function locateLaunch(args)
+		local projType, origin, velocity, velocityIndex = args[4], args[5], args[7], 7
+		if type(projType) == 'string' and typeof(origin) == 'Vector3' and typeof(velocity) == 'Vector3' then
+			return projType, origin, velocity, velocityIndex
+		end
+		-- Changed layout: find the pieces by type instead of by position. The launch vectors
+		-- always arrive in order - shoot position, root position, velocity - so the third one is
+		-- the velocity, and the projectile name is a known meta name before the first vector.
+		local vectors = {}
+		for index = 2, args.n do
+			if typeof(args[index]) == 'Vector3' then table.insert(vectors, index) end
+		end
+		if #vectors < 3 then return end
+		velocityIndex = vectors[3]
+		origin, velocity = args[vectors[1]], args[velocityIndex]
+		for index = 2, vectors[1] do
+			local value = args[index]
+			if type(value) == 'string' and bedwars.ProjectileMeta[value] then
+				projType = value
+				break
+			end
+		end
+		if type(projType) ~= 'string' then return end
+		return projType, origin, velocity, velocityIndex
+	end
+
 	local function solveSilent(args)
-		local origin, velocity, projType = args[4], args[6], args[3]
-		if typeof(origin) ~= 'Vector3' or typeof(velocity) ~= 'Vector3' or type(projType) ~= 'string' then
+		local projType, origin, velocity, velocityIndex = locateLaunch(args)
+		if not projType or typeof(origin) ~= 'Vector3' or typeof(velocity) ~= 'Vector3' then
 			return
 		end
 	
@@ -106,7 +137,9 @@ run(function()
 	
 		targetinfo.Targets[plr] = tick() + 1
 		store.hitchance.SilentAim = {Value = getHitChance(plr, travelTime), Clock = tick()}
-		return CFrame.lookAt(origin, calc).LookVector * speed
+		-- Only the direction is redirected; the launch speed stays the one the shot actually has,
+		-- so the server sees a normal-strength shot that happens to fly at the target.
+		return CFrame.lookAt(origin, calc).LookVector * speed, velocityIndex
 	end
 	
 	SilentAim = vape.Categories.Combat:CreateModule({
@@ -117,9 +150,9 @@ run(function()
 					if SilentAim.Enabled and not checkcaller() and getnamecallmethod() == 'InvokeServer' and tostring(...) == 'ProjectileFire' then
 						local self = ...
 						local args = table.pack(select(2, ...))
-						local success, newVelocity = pcall(solveSilent, args)
-						if success and typeof(newVelocity) == 'Vector3' then
-							args[6] = newVelocity
+						local success, newVelocity, velocityIndex = pcall(solveSilent, args)
+						if success and typeof(newVelocity) == 'Vector3' and velocityIndex then
+							args[velocityIndex] = newVelocity
 						elseif not success and shared.VapeDeveloper and tick() > lastWarn then
 							lastWarn = tick() + 5
 							warn('[catvape] silentaim solve failed: '..tostring(newVelocity))
