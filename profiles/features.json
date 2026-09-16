@@ -1,38 +1,60 @@
 {
 	"added": [
-		"PromptAura"
+		"AutoAngel",
+		"AutoBlackMarket",
+		"AutoBlockKicker",
+		"AutoCat",
+		"AutoDinoTamer",
+		"AutoFalconer",
+		"AutoGunBlade",
+		"AutoHatter",
+		"AutoMerchant",
+		"AutoRaven",
+		"AutoSorcerer",
+		"AutoVulcan"
 	],
 	"updated": [
-		"CheatDetector",
-		"ESP",
-		"AutoConsume",
 		"Killaura",
-		"SilentAim",
-		"StreamRemover",
-		"ACMODView",
-		"AutoToxic",
-		"PromptEditor",
-		"DeathSpawn"
+		"CheatDetector",
+		"InfiniteJump",
+		"Speed",
+		"ChatSpammer",
+		"CatExtender",
+		"JadeExtender",
+		"VoidRegentExtender",
+		"XurotExtender",
+		"YaminiExtender",
+		"YuziExtender"
 	],
 	"newModules": [
-		"PromptAura"
+		"AutoAngel",
+		"AutoBlackMarket",
+		"AutoBlockKicker",
+		"AutoCat",
+		"AutoDinoTamer",
+		"AutoFalconer",
+		"AutoGunBlade",
+		"AutoHatter",
+		"AutoMerchant",
+		"AutoRaven",
+		"AutoSorcerer",
+		"AutoVulcan"
 	],
 	"updatedModules": [
-		"CheatDetector",
-		"ESP",
-		"AutoConsume",
 		"Killaura",
-		"SilentAim",
-		"StreamRemover",
-		"ACMODView",
-		"AutoToxic",
-		"PromptEditor",
-		"DeathSpawn"
+		"CheatDetector",
+		"InfiniteJump",
+		"Speed",
+		"ChatSpammer",
+		"CatExtender",
+		"JadeExtender",
+		"VoidRegentExtender",
+		"XurotExtender",
+		"YaminiExtender",
+		"YuziExtender"
 	],
 	"patchedModules": [],
 	"premiumModules": [],
-	"removedModules": [
-		"InfiniteFly"
-	],
-	"text": "[BEDWARS]\n[+] Added PromptAura to World: activates nearby prompts with shop and repeat toggles\n[+] PromptEditor now has a Set/Expand mode dropdown\n[+] AutoConsume discovers every BedWars consumable and supports mushrooms/SingleMushroom\n[^] Rewrote CheatDetector with reach, hitbox, aim, killaura cadence, speed, fly, teleport, auto-clicker and AntiDeath void-abuse checks plus a self-test toggle\n[!] Fixed Killaura Animation Speed so it scales the whole swing\n[!] Fixed SilentAim snapping by suspending camera-turning projectile aids\n[!] Fixed StreamRemover and ACMODView Remove Disguises so the real player level shows instead of [?]\n[!] Fixed DeathSpawn not teleporting back to the last grounded spot\n[^] ESP settings are now collapsible sections instead of one long list\n[^] AutoGG delay slider now sits directly under its toggle\n[^] Merged the Exploits category into Blatant\n[-] Removed InfiniteFly\n\n[GENERAL]\n[!] Restored the game module tree that an automatic resplit workflow had overwritten, and disabled that workflow's push trigger\n[!] Fixed a loader regression where an empty pack response could be treated as a valid pack and no modules loaded\n[+] Configs can no longer reset: the GUI settings file is never deleted and a config that fails to decode no longer disables saving for the session\n[!] StaffDetector no longer permanently disables saving when it switches profile or applies a safe config\n[^] Config reviewer can edit metadata and config JSON, delete submissions, ban submitters and publish directly\n[^] Review queue is gated only by the maintainer key and asks for it when missing\n[-] Removed Cloud Configs entirely\n[^] Much faster startup: the BedWars pack and five modules are no longer re-downloaded every launch\n[^] Replaced the search bar with the compact reference layout\n"
+	"removedModules": [],
+	"text": "[BEDWARS]\n[!] Killaura now floors the hitreg cadence and swing animation at the weapon's own click limit, so Sync with a 0 swing time can no longer outrun the game\n[+] InfiniteJump Velocity mode has Max jumps: 2 is a double jump, the counter refills on landing, and holding spacebar no longer adds a jump\n[!] Speed CFrame mode no longer clips into walls while falling - each step is narrowed to what fits before the wall before it is applied\n[!] Fixed ChatSpammer doing nothing\n[!] Fixed every *Extender module: hooks install late and stay installed, kit reads fall back to the replicated attributes, and boosts land after the game's own movement\n[+] Added 12 kit modules: AutoAngel, AutoBlackMarket, AutoBlockKicker, AutoCat, AutoDinoTamer, AutoFalconer, AutoGunBlade, AutoHatter, AutoMerchant, AutoRaven, AutoSorcerer and AutoVulcan\n[^] CheatDetector rewritten with fixed, ping-independent thresholds: Speed 21 studs/sec with speed kits exempt, Reach 15 studs, Killaura angle rules, Fly over the void for a second, and a new AntiDeaths vertical-teleport check\n[^] CheatDetector per-check toggles now gate their check\n\n[GENERAL]\n[^] Version 3.12.0"
 }

@@ -60,37 +60,52 @@ run(function()
                                 if WallCheck.Enabled and destination.Magnitude > 1e-4 then
                                     rayCheck.FilterDescendantsInstances = {lplr.Character, gameCamera}
                                     rayCheck.CollisionGroup = root.CollisionGroup
-                                    
-                                    
-                                    
-                                    
-                                    
-                                    
-                                    
-                                    
+
                                     local skin = (math.max(root.Size.X, root.Size.Z) / 2) + 0.4
                                     local half = root.Size.Y / 2
-                                    
-                                    
-                                    
-                                    for _ = 1, 2 do
+
+                                    -- Casts start one skin behind the root because a ray that begins
+                                    -- inside a part ignores that part: a step taken with the body
+                                    -- already flush against a face saw no wall at all and walked
+                                    -- straight into it. Travel is then clamped along the face normal
+                                    -- rather than along the ray, so an angled face stops the body
+                                    -- exactly one skin clear of it instead of skin * (1 - cos(angle))
+                                    -- late. The engine used to resolve that leftover overlap by
+                                    -- pinning the character to the face, which is the "clip into the
+                                    -- wall and slide down slowly" report while falling.
+                                    for _ = 1, 3 do
                                         local step = destination.Magnitude
                                         if step <= 1e-4 then break end
-                                        local probe = destination.Unit * (step + skin)
-                                        local ray
-                                        
-                                        
+                                        local direction = destination.Unit
+                                        local back = root.Position - direction * skin
+
+                                        -- The cast reaches well past the step: a face crossed at a shallow
+                                        -- angle is far along the step even when it is right next to the
+                                        -- normal, so a step-length ray never sees the wall it is about to
+                                        -- walk into. skin * 6 covers incidence down to about 80 degrees.
+                                        local distance, normal
                                         for _, height in {0, half * 0.8, -half * 0.8} do
-                                            ray = workspace:Raycast(root.Position + Vector3.new(0, height, 0), probe, rayCheck)
-                                            if ray then break end
+                                            local ray = workspace:Raycast(back + Vector3.new(0, height, 0), direction * (step + skin * 6), rayCheck)
+                                            -- The nearest face across the three heights is the one the body meets first.
+                                            if ray and (not distance or ray.Distance < distance) then
+                                                distance, normal = ray.Distance, ray.Normal
+                                            end
                                         end
-                                        if not ray then break end
-                                        
-                                        
-                                        
-                                        local into = destination:Dot(ray.Normal)
-                                        if into >= 0 then break end
-                                        destination -= ray.Normal * into
+                                        if not distance then break end
+
+                                        local approach = -direction:Dot(normal)
+                                        if approach <= 1e-4 then break end
+
+                                        -- Studs of the step heading into the face, next to the most it
+                                        -- may cover before the body's skin touches it. The cast started
+                                        -- one skin behind the body, so that skin is inside the distance it
+                                        -- reports and the body's own radius comes off on top of it. A
+                                        -- negative allowance means the body is already past that line, so
+                                        -- the step pushes it back out instead of deeper in.
+                                        local into = -destination:Dot(normal)
+                                        local allowed = (distance - skin) * approach - skin
+                                        if into <= allowed then break end
+                                        destination += normal * (into - allowed)
                                     end
                                 end
 

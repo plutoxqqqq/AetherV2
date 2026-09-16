@@ -9140,34 +9140,23 @@ function mainapi:CreateChangelogs()
 	local body = Instance.new('TextLabel')
 	body.Size, body.Position, body.AutomaticSize = UDim2.new(1, -28, 0, 0), UDim2.fromOffset(14, 12), Enum.AutomaticSize.Y
 	body.BackgroundTransparency, body.RichText = 1, true
-	body.Text = [=[<b><font color="#d378ff">Startup</font></b>
-<font color="#63dc82">[+]</font> A release wipe now clears every PlaceId folder instead of three hardcoded ones, so a new version really does replace the packs and modules of the game you are in.
-<font color="#63dc82">[+]</font> The universal modules start running while the game pack is still coming down the wire instead of waiting for it, and the module list is fetched once per pack instead of twice.
-<font color="#63dc82">[+]</font> A cached pack now carries the module list and release it was built from, so it can never be reused for modules it does not contain.
-<font color="#6aa9ff">[^]</font> The previous-version list no longer loads during startup (it cost the commits API plus one version.txt per entry); it loads when the update center is opened and refreshes on demand.
-<font color="#6aa9ff">[^]</font> An incomplete module download is no longer baked into the pack cache: the modules that arrived still load on their own and the rest retry next launch.
-<font color="#6aa9ff">[^]</font> Probing for a published pack.lua no longer blocks the module download, so the request costs no wall clock time.
-<font color="#63dc82">[+]</font> The feature catalogue the frontend used to block on is now requested while the loader is still checking for an update.
-<b><font color="#d378ff">BedWars</font></b>
-<font color="#63dc82">[+]</font> Added AutoRefill: keeps arrows, wool and anything else you whitelist topped up, with a min/target double slider per item. Wool matches every colour.
-<font color="#63dc82">[+]</font> Added AutoUpgrade: the old AutoBuy upgrades moved here, driven by the game's live team upgrade meta instead of a hardcoded list, and a maxed upgrade says so once instead of retrying.
-<font color="#63dc82">[+]</font> AutoBank now has a Skybox / Legit dropdown. Legit banks everything into your personal chest while it is in range, pulls it all back out at a shop and redeposits when you leave. Skybox behaviour is untouched.
-<font color="#63dc82">[+]</font> Added a shared combat state - you count as fighting for 3 seconds after taking damage, and dying clears it - for modules that should stand down mid fight.
-<font color="#63dc82">[+]</font> Added libraries/bedwarsutil.lua. Shop scans and purchases, personal chest transfers, inventory counting, health reads and the stud/second slider suffixes now live in one place instead of being copied into every module.
-<font color="#6aa9ff">[^]</font> AutoBuy's Upgrades section moved to AutoUpgrade, with no deprecated alias left behind.
-<font color="#6aa9ff">[^]</font> In-range checks no longer carry their own numbers: the shared shop and chest radius is the single source, so AutoBank's old 30 stud shortcut is gone.
-<font color="#6aa9ff">[^]</font> Version 3.10.2, 3.10.3, 3.10.4 and 3.10.5 rolled up here; the fixes below shipped in 3.10.1.
-<font color="#63dc82">[+]</font> Added JadeInstantKill: pins the camera to an invisible anchor on a fixed Y, hops 200 studs above a living target, bypasses the Jade Hammer cooldown, pauses a second after landing and rides the slam onto them.
-<font color="#63dc82">[+]</font> Added the missing kit modules: AutoAbaddon, AutoArachne, AutoCogsworth, AutoElektra, AutoFlora, AutoMarrow, AutoSigrid and AutoTrixie.
-<font color="#63dc82">[+]</font> Added XurotExtender and YaminiWallKick, completing the kit movement extenders.
-<font color="#63dc82">[+]</font> Restored the "Script has updated from vX to vY" notification after loading an update.
-<font color="#6aa9ff">[^]</font> Fixed Update Modules and Update / Reinject: they now refresh the split game packs, files.txt, caches and version pin instead of the removed monolith files.
-<font color="#6aa9ff">[^]</font> Jade Hammer support now calls jade_hammer_jump for tiers I, II and III instead of the non-existent tiered abilities.
-<font color="#6aa9ff">[^]</font> Fixed Jade Hammer tier detection: Luau has no optional capture groups, so jade_hammer_1/2/3 were never recognised.
-<font color="#6aa9ff">[^]</font> Reworked the Jade Hammer paths in LongJump, NoFallDamage and JadeExtender around the real ability ID.
-<font color="#6aa9ff">[^]</font> Audited every Kits module ability and remote against the live game.
-<font color="#ff6969">[-]</font> Removed the module nickname system, Alt + right-click renaming, module-names.json and the Reset Module Names button.
-<font color="#6aa9ff">[^]</font> Version 3.10.6.]=]
+	body.Text = [=[<b><font color="#d378ff">BedWars</font></b>
+<font color="#6aa9ff">[^]</font> Killaura: with Sync on and a 0 swing time the swing ran far faster than BedWars will register. The hitreg cadence and the swing animation are now floored at the weapon's own click limit, so a low swing time can no longer outrun the game.
+<font color="#63dc82">[+]</font> Added Max jumps to InfiniteJump Velocity mode: 2 is a double jump, the counter refills on every landing, and holding spacebar no longer sneaks in an extra jump.
+<font color="#6aa9ff">[^]</font> Fixed Speed CFrame mode clipping into a wall while falling: each step is narrowed to what still fits before the wall's skin before it is applied, so you slide along the face at a full fall.
+<font color="#6aa9ff">[^]</font> Fixed ChatSpammer doing nothing - the flood-message hider no longer indexes the chat window before it exists.
+<font color="#6aa9ff">[^]</font> Fixed every *Extender module. They install their hook late and keep it installed, read the kit even before the match store syncs, and boost after the game's own movement.
+<font color="#63dc82">[+]</font> Added AutoAngel, AutoBlackMarket, AutoBlockKicker, AutoCat, AutoDinoTamer, AutoFalconer, AutoGunBlade, AutoHatter, AutoMerchant, AutoRaven, AutoSorcerer and AutoVulcan.
+<b><font color="#d378ff">CheatDetector</font></b>
+<font color="#6aa9ff">[^]</font> Rewritten around fixed thresholds. Ping no longer widens any allowance - the same reading counts the same on any connection.
+<font color="#6aa9ff">[^]</font> Speed: sustained ground movement over 21 studs/sec flags, and the check stands down entirely for the kits that really are faster (Zephyr, Krystal, Sigrid, Grim Reaper).
+<font color="#6aa9ff">[^]</font> Reach: a melee hit past 15 studs flags.
+<font color="#6aa9ff">[^]</font> Killaura: a hit landed more than 90 degrees off the facing direction from over a block away flags, and directly-behind hits flag past about 5 studs.
+<font color="#6aa9ff">[^]</font> Fly: holding position over the void with nothing underneath for over a second flags.
+<font color="#63dc82">[+]</font> Added AntiDeaths: flags the vertical teleports no replicated velocity can explain, and weights the drop under the map and back up far more heavily.
+<font color="#6aa9ff">[^]</font> The per-check toggles now actually gate their check instead of only hiding options.
+<b><font color="#d378ff">General</font></b>
+<font color="#6aa9ff">[^]</font> Version 3.12.0.]=]
 	body.TextColor3, body.TextSize, body.LineHeight = Color3.fromRGB(170, 170, 170), 13, 1.25
 	body.FontFace, body.TextXAlignment, body.TextYAlignment, body.TextWrapped, body.Parent = Font.fromEnum(Enum.Font.Roboto), Enum.TextXAlignment.Left, Enum.TextYAlignment.Top, true, notes
 	close.MouseButton1Click:Connect(function() window.Visible = false end)

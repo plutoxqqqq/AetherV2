@@ -238,8 +238,24 @@ run(function()
 		end
 		return furyBalance and furyBalance.FURY_POTION_ATTACK_SPEED_MULTIPLIER or 1
 	end
+	-- The fastest click rate the game itself will register for the weapon in hand. BedWars never
+	-- lets a swing land faster than the weapon's own attackSpeed, so nothing here may either.
+	local function weaponAttackSpeed(meta)
+		local sword = meta and meta.sword
+		local speed = sword and tonumber(sword.attackSpeed)
+		if not speed or speed <= 0 then speed = 0.3 end
+		return speed
+	end
+
 	local function calculateAttackDelay(meta)
-		local base = Sync.Enabled and SwingTime.Value or ((meta.sword and meta.sword.attackSpeed) or 0.292)
+		-- Sync drives the swing cadence from hitreg, but the weapon's click limit is the floor. A
+		-- zero swing time used to collapse to the 0.05s clamp, which is several times faster than
+		-- BedWars accepts - that is what made the animation run away on 0 swing time.
+		local attackSpeed = weaponAttackSpeed(meta)
+		local base = attackSpeed
+		if Sync.Enabled then
+			base = math.max(tonumber(SwingTime.Value) or 0, attackSpeed)
+		end
 		local fury = hasFuryPotion()
 		if fury then base *= getFuryMultiplier() end
 		if HitRegCalculator.Enabled then
@@ -555,12 +571,13 @@ run(function()
         Max = 2,
 	Decimal = 1000,
 		Default = 0.11,
-		Suffix = 'seconds'
+		Suffix = 'seconds',
+		Tooltip = 'How long one swing takes. With Sync on this is clamped up to the weapon\'s own click limit'
 	})
 	Sync = Killaura:CreateToggle({
 		Name = 'Sync with hitreg',
 	Darker = true,
-		Tooltip = 'Syncs ur hitreg with the swing time'
+		Tooltip = 'Syncs the swing and attack cadence with hitreg. It never goes faster than the weapon\'s own click limit, so 0 swing time cannot outrun BedWars'
     })
     HitRegCalculator = Killaura:CreateToggle({
         Name = 'HitReg calculator',

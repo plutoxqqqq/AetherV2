@@ -1,10 +1,15 @@
 run(function()
     local InfiniteJump
     local Mode
+    local MaxJumps
     local TP
     local rayCheck = RaycastParams.new()
     rayCheck.RespectCanCollide = true
     local jumps = 0
+    local lastJump = 0
+    -- Two JumpRequests this close together are the same press: held spacebar and the landing
+    -- frame both fire a second request that used to be counted as a fresh jump.
+    local JUMP_DEBOUNCE = 0.09
 
     --[[
         TP Down, ported from Fly.
@@ -22,6 +27,11 @@ run(function()
         than the library, so the airborne clock is kept here instead.
     ]]
     local groundTick, tpTick, tpToggle, oldy = tick(), tick(), true, nil
+
+    local function isGrounded()
+        local humanoid = entitylib.isAlive and entitylib.character and entitylib.character.Humanoid
+        return humanoid ~= nil and humanoid.FloorMaterial ~= Enum.Material.Air
+    end
 
     local function tpDownStep()
         local character = entitylib.character
@@ -68,37 +78,72 @@ run(function()
 	Function = function(callback: boolean)
 		if callback then
 			jumps = 0
+			lastJump = 0
 			groundTick, tpTick, tpToggle, oldy = tick(), tick(), true, nil
 
 			InfiniteJump:Clean(runService.PreSimulation:Connect(function()
-				if not TP.Enabled or not entitylib.isAlive then return end
-				tpDownStep()
+				if not entitylib.isAlive then return end
+				-- Touching the ground refills the jump counter, which is what makes the cap
+				-- "per airtime" rather than per life.
+				if isGrounded() then jumps = 0 end
+				if TP.Enabled then tpDownStep() end
 			end))
 
 			InfiniteJump:Clean(inputService.JumpRequest:Connect(function()
 				if not entitylib.isAlive then return end
-				jumps += 1
+				local character = entitylib.character
+				local humanoid, root = character.Humanoid, character.RootPart
+				if not humanoid or not root then return end
 
-				if jumps > 1 and Mode.Value == 'Velocity' then
-					local power = math.sqrt(2 * workspace.Gravity * entitylib.character.Humanoid.JumpHeight)
-					entitylib.character.RootPart.Velocity = Vector3.new(
-						entitylib.character.RootPart.Velocity.X,
-						power,
-						entitylib.character.RootPart.Velocity.Z
-					)
-				elseif Mode.Value == 'Jump' then
-					entitylib.character.Humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+				-- Leaving the ground is the game's own jump: it costs one of the allowance and
+				-- is never boosted, so a normal hop still behaves normally.
+				if isGrounded() then
+					jumps = 1
+					lastJump = tick()
+					return
+				end
+
+				-- A second request in the same beat is held spacebar or the landing frame, not a
+				-- new jump. Counting it was the old double jump.
+				if tick() - lastJump < JUMP_DEBOUNCE then return end
+
+				if Mode.Value == 'Velocity' then
+					if jumps >= MaxJumps.Value then return end
+					jumps += 1
+					lastJump = tick()
+					local power = math.sqrt(2 * workspace.Gravity * humanoid.JumpHeight)
+					root.Velocity = Vector3.new(root.Velocity.X, power, root.Velocity.Z)
+				else
+					lastJump = tick()
+					humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
 				end
 			end))
 		end
 	end,
 	ExtraText = function()
-		return TP.Enabled and 'TP Down' or Mode.Value
+		if TP.Enabled then return 'TP Down' end
+		if Mode.Value == 'Velocity' then return jumps .. '/' .. tostring(MaxJumps.Value) end
+		return Mode.Value
 	end,
     })
     Mode = InfiniteJump:CreateDropdown({
 	Name = 'Mode',
 	List = { 'Jump', 'Velocity' },
+	Function = function(value)
+		-- The cap only exists for Velocity mode; hiding it in Jump mode keeps the option list
+		-- honest about what actually reads it.
+		if MaxJumps and MaxJumps.Object then
+			MaxJumps.Object.Visible = value == 'Velocity'
+		end
+	end,
+    })
+    MaxJumps = InfiniteJump:CreateSlider({
+	Name = 'Max jumps',
+	Min = 1,
+	Max = 20,
+	Default = 2,
+	Tooltip = 'How many jumps you get before touching the ground again, counted from the moment you leave it. 2 is a double jump; the counter refills on every landing',
+	Visible = Mode.Value == 'Velocity',
     })
     TP = InfiniteJump:CreateToggle({
 	Name = 'TP Down',

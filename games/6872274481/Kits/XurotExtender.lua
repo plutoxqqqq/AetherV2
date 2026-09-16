@@ -1,26 +1,24 @@
 run(function()
+	local util = vape.Libraries.bedwarsutil
 	local XurotExtender
 	local Multiplier
 
-	local old
-
 	XurotExtender = kits:CreateModule({
 		Name = 'XurotExtender',
+		Category = 'Ability',
 		Function = function(callback)
-			if callback then
-				old = bedwars.VoidDragonController.flapWings
-				bedwars.VoidDragonController.flapWings = function(self, ...)
-					local call = old(self, ...)
-
-					if store.equippedKit == 'void_dragon' and entitylib.isAlive then
-						local root = entitylib.character.RootPart
-						root:ApplyImpulse(Vector3.new(0, root.AssemblyMass * (Multiplier.Value - 1) * 40, 0))
+			if not callback then return end
+			util.Hook.Controller(XurotExtender, 'VoidDragonController', 'flapWings', function(original, ...)
+				local results = table.pack(original(...))
+				if XurotExtender.Enabled and util.IsKit('void_dragon') then
+					local root = util.Utils.Root()
+					local value = Multiplier and Multiplier.Value or 1
+					if root and value > 1 then
+						root:ApplyImpulse(Vector3.new(0, root.AssemblyMass * (value - 1) * 40, 0))
 					end
-					return call
 				end
-			else
-				bedwars.VoidDragonController.flapWings = old
-			end
+				return table.unpack(results, 1, results.n)
+			end)
 		end,
 		Tooltip = 'Extends how high each Xurot wing flap throws you'
 	})

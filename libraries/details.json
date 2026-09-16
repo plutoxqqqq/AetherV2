@@ -124,6 +124,11 @@
    "The Adetunde kit"
   ]
  },
+ "AutoAngel": {
+  "lines": [
+   "Swaps between Trinity's Light and Void forms while an enemy is close."
+  ]
+ },
  "AutoArrest": {
   "lines": [
    "Handcuffs nearby entities automatically."
@@ -161,6 +166,11 @@
    "The Beekeeper kit"
   ]
  },
+ "AutoBlackMarket": {
+  "lines": [
+   "Keeps the black market open, and closes it again while a nearby enemy can reach you."
+  ]
+ },
  "AutoBlock": {
   "lines": [
    "Unblocks and blocks again just before each of your hits, so you keep the block up between them."
@@ -168,7 +178,8 @@
  },
  "AutoBlockKicker": {
   "lines": [
-   "Aims the block you kick at whoever it can actually hit."
+   "Aims the block you kick at whoever it can actually hit.",
+   "Also stomps once enough enemies are stacked around you."
   ],
   "requires": [
    "The Block Kicker kit"
@@ -203,6 +214,11 @@
   ],
   "requires": [
    "The Caitlyn kit"
+  ]
+ },
+ "AutoCat": {
+  "lines": [
+   "Pounces at the closest enemy in range."
   ]
  },
  "AutoClicker": {
@@ -266,6 +282,11 @@
    "Detonates your explosives for you."
   ]
  },
+ "AutoDinoTamer": {
+  "lines": [
+   "Charges at the closest enemy in range."
+  ]
+ },
  "AutoDrill": {
   "lines": [
    "Collects what your drills produce and attacks with them."
@@ -296,6 +317,11 @@
   ],
   "requires": [
    "The Ember kit"
+  ]
+ },
+ "AutoFalconer": {
+  "lines": [
+   "Sends the falcon at nearby enemies, with an optional recall once the area is clear."
   ]
  },
  "AutoFarmer": {
@@ -343,12 +369,22 @@
    "The Grim Reaper kit"
   ]
  },
+ "AutoGunBlade": {
+  "lines": [
+   "Fires the gun blade at the closest enemy in range."
+  ]
+ },
  "AutoHannah": {
   "lines": [
    "Executes marked players as soon as one comes into range."
   ],
   "requires": [
    "The Hannah kit"
+  ]
+ },
+ "AutoHatter": {
+  "lines": [
+   "Teleports away through the hat when a nearby enemy has you low."
   ]
  },
  "AutoHeal": {
@@ -457,6 +493,11 @@
    "The Melody kit"
   ]
  },
+ "AutoMerchant": {
+  "lines": [
+   "Rerolls the merchant stock on a delay."
+  ]
+ },
  "AutoMetal": {
   "lines": [
    "Digs up the buried metal the detector finds."
@@ -563,6 +604,11 @@
    "The Ramil kit"
   ]
  },
+ "AutoRaven": {
+  "lines": [
+   "Transforms into the raven, or sends it at nearby enemies, whichever you enable."
+  ]
+ },
  "AutoRejoin": {
   "lines": [
    "Rejoins a fresh server on its own after a disconnect or a kick."
@@ -609,6 +655,11 @@
   ],
   "requires": [
    "Projectiles in your hotbar"
+  ]
+ },
+ "AutoSorcerer": {
+  "lines": [
+   "Fires the sorcerer projectile at the closest enemy in range."
   ]
  },
  "AutoSpiritAssassin": {
@@ -695,6 +746,11 @@
   "lines": [
    "Drops your resources once you fall past the map, so an enemy cannot collect them from your body.",
    "Owl check and Pearl check both hold the loot: the second walks a telepearl you threw forward and keeps your resources if it would land on ground."
+  ]
+ },
+ "AutoVulcan": {
+  "lines": [
+   "Marks the closest enemy for the Vulcan artillery."
   ]
  },
  "AutoWarlock": {
@@ -866,11 +922,13 @@
  },
  "CheatDetector": {
   "lines": [
-   "Flags likely cheaters, grouped into impossible hits, blatant modules, AutoKit, crashers, breaker, and projectile aimbot.",
-   "Reads behaviour only - position, timing and replicated state. It never looks at what anybody is running, so there is no module name or signature for a cheat to change.",
-   "Every detection needs several impossible readings before it flags, and discards readings taken on a poor connection or explained by a status effect, teleport or knockback.",
-   "Every toggle takes effect while the module is running, and all of the position checks share one pass over the players every tenth of a second.",
-   "[TEST] Detect self runs the same checks against you, on your behaviour alone, so you can turn a cheat on and watch whether the check meant to catch it fires."
+   "Flags players whose replicated movement or melee hits cannot actually happen.",
+   "Thresholds are fixed and never scaled by ping - the same reading counts the same on any connection.",
+   "Reach flags a hit past 15 studs. Killaura flags hits landed more than 90 degrees off the facing direction from over a block away, and directly-behind hits past about 5 studs.",
+   "Speed flags sustained ground speed over 21 studs/sec, and stands down completely for kits that really do move faster.",
+   "Fly flags anyone holding position over the void with nothing underneath for over a second. AntiDeaths flags the vertical teleports no velocity can explain, including the drop under the map and back up.",
+   "Speed and Fly ignore readings taken right after the server moves somebody itself; AntiDeaths does not, because that is the thing it is looking for.",
+   "[TEST] Detect self runs the same checks against you so you can watch a check fire."
   ]
  },
  "ChestSteal": {
@@ -1157,7 +1215,8 @@
  },
  "InfiniteJump": {
   "lines": [
-   "Lets you jump again in mid-air, without limit.",
+   "Lets you jump again in mid-air.",
+   "Max jumps caps how many jumps one stretch of airtime gives you (2 is a double jump); touching the ground refills the counter.",
    "TP Down briefly touches the ground and returns you to your height once you have been airborne too long, so the server keeps seeing you land. It does not affect jumping."
   ]
  },

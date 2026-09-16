@@ -473,6 +473,128 @@ function Shop.Purchase(item, shopId, currencytable, options)
 end
 
 --------------------------------------------------------------------------------
+-- Kit identity
+--------------------------------------------------------------------------------
+
+-- The store field is the fast path every kit module reads, but it stays empty until a match
+-- state has replicated. Modules that only checked it silently did nothing for the first stretch
+-- of a round, so the replicated kit attributes are the fallback.
+function helpers.KitName()
+	local store = game_state()
+	local equipped = store and store.equippedKit
+	if type(equipped) == 'string' and equipped ~= '' then return equipped end
+	for _, attribute in {'PlayingAsKit', 'PlayingAsKits', 'SelectedKit', 'Kit'} do
+		local value = lplr:GetAttribute(attribute)
+		if value ~= nil then
+			local text = tostring(value)
+			if text ~= '' and text:lower() ~= 'none' then return text end
+		end
+	end
+	return nil
+end
+
+function helpers.IsKit(...)
+	local current = helpers.KitName()
+	if not current then return false end
+	current = current:lower()
+	for index = 1, select('#', ...) do
+		local wanted = select(index, ...)
+		if wanted ~= nil and current == tostring(wanted):lower() then return true end
+	end
+	return false
+end
+
+--------------------------------------------------------------------------------
+-- Abilities
+--------------------------------------------------------------------------------
+
+local Ability = {}
+helpers.Ability = Ability
+
+function Ability.Controller()
+	local bedwars = game_api()
+	return bedwars and bedwars.AbilityController or nil
+end
+
+-- canUseAbility is the same gate the game itself uses, and it is what keeps these callers from
+-- spamming a remote the server will reject.
+function Ability.Ready(id)
+	local controller = Ability.Controller()
+	if not controller or type(controller.canUseAbility) ~= 'function' then return false end
+	local ok, ready = pcall(controller.canUseAbility, controller, id, {disableBlockedAbilityAlert = true})
+	return ok and ready == true
+end
+
+function Ability.Use(id, ...)
+	local controller = Ability.Controller()
+	if not controller or type(controller.useAbility) ~= 'function' then return false end
+	local ok, result = pcall(controller.useAbility, controller, id, ...)
+	return ok and result ~= false
+end
+
+--------------------------------------------------------------------------------
+-- Controller hooks
+--------------------------------------------------------------------------------
+
+local Hook = {}
+helpers.Hook = Hook
+
+-- Installs `wrapper(original, ...)` in place of `controller[method]` and keeps it installed.
+-- Kit controllers only exist once their kit has loaded and the game rebuilds them on respawn, so
+-- a one-shot hook taken at toggle time - which is what the extenders used to do - was usually
+-- taken either against nil or against a method the game replaced moments later.
+function Hook.Controller(module, controllerName, methodName, wrapper)
+	local state = {controller = nil, original = nil, hooked = nil}
+
+	local function uninstall()
+		local controller = state.controller
+		if controller and state.hooked and controller[methodName] == state.hooked then
+			controller[methodName] = state.original
+		end
+		state.controller, state.original, state.hooked = nil, nil, nil
+	end
+
+	local function install()
+		if state.hooked then
+			if state.controller and state.controller[methodName] == state.hooked then return end
+			uninstall()
+		end
+		local bedwars = game_api()
+		local controller = bedwars and bedwars[controllerName]
+		if type(controller) ~= 'table' or type(controller[methodName]) ~= 'function' then return end
+		local original = controller[methodName]
+		state.controller, state.original = controller, original
+		state.hooked = function(...)
+			return wrapper(original, ...)
+		end
+		controller[methodName] = state.hooked
+	end
+
+	install()
+	local thread = task.spawn(function()
+		while module.Enabled do
+			install()
+			task.wait(1)
+		end
+	end)
+	module:Clean(function()
+		pcall(task.cancel, thread)
+		uninstall()
+	end)
+	return state
+end
+
+-- First Vector3 in an argument list, which is how the extenders cope with a controller calling
+-- its method with self, without self, or with the direction in a different slot.
+function helpers.FindVector(...)
+	for index = 1, select('#', ...) do
+		local value = select(index, ...)
+		if typeof(value) == 'Vector3' then return value end
+	end
+	return nil
+end
+
+--------------------------------------------------------------------------------
 -- Personal chest
 --------------------------------------------------------------------------------
 

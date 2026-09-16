@@ -1,103 +1,82 @@
-local function createKitExtender(spec)
-    local Extender
-    local Multiplier
-    local controller, original, hooked
+run(function()
+	local util = vape.Libraries.bedwarsutil
+	local CatExtender
+	local Multiplier
+	local WallKick
+	local WallMultiplier
 
-    local function install()
-        local target = bedwars[spec.Controller]
-        while not target and Extender.Enabled do
-            task.wait(0.1)
-            target = bedwars[spec.Controller]
-        end
-        if not Extender.Enabled or not target then return end
+	local function root()
+		return util.Utils.Root()
+	end
 
-        local method = target[spec.Method]
-        if typeof(method) ~= 'function' then return end
-        if hooked and method == hooked then return end
+	local function launch(impulse)
+		if not impulse then return end
+		local part = root()
+		if part then part:ApplyImpulse(impulse) end
+	end
 
-        controller, original = target, method
-        hooked = function(...)
-			local direction = spec.Argument and select(spec.Argument, ...) or nil
-			if spec.Argument and typeof(direction) ~= 'Vector3' then
-				for index = 1, select('#', ...) do
-					local candidate = select(index, ...)
-					if typeof(candidate) == 'Vector3' then direction = candidate end
+	CatExtender = kits:CreateModule({
+		Name = 'CatExtender',
+		Category = 'Ability',
+		Function = function(callback)
+			if not callback then return end
+			-- The hook is kept installed while the toggle is on, so it still lands if the game
+			-- only builds CatController once the match starts or after a respawn.
+			util.Hook.Controller(CatExtender, 'CatController', 'leap', function(original, ...)
+				local results = table.pack(original(...))
+				if CatExtender.Enabled and util.IsKit('cat') then
+					local direction = util.FindVector(...)
+					local part = root()
+					local value = Multiplier and Multiplier.Value or 1
+					if direction and part and value > 1 then
+						local flat = direction * Vector3.new(1, 0, 1)
+						if flat.Magnitude > 1e-4 then
+							launch(flat.Unit * part.AssemblyMass * (value - 1) * 70)
+						end
+					end
 				end
-			end
-            local results = table.pack(method(...))
+				return table.unpack(results, 1, results.n)
+			end)
+		end,
+		Tooltip = 'Extends how far the Cat/Yamini pounce launches you'
+	})
 
-            if Extender.Enabled and entitylib.isAlive
-				and (not spec.Argument or typeof(direction) == 'Vector3') then
-				task.defer(function()
-					pcall(function()
-						if not Extender.Enabled or not entitylib.isAlive then return end
-						local root = entitylib.character.RootPart
-						local impulse = spec.Impulse(root, direction, Multiplier.Value)
-						if impulse then root:ApplyImpulse(impulse) end
-					end)
-				end)
-            end
+	Multiplier = CatExtender:CreateSlider({
+		Name = 'Multiplier',
+		Min = 1,
+		Max = 5,
+		Default = 2,
+		Decimal = 10,
+		Suffix = 'x',
+		Tooltip = 'How much further than normal the pounce carries you. 1x is the game\'s own distance'
+	})
 
-            return table.unpack(results, 1, results.n)
-        end
+	WallKick = kits:CreateModule({
+		Name = 'YaminiWallKick',
+		Category = 'Ability',
+		Function = function(callback)
+			if not callback then return end
+			util.Hook.Controller(WallKick, 'CatController', 'dismountWall', function(original, ...)
+				local results = table.pack(original(...))
+				if WallKick.Enabled and util.IsKit('cat') then
+					local part = root()
+					local value = WallMultiplier and WallMultiplier.Value or 1
+					if part and value > 1 then
+						launch(Vector3.new(0, part.AssemblyMass * (value - 1) * 25, 0))
+					end
+				end
+				return table.unpack(results, 1, results.n)
+			end)
+		end,
+		Tooltip = 'Extends how high dropping off a climbed wall throws you'
+	})
 
-        controller[spec.Method] = hooked
-    end
-
-    Extender = kits:CreateModule({
-        Name = spec.Name,
-        Category = 'Ability',
-        Function = function(callback)
-            if callback then
-                Extender:Clean(task.spawn(install))
-            else
-                if controller and original and controller[spec.Method] == hooked then
-                    controller[spec.Method] = original
-                end
-                controller, original, hooked = nil, nil, nil
-            end
-        end,
-        Tooltip = spec.Tooltip
-    })
-
-    Multiplier = Extender:CreateSlider({
-        Name = 'Multiplier',
-        Min = 1,
-        Max = 5,
-        Default = 2,
-        Decimal = 10,
-        Suffix = 'x',
-        Tooltip = 'How much further than normal the ability carries you. 1x is the game\'s own distance'
-    })
-
-    return Extender
-end
-
-run(function()
-    createKitExtender({
-        Name = 'CatExtender',
-        Kit = 'cat',
-        Controller = 'CatController',
-        Method = 'leap',
-        Argument = 3,
-        Impulse = function(root, direction, multiplier)
-            local flat = direction * Vector3.new(1, 0, 1)
-            if flat.Magnitude <= 0 then return nil end
-            return flat.Unit * root.AssemblyMass * (multiplier - 1) * 70
-        end,
-        Tooltip = 'Extends how far the Cat/Yamini pounce launches you'
-    })
-end)
-
-run(function()
-    createKitExtender({
-        Name = 'YaminiWallKick',
-        Kit = 'cat',
-        Controller = 'CatController',
-        Method = 'dismountWall',
-        Impulse = function(root, direction, multiplier)
-            return Vector3.new(0, root.AssemblyMass * (multiplier - 1) * 25, 0)
-        end,
-        Tooltip = 'Extends how high dropping off a climbed wall throws you'
-    })
+	WallMultiplier = WallKick:CreateSlider({
+		Name = 'Multiplier',
+		Min = 1,
+		Max = 5,
+		Default = 2,
+		Decimal = 10,
+		Suffix = 'x'
+	})
 end)

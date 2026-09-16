@@ -8,60 +8,68 @@ run(function()
 
 	---------------------------------------------------------------------------
 	-- Tuning
+	--
+	-- Every threshold below is fixed. Nothing here is scaled by ping: a player's allowance is the
+	-- same whether they are on 20ms or 200ms, which is deliberate - the checks describe what the
+	-- game itself will and will not accept, and that does not change with somebody's connection.
 	---------------------------------------------------------------------------
 	local POLL = 0.1
 	local STRIKE_MEMORY = 45
 
-	-- Nothing here can see the server. Above this much local ping every position this client holds
-	-- is too stale to accuse anybody with, so the position checks stand down instead of guessing.
-	local MAX_PING = 0.25
+	-- Reach: anything past this is beyond what a melee swing can cover.
+	local REACH_LIMIT = 15
 
-	-- CombatConstant.RAYCAST_SWORD_CHARACTER_DISTANCE is where an ordinary sword's reach sits, and
-	-- 24 is the longest attackRange any melee weapon in the game has (whisper feather).
-	local REACH_BASE = 14.4
-	local MAX_MELEE_RANGE = 24
-	-- Interpolation between the server's snapshot and this client's frames, the rounding the server
-	-- does on a hit, and the fact that the victim kept moving for the attacker's whole round trip.
-	local REACH_MARGIN = 2.5
-	local REACH_PER_PING = 20
-	local REACH_DRIFT_CAP = 3
+	-- Killaura: a hit landed while facing away from the victim. From more than a block out, 90
+	-- degrees off the facing direction is already impossible to aim; directly behind them the game
+	-- gives a little more room, so that only flags past ~5 studs.
+	local SIDE_ANGLE = 90
+	local BEHIND_ANGLE = 160
+	local SIDE_DISTANCE = 3
+	local BEHIND_DISTANCE = 5
 
-	-- A hit that lands more than this far behind the attacker was not aimed, so the only way the
-	-- server accepted it is an expanded hitbox.
-	local HITBOX_ANGLE = 100
-
-	-- One swing reaches one player, and the shortest attack cooldown in the game is longer than
-	-- MULTI_WINDOW, so two victims inside it cannot come from two swings.
-	local MULTI_WINDOW = 0.1
-	local MULTI_WINDOW_WIDE = 1
-	local MULTI_VICTIMS = 3
-
-	-- Sprinting is 20 studs per second before modifiers. 24 leaves room for every legal movement
-	-- buff and still sits under what a speed cheat is set to, and the window makes a single
-	-- knockback or ability boost irrelevant.
-	local SPEED_LIMIT = 24
+	-- Speed: sustained ground speed above this is faster than any legal movement buff.
+	local SPEED_LIMIT = 21
 	local SPEED_WINDOW = 1.5
 	local SPEED_SAMPLES = 5
 	local SPEED_SAMPLE_LIMIT = 0.85
 
-	-- Hovering this long with no ground underneath is not something the game hands out, except to
-	-- the kits and items listed below.
-	local FLY_TIME = 3
-	local FLY_DESCENT = 1.5
-	local FLY_GROUND = 60
+	-- Kits that legitimately move faster than the limit. The check stands down entirely for them
+	-- rather than trying to guess how much of the speed is the kit.
+	local SPEED_KITS = {
+		wind_walker = true,
+		glacial_skater = true,
+		elk_master = true,
+		grim_reaper = true
+	}
+
+	-- Fly: nothing solid underneath for this long is a hover, not a fall.
+	local VOID_TIME = 1
+	local VOID_DESCENT = 1.5
+	local VOID_DEPTH = 80
+
+	-- AntiDeaths: a position snap the replicated velocity cannot explain. A normal jump moves with
+	-- its velocity, so the displacement it leaves behind is tiny; even the softest AntiDeath drops
+	-- or lifts the body a few studs instantly, which shows up here as unexplained vertical travel.
+	local TELEPORT_VERTICAL = 4
+	local TELEPORT_MARGIN = 3
+	-- A deep drop followed by the same rise inside this window is the classic "under the map and
+	-- straight back up" dodge.
+	local UNDER_MAP_DROP = 25
+	local UNDER_MAP_WINDOW = 2
 
 	local required = {
 		Reach = 3,
 		Killaura = 3,
 		Speed = 3,
-		Fly = 3
+		Fly = 3,
+		AntiDeaths = 3
 	}
 
 	local strikes = {}
 	local records = {}
 	local speedTracks = {}
 	local airTracks = {}
-	local hitHistory = {}
+	local antiTracks = {}
 	local pollThread
 
 	local MOVEMENT_WORDS = {'speed', 'jump', 'haste', 'fury', 'strength', 'swift', 'agility', 'slow'}
@@ -79,13 +87,6 @@ run(function()
 
 	local function isSelf(plr)
 		return plr == Players.LocalPlayer
-	end
-
-	local function playerPing(plr)
-		local ok, ping = pcall(function()
-			return plr:GetNetworkPing()
-		end)
-		return ok and tonumber(ping) or 0
 	end
 
 	-- whitelist:get hands the targetable flag back in its second value, the same value the game reads
@@ -124,8 +125,9 @@ run(function()
 	end
 
 	-- A player is only flagged once the same reason has been seen `required[reason]` times inside
-	-- the memory window, so one odd reading is never enough on its own.
-	local function flag(plr, reason)
+	-- the memory window, so one odd reading is never enough on its own. `weight` lets the
+	-- unmistakable patterns (a completed drop under the map and back) count for more than one.
+	local function flag(plr, reason, weight)
 		if ignored(plr) then return end
 		local entry = strikes[plr]
 		if not entry then
@@ -138,7 +140,9 @@ run(function()
 			entry[reason] = list
 		end
 		local t = now()
-		table.insert(list, t)
+		for _ = 1, weight or 1 do
+			table.insert(list, t)
+		end
 		for index = #list, 1, -1 do
 			if t - list[index] > STRIKE_MEMORY then table.remove(list, index) end
 		end
@@ -163,7 +167,9 @@ run(function()
 		return false
 	end
 
-	-- The game marks the characters it has had to move itself.
+	-- The game marks the characters it has had to move itself: void rescues, respawns and ability
+	-- pulls. Speed and Fly read that so a server correction cannot look like a cheat. AntiDeaths
+	-- deliberately does not, because a correction is exactly what it is looking for.
 	local function recentlyCorrected(character)
 		return character:GetAttribute('LastTeleported') ~= nil or character:GetAttribute('LastServerCorrected') ~= nil
 	end
@@ -186,16 +192,6 @@ run(function()
 
 	local function kitOf(plr)
 		return (plr:GetAttribute('PlayingAsKit') or plr:GetAttribute('PlayingAsKits') or '')
-	end
-
-	-- The reach the game itself would have given the weapon they were holding, taken from the hand
-	-- the game keeps in HandInvItem rather than the observed inventory, which lags behind.
-	local function weaponReach(character)
-		local name = heldItem(character)
-		local meta = name and bedwars.ItemMeta and bedwars.ItemMeta[name]
-		local range = meta and meta.sword and tonumber(meta.sword.attackRange)
-		if not range or range <= 0 then range = REACH_BASE end
-		return math.clamp(range, REACH_BASE, MAX_MELEE_RANGE)
 	end
 
 	local function entityList()
@@ -237,8 +233,8 @@ run(function()
 			Seated = state == Enum.HumanoidStateType.Seated,
 			HoverItem = holdingHoverItem(character),
 			Kit = kitOf(plr),
-			Time = now(),
 			Teleported = recentlyCorrected(character),
+			Time = now(),
 			Previous = records[plr]
 		}
 		records[plr] = record
@@ -259,6 +255,13 @@ run(function()
 	end
 
 	local function checkSpeed(record)
+		-- Kits that really do move faster are exempt outright, so the limit can stay tight for
+		-- everybody else instead of being raised until it stops catching cheaters.
+		if SPEED_KITS[record.Kit] then
+			speedTracks[record.Player] = nil
+			return
+		end
+
 		local previous = record.Previous
 		if not previous then return end
 		local dt = record.Time - previous.Time
@@ -299,13 +302,20 @@ run(function()
 	end
 
 	---------------------------------------------------------------------------
-	-- Fly: sustained hover with no ground underneath
+	-- Fly: hanging over the void with nothing underneath
 	---------------------------------------------------------------------------
+
+	local function overVoid(record)
+		groundRay.FilterDescendantsInstances = {record.Character}
+		return workspace:Raycast(record.Position, Vector3.new(0, -VOID_DEPTH, 0), groundRay) == nil
+	end
 
 	local function checkFly(record)
 		local previous = record.Previous
-		local hovering = not record.Grounded and record.Velocity.Y > -FLY_DESCENT
-		if not previous or not hovering or record.Hurt or record.Teleported or record.Seated
+		-- Descending people are falling, not hovering, which is what keeps a legitimate drop off
+		-- the map from being read as flight.
+		local hovering = not record.Grounded and record.Velocity.Y > -VOID_DESCENT
+		if not previous or not hovering or record.Hurt or record.Seated or record.Teleported
 			or record.HoverItem or HOVER_KITS[record.Kit]
 			or hasEffect(record.Character, MOVEMENT_WORDS) then
 			airTracks[record.Player] = nil
@@ -325,21 +335,77 @@ run(function()
 		end
 		track.time += dt
 		track.moved += (record.Position - previous.Position).Magnitude
-		if track.time < FLY_TIME then return end
+		if track.time < VOID_TIME then return end
 
-		airTracks[record.Player] = nil
-		-- Riding or being carried puts something solid under them.
-		if record.Humanoid.SeatPart then return end
-		groundRay.FilterDescendantsInstances = {record.Character}
-		local hit = workspace:Raycast(record.Position, Vector3.new(0, -FLY_GROUND, 0), groundRay)
-		if not hit and track.moved > 2 then
+		-- The clock only means anything if there is no ground anywhere under them and they are
+		-- actually holding their height rather than being carried by something.
+		if record.Humanoid.SeatPart then
+			airTracks[record.Player] = nil
+			return
+		end
+		if overVoid(record) and track.moved > 1 then
 			flag(record.Player, 'Fly')
+		end
+		airTracks[record.Player] = nil
+	end
+
+	---------------------------------------------------------------------------
+	-- AntiDeaths: vertical teleports no velocity can explain
+	---------------------------------------------------------------------------
+
+	local function checkAntiDeaths(record)
+		local previous = record.Previous
+		if not previous then return end
+		local dt = record.Time - previous.Time
+		if dt <= 0 or dt > 0.5 then return end
+
+		local delta = record.Position - previous.Position
+		-- What the replicated velocity says the body should have moved. A jump matches it; a
+		-- teleport does not.
+		local expected = previous.Velocity * dt
+		local unexplained = delta - expected
+		if math.abs(unexplained.Y) < TELEPORT_VERTICAL or unexplained.Magnitude < TELEPORT_MARGIN then
+			return
+		end
+
+		flag(record.Player, 'AntiDeaths')
+
+		-- Deep drops are remembered so the trip back up can be matched to them: going under the
+		-- map and straight back up is the signature, and it is worth more than a lone strike.
+		if delta.Y <= -UNDER_MAP_DROP then
+			antiTracks[record.Player] = {time = record.Time, depth = -delta.Y}
+		elseif delta.Y >= UNDER_MAP_DROP then
+			local under = antiTracks[record.Player]
+			if under and record.Time - under.time <= UNDER_MAP_WINDOW then
+				flag(record.Player, 'AntiDeaths', 2)
+				antiTracks[record.Player] = nil
+			end
 		end
 	end
 
 	---------------------------------------------------------------------------
-	-- Combat: reach, and one swing reaching more than one player
+	-- Combat: reach, and hits landed while facing away
 	---------------------------------------------------------------------------
+
+	-- Split out of the damage handler so the connector tests can feed it a hit directly.
+	local function evaluateHit(attackRoot, victimRoot, damageType)
+		if damageType ~= 0 then return nil end
+		local distance = (attackRoot.Position - victimRoot.Position).Magnitude
+		if distance > REACH_LIMIT then
+			return 'Reach'
+		end
+
+		local direction = victimRoot.Position - attackRoot.Position
+		if direction.Magnitude <= 0 then return nil end
+		local angle = math.deg(math.acos(math.clamp(attackRoot.CFrame.LookVector:Dot(direction.Unit), -1, 1)))
+
+		local behind = angle >= BEHIND_ANGLE
+		local minDistance = behind and BEHIND_DISTANCE or SIDE_DISTANCE
+		if angle > SIDE_ANGLE and distance > minDistance then
+			return 'Killaura'
+		end
+		return nil
+	end
 
 	local function onDamage(data)
 		local attacker = data and data.fromEntity and Players:GetPlayerFromCharacter(data.fromEntity)
@@ -349,55 +415,8 @@ run(function()
 		local victimRoot = data.entityInstance:FindFirstChild('HumanoidRootPart')
 		if not attackRoot or not victimRoot or not attackRoot.Parent or not victimRoot.Parent then return end
 
-		local distance = (attackRoot.Position - victimRoot.Position).Magnitude
-		local ping = math.clamp(playerPing(attacker), 0, MAX_PING)
-		local direction = victimRoot.Position - attackRoot.Position
-		local angle = 0
-		if direction.Magnitude > 0 then
-			angle = math.deg(math.acos(math.clamp(attackRoot.CFrame.LookVector:Dot(direction.Unit), -1, 1)))
-		end
-
-		if data.damageType ~= 0 then return end
-
-		local reach = weaponReach(data.fromEntity)
-		local victimSpeed = Vector3.new(victimRoot.AssemblyLinearVelocity.X, 0, victimRoot.AssemblyLinearVelocity.Z).Magnitude
-		local drift = math.min(victimSpeed * ping, REACH_DRIFT_CAP)
-		local allowance = reach + REACH_MARGIN + (ping * REACH_PER_PING) + drift
-
-		if Combat.Toggle.Enabled then
-			if distance > allowance then
-				flag(attacker, 'Reach')
-			end
-
-			local t = now()
-			local history = hitHistory[attacker]
-			if not history then
-				history = {}
-				hitHistory[attacker] = history
-			end
-			table.insert(history, {time = t, victim = victim})
-			for index = #history, 1, -1 do
-				if t - history[index].time > MULTI_WINDOW_WIDE then table.remove(history, index) end
-			end
-
-			local closeSeen, seen = {}, {}
-			for _, hit in history do
-				seen[hit.victim] = true
-				if t - hit.time <= MULTI_WINDOW then closeSeen[hit.victim] = true end
-			end
-			local closeVictims, victims = 0, 0
-			for _ in closeSeen do closeVictims += 1 end
-			for _ in seen do victims += 1 end
-
-			-- Two different players inside one attack cooldown, or three inside a second, cannot come
-			-- from separate swings. A hit landed more than a right angle behind the attacker is the
-			-- same signature from the other side: something else picked the target.
-			if closeVictims >= 2 or victims >= MULTI_VICTIMS then
-				flag(attacker, 'Killaura')
-			elseif distance <= allowance and distance > 2 and angle > HITBOX_ANGLE then
-				flag(attacker, 'Killaura')
-			end
-		end
+		local reason = evaluateHit(attackRoot, victimRoot, data.damageType)
+		if reason and optionEnabled(Combat, reason) then flag(attacker, reason) end
 	end
 
 	---------------------------------------------------------------------------
@@ -406,14 +425,17 @@ run(function()
 
 	local function poll()
 		if not CheatDetector.Enabled then return end
-		-- Records still have to be refreshed while laggy so the next clean poll compares against a
-		-- recent position instead of a stale one.
-		local movement = Movement.Toggle.Enabled and playerPing(Players.LocalPlayer) <= MAX_PING
+		local checkSpeedOn = optionEnabled(Movement, 'Speed')
+		local checkFlyOn = optionEnabled(Movement, 'Fly')
+		local checkAntiDeathsOn = optionEnabled(Movement, 'AntiDeaths')
+		if not (checkSpeedOn or checkFlyOn or checkAntiDeathsOn) then return end
+
 		for _, ent in entityList() do
 			local ok, record = pcall(snapshot, ent)
-			if ok and record and movement then
-				pcall(checkSpeed, record)
-				pcall(checkFly, record)
+			if ok and record then
+				if checkSpeedOn then pcall(checkSpeed, record) end
+				if checkFlyOn then pcall(checkFly, record) end
+				if checkAntiDeathsOn then pcall(checkAntiDeaths, record) end
 			end
 		end
 
@@ -422,7 +444,7 @@ run(function()
 				records[plr] = nil
 				speedTracks[plr] = nil
 				airTracks[plr] = nil
-				hitHistory[plr] = nil
+				antiTracks[plr] = nil
 				strikes[plr] = nil
 			end
 		end
@@ -440,17 +462,26 @@ run(function()
 				end
 			end
 		})
-		local api = {Toggle = toggle}
+		local api = {Toggle = toggle, Options = {}}
 		function api:Add(options)
 			options.Darker = true
 			local option = CheatDetector:CreateToggle(options)
 			if option.Object then
 				option.Object.Visible = toggle.Enabled == true
 			end
+			api.Options[options.Name] = option
 			table.insert(children, option)
 			return option
 		end
 		return api
+	end
+
+	-- The per-check toggles under each group used to be decoration: the checks read the group
+	-- header and nothing else. The poll and damage paths now ask this before running one.
+	local function optionEnabled(group, name)
+		if not (group and group.Toggle.Enabled) then return false end
+		local option = group.Options[name]
+		return option == nil or option.Enabled == true
 	end
 
 	CheatDetector = vape.Categories.Utility:CreateModule({
@@ -464,7 +495,7 @@ run(function()
 			table.clear(records)
 			table.clear(speedTracks)
 			table.clear(airTracks)
-			table.clear(hitHistory)
+			table.clear(antiTracks)
 			table.clear(strikes)
 			if not callback then return end
 			pollThread = task.spawn(function()
@@ -482,12 +513,23 @@ run(function()
 			end
 		end
 	})
-	Combat = group('Combat checks', 'Reach and one-swing-many-victims behaviour')
+
+	-- The decision functions are kept reachable so the checks can be exercised with synthetic
+	-- records (the connector tests do exactly that) without needing a live match.
+	CheatDetector.Checks = {
+		Reach = evaluateHit,
+		SpeedLimit = SPEED_LIMIT,
+		ReachLimit = REACH_LIMIT,
+		SpeedKits = SPEED_KITS
+	}
+
+	Combat = group('Combat checks', 'Reach and hits landed while facing away')
 	Combat:Add({Name = 'Reach', Default = true})
 	Combat:Add({Name = 'Killaura', Default = true})
-	Movement = group('Movement checks', 'Speed and hover behaviour')
+	Movement = group('Movement checks', 'Speed, hovering over the void and vertical teleports')
 	Movement:Add({Name = 'Speed', Default = true})
 	Movement:Add({Name = 'Fly', Default = true})
+	Movement:Add({Name = 'AntiDeaths', Default = true})
 	SelfDetect = CheatDetector:CreateToggle({
 		Name = '[TEST] Detect self',
 		Default = false,
