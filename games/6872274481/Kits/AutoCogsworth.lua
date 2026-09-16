@@ -1,4 +1,6 @@
 run(function()
+
+	local util = vape.Libraries.bedwarsutil
 	local AutoCogsworth
 	local Targets
 	local Collect
@@ -82,9 +84,7 @@ run(function()
 		Min = 5,
 		Max = 500,
 		Default = 250,
-		Suffix = function(val)
-			return val <= 1 and 'stud' or 'studs'
-		end
+		Suffix = util.Studs
 	})
 	Delay = AutoCogsworth:CreateSlider({
 		Name = 'Delay',
@@ -92,9 +92,7 @@ run(function()
 		Max = 3,
 		Default = 0.3,
 		Decimal = 100,
-		Suffix = function(val)
-			return val <= 1 and 'sec' or 'secs'
-		end
+		Suffix = util.Seconds
 	})
 	Overclock = AutoCogsworth:CreateToggle({
 		Name = 'Overclock',
@@ -108,8 +106,6 @@ run(function()
 		Min = 1,
 		Max = 60,
 		Default = 25,
-		Suffix = function(val)
-			return val <= 1 and 'stud' or 'studs'
-		end
+		Suffix = util.Studs
 	})
 end)

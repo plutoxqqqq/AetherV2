@@ -1,4 +1,6 @@
 run(function()
+
+	local util = vape.Libraries.bedwarsutil
 	local AutoVoidHunter
 	local Range
 	local Detonate
@@ -36,9 +38,7 @@ run(function()
 		Min = 1,
 		Max = 100,
 		Default = 50,
-		Suffix = function(val)
-			return val <= 1 and 'stud' or 'studs'
-		end
+		Suffix = util.Studs
 	})
 	Detonate = AutoVoidHunter:CreateToggle({
 		Name = 'Auto detonate',

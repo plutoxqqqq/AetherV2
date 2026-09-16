@@ -1,4 +1,6 @@
 run(function()
+
+	local util = vape.Libraries.bedwarsutil
 	local AutoSigrid
 	local Combat
 	local Targets
@@ -55,8 +57,6 @@ run(function()
 		Max = 80,
 		Default = 40,
 		Visible = false,
-		Suffix = function(val)
-			return val <= 1 and 'stud' or 'studs'
-		end
+		Suffix = util.Studs
 	})
 end)

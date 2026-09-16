@@ -1,4 +1,6 @@
 run(function()
+
+	local util = vape.Libraries.bedwarsutil
 	local FalconAura
 	local Range
 	local Delay
@@ -39,9 +41,7 @@ run(function()
 		Min = 1,
 		Max = 150,
 		Default = 80,
-		Suffix = function(val)
-			return val <= 1 and 'stud' or 'studs'
-		end
+		Suffix = util.Studs
 	})
 	Delay = FalconAura:CreateSlider({
 		Name = 'Delay',
@@ -49,9 +49,7 @@ run(function()
 		Max = 5,
 		Default = 1,
 		Decimal = 10,
-		Suffix = function(val)
-			return val <= 1 and 'sec' or 'secs'
-		end
+		Suffix = util.Seconds
 	})
 	Recall = FalconAura:CreateToggle({
 		Name = 'Recall when clear',

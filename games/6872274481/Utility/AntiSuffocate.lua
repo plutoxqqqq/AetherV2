@@ -1,4 +1,6 @@
 run(function()
+
+	local util = vape.Libraries.bedwarsutil
 	local AntiSuffocate
 	local Mode
 	local Height
@@ -63,9 +65,7 @@ run(function()
 		Max = 4,
 		Default = 1.5,
 		Decimal = 10,
-		Suffix = function(val)
-			return val <= 1 and 'stud' or 'studs'
-		end,
+		Suffix = util.Studs,
 		Tooltip = 'How far above your root the check looks, 1.5 is head level'
 	})
 end)

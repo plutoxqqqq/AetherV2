@@ -1,4 +1,6 @@
 run(function()
+
+	local util = vape.Libraries.bedwarsutil
 	local VoidRegentAutoClutch
 	local Range
 	local Depth
@@ -35,9 +37,7 @@ run(function()
 		Min = 10,
 		Max = 60,
 		Default = 45,
-		Suffix = function(val)
-			return val <= 1 and 'stud' or 'studs'
-		end,
+		Suffix = util.Studs,
 		Tooltip = 'How far to look for ground to dash back to'
 	})
 	Depth = VoidRegentAutoClutch:CreateSlider({
@@ -45,9 +45,7 @@ run(function()
 		Min = 10,
 		Max = 150,
 		Default = 60,
-		Suffix = function(val)
-			return val <= 1 and 'stud' or 'studs'
-		end,
+		Suffix = util.Studs,
 		Tooltip = 'Nothing beneath you within this counts as the void'
 	})
 	FallSpeed = VoidRegentAutoClutch:CreateSlider({

@@ -1,4 +1,6 @@
 run(function()
+
+	local util = vape.Libraries.bedwarsutil
 	local AutoVoidKnight
 	local Iron
 	local Emeralds
@@ -57,9 +59,7 @@ run(function()
 		Min = 1,
 		Max = 60,
 		Default = 30,
-		Suffix = function(val)
-			return val <= 1 and 'stud' or 'studs'
-		end
+		Suffix = util.Studs
 	})
 	Iron = AutoVoidKnight:CreateToggle({
 		Name = 'Iron',

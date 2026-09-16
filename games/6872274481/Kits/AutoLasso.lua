@@ -1,4 +1,6 @@
 run(function()
+
+	local util = vape.Libraries.bedwarsutil
 	local AutoLasso
 	local Targets
 	local Range
@@ -87,9 +89,7 @@ run(function()
 		Min = 1,
 		Max = 60,
 		Default = 22,
-		Suffix = function(val)
-			return val <= 1 and 'stud' or 'studs'
-		end
+		Suffix = util.Studs
 	})
 	FireRate = AutoLasso:CreateTwoSlider({
 		Name = 'Fire Rate',

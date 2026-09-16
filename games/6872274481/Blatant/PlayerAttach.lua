@@ -1,4 +1,6 @@
 run(function()
+
+    local util = vape.Libraries.bedwarsutil
     local PlayerAttach
     local Range
     local Targets
@@ -48,8 +50,6 @@ run(function()
         Min = 1,
         Max = 35,
         Default = 23,
-        Suffix = function(val)
-            return val <= 1 and 'stud' or 'studs'
-        end
+        Suffix = util.Studs
     })
 end)

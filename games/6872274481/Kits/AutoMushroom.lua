@@ -1,4 +1,6 @@
 run(function()
+
+	local util = vape.Libraries.bedwarsutil
 	local AutoMushroom
 	local Ingredient
 	local Delay
@@ -38,8 +40,6 @@ run(function()
 		Max = 5,
 		Default = 0.5,
 		Decimal = 10,
-		Suffix = function(val)
-			return val <= 1 and 'sec' or 'secs'
-		end
+		Suffix = util.Seconds
 	})
 end)

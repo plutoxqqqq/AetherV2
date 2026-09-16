@@ -1,4 +1,6 @@
 run(function()
+
+	local util = vape.Libraries.bedwarsutil
 	local AutoBountyHunter
 	local Track
 	local Reroll
@@ -84,9 +86,7 @@ run(function()
 		Max = 500,
 		Default = 250,
 		Darker = true,
-		Suffix = function(val)
-			return val <= 1 and 'stud' or 'studs'
-		end
+		Suffix = util.Studs
 	})
 
 end)

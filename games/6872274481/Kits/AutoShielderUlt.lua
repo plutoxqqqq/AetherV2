@@ -1,4 +1,6 @@
 run(function()
+
+	local util = vape.Libraries.bedwarsutil
 	local AutoShielderUlt
 	local Range
 	local Targets
@@ -37,9 +39,7 @@ run(function()
 		Min = 1,
 		Max = 60,
 		Default = 25,
-		Suffix = function(val)
-			return val <= 1 and 'stud' or 'studs'
-		end
+		Suffix = util.Studs
 	})
 	Targets = AutoShielderUlt:CreateSlider({
 		Name = 'Targets',
@@ -54,8 +54,6 @@ run(function()
 		Max = 10,
 		Default = 2,
 		Decimal = 10,
-		Suffix = function(val)
-			return val <= 1 and 'sec' or 'secs'
-		end
+		Suffix = util.Seconds
 	})
 end)

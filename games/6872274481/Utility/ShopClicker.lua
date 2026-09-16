@@ -1,4 +1,6 @@
 run(function()
+    local util = vape.Libraries.bedwarsutil
+
     local ShopQuickBuy
     local HoldDelay
     local CPS
@@ -31,15 +33,7 @@ run(function()
     end
 
     local function getShopId()
-        if not entitylib.isAlive then return nil end
-        local localPosition = entitylib.character.RootPart.Position
-        local id
-        for _, v in store.shop do
-            if v.Shop and (v.RootPart.Position - localPosition).Magnitude <= 20 then
-                id = v.Id
-            end
-        end
-        return id
+        return util.Shop.Id('item')
     end
 
     local function getHoveredItem()
@@ -57,21 +51,13 @@ run(function()
     end
 
     local function canBuy(item)
-        if item.ignoredByKit and table.find(item.ignoredByKit, store.equippedKit or '') then return false end
-        if item.lockedByForge or item.disabled then return false end
-        if item.require and item.require.teamUpgrade then
-            if (bedwars.Store:getState().Bedwars.teamUpgrades[item.require.teamUpgrade.upgradeId] or -1) < item.require.teamUpgrade.lowestTierIndex then
-                return false
-            end
-        end
-        local currency = getItem(item.currency)
-        return (currency and currency.amount or 0) >= item.price
+        return util.Shop.CanBuy(item)
     end
 
     local function purchase(itemType, shopId)
-        if bedwars.BedwarsShopController.alreadyPurchasedMap[itemType] ~= nil then return end
+        if util.Shop.Owned(itemType) then return end
 
-        local item = bedwars.Shop.getShopItem(itemType, lplr, {shopId = shopId})
+        local item = util.Shop.Item(itemType, shopId)
         if not item or not canBuy(item) then return end
 
         bedwars.Client:Get('BedwarsPurchaseItem'):CallServerAsync({
@@ -96,7 +82,7 @@ run(function()
         end
         clickThread = task.spawn(function()
             repeat
-                local shopId = bedwars.AppController:isAppOpen('BedwarsItemShopApp') and store.shopLoaded and getShopId()
+                local shopId = util.Shop.ItemScreenOpen() and store.shopLoaded and getShopId()
                 if shopId then
                     purchase(itemType, shopId)
                 end
@@ -112,7 +98,7 @@ run(function()
             if callback then
                 ShopQuickBuy:Clean(inputService.InputBegan:Connect(function(input)
                     if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
-                    if not bedwars.AppController:isAppOpen('BedwarsItemShopApp') then return end
+                    if not util.Shop.ItemScreenOpen() then return end
 
                     local itemType = getHoveredItem()
                     if not itemType then return end

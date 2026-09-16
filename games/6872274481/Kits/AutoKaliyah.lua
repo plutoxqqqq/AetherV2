@@ -1,4 +1,6 @@
 run(function()
+
+	local util = vape.Libraries.bedwarsutil
 	local AutoKaliyah
 	local Range
 	local Stacks
@@ -64,9 +66,7 @@ run(function()
 		Min = 1,
 		Max = 20,
 		Default = 18,
-		Suffix = function(val)
-			return val <= 1 and 'stud' or 'studs'
-		end
+		Suffix = util.Studs
 	})
 	AutoKaliyah:CreateButton({
 		Name = 'Sync to legit range',

@@ -1,4 +1,6 @@
 run(function()
+
+	local util = vape.Libraries.bedwarsutil
 	local AutoSheep
 	local Delay
 	local Range
@@ -34,9 +36,7 @@ run(function()
 		Min = 1,
 		Max = 200,
 		Default = 20,
-		Suffix = function(val)
-			return val <= 1 and 'stud' or 'studs'
-		end
+		Suffix = util.Studs
 	})
 	Infinite = AutoSheep:CreateToggle({
 		Name = 'Infinite range',

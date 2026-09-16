@@ -1,4 +1,6 @@
 run(function()
+
+	local util = vape.Libraries.bedwarsutil
 	local AutoMarina
 	local Range
 
@@ -39,8 +41,6 @@ run(function()
 		Min = 1,
 		Max = 65,
 		Default = 50,
-		Suffix = function(val)
-			return val <= 1 and 'stud' or 'studs'
-		end
+		Suffix = util.Studs
 	})
 end)

@@ -1,4 +1,6 @@
 run(function()
+
+    local util = vape.Libraries.bedwarsutil
     local BedAlarm
     local Range
     local Volume
@@ -80,9 +82,7 @@ run(function()
 	Min = 1,
 	Max = 100,
 	Default = 70,
-	Suffix = function(val)
-		return val <= 1 and 'stud' or 'studs'
-	end,
+	Suffix = util.Studs,
     })
     Volume = BedAlarm:CreateSlider({
 	Name = 'Volume multiplier',

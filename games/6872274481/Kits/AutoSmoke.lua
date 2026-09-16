@@ -1,4 +1,6 @@
 run(function()
+
+	local util = vape.Libraries.bedwarsutil
 	local AutoSmoke
 	local Range
 	local Health
@@ -37,9 +39,7 @@ run(function()
 		Min = 1,
 		Max = 60,
 		Default = 25,
-		Suffix = function(val)
-			return val <= 1 and 'stud' or 'studs'
-		end
+		Suffix = util.Studs
 	})
 	Health = AutoSmoke:CreateSlider({
 		Name = 'Health',
@@ -57,8 +57,6 @@ run(function()
 		Max = 15,
 		Default = 5,
 		Decimal = 10,
-		Suffix = function(val)
-			return val <= 1 and 'sec' or 'secs'
-		end
+		Suffix = util.Seconds
 	})
 end)

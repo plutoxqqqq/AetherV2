@@ -37,7 +37,7 @@ local PLACE_ALIAS = {
 	[132768098780837] = 6872274481,
 	[16008862571] = 6872265039,
 }
-local DOWNLOAD_BATCH = 48
+local DOWNLOAD_BATCH = 24
 
 local function toast(title, text, duration)
 	pcall(function()
@@ -80,11 +80,21 @@ local function downloadFile(path, func)
 	return (func or readfile)(path)
 end
 
-local function remoteExists(rel)
+-- One round trip per URL. The loader used to call remoteExists and then downloadFile on the
+-- same path, paying for the file twice, and it raised instead of answering "not there yet"
+-- when GitHub handed back a 404 body.
+local function fetchRemote(rel)
 	local suc, res = pcall(function()
 		return game:HttpGet('https://raw.githubusercontent.com/plutoxqqqq/AetherV2/'..SOURCE_COMMIT..'/'..rel, true)
 	end)
-	return suc and type(res) == 'string' and res ~= '404: Not Found' and not res:find('^%s*<!doctype html')
+	if not suc or type(res) ~= 'string' then
+		return nil
+	end
+	local head = res:sub(1, 300):lower()
+	if res == '404: Not Found' or head:find('^%s*404') or head:find('^%s*<!doctype html') or head:find('^%s*<html') then
+		return nil
+	end
+	return res
 end
 
 local function parseFileList(list)
@@ -96,6 +106,41 @@ local function parseFileList(list)
 		end
 	end
 	return names
+end
+
+-- A cached pack is only reusable for the exact module list and release it was built from,
+-- and that key travels in the pack's own header. A pack written by an older loader carries no
+-- header, so it is discarded instead of being trusted for modules it may not contain.
+local PACK_HEADER = '--AetherV2 pack'
+
+local function hashString(text)
+	local hash = 2166136261
+	for index = 1, #text do
+		hash = bit32.bxor(hash, text:byte(index))
+		hash = (hash * 16777619) % 4294967296
+	end
+	return string.format('%08x', hash)
+end
+
+local function installedVersion()
+	if not isfile('aetherv2/profiles/version.txt') then return '' end
+	local ok, body = pcall(readfile, 'aetherv2/profiles/version.txt')
+	return ok and type(body) == 'string' and body:gsub('%s+', '') or ''
+end
+
+local function packKey(folder, list)
+	return hashString(folder..'\n'..installedVersion()..'\n'..list)
+end
+
+local function packHeader(key, count)
+	return PACK_HEADER..' key='..key..' count='..count..'\n'
+end
+
+local function packKeyOf(body)
+	if type(body) ~= 'string' then return nil end
+	local line = body:match('^[^\r\n]*')
+	if not line or line:sub(1, #PACK_HEADER) ~= PACK_HEADER then return nil end
+	return line:match('key=(%x+)')
 end
 
 local function downloadParallel(folder, names, phaseStart, phaseSpan)
@@ -133,110 +178,182 @@ local function packLooksValid(body)
 		or head:find('vape', 1, true) ~= nil
 end
 
--- loadPackedFast: use a local pack.lua when present, otherwise download once and cache the pack
-local function loadPacked(folder)
-	local packPath = 'aetherv2/games/'..folder..'/pack.lua'
-	if isfile(packPath) then
-		local cached = select(2, pcall(readfile, packPath))
-		if packLooksValid(cached) then
-			local chunk, err = loadstring(cached, folder)
-			if chunk then
-				local ok, result = pcall(chunk, license)
-				if ok then
-					return true
-				end
-				warn('[AetherV2] pack run failed '..folder..': '..tostring(result))
-			else
-				warn('[AetherV2] pack compile failed '..folder..': '..tostring(err))
-			end
-		else
-			warn('[AetherV2] discarding invalid pack cache '..folder)
-		end
-		pcall(delfile, packPath)
-	end
-
-	-- A committed pack.lua turns a cold start from hundreds of HTTP requests into one.
-	if not isfile(packPath) then
-		local fetched, body = pcall(downloadFile, packPath)
-		if fetched and packLooksValid(body) then
-			local remoteChunk, remoteErr = loadstring(body, folder)
-			if remoteChunk then
-				local ran, result = pcall(remoteChunk, license)
-				if ran then
-					return true
-				end
-				warn('[AetherV2] remote pack run failed '..folder..': '..tostring(result))
-			else
-				warn('[AetherV2] remote pack compile failed '..folder..': '..tostring(remoteErr))
-			end
-		end
-		pcall(delfile, packPath)
-	end
-
+-- loadPacked used to run blind: files.txt was fetched twice (remoteExists, then downloadFile),
+-- a 404 for a pack.lua that this repository does not publish was burned on every cold start,
+-- and a cached pack was trusted forever. buildPack answers "is there a module list, and does the
+-- cached pack actually describe it?"; preparePack runs that in a coroutine so both folders can
+-- work at the same time; runPack only executes, in the order the game needs.
+local function buildPack(job)
+	local folder = job.Folder
 	local listPath = 'aetherv2/games/'..folder..'/files.txt'
-	local list
-	if isfile(listPath) then
-		list = readfile(listPath)
-	elseif remoteExists('games/'..folder..'/files.txt') then
-		list = downloadFile(listPath)
-	else
-		return false, 'no files.txt'
+
+	-- The module list is fetched live so a module added to the repository shows up without
+	-- waiting on a version bump. The cached copy is only an offline fallback.
+	local list = fetchRemote('games/'..folder..'/files.txt')
+	if list then
+		local cachedList = isfile(listPath) and select(2, pcall(readfile, listPath)) or nil
+		if cachedList ~= list then
+			ensureParentFolder(listPath)
+			pcall(writefile, listPath, list)
+		end
+	elseif isfile(listPath) then
+		list = select(2, pcall(readfile, listPath))
+	end
+	if type(list) ~= 'string' or list == '' then
+		job.Error = 'no files.txt'
+		return
 	end
 	local names = parseFileList(list)
 	if #names == 0 then
-		return false, 'empty files.txt'
+		job.Error = 'empty files.txt'
+		return
 	end
-	local bodies = downloadParallel(folder, names, 0, 0)
+	job.Names = names
+	job.Key = packKey(folder, list)
+
+	local packPath = 'aetherv2/games/'..folder..'/pack.lua'
+	if isfile(packPath) then
+		local cached = select(2, pcall(readfile, packPath))
+		if packKeyOf(cached) == job.Key and packLooksValid(cached) then
+			local chunk, err = loadstring(cached, folder)
+			if chunk then
+				job.Chunk = chunk
+				return
+			end
+			warn('[AetherV2] cached pack for '..folder..' does not compile: '..tostring(err))
+		elseif packKeyOf(cached) == nil then
+			warn('[AetherV2] discarding pack cache '..folder..' written by an older loader')
+		else
+			warn('[AetherV2] discarding stale pack cache '..folder..' (module list or release changed)')
+		end
+		pcall(delfile, packPath)
+	end
+
+	-- A committed pack would turn a cold start into a couple of requests instead of hundreds, so
+	-- it is asked for alongside the sources rather than before them: in this repository that URL
+	-- is a 404, and this way the 404 costs no wall clock time.
+	local remotePack
+	task.spawn(function()
+		local body = fetchRemote('games/'..folder..'/pack.lua')
+		if packKeyOf(body) == job.Key and packLooksValid(body) then
+			remotePack = body
+		end
+	end)
+
+	local bodies = downloadParallel(folder, names)
 	local chunks = {}
-	for i = 1, #names do
-		if bodies[i] then
-			table.insert(chunks, bodies[i])
+	for index = 1, #names do
+		if bodies[index] then
+			table.insert(chunks, bodies[index])
 		end
 	end
-	if #chunks == 0 then
-		return false, 'no chunks'
+	job.Bodies = bodies
+	-- An incomplete download used to be concatenated anyway, silently baking the missing modules
+	-- into the cache. Refuse to write a pack that is not the whole module list, and let runPack
+	-- compile and run the modules that did arrive.
+	if #chunks < #names then
+		job.Error = 'incomplete module download ('..#chunks..'/'..#names..')'
+		warn('[AetherV2] '..folder..': '..job.Error)
+		return
 	end
-	local packed = table.concat(chunks, '\n')
+
+	if remotePack then
+		local chunk = loadstring(remotePack, folder)
+		if chunk then
+			ensureParentFolder(packPath)
+			pcall(writefile, packPath, remotePack)
+			job.Chunk = chunk
+			return
+		end
+	end
+
+	local packed = packHeader(job.Key, #names)..table.concat(chunks, '\n')
 	if not packLooksValid(packed) then
-		return false, 'assembled pack failed validation'
+		job.Error = 'assembled pack failed validation'
+		return
 	end
-	ensureParentFolder(packPath)
-	pcall(writefile, packPath, packed)
 	local chunk, err = loadstring(packed, folder)
 	if not chunk then
 		warn('[AetherV2] compile failed '..folder..': '..tostring(err))
-		local ran = 0
-		for i, name in ipairs(names) do
-			local body = bodies[i]
+		return
+	end
+	ensureParentFolder(packPath)
+	pcall(writefile, packPath, packed)
+	job.Chunk = chunk
+end
+
+local function preparePack(folder)
+	local job = {Folder = folder, Ready = false}
+	task.spawn(function()
+		local ok, err = pcall(buildPack, job)
+		if not ok then
+			job.Error = tostring(err)
+			warn('[AetherV2] pack preparation failed '..folder..': '..tostring(err))
+		end
+		job.Ready = true
+	end)
+	return job
+end
+
+local function runPack(job)
+	if not job.Ready then
+		repeat task.wait() until job.Ready
+	end
+	if job.Chunk then
+		local ok, result = pcall(job.Chunk, license)
+		if ok then
+			return true
+		end
+		warn('[AetherV2] pack run failed '..job.Folder..': '..tostring(result))
+		job.Error = job.Error or tostring(result)
+		return false, result
+	end
+	-- The fallback compiles each source on its own, so one bad or missing module costs only
+	-- itself instead of the whole folder.
+	local ran = 0
+	if job.Bodies and job.Names then
+		for index, name in ipairs(job.Names) do
+			local body = job.Bodies[index]
 			if body then
-				local one, oneErr = loadstring(body, folder..'/'..name)
+				local one, oneErr = loadstring(body, job.Folder..'/'..name)
 				if one then
 					if pcall(one, license) then
 						ran += 1
 					end
 				else
-					warn('[AetherV2] compile failed '..folder..'/'..name..': '..tostring(oneErr))
+					warn('[AetherV2] compile failed '..job.Folder..'/'..name..': '..tostring(oneErr))
 				end
 			end
 		end
-		return ran > 0
+	else
+		local reason = job.Error or 'no module sources'
+		warn('[AetherV2] '..job.Folder..' modules unavailable: '..reason)
+		return false, reason
 	end
-	local ok, result = pcall(chunk, license)
-	if not ok then
-		warn('[AetherV2] run failed '..folder..': '..tostring(result))
-		return false, result
-	end
-	return true
+	return ran > 0, job.Error
 end
 
 local function loadLegacy(name)
-	local path = 'aetherv2/games/'..name..'.lua'
-	if isfile(path) or remoteExists('games/'..name..'.lua') then
-		local chunk = loadstring(downloadFile(path), name)
-		if chunk then
-			pcall(chunk, license)
-			return true
+	local rel = 'games/'..name..'.lua'
+	local path = 'aetherv2/'..rel
+	local body
+	if isfile(path) then
+		body = select(2, pcall(readfile, path))
+	else
+		body = fetchRemote(rel)
+		if body then
+			body = '--This watermark is used to delete the file if its cached, remove it to make the file persist after vape updates.\n'..body
+			ensureParentFolder(path)
+			pcall(writefile, path, body)
 		end
+	end
+	if type(body) ~= 'string' or body == '' then
+		return false
+	end
+	local chunk = loadstring(body, name)
+	if chunk then
+		pcall(chunk, license)
+		return true
 	end
 	return false
 end
@@ -385,14 +502,19 @@ shared.vape = vape
 _G.vape = vape
 
 if not shared.VapeIndependent then
-	if not loadPacked('universal') then
+	-- Both packs are prepared at the same time. The universal pack is the smaller of the two,
+	-- so its modules start running while the game pack is still on the wire, and neither folder
+	-- waits on the other folder's module list.
+	local universalJob = preparePack('universal')
+	local place = resolvePlace()
+	local placeJob = preparePack(tostring(place))
+	if not runPack(universalJob) then
 		loadLegacy('universal')
 	end
-	local place = resolvePlace()
 	if vape.Place == nil then
 		vape.Place = place
 	end
-	if not loadPacked(tostring(place)) then
+	if not runPack(placeJob) then
 		if not loadLegacy(tostring(place)) then
 			warn('[AetherV2] No game module for '..tostring(game.PlaceId)..' -> '..tostring(place))
 			toast('AetherV2', 'No game pack for '..tostring(game.PlaceId)..'. Universal only.', 8)

@@ -1,4 +1,6 @@
 run(function()
+
+	local util = vape.Libraries.bedwarsutil
 	local AutoNahila
 	local Health
 	local Range
@@ -52,8 +54,6 @@ run(function()
 		Min = 1,
 		Max = 60,
 		Default = 25,
-		Suffix = function(val)
-			return val <= 1 and 'stud' or 'studs'
-		end
+		Suffix = util.Studs
 	})
 end)

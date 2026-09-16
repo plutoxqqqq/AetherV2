@@ -1,4 +1,6 @@
 run(function()
+
+	local util = vape.Libraries.bedwarsutil
 	local AutoCaitlyn
 	local Mode
 	local Range
@@ -274,9 +276,7 @@ run(function()
 		Min = 1,
 		Max = 50,
 		Default = 50,
-		Suffix = function(val)
-			return val <= 1 and 'stud' or 'studs'
-		end
+		Suffix = util.Studs
 	})
 	TargetPriorities = AutoCaitlyn:CreateToggle({
 		Name = 'Target Priorities',

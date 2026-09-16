@@ -1,4 +1,6 @@
 run(function()
+
+	local util = vape.Libraries.bedwarsutil
 	local AutoHannah
 	local Targets
 	local Sort
@@ -64,9 +66,7 @@ run(function()
 		Min = 1,
 		Max = 30,
 		Default = 30,
-		Suffix = function(val)
-			return val <= 1 and 'stud' or 'studs'
-		end
+		Suffix = util.Studs
 	})
 	AuraTarget = AutoHannah:CreateToggle({
 		Name = 'Only killaura target',

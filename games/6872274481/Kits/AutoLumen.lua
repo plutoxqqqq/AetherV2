@@ -1,4 +1,6 @@
 run(function()
+
+	local util = vape.Libraries.bedwarsutil
 	local AutoLumen
 	local Targets
 	local Range
@@ -81,9 +83,7 @@ run(function()
 		Min = 1,
 		Max = 120,
 		Default = 60,
-		Suffix = function(val)
-			return val <= 1 and 'stud' or 'studs'
-		end
+		Suffix = util.Studs
 	})
 	FullCharge = AutoLumen:CreateToggle({
 		Name = 'Full charge',

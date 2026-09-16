@@ -1,4 +1,6 @@
 run(function()
+
+	local util = vape.Libraries.bedwarsutil
 	local JadeInstantKill
 	local Targets
 	local Range
@@ -332,9 +334,7 @@ run(function()
 		Min = 1,
 		Max = 200,
 		Default = 100,
-		Suffix = function(val)
-			return val <= 1 and 'stud' or 'studs'
-		end,
+		Suffix = util.Studs,
 		Tooltip = 'How far away a target can be before the slam starts'
 	})
 	LimitItems = JadeInstantKill:CreateToggle({

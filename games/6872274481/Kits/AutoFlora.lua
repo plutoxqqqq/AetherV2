@@ -1,4 +1,6 @@
 run(function()
+
+	local util = vape.Libraries.bedwarsutil
 	local AutoFlora
 	local Mode
 	local Height
@@ -47,9 +49,7 @@ run(function()
 		Max = 200,
 		Default = 40,
 		Visible = false,
-		Suffix = function(val)
-			return val <= 1 and 'stud' or 'studs'
-		end
+		Suffix = util.Studs
 	})
 	Speed = AutoFlora:CreateSlider({
 		Name = 'Fall speed',

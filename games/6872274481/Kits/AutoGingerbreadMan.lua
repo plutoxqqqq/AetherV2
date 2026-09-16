@@ -1,4 +1,6 @@
 run(function()
+
+	local util = vape.Libraries.bedwarsutil
 	local AutoGingerbread
 	local Range
 	local Delay
@@ -89,9 +91,7 @@ run(function()
 		Max = 30,
 		Default = 30,
 		Darker = true,
-		Suffix = function(val)
-			return val <= 1 and 'stud' or 'studs'
-		end
+		Suffix = util.Studs
 	})
 	Delay = AutoGingerbread:CreateSlider({
 		Name = 'Break delay',

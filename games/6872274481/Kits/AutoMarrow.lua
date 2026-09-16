@@ -1,4 +1,6 @@
 run(function()
+
+	local util = vape.Libraries.bedwarsutil
 	local AutoMarrow
 	local Mode
 	local Targets
@@ -46,9 +48,7 @@ run(function()
 		Min = 1,
 		Max = 40,
 		Default = 12,
-		Suffix = function(val)
-			return val <= 1 and 'stud' or 'studs'
-		end
+		Suffix = util.Studs
 	})
 	Health = AutoMarrow:CreateSlider({
 		Name = 'Health',

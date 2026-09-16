@@ -1,4 +1,6 @@
 run(function()
+
+	local util = vape.Libraries.bedwarsutil
 	local AutoZola
 	local Mode
 	local Range
@@ -90,8 +92,6 @@ run(function()
 		Min = 1,
 		Max = 50,
 		Default = 30,
-		Suffix = function(val)
-			return val <= 1 and 'stud' or 'studs'
-		end
+		Suffix = util.Studs
 	})
 end)

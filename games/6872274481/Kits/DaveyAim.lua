@@ -1,4 +1,6 @@
 run(function()
+
+	local util = vape.Libraries.bedwarsutil
 	local DaveyAim
 	local Mode
 	local Position
@@ -500,9 +502,7 @@ run(function()
 		Min = 1,
 		Max = 18,
 		Default = 10,
-		Suffix = function(val)
-			return val <= 1 and 'stud' or 'studs'
-		end
+		Suffix = util.Studs
 	})
 	LaunchCannon = DaveyAim:CreateToggle({
 		Name = 'Launch Cannon',

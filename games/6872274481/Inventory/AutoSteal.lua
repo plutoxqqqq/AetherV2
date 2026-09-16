@@ -3,26 +3,19 @@ run(function()
     
     
     
+    local util = vape.Libraries.bedwarsutil
+
     local AutoSteal
     local Range, Delay, GUI, Skywars, Chests, Bank
     local Start = 0
 
-    local function inv()
-        return bedwars.Client:GetNamespace('Inventory')
-    end
-
-    local function getFolder(chest)
-        local fv = chest:FindFirstChild('ChestFolderValue')
-        return fv and fv.Value or nil
-    end
+    local inv = util.Chest.Remotes
+    local getFolder = util.Chest.FolderOf
 
     
     
     
-    local function ownPersonalFolder()
-        local inventories = replicatedStorage:FindFirstChild('Inventories')
-        return inventories and inventories:FindFirstChild(lplr.Name .. '_personal') or nil
-    end
+    local ownPersonalFolder = util.Chest.OwnFolder
 
     
     
@@ -49,30 +42,22 @@ run(function()
     end
 
     local function isPersonal(chest)
-        if collectionService:HasTag(chest, 'personal-chest') then return true end
-        if tostring(chest.Name):lower():find('personal') then return true end
-        if chest:GetAttribute('PersonalChest') or chest:GetAttribute('IsPersonalChest') then return true end
-        return isPersonalFolder(getFolder(chest))
+        return util.Chest.IsPersonal(chest)
     end
 
     local function lootFolder(folder, items)
-        if not folder then return end
-        
-        
-        if isPersonalFolder(folder) then return end
+        if not folder or isPersonalFolder(folder) then return end
         local own = ownPersonalFolder()
         if own and folder == own then return end
-        inv():Get('SetObservedChest'):SendToServer(folder)
-        for _, v2 in folder:GetChildren() do
-            if v2:IsA('Accessory') then
+        util.Chest.Observe(folder, function()
+            for _, entry in util.Chest.Entries(folder) do
                 task.spawn(function()
-                    if inv():Get('ChestGetItem'):CallServer(folder, v2) and items then
-                        table.insert(items, v2.Name)
+                    if util.Chest.Take(folder, entry) and items then
+                        table.insert(items, entry.Name)
                     end
                 end)
             end
-        end
-        inv():Get('SetObservedChest'):SendToServer(nil)
+        end)
     end
 
     AutoSteal = vape.Categories.Inventory:CreateModule({
@@ -112,9 +97,7 @@ run(function()
                         end
                         
                         local own = Bank.Enabled and #items > 0 and ownPersonalFolder() or nil
-                        if own then
-                            for _, v in collectionService:GetTagged('personal-chest') do
-                                if (localPosition - v.Position).Magnitude <= Range.Value then
+                        if own and util.Chest.InRange(Range.Value, localPosition) then
                                     
                                     
                                     
@@ -124,7 +107,7 @@ run(function()
                                         local item = getItem(name)
                                         if item then
                                             task.spawn(function()
-                                                if inv():Get('ChestGiveItem'):CallServer(own, item.tool) then
+                                                if util.Chest.Give(own, item.tool) then
                                                     local index = table.find(items, name)
                                                     if index then
                                                         table.remove(items, index)
@@ -133,9 +116,6 @@ run(function()
                                             end)
                                         end
                                     end
-                                    break
-                                end
-                            end
                         end
                         Start = tick()
                     end
@@ -151,7 +131,7 @@ run(function()
         Min = 1,
         Max = 18,
         Default = 18,
-        Suffix = function(val) return val <= 1 and 'stud' or 'studs' end,
+        Suffix = util.Studs,
     })
     Delay = AutoSteal:CreateSlider({
         Name = 'Delay',

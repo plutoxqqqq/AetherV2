@@ -1,4 +1,6 @@
 run(function()
+
+	local util = vape.Libraries.bedwarsutil
 	local AutoCard
 	local Range
 	local Delay
@@ -36,9 +38,7 @@ run(function()
 		Min = 1,
 		Max = 100,
 		Default = 60,
-		Suffix = function(val)
-			return val <= 1 and 'stud' or 'studs'
-		end
+		Suffix = util.Studs
 	})
 	Delay = AutoCard:CreateSlider({
 		Name = 'Delay',
@@ -46,8 +46,6 @@ run(function()
 		Max = 3,
 		Default = 0.4,
 		Decimal = 10,
-		Suffix = function(val)
-			return val <= 1 and 'sec' or 'secs'
-		end
+		Suffix = util.Seconds
 	})
 end)

@@ -1,4 +1,6 @@
 run(function()
+
+    local util = vape.Libraries.bedwarsutil
     local SilentAura
     local Targets
     local Speed
@@ -282,9 +284,7 @@ run(function()
         Tooltip = 'Where you will start swinging, not attacking',
         Min = 0,
         Max = 6,
-        Suffix = function(val)
-            return val <= 1 and 'stud' or 'studs'
-        end,
+        Suffix = util.Studs,
         Decimal = 5,
         Default = 3,
     })

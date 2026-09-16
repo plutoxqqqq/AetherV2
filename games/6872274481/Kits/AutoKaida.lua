@@ -1,4 +1,6 @@
 run(function()
+
+	local util = vape.Libraries.bedwarsutil
 	local AutoKaida
 	local Targets
 	local Sort
@@ -131,18 +133,14 @@ run(function()
 		Min = 1,
 		Max = 32,
 		Default = 32,
-		Suffix = function(val)
-			return val <= 1 and 'stud' or 'studs'
-		end
+		Suffix = util.Studs
 	})
 	AttackRange = AutoKaida:CreateSlider({
 		Name = 'Attack Range',
 		Min = 1,
 		Max = 32,
 		Default = 32,
-		Suffix = function(val)
-			return val <= 1 and 'stud' or 'studs'
-		end
+		Suffix = util.Studs
 	})
 	Spell = AutoKaida:CreateToggle({
 		Name = 'Auto summon',
@@ -179,9 +177,7 @@ run(function()
 		Default = 39,
 		Darker = true,
 		Visible = false,
-		Suffix = function(val)
-			return val <= 1 and 'stud' or 'studs'
-		end,
+		Suffix = util.Studs,
 		Tooltip = 'The game refuses anything past 39 studs'
 	})
 	Swing = AutoKaida:CreateToggle({

@@ -1,4 +1,6 @@
 run(function()
+
+	local util = vape.Libraries.bedwarsutil
 	local AutoEldric
 	local Targets
 	local Range
@@ -85,9 +87,7 @@ run(function()
 		Min = 1,
 		Max = 60,
 		Default = 24,
-		Suffix = function(val)
-			return val <= 1 and 'stud' or 'studs'
-		end
+		Suffix = util.Studs
 	})
 	AutoEldric:CreateButton({
 		Name = 'Sync to legit range',

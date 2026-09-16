@@ -1,4 +1,6 @@
 run(function()
+
+	local util = vape.Libraries.bedwarsutil
 	local AutoXurot
 	local Range
 	local Delay
@@ -106,9 +108,7 @@ run(function()
 		Min = 1,
 		Max = 200,
 		Default = 120,
-		Suffix = function(val)
-			return val <= 1 and 'stud' or 'studs'
-		end
+		Suffix = util.Studs
 	})
 	Delay = AutoXurot:CreateSlider({
 		Name = 'Delay',
@@ -116,9 +116,7 @@ run(function()
 		Max = 3,
 		Default = 0.5,
 		Decimal = 10,
-		Suffix = function(val)
-			return val <= 1 and 'sec' or 'secs'
-		end
+		Suffix = util.Seconds
 	})
 	FlapSpeed = AutoXurot:CreateToggle({
 		Name = 'Flap speed',

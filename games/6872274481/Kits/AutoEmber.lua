@@ -1,4 +1,6 @@
 run(function()
+
+	local util = vape.Libraries.bedwarsutil
 	local AutoEmber
 	local Targets
 	local Range
@@ -48,9 +50,7 @@ run(function()
 		Min = 1,
 		Max = 22,
 		Default = 22,
-		Suffix = function(val)
-			return val <= 1 and 'stud' or 'studs'
-		end
+		Suffix = util.Studs
 	})
 	Limit = AutoEmber:CreateToggle({Name = 'Limit to item'})
 end)

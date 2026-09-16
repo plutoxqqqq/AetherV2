@@ -1,4 +1,6 @@
 run(function()
+
+	local util = vape.Libraries.bedwarsutil
 	local AutoLani
 	local Delay
 	local UseEnemy
@@ -76,9 +78,7 @@ run(function()
 		Max = 20,
 		Default = 5,
 		Decimal = 10,
-		Suffix = function(val)
-			return val <= 1 and 'sec' or 'secs'
-		end,
+		Suffix = util.Seconds,
 		Tooltip = 'Delay between triggers'
 	})
 	for _, v in playersService:GetPlayers() do

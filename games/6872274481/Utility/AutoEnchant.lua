@@ -1,4 +1,6 @@
 run(function()
+
+	local util = vape.Libraries.bedwarsutil
 	local AutoEnchant
 	local Wanted
 	local Repair
@@ -54,9 +56,7 @@ run(function()
 		Min = 1,
 		Max = 30,
 		Default = 12,
-		Suffix = function(val)
-			return val <= 1 and 'stud' or 'studs'
-		end
+		Suffix = util.Studs
 	})
 	Delay = AutoEnchant:CreateSlider({
 		Name = 'Delay',

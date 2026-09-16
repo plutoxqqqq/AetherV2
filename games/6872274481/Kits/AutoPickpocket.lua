@@ -1,4 +1,6 @@
 run(function()
+
+	local util = vape.Libraries.bedwarsutil
 	local AutoPickpocket
 	local Targets
 	local Range
@@ -51,9 +53,7 @@ run(function()
 		Min = 1,
 		Max = 30,
 		Default = Legit,
-		Suffix = function(val)
-			return val <= 1 and 'stud' or 'studs'
-		end
+		Suffix = util.Studs
 	})
 	AutoPickpocket:CreateButton({
 		Name = 'Sync to legit range',

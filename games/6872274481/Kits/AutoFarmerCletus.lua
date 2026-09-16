@@ -1,4 +1,6 @@
 run(function()
+
+	local util = vape.Libraries.bedwarsutil
 	local AutoFarmerCletus
 	local Range
 	local Delay
@@ -45,9 +47,7 @@ run(function()
 		Min = 1,
 		Max = 60,
 		Default = 25,
-		Suffix = function(val)
-			return val <= 1 and 'stud' or 'studs'
-		end
+		Suffix = util.Studs
 	})
 	AutoFarmerCletus:CreateButton({
 		Name = 'Sync to legit range',
@@ -61,8 +61,6 @@ run(function()
 		Max = 2,
 		Default = 0.15,
 		Decimal = 100,
-		Suffix = function(val)
-			return val <= 1 and 'sec' or 'secs'
-		end
+		Suffix = util.Seconds
 	})
 end)

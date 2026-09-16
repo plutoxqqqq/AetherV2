@@ -5,6 +5,8 @@ run(function()
     local Mode
     local ChestRange
     local Withdraw
+    local OnlyWhenLow
+    local LowHealth
     local BeforeDeath
     local HPThreshold
     local BeforeDeathWhitelist
@@ -12,11 +14,17 @@ run(function()
     local WithdrawKey
     local UI
 
+    local util = vape.Libraries.bedwarsutil
+
     
     local droppedItems = {}
     
     
     local dropCooldowns = {}
+    
+    
+    
+    local chestCooldowns = {}
     
     
     
@@ -45,6 +53,10 @@ run(function()
     local BANK_HEIGHT = 120
     local BANK_SPACING = 4
     local BANK_COLUMNS = 8
+
+    
+    
+    local LEGIT_DEFAULT_HP = 30
 
     local function untrackDrop(drop)
         releasingDrops[drop] = nil
@@ -101,83 +113,76 @@ run(function()
     end
 
     
+    -- At either shopkeeper, using the same in-range check (and the same 20 studs) the other
+    -- shop modules use, or with a buying screen already open.
     local function atShop()
-        if not entitylib.isAlive then return false end
-        local opened = false
-        pcall(function()
-            opened = bedwars.AppController:isAppOpen('BedwarsItemShopApp') or bedwars.AppController:isAppOpen('TeamUpgradeApp')
-        end)
-        if opened then return true end
-        local position = entitylib.character.RootPart.Position
-        for _, npc in store.shop do
-            local root = npc.RootPart
-            if root and root.Parent and (root.Position - position).Magnitude <= 30 then
-                return true
-            end
-        end
-        return false
+        return util.Shop.BuyScreenOpen() or util.Shop.Nearby() ~= nil
     end
 
     
     
     
 
-    local function inventoryRemotes()
-        return bedwars.Client:GetNamespace('Inventory')
+    local inventoryRemotes = util.Chest.Remotes
+
+    
+    
+    
+    local ownPersonalFolder = util.Chest.OwnFolder
+
+    
+    
+    
+    
+    local function chestRange()
+        local range = ChestRange and tonumber(ChestRange.Value)
+        return range and range > 0 and range or util.Chest.Range
     end
 
     
     
     
-    local function ownPersonalFolder()
-        local inventories = replicatedStorage:FindFirstChild('Inventories')
-        return inventories and inventories:FindFirstChild(lplr.Name .. '_personal') or nil
-    end
-
-    local function chestPart(chest)
-        return chest:IsA('Model') and chest.PrimaryPart or (chest:IsA('BasePart') and chest) or nil
-    end
-
-    
-    
-    
+    -- The chest screen counts as being at the chest, so banking keeps working while it is
+    -- open; otherwise the same tagged-chest scan AutoSteal uses, at the configured range.
     local function atPersonalChest()
-        if not entitylib.isAlive then return false end
-        local opened = false
-        pcall(function()
-            opened = bedwars.AppController:isAppOpen('ChestApp')
-        end)
-        if opened then return true end
-        local position = entitylib.character.RootPart.Position
-        for _, chest in collectionService:GetTagged('personal-chest') do
-            local part = chestPart(chest)
-            if part and part.Parent and (part.Position - position).Magnitude <= ChestRange.Value then
-                return true
-            end
-        end
-        return false
+        return util.Shop.ChestScreenOpen() or util.Chest.InRange(chestRange())
     end
 
     
-    local function chestTotals(folder)
-        local totals = {}
-        if not folder then return totals end
-        for _, entry in folder:GetChildren() do
-            totals[entry.Name] = (totals[entry.Name] or 0) + (entry:GetAttribute('Amount') or 1)
-        end
-        return totals
-    end
+    local chestTotals = util.Chest.Totals
 
     
     
     
-    local function depositToChest(folder, allowedItems)
+    local function currentHealth()
+        return util.Health.Current()
+    end
+
+    
+    
+    local shopScreenOpen = util.Shop.BuyScreenOpen
+
+    
+    
+    
+    
+    
+    local function bankable(item)
+        local name = item and (item.itemType or (item.tool and item.tool.Name))
+        if not name or not item.tool then return false end
+        local meta = bedwars.ItemMeta and bedwars.ItemMeta[name]
+        if meta and (meta.armor or meta.sword or meta.breakBlock) then return false end
+        return true
+    end
+
+    
+    
+    local function depositAllToChest(folder)
         if chestDepositBusy then return false end
-        allowedItems = allowedItems or Whitelist.ListEnabled
         local wanted = {}
         for _, item in store.inventory.inventory.items do
             local name = item.itemType or (item.tool and item.tool.Name)
-            if name and item.tool and table.find(allowedItems, name) and (dropCooldowns[name] or 0) < os.clock() then
+            if name and bankable(item) and (chestCooldowns[name] or 0) < os.clock() then
                 table.insert(wanted, {Name = name, Tool = item.tool})
             end
         end
@@ -195,7 +200,7 @@ run(function()
             if not ok or not given then
                 
                 
-                dropCooldowns[entry.Name] = os.clock() + 5
+                chestCooldowns[entry.Name] = os.clock() + 5
             end
         end
         pcall(function()
@@ -203,6 +208,59 @@ run(function()
         end)
         chestDepositBusy = false
         return true
+    end
+
+    ---------------------------------------------------------------------------
+    -- Skybox mode banks the whitelist only and keeps its own backoff timers, exactly as it
+    -- always has; Legit mode below banks everything. Only the chest plumbing is shared.
+    ---------------------------------------------------------------------------
+    local function depositToChest(folder, allowedItems)
+        if chestDepositBusy then return false end
+        allowedItems = allowedItems or Whitelist.ListEnabled
+        local wanted = {}
+        for _, item in store.inventory.inventory.items do
+            local name = item.itemType or (item.tool and item.tool.Name)
+            if name and item.tool and table.find(allowedItems, name) and (dropCooldowns[name] or 0) < os.clock() then
+                table.insert(wanted, {Name = name, Tool = item.tool})
+            end
+        end
+        if #wanted == 0 then return false end
+
+        chestDepositBusy = true
+        local deposited = false
+        util.Chest.Observe(folder, function()
+            for _, entry in wanted do
+                if not AutoBank.Enabled then break end
+                if util.Chest.Give(folder, entry.Tool) then
+                    deposited = true
+                else
+                    -- Back off that one item instead of hammering it.
+                    dropCooldowns[entry.Name] = os.clock() + 5
+                end
+            end
+        end)
+        chestDepositBusy = false
+        return deposited
+    end
+
+    local function withdrawFromChest(folder, itemType)
+        local contents = util.Chest.Entries(folder)
+        if #contents == 0 then return end
+
+        local requestBudget = 8
+        util.Chest.Observe(folder, function()
+            for _, entry in contents do
+                if not AutoBank.Enabled or requestBudget <= 0 then break end
+                if table.find(Whitelist.ListEnabled, entry.Name) and (not itemType or entry.Name == itemType) then
+                    local amount = math.max(entry:GetAttribute('Amount') or 1, 1)
+                    for _ = 1, amount do
+                        if not AutoBank.Enabled or not entry.Parent or requestBudget <= 0 then break end
+                        util.Chest.Take(folder, entry)
+                        requestBudget -= 1
+                    end
+                end
+            end
+        end)
     end
 
     local function parseHotkey(box)
@@ -220,19 +278,7 @@ run(function()
         return nil
     end
 
-    local function currentHealthPercent()
-        local character = lplr.Character
-        if not character then return nil end
-        
-        
-        local health = character:GetAttribute('Health')
-        local maximum = character:GetAttribute('MaxHealth')
-        local humanoid = character:FindFirstChildOfClass('Humanoid')
-        if type(health) ~= 'number' then health = humanoid and humanoid.Health end
-        if type(maximum) ~= 'number' or maximum <= 0 then maximum = humanoid and humanoid.MaxHealth end
-        if type(health) ~= 'number' or type(maximum) ~= 'number' or maximum <= 0 then return nil end
-        return math.clamp((health / maximum) * 100, 0, 100)
-    end
+    local currentHealthPercent = util.Health.Percent
 
 	local function queueEmergencyDrop(item, token, bankPosition, bankCharacter)
 		local name, tool = item and (item.itemType or (item.tool and item.tool.Name)), item and item.tool
@@ -277,24 +323,15 @@ run(function()
 		local character = entitylib.character
 		local root = character and character.RootPart
 		local bankPosition = root and root.Position
-		local deposited = false
-		if Mode.Value == 'Chest' and not chestDepositBusy then
-			local folder = entitylib.isAlive and ownPersonalFolder() or nil
-			if folder and atPersonalChest() then
-				deposited = depositToChest(folder, BeforeDeathWhitelist.ListEnabled)
-			end
-		end
 		
 		
 		
 		
-		if not deposited then
-			local inventory = store.inventory and store.inventory.inventory
-			for _, item in type(inventory) == 'table' and inventory.items or {} do
-				local name = item.itemType or (item.tool and item.tool.Name)
-				if name and table.find(BeforeDeathWhitelist.ListEnabled, name) then
-					queueEmergencyDrop(item, token, bankPosition, bankCharacter)
-				end
+		local inventory = store.inventory and store.inventory.inventory
+		for _, item in type(inventory) == 'table' and inventory.items or {} do
+			local name = item.itemType or (item.tool and item.tool.Name)
+			if name and table.find(BeforeDeathWhitelist.ListEnabled, name) then
+				queueEmergencyDrop(item, token, bankPosition, bankCharacter)
 			end
 		end
 		beforeDeathDepositing = false
@@ -332,18 +369,19 @@ run(function()
 
     
     
-    local function withdrawFromChest(folder, itemType)
+    
+    local function withdrawAllFromChest(folder)
         local contents = folder:GetChildren()
-        if #contents == 0 then return end
+        if #contents == 0 then return false end
 
         pcall(function()
             inventoryRemotes():Get('SetObservedChest'):SendToServer(folder)
         end)
         local requestBudget = 8
+        local took = false
         for _, entry in contents do
-            if not AutoBank.Enabled then break end
-            if entry:IsA('Accessory') and table.find(Whitelist.ListEnabled, entry.Name)
-                and (not itemType or entry.Name == itemType) then
+            if not AutoBank.Enabled or requestBudget <= 0 then break end
+            if entry:IsA('Accessory') then
                 local amount = math.max(entry:GetAttribute('Amount') or 1, 1)
                 for _ = 1, amount do
                     if not AutoBank.Enabled or not entry.Parent or requestBudget <= 0 then break end
@@ -351,13 +389,90 @@ run(function()
                         inventoryRemotes():Get('ChestGetItem'):CallServer(folder, entry)
                     end)
                     requestBudget -= 1
+                    took = true
                 end
             end
-            if requestBudget <= 0 then break end
         end
         pcall(function()
             inventoryRemotes():Get('SetObservedChest'):SendToServer(nil)
         end)
+        return took
+    end
+
+    
+    
+    
+    
+    local function lowHealthReached()
+        if not OnlyWhenLow.Enabled then return true end
+        local health = currentHealth()
+        if not health then return true end
+        return health <= (tonumber(LowHealth.Value) or LEGIT_DEFAULT_HP)
+    end
+
+    
+    
+    
+    local function runLegitMode()
+        if not util.Queue.Await(AutoBank) then return end
+        local pendingRedeposit = false
+
+        AutoBank:Clean(inputService.InputBegan:Connect(function(input)
+            if inputService:GetFocusedTextBox() then return end
+            local deposit, withdraw = parseHotkey(DepositKey), parseHotkey(WithdrawKey)
+            if not deposit and not withdraw then return end
+            if deposit and input.KeyCode == deposit then
+                local folder = atOwnChest()
+                if folder and not chestDepositBusy then
+                    depositAllToChest(folder)
+                end
+            elseif withdraw and input.KeyCode == withdraw then
+                local folder = atOwnChest()
+                if folder then
+                    withdrawAllFromChest(folder)
+                end
+            end
+        end))
+
+        repeat
+            if entitylib.isAlive and store.matchState ~= 2 then
+                local folder = ownPersonalFolder()
+                if folder and atPersonalChest() then
+                    if shopScreenOpen() then
+                        
+                        
+                        if Withdraw.Enabled and withdrawAllFromChest(folder) then
+                            pendingRedeposit = true
+                        end
+                    elseif pendingRedeposit or lowHealthReached() then
+                        
+                        
+                        depositAllToChest(folder)
+                        pendingRedeposit = false
+                    end
+                end
+            end
+            task.wait(0.1)
+        until not AutoBank.Enabled
+    end
+
+    
+    
+    local function applyModeOptions()
+        local legit = Mode.Value == 'Legit'
+        for _, option in {ChestRange, Withdraw, OnlyWhenLow, LowHealth, DepositKey, WithdrawKey} do
+            if option and option.Object then option.Object.Visible = legit end
+        end
+        for _, option in {Whitelist, DisplayResources, BeforeDeath} do
+            if option and option.Object then option.Object.Visible = not legit end
+        end
+        if not legit then
+            local enabled = BeforeDeath.Enabled
+            if HPThreshold and HPThreshold.Object then HPThreshold.Object.Visible = enabled end
+            if BeforeDeathWhitelist and BeforeDeathWhitelist.Object then BeforeDeathWhitelist.Object.Visible = enabled end
+        elseif LowHealth and LowHealth.Object then
+            LowHealth.Object.Visible = OnlyWhenLow.Enabled
+        end
     end
 
     local function addDisplayEntry(itemType)
@@ -394,6 +509,10 @@ run(function()
             if callback then
                 
                 
+                if Mode.Value == 'Legit' then
+                    runLegitMode()
+                    return
+                end
                 
                 UI = Instance.new('Frame')
                 UI.Size = UDim2.new(1, 0, 0, 32)
@@ -532,44 +651,49 @@ run(function()
                 table.clear(pendingReclaims)
                 table.clear(releasingDrops)
                 table.clear(dropCooldowns)
+                table.clear(chestCooldowns)
                 table.clear(displayEntries)
                 dangerTriggered, dangerCharacter, beforeDeathDepositing, chestDepositBusy = false, nil, false, false
                 return
             end
 
         end,
-        Tooltip = 'Stores resources somewhere safe, in your personal chest or held above the map until a shop'
+        Tooltip = 'Stores resources somewhere safe: held above the map until a shop, or banked in your personal chest'
     })
 
     Mode = AutoBank:CreateDropdown({
         Name = 'Mode',
-        List = {'Skybox', 'Chest'},
+        List = {'Skybox', 'Legit'},
         Default = 'Skybox',
-        Visible = false,
-        Tooltip = 'Skybox - holds the drops above the map until a shop\nChest - walks up and banks them like you would',
+        Tooltip = 'Skybox - holds the items above the map until a shop\nLegit - banks everything into your personal chest and pulls it back out at a shop',
         Function = function()
+            applyModeOptions()
             
             
             if AutoBank.Enabled then
                 AutoBank:Toggle()
                 AutoBank:Toggle()
             end
-            pcall(function()
-                ChestRange.Object.Visible = Mode.Value == 'Chest'
-                Withdraw.Object.Visible = Mode.Value == 'Chest'
-            end)
         end
     })
+    
+    
+    
+    local modeLoad = Mode.Load
+    function Mode:Load(tab)
+        if type(tab) == 'table' and tab.Value == 'Chest' then
+            tab = {Value = 'Legit'}
+        end
+        return modeLoad(self, tab)
+    end
     ChestRange = AutoBank:CreateSlider({
         Name = 'Chest range',
         Min = 1,
         Max = 30,
-        Default = 20,
+        Default = util.Chest.Range,
         Darker = true,
         Visible = false,
-        Suffix = function(val)
-            return val <= 1 and 'stud' or 'studs'
-        end,
+        Suffix = util.Studs,
         Tooltip = 'How close to your personal chest you have to be before anything is banked'
     })
     Withdraw = AutoBank:CreateToggle({
@@ -577,7 +701,26 @@ run(function()
         Default = true,
         Darker = true,
         Visible = false,
-        Tooltip = 'Empties the chest back into your inventory at a shop, so AutoBuy can spend what you banked'
+        Tooltip = 'Empties the chest back into your inventory while a shop screen is open, so AutoBuy can spend what you banked. Everything is banked again once you leave the shop'
+    })
+    OnlyWhenLow = AutoBank:CreateToggle({
+        Name = 'Only when low',
+        Default = false,
+        Darker = true,
+        Visible = false,
+        Function = function(enabled)
+            if LowHealth and LowHealth.Object then LowHealth.Object.Visible = enabled end
+        end,
+        Tooltip = 'Only banks while your health is low, so you can keep fighting with your loot on you'
+    })
+    LowHealth = AutoBank:CreateSlider({
+        Name = 'Low HP',
+        Min = 1,
+        Max = 99,
+        Default = LEGIT_DEFAULT_HP,
+        Darker = true,
+        Visible = false,
+        Tooltip = 'Flat health, not a percentage - 30 means 30 HP'
     })
     BeforeDeath = AutoBank:CreateToggle({
         Name = 'Before death',
@@ -587,7 +730,7 @@ run(function()
             if BeforeDeathWhitelist and BeforeDeathWhitelist.Object then BeforeDeathWhitelist.Object.Visible = enabled end
 			if enabled and AutoBank.Enabled then bindDangerCharacter(lplr.Character) end
         end,
-        Tooltip = 'Banks selected inventory items at your personal chest once when your health becomes dangerous'
+        Tooltip = 'Drops selected inventory items somewhere safe once when your health becomes dangerous'
     })
     HPThreshold = AutoBank:CreateSlider({
         Name = 'HP Threshold',
@@ -628,11 +771,13 @@ run(function()
     DepositKey = AutoBank:CreateTextBox({
         Name = 'Deposit key',
         Placeholder = 'None',
-        Tooltip = 'Press while stood at your personal chest to instantly bank every whitelisted item'
+        Tooltip = 'Press while stood at your personal chest to instantly bank everything you are carrying'
     })
     WithdrawKey = AutoBank:CreateTextBox({
         Name = 'Withdraw key',
         Placeholder = 'None',
-        Tooltip = 'Press while stood at your personal chest to instantly pull every whitelisted item back out'
+        Tooltip = 'Press while stood at your personal chest to instantly pull everything back out'
     })
+
+    applyModeOptions()
 end)

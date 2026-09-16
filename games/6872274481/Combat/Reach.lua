@@ -1,4 +1,6 @@
 run(function()
+
+	local util = vape.Libraries.bedwarsutil
 	local BlockReach
 		local BlockRange
 		local BreakReach
@@ -50,9 +52,7 @@ run(function()
 			Default = 18,
 			Decimal = 5,
 			Darker = true,
-			Suffix = function(val)
-				return val <= 1 and 'stud' or 'studs'
-			end,
+			Suffix = util.Studs,
 			Function = function(val)
 				bedwars.CombatConstant.RAYCAST_SWORD_CHARACTER_DISTANCE = Reach.Enabled and SwordReach.Enabled and val or 14.4
 			end,
@@ -69,9 +69,7 @@ run(function()
 			Max = 60,
 			Default = 18,
 			Darker = true,
-			Suffix = function(val)
-				return val <= 1 and 'stud' or 'studs'
-			end,
+			Suffix = util.Studs,
 			Visible = false,
 		})
 		BreakReach = Reach:CreateToggle({
@@ -87,9 +85,7 @@ run(function()
 			Default = 30,
 			Decimal = 5,
 			Darker = true,
-			Suffix = function(val)
-				return val <= 1 and 'stud' or 'studs'
-			end,
+			Suffix = util.Studs,
 			Visible = false,
 		})
 		Reach:CreateButton({

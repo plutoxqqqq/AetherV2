@@ -1,4 +1,6 @@
 run(function()
+
+	local util = vape.Libraries.bedwarsutil
 	local AutoGrove
 	local Delay
 	local nextWater = 0
@@ -26,8 +28,6 @@ run(function()
 		Max = 20,
 		Default = 3,
 		Decimal = 10,
-		Suffix = function(val)
-			return val <= 1 and 'sec' or 'secs'
-		end
+		Suffix = util.Seconds
 	})
 end)

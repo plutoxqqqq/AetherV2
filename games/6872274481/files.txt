@@ -40,6 +40,8 @@ Blatant/LongJumpBypass.lua
 Blatant/MultiAction.lua
 Inventory/ArmorSwitch.lua
 Inventory/AutoBank.lua
+Inventory/AutoRefill.lua
+Inventory/AutoUpgrade.lua
 Inventory/AutoBuy.lua
 Inventory/AutoConsume.lua
 Inventory/AutoFish.lua

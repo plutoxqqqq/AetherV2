@@ -1,4 +1,6 @@
 run(function()
+
+	local util = vape.Libraries.bedwarsutil
 	local AutoTrixie
 	local Targets
 	local Warp
@@ -63,9 +65,7 @@ run(function()
 		Min = 5,
 		Max = 80,
 		Default = 40,
-		Suffix = function(val)
-			return val <= 1 and 'stud' or 'studs'
-		end
+		Suffix = util.Studs
 	})
 	Rewind = AutoTrixie:CreateToggle({
 		Name = 'Rewind on low health',

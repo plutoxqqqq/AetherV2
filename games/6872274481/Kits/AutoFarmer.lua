@@ -1,4 +1,6 @@
 run(function()
+
+	local util = vape.Libraries.bedwarsutil
 	local AutoFarmer
 	local Range
 	local Switch
@@ -33,9 +35,7 @@ run(function()
 		Min = 1,
 		Max = 60,
 		Default = 25,
-		Suffix = function(val)
-			return val <= 1 and 'stud' or 'studs'
-		end
+		Suffix = util.Studs
 	})
 	Delay = AutoFarmer:CreateSlider({
 		Name = 'Delay',
@@ -43,9 +43,7 @@ run(function()
 		Max = 3,
 		Default = 0.3,
 		Decimal = 10,
-		Suffix = function(val)
-			return val <= 1 and 'sec' or 'secs'
-		end
+		Suffix = util.Seconds
 	})
 	Switch = AutoFarmer:CreateToggle({
 		Name = 'Auto Switch',

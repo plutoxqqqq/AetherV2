@@ -1,4 +1,6 @@
 run(function()
+
+	local util = vape.Libraries.bedwarsutil
 	local AutoBee
 	local Collect
 	local CollectRange
@@ -72,9 +74,7 @@ run(function()
 		Max = 22,
 		Default = 20,
 		Darker = true,
-		Suffix = function(val)
-			return val <= 1 and 'stud' or 'studs'
-		end
+		Suffix = util.Studs
 	})
 	CollectDelay = AutoBee:CreateSlider({
 		Name = 'Collect delay',
@@ -105,9 +105,7 @@ run(function()
 		Default = 14,
 		Darker = true,
 		Visible = false,
-		Suffix = function(val)
-			return val <= 1 and 'stud' or 'studs'
-		end
+		Suffix = util.Studs
 	})
 	DepositDelay = AutoBee:CreateSlider({
 		Name = 'Deposit Delay',

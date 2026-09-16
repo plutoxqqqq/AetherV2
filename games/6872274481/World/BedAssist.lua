@@ -1,4 +1,6 @@
 run(function()
+
+    local util = vape.Libraries.bedwarsutil
     local BedAssist
     local AimMode
     local Speed
@@ -171,9 +173,7 @@ run(function()
         Min = 1,
         Max = 30,
         Default = 20,
-        Suffix = function(val)
-            return val <= 1 and 'stud' or 'studs'
-        end,
+        Suffix = util.Studs,
     })
     Shake = BedAssist:CreateSlider({
         Name = 'Shake',

@@ -95,6 +95,19 @@ local function downloadFile(path, func)
 	return (func or readfile)(path)
 end
 
+run(function()
+	vape.Libraries.combat = loadstring(downloadFile('aetherv2/libraries/combat.lua'), 'combat')()
+	getgenv().AetherCombat = vape.Libraries.combat
+	shared.AetherCombat = vape.Libraries.combat
+end)
+
+-- Shared BedWars helpers: every duplicate of the shop scan, the purchase bookkeeping, the
+-- personal chest plumbing and the inventory/health reads lives here instead of in each module.
+run(function()
+	vape.Libraries.bedwarsutil = loadstring(downloadFile('aetherv2/libraries/bedwarsutil.lua'), 'bedwarsutil')()
+	shared.AetherBedWarsUtil = vape.Libraries.bedwarsutil
+end)
+
 local bedwars = {}
 local rankCache = {}
 local store = {

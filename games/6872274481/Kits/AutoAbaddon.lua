@@ -1,4 +1,6 @@
 run(function()
+
+	local util = vape.Libraries.bedwarsutil
 	local AutoAbaddon
 	local Delay
 	local Limit
@@ -47,9 +49,7 @@ run(function()
 		Min = 5,
 		Max = 100,
 		Default = 40,
-		Suffix = function(val)
-			return val <= 1 and 'stud' or 'studs'
-		end,
+		Suffix = util.Studs,
 		Tooltip = 'How far out hives still count toward the limit'
 	})
 	Delay = AutoAbaddon:CreateSlider({
@@ -58,8 +58,6 @@ run(function()
 		Max = 5,
 		Default = 1.5,
 		Decimal = 100,
-		Suffix = function(val)
-			return val <= 1 and 'sec' or 'secs'
-		end
+		Suffix = util.Seconds
 	})
 end)

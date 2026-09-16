@@ -1,4 +1,6 @@
 run(function()
+
+	local util = vape.Libraries.bedwarsutil
 	local AutoGrim
 	local Range
 	local Health
@@ -37,9 +39,7 @@ run(function()
 		Min = 1,
 		Max = 120,
 		Default = 12,
-		Suffix = function(val)
-			return val <= 1 and 'stud' or 'studs'
-		end
+		Suffix = util.Studs
 	})
 	AutoGrim:CreateButton({
 		Name = 'Sync to legit range',
