@@ -10,6 +10,7 @@ Blatant/DamageBoost.lua
 Kits/DeathAdderAimbot.lua
 Blatant/Fly.lua
 Blatant/HitBoxes.lua
+Blatant/InfiniteFly.lua
 Blatant/KeepSprint.lua
 Blatant/Killaura.lua
 Blatant/LongJump.lua
