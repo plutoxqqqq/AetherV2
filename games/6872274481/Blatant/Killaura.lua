@@ -39,7 +39,8 @@ run(function()
     local TargetSkilled
     local AttackMode
 	local Particles, Boxes = {}, {}
-    local anims, AnimDelay, AnimTween, armC0 = vape.Libraries.auraanims, tick()    local AttackRemote
+    local anims, AnimDelay, AnimTween, armC0 = vape.Libraries.auraanims, tick()
+	local AttackRemote
 	local lastRemoteRefresh = 0
 	local animationHooked = false
 	local function refreshAttackRemote()
@@ -355,7 +356,8 @@ run(function()
                             switchItem(sword.tool, 0)
 							local selfpos = entitylib.character.RootPart.Position
 							local localfacing = entitylib.character.RootPart.CFrame.LookVector * Vector3.new(1, 0, 1)
-							if localfacing.Magnitude > 0.001 then localfacing = localfacing.Unit end							local inrange, hittable = {}, {}
+							if localfacing.Magnitude > 0.001 then localfacing = localfacing.Unit end
+							local inrange, hittable = {}, {}
 							for _, v in plrs do
 								if not v.RootPart or not v.RootPart.Parent then continue end
 								if not passesAirChance(v) then continue end
