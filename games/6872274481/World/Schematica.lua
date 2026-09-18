@@ -179,66 +179,6 @@ run(function()
             end
         end
     end
-
-    Schematica = vape.Categories.World:CreateModule({
-        Name = 'Schematica',
-        Function = function(callback)
-            if callback then
-                if not File.Value:find('.json') then
-                    notif('Schematica', 'Invalid file', 3)
-                    Schematica:Toggle()
-                    return
-                end
-
-                if Mode.Value == 'Save' then
-                    save()
-                    Schematica:Toggle()
-                else
-                    local suc, read = pcall(function()
-                        return isfile(File.Value) and httpService:JSONDecode(readfile(File.Value))
-                    end)
-
-                    if suc and read then
-                        load(read)
-                    else
-                        notif('Schematica', 'Missing / corrupted file', 3)
-                        Schematica:Toggle()
-                    end
-                end
-            else
-                for _, v in parts do
-                    v:Destroy()
-                end
-                table.clear(parts)
-            end
-        end,
-        Tooltip = 'Save and load placements of buildings'
-    })
-    File = Schematica:CreateTextBox({
-        Name = 'File',
-        Function = function()
-            loadMaterials()
-            point1, point2 = nil, nil
-        end
-    })
-    Mode = Schematica:CreateDropdown({
-        Name = 'Mode',
-        List = {'Load', 'Save'}
-    })
-    Transparency = Schematica:CreateSlider({
-        Name = 'Transparency',
-        Min = 0,
-        Max = 1,
-        Default = 0.7,
-        Decimal = 10,
-        Function = function(val)
-            for _, v in parts do
-                v.Transparency = val
-            end
-        end
-    })
-    Rotation = Schematica:CreateDropdown({Name = 'Rotation', List = {'0', '90', '180', '270'}})
-    Mirror = Schematica:CreateToggle({Name = 'Mirror'})
-    VerticalOffset = Schematica:CreateSlider({Name = 'Vertical offset', Min = -20, Max = 20, Default = 0})
-    Layer = Schematica:CreateSlider({Name = 'Layer view', Min = 0, Max = 30, Default = 0, Tooltip = '0 shows every layer'})
 end)
+
+-- module is unnused
