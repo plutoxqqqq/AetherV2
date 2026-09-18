@@ -9437,6 +9437,7 @@ function mainapi:Load(skipgui, profile)
 		mergeModuleConfig('AutoClicker', {'AutoClickerV2'})
 		mergeModuleConfig('BlockIn', {'Block-In', 'BlockInV2'})
 		mergeModuleConfig('RecoveryTP', {'DeathTP'})
+		mergeModuleConfig('MineThrough', {'IgnorePlaceHitboxes'})
 
 		local mouseTP = savedata.Modules.MouseTP
 		if mouseTP and type(mouseTP.Options) == 'table' then

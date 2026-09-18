@@ -244,7 +244,7 @@ World/BedProtector.lua
 World/BlockIn.lua
 World/Breaker.lua
 World/FastPlace.lua
-World/IgnorePlaceHitboxes.lua
+World/MineThrough.lua
 World/NightmareEmote.lua
 World/PotatoMode.lua
 World/RemoveNeon.lua

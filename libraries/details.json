@@ -1381,6 +1381,12 @@
    "Shows how much memory Roblox is using."
   ]
  },
+ "MineThrough": {
+  "lines": [
+   "Mines the block behind an entity under your crosshair instead of stopping at it.",
+   "Place extends that to block placement, so you can build against a block a player is standing in front of."
+  ]
+ },
  "MissileTP": {
   "lines": [
    "Spawns a missile and teleports it onto a player near your mouse."

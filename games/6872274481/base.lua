@@ -1986,8 +1986,8 @@ run(function()
 		
 		
 		
-		if bedwars.IgnorePlaceHitboxes then
-			return bedwars.IgnorePlaceHitboxes(place)
+		if bedwars.MineThrough then
+			return bedwars.MineThrough(place)
 		end
 		return place()
 	end
