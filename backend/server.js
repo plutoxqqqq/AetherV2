@@ -3,9 +3,10 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const {dataPath} = require('./data-path');
 
 const PORT = Number(process.env.PORT || 3000);
-const DATA_FILE = process.env.DATA_FILE || path.join(__dirname, 'data.json');
+const DATA_FILE = process.env.DATA_FILE || dataPath('configs.json', ['data.json']);
 const ADMIN_KEY = process.env.ADMIN_KEY || '';
 const MAX_BODY = 2 * 1024 * 1024;
 const categories = new Set(['Closet', 'Semi-closet', 'Blatant']);
@@ -24,8 +25,11 @@ const read = () => {
   }
 };
 const write = data => { fs.mkdirSync(path.dirname(DATA_FILE),{recursive:true}); const temp=`${DATA_FILE}.${process.pid}.tmp`; fs.writeFileSync(temp,JSON.stringify(data,null,2)); fs.renameSync(temp,DATA_FILE); };
-const json = (res, status, value) => { res.writeHead(status, {'content-type':'application/json','access-control-allow-origin':'*','access-control-allow-headers':'authorization,content-type','access-control-allow-methods':'GET,POST,PATCH,DELETE,OPTIONS'}); res.end(JSON.stringify(value)); };
-const raw = (res, status, value) => { res.writeHead(status, {'content-type':'application/json','access-control-allow-origin':'*'}); res.end(value); };
+// A reply resolves to true so the caller can tell "this service answered the request" from "this
+// route belongs to another service". index.js composes this handler with the premium one behind a
+// single listener; running the file directly keeps the same standalone behaviour as before.
+const json = (res, status, value) => { res.writeHead(status, {'content-type':'application/json','access-control-allow-origin':'*','access-control-allow-headers':'authorization,content-type','access-control-allow-methods':'GET,POST,PATCH,DELETE,OPTIONS'}); res.end(JSON.stringify(value)); return true; };
+const raw = (res, status, value) => { res.writeHead(status, {'content-type':'application/json','access-control-allow-origin':'*'}); res.end(value); return true; };
 const body = req => new Promise((resolve, reject) => {
   let size=0, settled=false; const chunks=[];
   req.on('data',chunk=>{ if(settled)return; const value=Buffer.isBuffer(chunk)?chunk:Buffer.from(chunk); size+=value.length; if(size>MAX_BODY){settled=true;reject(Object.assign(Error('Request body is too large'),{status:413}));return;} chunks.push(value); });
@@ -115,9 +119,9 @@ async function editPublished(file, patch) {
   return file;
 }
 async function removePublished(file) {
-  if (!validFile(file)) throw Error('Invalid public config file');
+  if (!validFile(file)) throw Error('Invalid community config file');
   const {manifest,presets,sha}=await readManifest();
-  if (!presets.some(p=>p.file===file)) { const error=Error('The requested file is not a known Public Config'); error.status=404; throw error; }
+  if (!presets.some(p=>p.file===file)) { const error=Error('The requested file is not a known Community Config'); error.status=404; throw error; }
   const configRemote=await getGithubFile(file);
   // Remove the pointer first. A failed second operation can leave an unlisted orphan,
   // but never a catalogue entry that points at an unavailable file.
@@ -148,7 +152,7 @@ const presetsWithActivity = async (db, userId) => {
 };
 const banRecord = db => ({bans:db.bans});
 
-const server = http.createServer(async (req,res) => { try {
+async function handleRequest(req,res) { try {
   if (req.method==='OPTIONS') return json(res,204,{success:true});
   const url=new URL(req.url,'http://localhost');
   const pathname=url.pathname.replace(/\/+$/, '')||'/';
@@ -162,6 +166,10 @@ const server = http.createServer(async (req,res) => { try {
     const item={...value,id:crypto.randomUUID(),token:crypto.randomBytes(24).toString('hex'),status:'pending',submissionType:'new',createdAt:new Date().toISOString()}; db.submissions.push(item); write(db);
     return json(res,201,{success:true,id:item.id,token:item.token,status:item.status,submissionType:item.submissionType});
   }
+  // Lets the client tell "a key is stored" apart from "the service accepts this key" without
+  // pulling the whole review queue. A wrong key used to look identical to a working one until
+  // every moderation action failed with 401.
+  if (req.method==='GET'&&pathname==='/admin/verify') { if(!admin(req)) return json(res,401,{success:false,error:'Maintainer authentication required'}); return json(res,200,{success:true,role:'maintainer',service:'community-configs'}); }
   if (req.method==='GET'&&pathname==='/submissions') { if(!admin(req)) return json(res,401,{success:false,error:'Maintainer authentication required'}); const db=read(),status=url.searchParams.get('status'); return json(res,200,{success:true,submissions:db.submissions.filter(s=>!status||s.status===status).map(({token,...s})=>({...s,publishedFile:s.file||undefined,banned:Boolean(db.bans[String(s.userId)])}))}); }
   if (req.method==='GET'&&pathname==='/bans') { if(!admin(req)) return json(res,401,{success:false,error:'Maintainer authentication required'}); const db=read(); return json(res,200,{success:true,...banRecord(db)}); }
   if (req.method==='POST'&&pathname==='/bans') {
@@ -180,7 +188,7 @@ const server = http.createServer(async (req,res) => { try {
   if (req.method==='DELETE'&&pathname==='/public-configs') { if(!admin(req)) return json(res,401,{success:false,error:'Maintainer authentication required'}); const value=await body(req); const file=await removePublished(value.file); return json(res,200,{success:true,status:'deleted',file}); }
   if (req.method==='PATCH'&&pathname.startsWith('/public-configs/')) {
     if(!admin(req)) return json(res,401,{success:false,error:'Maintainer authentication required'});
-    const file=decodeURIComponent(pathname.slice('/public-configs/'.length)); if(!validFile(file)) return json(res,400,{success:false,error:'Invalid public config file'});
+    const file=decodeURIComponent(pathname.slice('/public-configs/'.length)); if(!validFile(file)) return json(res,400,{success:false,error:'Invalid community config file'});
     const file_=await editPublished(file,await body(req)); return json(res,200,{success:true,file:file_});
   }
   if (req.method==='DELETE'&&pathname.startsWith('/public-configs/')) { if(!admin(req)) return json(res,401,{success:false,error:'Maintainer authentication required'}); const file=await removePublished(decodeURIComponent(pathname.slice('/public-configs/'.length))); return json(res,200,{success:true,status:'deleted',file}); }
@@ -196,7 +204,7 @@ const server = http.createServer(async (req,res) => { try {
   }
   const publicMatch=pathname.match(/^\/public-configs\/([^/]+)$/);
   if (req.method==='GET'&&publicMatch) {
-    const file=decodeURIComponent(publicMatch[1]); if(!validFile(file)) return json(res,400,{success:false,error:'Invalid public config file'});
+    const file=decodeURIComponent(publicMatch[1]); if(!validFile(file)) return json(res,400,{success:false,error:'Invalid community config file'});
     const remote=await getGithubFile(file).catch(error=>{error.status=404;throw error;});
     const db=read(); db.downloads[file]=(Number(db.downloads[file])||0)+1; write(db);
     return raw(res,200,remote.decoded);
@@ -209,7 +217,7 @@ const server = http.createServer(async (req,res) => { try {
   const ratingsMatch=pathname.match(/^\/public-configs\/([^/]+)\/ratings$/);
   if (req.method==='POST'&&ratingsMatch) {
     const file=decodeURIComponent(ratingsMatch[1]); const value=await body(req); const clientId=String(value.clientId||value.userId||'').slice(0,120);
-    if(!validFile(file)||!clientId) return json(res,400,{success:false,error:'A clientId and public config file are required'});
+    if(!validFile(file)||!clientId) return json(res,400,{success:false,error:'A clientId and community config file are required'});
     const db=read(); db.ratings[file]=db.ratings[file]||{};
     const rating=value.rating==='like'?1:value.rating==='dislike'?-1:0;
     if (rating===0) delete db.ratings[file][clientId]; else db.ratings[file][clientId]=rating;
@@ -221,7 +229,7 @@ const server = http.createServer(async (req,res) => { try {
     if(!validFile(file)||!validUpdate(value)) return json(res,400,{success:false,error:'Missing or invalid update details'});
     const db=read();
     if (db.bans[String(value.userId)]) return json(res,403,{success:false,error:'This account is banned from submitting configs'});
-    const preset=(await presetsWithActivity(db)).find(p=>p.file===file); if(!preset) return json(res,404,{success:false,error:'The requested file is not a known Public Config'});
+    const preset=(await presetsWithActivity(db)).find(p=>p.file===file); if(!preset) return json(res,404,{success:false,error:'The requested file is not a known Community Config'});
     const item={...value,id:crypto.randomUUID(),token:crypto.randomBytes(24).toString('hex'),status:'pending',submissionType:'update',targetFile:file,name:preset.name,displayName:value.displayName||preset.name,createdAt:new Date().toISOString()}; db.submissions.push(item); write(db);
     return json(res,201,{success:true,id:item.id,token:item.token,status:item.status,submissionType:item.submissionType,file,changelog:item.changelog});
   }
@@ -273,7 +281,12 @@ const server = http.createServer(async (req,res) => { try {
     finally { reviewing.delete(id); }
     return json(res,200,{success:true,id:decided.id,status:decided.status,file:decided.file,submissionType:decided.submissionType});
   }
-  return json(res,404,{success:false,error:'Not found'});
- } catch(error) { return json(res,error.status||500,{success:false,error:error.message||'Operation failed',details:error.cause&&String(error.cause)}); } });
-if(require.main===module) server.listen(PORT,()=>console.log(`Aether config backend listening on ${PORT}`));
-module.exports={server,canonical,publish,removePublished,editPublished,validSubmission,validUpdate,body,read};
+  return false;
+ } catch(error) { return json(res,error.status||500,{success:false,error:error.message||'Operation failed',details:error.cause&&String(error.cause)}); } }
+
+const server = http.createServer(async (req,res) => {
+  if (await handleRequest(req,res)) return;
+  json(res,404,{success:false,error:'Not found'});
+});
+if(require.main===module) server.listen(PORT,()=>console.log(`AetherV2 Community Configs service listening on ${PORT}`));
+module.exports={server,handleRequest,canonical,publish,removePublished,editPublished,validSubmission,validUpdate,body,read};

@@ -1087,7 +1087,7 @@ configapi.Presets = {
 configapi.Presets.Registry = (isfile(configapi.Presets.Path) and loadJson(configapi.Presets.Path)) or {}
 configapi.Presets.Owners = (isfile(configapi.Presets.OwnerPath) and loadJson(configapi.Presets.OwnerPath)) or {}
 
--- Public configs always use the live publishing branch. Aether's commit pin is only for
+-- Community configs always use the live publishing branch. Aether's commit pin is only for
 -- application code and must not prevent newly moderated configs from appearing.
 function configapi.Presets.Base()
 	return 'https://raw.githubusercontent.com/plutoxqqqq/AetherV2/main/configs/'
@@ -1115,9 +1115,21 @@ function configapi.Presets.ClientId()
 	return stored
 end
 
+-- Every backend request the client makes resolves through here, whichever route it is for:
+-- Community Configs submissions and review, the premium session endpoints and the analytics
+-- heartbeat all share one origin, so a single override repoints the whole client. The published
+-- /public-configs API path is unchanged so older clients keep working against the same service.
+function configapi.Presets.Route(suffix)
+	local route = tostring(suffix or '')
+	if route ~= '' and route:sub(1, 1) ~= '/' then
+		route = '/'..route
+	end
+	return configapi.Presets.Backend()..route
+end
+
 function configapi.Presets.URL(file)
 	local player = cloneref(game:GetService('Players')).LocalPlayer
-	return configapi.Presets.Backend()..'/public-configs/'..httpService:UrlEncode(tostring(file))
+	return configapi.Presets.Route('/public-configs/'..httpService:UrlEncode(tostring(file)))
 		..'?userId='..tostring(player.UserId)
 		..'&clientId='..httpService:UrlEncode(configapi.Presets.ClientId())
 		..'&aether='..tostring(os.time())..'-'..tostring(math.random(100000, 999999))
@@ -1138,7 +1150,7 @@ function configapi.Presets.FetchList(sort)
 	local player = cloneref(game:GetService('Players')).LocalPlayer
 	local backendSuccess, backendResponse = pcall(function()
 		return game:HttpGet(
-			configapi.Presets.Backend()..'/public-configs?sort='..httpService:UrlEncode(tostring(sort or 'trending'))
+			configapi.Presets.Route('/public-configs?sort='..httpService:UrlEncode(tostring(sort or 'trending')))
 				..'&userId='..tostring(player.UserId),
 			true
 		)
@@ -1210,6 +1222,54 @@ function configapi.Presets.GetOwner(file)
 	local owner = type(file) == 'string' and configapi.Presets.Owners[file:lower()] or nil
 	local player = cloneref(game:GetService('Players')).LocalPlayer
 	return type(owner) == 'table' and tonumber(owner.userId) == player.UserId and type(owner.token) == 'string' and owner or nil
+end
+
+--[[
+	Who is offered the Community Configs moderation tools.
+
+	Roblox usernames are case-insensitive, so both sides are lowercased before they are compared:
+the names below are stored lowercase and the local player's name is lowered to match. That is
+the whole fix for an account that could never match a mixed-case entry such as 'AetherV2Owner'.
+
+	UserIds are checked as well as names, because a username can be changed and a UserId cannot.
+Put the UserIds of the accounts you trust in UserIds below; a matching name is accepted on its
+own without one.
+
+	This list only decides who sees the buttons. It is not a security boundary and cannot be one:
+the client is published, so anything written here can be read, and a modified client can claim
+any username or UserId it likes. Every moderation write is authorised by the maintainer key on
+the service, which is the only thing that can accept or reject a decision. Design the list
+accordingly: adding a name here grants no power, it only removes a menu they would otherwise
+have to be handed the key to find.
+
+	Extend it at runtime without editing this file:
+		getgenv().AetherConfigReviewers = {'aetherv2owner', 123456789}
+]]
+configapi.Presets.Reviewers = {
+	Names = {'plutoxqqqqqq', 'aetherv2owner'},
+	UserIds = {}
+}
+
+function configapi.Presets.IsReviewer(player)
+	player = player or cloneref(game:GetService('Players')).LocalPlayer
+	if not player then return false end
+	local names, ids = {}, {}
+	for _, name in ipairs(configapi.Presets.Reviewers.Names) do
+		if type(name) == 'string' then names[name:lower()] = true end
+	end
+	for _, id in ipairs(configapi.Presets.Reviewers.UserIds) do
+		if tonumber(id) then ids[tonumber(id)] = true end
+	end
+	-- getgenv().AetherConfigReviewers mirrors the AetherConfigBackend override, so a reviewer
+	-- can be added on one install without publishing a different list to everyone.
+	local extra = getgenv and getgenv().AetherConfigReviewers
+	if type(extra) == 'table' then
+		for _, entry in ipairs(extra) do
+			local id = tonumber(entry)
+			if id then ids[id] = true else names[tostring(entry):lower()] = true end
+		end
+	end
+	return names[tostring(player.Name or ''):lower()] == true or ids[tonumber(player.UserId)] == true
 end
 
 --[[
@@ -5899,7 +5959,7 @@ function mainapi:CreateCategoryList(categorysettings)
 		dltitle.Size = UDim2.new(1, -20, 0, 20)
 		dltitle.Position = UDim2.fromOffset(16, 12)
 		dltitle.BackgroundTransparency = 1
-		dltitle.Text = 'Public Configs'
+		dltitle.Text = 'Community Configs'
 		dltitle.TextXAlignment = Enum.TextXAlignment.Left
 		dltitle.TextColor3 = uipallet.Text
 		dltitle.TextSize = 14
@@ -5968,13 +6028,11 @@ function mainapi:CreateCategoryList(categorysettings)
 		end)
 		table.insert(mainapi.Windows, dl)
 
-		-- Submission and rating writes require the Worker: Roblox clients never receive
+		-- Submission and rating writes require the backend: Roblox clients never receive
 		-- repository credentials. A custom deployment can still be selected with
-		-- getgenv().AetherConfigBackend or profiles/configbackend.txt.
+		-- getgenv().AetherConfigBackend or profiles/configbackend.txt, which repoints every
+		-- route at once because they all resolve through configapi.Presets.Route.
 		local requestFunction = request or http_request or (syn and syn.request)
-		local function backendURL()
-			return configapi.Presets.Backend()
-		end
 		local ADMIN_KEY_PATH = 'aetherv2/profiles/configadminkey.txt'
 		local function adminKey()
 			local key = getgenv and getgenv().AetherConfigAdminKey
@@ -5987,8 +6045,8 @@ function mainapi:CreateCategoryList(categorysettings)
 			return adminKey() ~= ''
 		end
 		local function backendRequest(method, route, body, admin)
-			local base = backendURL()
-			if base == '' or not requestFunction then return false, 'A config backend has not been configured.' end
+			local url = configapi.Presets.Route(route)
+			if url == '' or not requestFunction then return false, 'A config backend has not been configured.' end
 			local headers = {['Content-Type'] = 'application/json'}
 			if admin then
 				local key = adminKey()
@@ -5996,7 +6054,7 @@ function mainapi:CreateCategoryList(categorysettings)
 				headers.Authorization = 'Bearer '..key
 			end
 			local ok, response = pcall(requestFunction, {
-				Url = base..route,
+				Url = url,
 				Method = method,
 				Headers = headers,
 				Body = body and httpService:JSONEncode(body) or nil
@@ -6036,13 +6094,40 @@ function mainapi:CreateCategoryList(categorysettings)
 		local sortIndex = 1
 		local sortButton = submissionButton('Sort', 'Sort: '..sortModes[sortIndex].Label, UDim2.fromOffset(298, 52), 176, dl)
 		local refreshButton = submissionButton('Refresh', '↻', UDim2.fromOffset(480, 52), 30, dl)
-		-- The maintainer key is the security boundary. Anyone can open the queue, but the
-		-- window asks for the key when one is missing and every write is key-gated server
-		-- side. This removes the old hardcoded Roblox-name list that silently hid the queue
-		-- from legitimate reviewers using a different account.
+		-- Who is offered the moderation tools, and what actually authorises a write.
+		--
+		-- configapi.Presets.IsReviewer decides who sees the buttons. Every moderation request
+		-- is authorised by the maintainer key on the service and by nothing else, so an account
+		-- that is not on the list cannot moderate by finding this window, and an account that
+		-- is on the list still cannot without the key.
 		local localPlayer = cloneref(game:GetService('Players')).LocalPlayer
-		review.Visible = true
-		directPublish.Visible = hasAdminKey()
+		local reviewer = configapi.Presets.IsReviewer(localPlayer)
+
+		-- nil = not checked yet this session, true = the service accepted the stored key,
+		-- false = the service rejected it.
+		local adminKeyState = nil
+		local function verifyAdminKey(force)
+			if not hasAdminKey() then
+				adminKeyState = nil
+				return false
+			end
+			if adminKeyState == nil or force then
+				adminKeyState = backendRequest('GET', '/admin/verify', nil, true) and true or false
+			end
+			return adminKeyState == true
+		end
+		-- hasAdminKey() only says a string is on disk. A key the service rejected has to reopen
+		-- the key bar, or a reviewer is left holding a key that cannot work with no way to see
+		-- why every action fails.
+		local function keyUsable()
+			return hasAdminKey() and adminKeyState ~= false
+		end
+
+		-- Reassigned once the later windows exist. The controls start hidden so a non-reviewer
+		-- never sees them even if something below fails to build.
+		local refreshOwnerUI = function() end
+		review.Visible = false
+		directPublish.Visible = false
 		addTooltip(submitConfig, 'Submits the active config for in-game review')
 		addTooltip(review, 'Lists the configs waiting on a maintainer decision')
 		local function responseMessage(response, fallback)
@@ -6057,7 +6142,7 @@ function mainapi:CreateCategoryList(categorysettings)
 			sortButton.Text = 'Sort: '..sortModes[sortIndex].Label
 			if refresh then refresh() end
 		end)
-		addTooltip(sortButton, 'Choose how D1 ranks the Public Config catalogue')
+		addTooltip(sortButton, 'Choose how D1 ranks the Community Config catalogue')
 
 		local function submitActiveConfig(details, updatePreset, direct)
 			local path = mainapi.Profile and getConfigPath(mainapi.Profile)
@@ -6102,7 +6187,7 @@ function mainapi:CreateCategoryList(categorysettings)
 			local ok, response = backendRequest('POST', route, payload, direct)
 			local successMessage
 			if direct then
-				successMessage = 'Config published directly to Public Configs.'
+				successMessage = 'Config published directly to Community Configs.'
 			elseif updatePreset then
 				successMessage = 'Update submitted for v'..tostring(type(response) == 'table' and response.targetVersion or '?')..' review.'
 			else
@@ -6374,7 +6459,7 @@ function mainapi:CreateCategoryList(categorysettings)
 			local name = tostring(result.name or 'Unnamed config')
 			local rejectionReason = type(result.reason) == 'string' and result.reason:match('^%s*(.-)%s*$') or ''
 			local message = accepted
-				and ('Congrats! Your config '..name..' has been accepted.\n\nYou can view and download it in the Public Configs window.')
+				and ('Congrats! Your config '..name..' has been accepted.\n\nYou can view and download it in the Community Configs window.')
 				or ('Your config '..name..' has been rejected.'..(rejectionReason ~= '' and ('\n\nReason: '..rejectionReason) or '')..'\n\nYou can revise it and submit another request.')
 			local body = Instance.new('TextLabel')
 			body.Size, body.Position, body.BackgroundTransparency = UDim2.new(1, -44, 0, accepted and 90 or 138), UDim2.fromOffset(22, 84), 1
@@ -6446,20 +6531,28 @@ function mainapi:CreateCategoryList(categorysettings)
 		keySave.AnchorPoint = Vector2.new(1, 0)
 
 		local function setReviewListMetrics()
-			local offset = hasAdminKey() and 44 or 78
+			local offset = keyUsable() and 44 or 78
 			reviewList.Position = UDim2.fromOffset(10, offset)
 			reviewList.Size = UDim2.new(1, -20, 1, -(offset + 8))
-			keyBar.Visible = not hasAdminKey()
+			keyBar.Visible = not keyUsable()
 		end
 
 		local openEditWindow
 		local function refreshReviews()
 			for _, child in reviewList:GetChildren() do if child:IsA('Frame') or child:IsA('TextLabel') then child:Destroy() end end
+			-- Confirm the key before painting, so a rejected key reopens the key bar in the same
+			-- pass rather than only after a second refresh.
+			if hasAdminKey() then verifyAdminKey() end
 			setReviewListMetrics()
-			if not hasAdminKey() then
+			if not keyUsable() then
 				local notice = Instance.new('TextLabel')
 				notice.Size, notice.BackgroundTransparency, notice.TextWrapped, notice.Parent = UDim2.new(1, 0, 0, 44), 1, true, reviewList
-				notice.Text, notice.TextColor3, notice.TextSize, notice.FontFace = 'Paste the maintainer key above and save it to load the review queue.', color.Dark(uipallet.Text, 0.3), 12, uipallet.Font
+				-- Naming the origin is what turns "the key is wrong" into an answerable question when
+				-- the client has been pointed at a different backend with a different key.
+				notice.Text = hasAdminKey()
+					and ('The service at '..configapi.Presets.Backend()..' rejected the maintainer key on this install. Paste its key above and save it.')
+					or 'Paste the maintainer key above and save it to load the review queue.'
+				notice.TextColor3, notice.TextSize, notice.FontFace = color.Dark(uipallet.Text, 0.3), 12, uipallet.Font
 				notice.TextXAlignment, notice.TextYAlignment = Enum.TextXAlignment.Left, Enum.TextYAlignment.Top
 				return
 			end
@@ -6606,7 +6699,7 @@ function mainapi:CreateCategoryList(categorysettings)
 			editState.Submission = submission
 			editState.Published = publishedFile
 			editState.Config = submission.config
-			editTitle.Text = (publishedFile and 'Edit public ' or 'Edit ')..tostring(submission.displayName or submission.name or 'config')
+			editTitle.Text = (publishedFile and 'Edit community ' or 'Edit ')..tostring(submission.displayName or submission.name or 'config')
 			editFields.displayName.Text = tostring(submission.displayName or submission.name or '')
 			editFields.creator.Text = tostring(submission.creator or submission.credits or submission.submitter or '')
 			editFields.category.Text = tostring(submission.category or '')
@@ -6658,8 +6751,14 @@ function mainapi:CreateCategoryList(categorysettings)
 			ensureDataFolders()
 			pcall(writefile, ADMIN_KEY_PATH, value)
 			keyBox.Text = ''
-			directPublish.Visible = true
-			mainapi:CreateNotification('Configs', 'Maintainer key saved.', 5, 'info')
+			-- The service is the only thing that can say whether a key is real, so it is asked
+			-- before anything unlocks. Announcing success unconditionally is what made a typo
+			-- look exactly like a working key until every moderation action returned 401.
+			local accepted = verifyAdminKey(true)
+			refreshOwnerUI()
+			mainapi:CreateNotification('Configs', accepted
+				and 'Maintainer key saved and verified.'
+				or 'The service rejected that maintainer key.', 7, accepted and 'info' or 'alert')
 			refreshReviews()
 		end)
 		review.MouseButton1Click:Connect(function() reviewWindow.Visible = true; refreshReviews() end)
@@ -6747,8 +6846,21 @@ function mainapi:CreateCategoryList(categorysettings)
 		local detailsEdit = submissionButton('EditPublic', 'Edit', UDim2.fromOffset(198, 370), 86, detailsWindow)
 		local detailsDelete = submissionButton('Delete', 'Delete', UDim2.new(1, -100, 0, 370), 86, detailsWindow)
 		detailsDelete.BackgroundColor3 = Color3.fromRGB(155, 61, 67)
-		detailsEdit.Visible = hasAdminKey()
-		detailsDelete.Visible = hasAdminKey()
+
+		-- Every owner-only control is repainted from one place. These used to be decided once
+		-- while the window was built, so a reviewer who pasted the key mid-session was given
+		-- the queue but kept Edit and Delete hidden until the next injection.
+		refreshOwnerUI = function()
+			local allowed = reviewer == true
+			review.Visible = allowed
+			directPublish.Visible = allowed and keyUsable()
+			detailsEdit.Visible = allowed and keyUsable()
+			detailsDelete.Visible = allowed and keyUsable()
+			if not allowed and reviewWindow.Visible then reviewWindow.Visible = false end
+			if not allowed and detailsWindow.Visible then detailsWindow.Visible = false end
+			setReviewListMetrics()
+		end
+		refreshOwnerUI()
 		table.insert(mainapi.Windows, detailsWindow)
 
 		local deleteWindow = Instance.new('Frame')
@@ -6757,7 +6869,7 @@ function mainapi:CreateCategoryList(categorysettings)
 		addBlur(deleteWindow); addCorner(deleteWindow); addWindowStroke(deleteWindow); makeDraggable(deleteWindow)
 		local deleteTitle = Instance.new('TextLabel')
 		deleteTitle.Size, deleteTitle.Position, deleteTitle.BackgroundTransparency = UDim2.new(1, -50, 0, 34), UDim2.fromOffset(14, 2), 1
-		deleteTitle.Text, deleteTitle.TextColor3, deleteTitle.TextSize, deleteTitle.FontFace = 'Delete public config?', uipallet.Text, 14, uipallet.FontSemiBold
+		deleteTitle.Text, deleteTitle.TextColor3, deleteTitle.TextSize, deleteTitle.FontFace = 'Delete community config?', uipallet.Text, 14, uipallet.FontSemiBold
 		deleteTitle.TextXAlignment, deleteTitle.Parent = Enum.TextXAlignment.Left, deleteWindow
 		local deleteTarget
 		addCloseButton(deleteWindow).MouseButton1Click:Connect(function() deleteWindow.Visible = false; deleteTarget = nil end)
@@ -6850,7 +6962,7 @@ function mainapi:CreateCategoryList(categorysettings)
 		detailsDelete.MouseButton1Click:Connect(function()
 			if not activeDetailsPreset then return end
 			deleteTarget = activeDetailsPreset
-			deleteText.Text = 'This permanently removes '..tostring(deleteTarget.name)..' from Public Configs and deletes '..tostring(deleteTarget.file)..' from GitHub. This cannot be undone from Aether.'
+			deleteText.Text = 'This permanently removes '..tostring(deleteTarget.name)..' from Community Configs and deletes '..tostring(deleteTarget.file)..' from GitHub. This cannot be undone from Aether.'
 			deleteWindow.Visible = true
 		end)
 		confirmDelete.MouseButton1Click:Connect(function()
@@ -7017,7 +7129,7 @@ function mainapi:CreateCategoryList(categorysettings)
 		end
 
 		refreshButton.MouseButton1Click:Connect(refresh)
-		addTooltip(refreshButton, 'Fetch the latest Public Config catalogue')
+		addTooltip(refreshButton, 'Fetch the latest Community Config catalogue')
 
 		-- Opening it is also offered by the first-run welcome popup, so the opener lives
 		-- on mainapi rather than only on this button.

@@ -5,7 +5,13 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const zlib = require('node:zlib');
 
-const STATS_FILE = process.env.AETHER_STATS_FILE || path.join(__dirname, 'execution-stats.json');
+const {dataPath} = require('./data-path');
+
+// Analytics is the one store that must survive a redeploy to be worth anything, so the baked-in
+// default now sits in data/ beside the config store. A deployment that has been writing the old
+// backend/execution-stats.json keeps that file until it is moved, and AETHER_STATS_FILE still
+// wins over both for a mounted disk.
+const STATS_FILE = process.env.AETHER_STATS_FILE || dataPath('execution-stats.json', ['execution-stats.json']);
 const VERSION = 2;
 const ACTIVE_WINDOW_MS = 30000;
 const LAUNCH_CLASSIFY_WINDOW_MS = 60000;

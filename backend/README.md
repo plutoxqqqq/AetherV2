@@ -1,6 +1,6 @@
 # AetherV2 backend services
 
-This directory contains the optional premium-key service, its Discord management bot, and the separate config-review service. Normal AetherV2 loads publicly from GitHub without a key.
+This directory contains one service with one entrypoint, `index.js`, that serves every route: the Community Configs API, the optional premium-key source proxy, its execution analytics, and the Discord management bot. Normal AetherV2 loads publicly from GitHub without a key.
 
 ## Security model
 
@@ -47,6 +47,8 @@ DISCORD_OWNER_IDS=123456789012345678,optional_second_owner
 DISCORD_GUILD_ID=optional_test_guild
 ```
 
+`PREMIUM_GITHUB_REPO` doubles as the switch that loads the premium stack: leave it unset and the same process serves Community Configs only, so a configs deployment never needs `PUBLIC_ORIGIN`. `ADMIN_KEY` authenticates the Community Configs review queue and is never used by the premium routes.
+
 `DISCORD_OWNER_IDS` contains immutable Discord user IDs. Display names and usernames never authorize management actions. `DISCORD_GUILD_ID` makes command updates appear immediately in that guild; without it, commands register globally.
 
 Legacy `AETHER_KEY`, `AETHER_KEYS`, and singular `DISCORD_OWNER_ID` fallbacks are no longer read. Keys already represented in the registry continue to work; an old environment-only raw key that never received a registry record must be replaced with `/key generate`.
@@ -54,7 +56,7 @@ Legacy `AETHER_KEY`, `AETHER_KEYS`, and singular `DISCORD_OWNER_ID` fallbacks ar
 ## Optional hardening and capacity variables
 
 ```text
-AETHER_REGISTRY_FILE=backend/key-bindings.json
+AETHER_REGISTRY_FILE=backend/key-bindings.json   # path on the registry branch, not a local file
 AETHER_ALLOWED_REFS=main
 AETHER_ALLOWED_PATHS=init.lua,main.lua,loadstring,version.txt,assets/,configs/,games/,guis/,libraries/,profiles/
 # Restrict private premium files to the module paths the client needs.
@@ -102,15 +104,38 @@ Keep `AetherV2Premium` private and grant the Render service's fine-grained GitHu
 
 ## Running and deploying
 
-The source proxy can start the bot in the same process:
+`npm start` runs the whole service on one port:
 
 ```bash
-npm run start:source
+npm start
 ```
 
-If `DISCORD_TOKEN` is absent, only the proxy runs. The bot can also run separately with `npm run start:bot`. The older config-review service runs with `npm start` and uses its own `ADMIN_KEY` and `DATA_FILE` settings.
+The premium stack is loaded only when `PREMIUM_GITHUB_REPO` is set, because it validates its own settings while it loads. A deployment that sets it gets configs, premium, analytics and the Discord bot together; one that omits it serves Community Configs alone from the same process and the same folder. Set `PREMIUM_GITHUB_REPO` plus `PUBLIC_ORIGIN` to enable it, and `DISCORD_TOKEN` to start the bot in-process.
 
-For a combined deployment, use `node private-source.js`, an HTTPS origin matching `PUBLIC_ORIGIN`, and outbound access to GitHub, Roblox, and Discord. Protect service logs and dashboard access. The first registry write creates or upgrades the version-3 registry through GitHub’s Contents API.
+The split entrypoints still exist for a deployment that wants them separately:
+
+```bash
+npm run start:configs   # Community Configs only
+npm run start:source    # premium proxy, analytics and the bot
+npm run start:bot       # the Discord bot by itself
+```
+
+Every route serves the same origin either way. Point the client at one URL with `getgenv().AetherConfigBackend` or `aetherv2/profiles/configbackend.txt`; the client resolves each route through `configapi.Presets.Route`.
+
+An HTTPS origin matching `PUBLIC_ORIGIN` and outbound access to GitHub, Roblox, and Discord are required for the premium routes. Protect service logs and dashboard access: `/premium/authorize` receives raw keys, so hosting and CDN access logs must be disabled or redacted. The first registry write creates or upgrades the version-3 registry through GitHub’s Contents API.
+
+`GET /health` reports which capabilities this process loaded (`configs`, `premiumEnabled`, `executionAnalytics`, `discordBot`).
+
+## State
+
+Every mutable file lives in `backend/data/`, resolved by `data-path.js` against this directory rather than the process working directory:
+
+- `data/configs.json` — submissions, review decisions, bans, ratings, download counts and version history (`DATA_FILE`).
+- `data/execution-stats.json` — execution analytics (`AETHER_STATS_FILE`).
+
+Each default keeps reading the pre-merge location (`backend/data.json`, `backend/execution-stats.json`) until the file is moved by hand, so an upgrade cannot start from an empty store. On a host with a persistent disk, set `DATA_FILE` and `AETHER_STATS_FILE` to the mounted paths instead and back them up.
+
+`backend/key-bindings.json` is not live state: it is the local mirror of the registry that lives at the same path **on the `AETHER_REGISTRY_BRANCH` branch of `GITHUB_REPO`**. `AETHER_REGISTRY_FILE` and `AETHER_CONFLICT_FILE` are repository paths on that branch, not local filenames, so changing them moves where the registry is stored. The registry and the conflict ledger are read from and written to GitHub; there is no local registry database.
 
 ## Discord key commands
 
@@ -138,34 +163,37 @@ Registry mutations carry an operation ID. If GitHub reports a SHA conflict, time
 
 Source and authorization rate limits are per process and per observed client IP. Leave `AETHER_TRUST_PROXY=false` unless the service is reachable only through a trusted reverse proxy that replaces `X-Forwarded-For`. Sessions and limiter buckets are in memory, so a restart invalidates sessions and resets limits. Run a shared external limiter/session store if deploying multiple replicas. A GitHub or registry outage intentionally blocks premium access until validation is available; normal public AetherV2 is unaffected.
 
-## Config-review service
+## Community Configs service
 
-`server.js` remains separate from key management. It accepts config submissions, exposes an `ADMIN_KEY`-protected review queue, and publishes accepted config files through GitHub. Its persistent `DATA_FILE` must be backed up. Do not reuse Discord, GitHub, admin, or Aether access keys across roles.
+`server.js` is a route group of the merged service and shares nothing with key management except the process. It accepts config submissions, exposes an `ADMIN_KEY`-protected review queue, and publishes accepted config files through GitHub. Its persistent `DATA_FILE` must be backed up. Do not reuse Discord, GitHub, admin, or Aether access keys across roles: merging the services merged the process, not the credentials.
+
+The API paths keep their published `/public-configs` names so older clients keep working, even though the window and the docs now call the feature Community Configs.
 
 Who can review:
 
-- API: anyone presenting `Authorization: Bearer $ADMIN_KEY`. Set `ADMIN_KEY` on the Worker or `npm start` process. Rotate that value to drop old reviewers.
-- In-game Review button: Roblox usernames listed in `reviewAccounts` in `guis/new.core.lua`. That list is display-only. The key is the real gate.
-- Client sends the key from `aetherv2/profiles/configadminkey.txt`.
+- API: anyone presenting `Authorization: Bearer $ADMIN_KEY`. Set `ADMIN_KEY` on the service. Rotate that value to drop every reviewer at once.
+- In-game: the tools are offered only to the accounts in `configapi.Presets.Reviewers` in `guis/new.lua` (`plutoxqqqqqq`, `aetherv2owner`; names match case-insensitively and UserIds may be listed alongside them). That list decides who is shown the buttons and nothing else. The client is published, so it can be read and a modified client can claim any username or UserId — treat the list as a menu filter, never as authorisation.
+- The key is the gate. `GET /admin/verify` answers `200` only for the accepted key, which is how the client distinguishes a real key from a typo before it unlocks anything; every moderation write is checked separately.
+- Client reads the key from `aetherv2/profiles/configadminkey.txt`, or the reviewer pastes it into the Review window's key bar, which writes that file.
 
 How to change reviewers:
 
-1. Edit `reviewAccounts` in `guis/new.core.lua` (lowercase Roblox names).
-2. Give each reviewer `configadminkey.txt` containing the current `ADMIN_KEY`.
-3. Redeploy/restart the config backend after changing `ADMIN_KEY`.
+1. Add the account to `Reviewers` in `guis/new.lua`, preferably with its UserId, or extend it for one install with `getgenv().AetherConfigReviewers`.
+2. Give each reviewer `configadminkey.txt` containing the current `ADMIN_KEY`, or let them paste it into the Review window once.
+3. Restart the service after changing `ADMIN_KEY`.
 4. `DISCORD_OWNER_IDS` does not grant config-review access.
 
 ## Execution analytics
 
 The public loader reports one execution to the premium-source service without sending a premium key. When the executor exposes a request API, the report includes the Roblox UserId so the backend can count unique players; only a one-way SHA-256 hash is persisted. Executors without a request API still increment the anonymous execution total.
 
-For durable all-time stats on Render, attach a persistent disk to the combined `node private-source.js` service and set:
+For durable all-time stats on Render, attach a persistent disk to the merged `npm start` service and set:
 
 ```text
 AETHER_STATS_FILE=/var/data/execution-stats.json
 AETHER_ANALYTICS_RATE_LIMIT=60
 ```
 
-Run the Discord bot in the same `private-source.js` process so it reads the same live stats store. `/stats summary` shows the current hour, day, week, month, and all-time totals. `/stats graph` renders a PNG line graph for hourly (24 points), daily (30), weekly (12), or monthly (12) data and can graph either executions or unique players. Buckets use UTC.
+Run the Discord bot in the same process (`npm start`) so it reads the same live stats store. `/stats summary` shows the current hour, day, week, month, and all-time totals. `/stats graph` renders a PNG line graph for hourly (24 points), daily (30), weekly (12), or monthly (12) data and can graph either executions or unique players. Buckets use UTC.
 
 The client-side report is intentionally lightweight and can be spoofed by a modified client, so these numbers are product telemetry rather than tamper-proof billing/security data. The analytics endpoint is separately rate-limited and never accepts or stores raw premium keys.

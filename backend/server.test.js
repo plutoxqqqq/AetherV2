@@ -26,3 +26,25 @@ test('public deletion is authenticated and returns structured JSON',async()=>{
     assert.deepEqual(await response.json(),{success:false,error:'Maintainer authentication required'});
   } finally { await new Promise(resolve=>server.close(resolve)); }
 });
+// ADMIN_KEY is read once while the module loads, so accepting a key needs a fresh instance rather
+// than the one the other tests already hold.
+test('the client can verify a maintainer key and a wrong one is refused',async()=>{
+  process.env.ADMIN_KEY='test-maintainer-key';
+  delete require.cache[require.resolve('./server')];
+  const fresh=require('./server');
+  await new Promise(resolve=>fresh.server.listen(0,'127.0.0.1',resolve));
+  const base=`http://127.0.0.1:${fresh.server.address().port}`;
+  try {
+    const wrong=await fetch(base+'/admin/verify',{headers:{authorization:'Bearer not-the-key'}});
+    assert.equal(wrong.status,401);
+    const missing=await fetch(base+'/admin/verify');
+    assert.equal(missing.status,401);
+    const accepted=await fetch(base+'/admin/verify',{headers:{authorization:'Bearer test-maintainer-key'}});
+    assert.equal(accepted.status,200);
+    assert.deepEqual(await accepted.json(),{success:true,role:'maintainer',service:'community-configs'});
+  } finally {
+    await new Promise(resolve=>fresh.server.close(resolve));
+    delete process.env.ADMIN_KEY;
+    delete require.cache[require.resolve('./server')];
+  }
+});

@@ -84,10 +84,14 @@ const json = (res, status, value, extraHeaders = {}) => {
     ...extraHeaders
   });
   res.end(JSON.stringify(value));
+  // Every reply resolves to true so the merged listener can tell "this service answered" from
+  // "another service owns this path" without duplicating the route table.
+  return true;
 };
 const text = (res, status, value, contentType = 'text/plain; charset=utf-8') => {
   res.writeHead(status, {'content-type': contentType, 'cache-control': 'no-store', 'access-control-allow-origin': '*'});
   res.end(value);
+  return true;
 };
 
 const readAnalyticsBody = req => new Promise((resolve, reject) => {
@@ -236,7 +240,7 @@ const premiumTree = async () => {
   return JSON.stringify({sha: body.sha, truncated: false, tree});
 };
 
-const server = http.createServer(async (req, res) => {
+async function handleRequest(req, res) {
   try {
     if (req.method === 'OPTIONS') return res.writeHead(204, {
       'access-control-allow-origin': '*',
@@ -244,6 +248,15 @@ const server = http.createServer(async (req, res) => {
       'access-control-allow-headers': 'content-type'
     }).end();
     const url = new URL(req.url, 'http://localhost');
+
+    // Ownership is settled before the limiter. The limiter buckets by client IP and route group,
+    // so if it ran first a single shared listener would spend premium-source budget on config
+    // requests that this service does not serve. Unclaimed requests write nothing and fall
+    // through to the next service.
+    const owned = url.pathname === '/health' || url.pathname === '/analytics/execution' ||
+      url.pathname.startsWith('/premium/');
+    if (!owned) return false;
+
     const retryAfter = consumeRateLimit(req, url.pathname);
     if (retryAfter) return json(res, 429, {success: false, error: 'Too many requests; try again shortly'}, {'retry-after': String(retryAfter)});
 
@@ -290,10 +303,15 @@ const server = http.createServer(async (req, res) => {
       return text(res, 200, await premiumTree(), 'application/json; charset=utf-8');
     }
 
-    return json(res, 404, {success: false, error: 'Endpoint not found'});
+    return false;
   } catch (error) {
     return json(res, error.status || 500, {success: false, error: error.message || 'Premium source request failed'});
   }
+}
+
+const server = http.createServer(async (req, res) => {
+  if (await handleRequest(req, res)) return;
+  json(res, 404, {success: false, error: 'Endpoint not found'});
 });
 
 if (require.main === module) {
@@ -310,6 +328,9 @@ if (require.main === module) {
 
 module.exports = {
   server,
+  handleRequest,
+  premiumEnabled,
+  executionStats,
   validPath,
   premiumClientPath,
   verifyRobloxIdentity,

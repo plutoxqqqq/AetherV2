@@ -3,10 +3,11 @@
   "version": "1.1.0",
   "private": true,
   "scripts": {
-    "start": "node server.js",
+    "start": "node index.js",
+    "start:configs": "node server.js",
     "start:source": "node private-source.js",
     "start:bot": "node discord-bot.js",
-    "check": "node --check server.js && node --check key-registry.js && node --check key-conflicts.js && node --check private-source.js && node --check execution-stats.js && node --check discord-bot.js",
+    "check": "node --check index.js && node --check server.js && node --check data-path.js && node --check key-registry.js && node --check key-conflicts.js && node --check private-source.js && node --check private-source-core.js && node --check execution-stats.js && node --check discord-bot.js",
     "test": "node --test"
   },
   "engines": {
