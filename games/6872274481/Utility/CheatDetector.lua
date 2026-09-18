@@ -1,51 +1,16 @@
 run(function()
 	local CheatDetector
-	local SelfDetect
-	local Combat
-	local Movement
+	local SelfTest
+	local toggles = {}
 
-	local Players = cloneref(game:GetService('Players'))
-
-	---------------------------------------------------------------------------
-	-- Tuning
-	--
-	-- Every threshold below is fixed. Nothing here is scaled by ping: a player's allowance is the
-	-- same whether they are on 20ms or 200ms, which is deliberate - the checks describe what the
-	-- game itself will and will not accept, and that does not change with somebody's connection.
-	---------------------------------------------------------------------------
-	local POLL = 0.1
-	local STRIKE_MEMORY = 45
-
-	-- Reach: anything past this is beyond what a melee swing can cover.
-	local REACH_LIMIT = 15
-
-	-- Killaura: a hit landed while facing away from the victim. From more than a block out, 90
-	-- degrees off the facing direction is already impossible to aim; directly behind them the game
-	-- gives a little more room, so that only flags past ~5 studs.
-	local SIDE_ANGLE = 90
-	local BEHIND_ANGLE = 160
-	local SIDE_DISTANCE = 3
-	local BEHIND_DISTANCE = 5
-
-	-- Speed: sustained ground speed above this is faster than any legal movement buff.
-	local SPEED_LIMIT = 21
-	local SPEED_WINDOW = 1.5
-	local SPEED_SAMPLES = 5
-	local SPEED_SAMPLE_LIMIT = 0.85
-
-	-- Kits that legitimately move faster than the limit. The check stands down entirely for them
-	-- rather than trying to guess how much of the speed is the kit.
-	local SPEED_KITS = {
-		wind_walker = true,
-		glacial_skater = true,
-		elk_master = true,
-		grim_reaper = true
-	}
-
-	-- Fly: nothing solid underneath for this long is a hover, not a fall.
-	local VOID_TIME = 1
-	local VOID_DESCENT = 1.5
-	local VOID_DEPTH = 80
+	-- How often every tracked body is sampled, how long a position is remembered, and how much
+	-- score a single reason may add before the flag is raised.
+	local SAMPLE_STEP = 0.05
+	local HISTORY_TIME = 2
+	local FLAG_SCORE = 70
+	local SCORE_DECAY = 1.2
+	local REASON_LIFE = 25
+	local REASON_COOLDOWN = 6
 
 	-- AntiDeaths: a position snap the replicated velocity cannot explain. A normal jump moves with
 	-- its velocity, so the displacement it leaves behind is tiny; even the softest AntiDeath drops
@@ -53,44 +18,58 @@ run(function()
 	local TELEPORT_VERTICAL = 4
 	local TELEPORT_MARGIN = 3
 	-- A deep drop followed by the same rise inside this window is the classic "under the map and
-	-- straight back up" dodge.
+	-- straight back up" dodge, and is worth more than a lone strike.
 	local UNDER_MAP_DROP = 25
 	local UNDER_MAP_WINDOW = 2
 
-	local required = {
-		Reach = 3,
-		Killaura = 3,
-		Speed = 3,
-		Fly = 3,
-		AntiDeaths = 3
+	local tips = {
+		Speed = 'catches ppl movin way too fast',
+		Reach = 'catches ppl hittin u from too far away',
+		Killaura = 'catches ppl hittin mad fast or behind them',
+		Fly = 'catches ppl floatin in the air',
+		AntiDeaths = 'catches ppl teleportin out of a death they should not have survived'
 	}
 
-	local strikes = {}
-	local records = {}
-	local speedTracks = {}
-	local airTracks = {}
+	local history = {}
+	local meta = {}
+	local score = {}
+	local flagged = {}
+	local reachStreak = {}
+	local airTime = {}
+	local speedTime = {}
+	local kaData = {}
 	local antiTracks = {}
-	local pollThread
 
-	local MOVEMENT_WORDS = {'speed', 'jump', 'haste', 'fury', 'strength', 'swift', 'agility', 'slow'}
-	-- Kits that are allowed to leave the ground for long stretches.
-	local HOVER_KITS = {owl = true}
-	-- Items that are allowed to hold a player in the air.
-	local HOVER_ITEMS = {'balloon', 'glider', 'parachute'}
-
-	local groundRay = RaycastParams.new()
-	groundRay.FilterType = Enum.RaycastFilterType.Exclude
-
-	local function now()
-		return tick()
+	local function resetPlayer(plr)
+		history[plr] = nil
+		meta[plr] = nil
+		score[plr] = nil
+		reachStreak[plr] = nil
+		airTime[plr] = nil
+		speedTime[plr] = nil
+		kaData[plr] = nil
+		antiTracks[plr] = nil
 	end
 
-	local function isSelf(plr)
-		return plr == Players.LocalPlayer
+	local function resetAll()
+		table.clear(history)
+		table.clear(meta)
+		table.clear(score)
+		table.clear(flagged)
+		table.clear(reachStreak)
+		table.clear(airTime)
+		table.clear(speedTime)
+		table.clear(kaData)
+		table.clear(antiTracks)
 	end
 
-	-- whitelist:get hands the targetable flag back in its second value, the same value the game reads
-	-- before it lets a hit through, so anyone it marks untargetable is left alone here as well.
+	local function isOn(name)
+		local t = toggles[name]
+		return t and t.Enabled
+	end
+
+	-- whitelist:get hands the targetable flag back in its second value, the same value the game
+	-- reads before it lets a hit through, so anyone it marks untargetable is left alone here too.
 	local function whitelisted(plr)
 		local ok, targetable = pcall(function()
 			return select(2, whitelist:get(plr))
@@ -98,17 +77,32 @@ run(function()
 		return ok and targetable == false
 	end
 
-	-- Friends and manual whitelist entries are never accused: they are the people the user asked
-	-- not to touch, and a false tag on them is worse than a miss.
+	-- Friends, manual whitelist entries and anyone already reported are never accused again: a
+	-- false tag on somebody the user asked not to touch is worse than a miss.
 	local function ignored(plr)
 		if not plr or not plr.Parent then return true end
-		if isSelf(plr) and not (SelfDetect and SelfDetect.Enabled) then return true end
-		if CheatersFlagged[plr] == true then return true end
-		if isFriend and isFriend(plr) then return true end
+		if plr == lplr and not (SelfTest and SelfTest.Enabled) then return true end
+		if CheatersFlagged[plr] then return true end
+		if isFriend(plr) then return true end
 		if whitelisted(plr) then return true end
 		return false
 	end
 
+	local function notSelf(plr)
+		return not ignored(plr)
+	end
+
+	local function getEntities()
+		if SelfTest and SelfTest.Enabled and entitylib.character then
+			local list = table.clone(entitylib.List)
+			table.insert(list, entitylib.character)
+			return list
+		end
+		return entitylib.List
+	end
+
+	-- The flagged players are written to disk and into the session's cheater list, and the tag the
+	-- rest of the pack colours them with, so one verdict is visible everywhere.
 	local function persist(plr, reason)
 		pcall(function()
 			if isfolder and not isfolder('aether') then makefolder('aether') end
@@ -124,415 +118,558 @@ run(function()
 		end)
 	end
 
-	-- A player is only flagged once the same reason has been seen `required[reason]` times inside
-	-- the memory window, so one odd reading is never enough on its own. `weight` lets the
-	-- unmistakable patterns (a completed drop under the map and back) count for more than one.
-	local function flag(plr, reason, weight)
-		if ignored(plr) then return end
-		local entry = strikes[plr]
-		if not entry then
-			entry = {}
-			strikes[plr] = entry
-		end
-		local list = entry[reason]
-		if not list then
-			list = {}
-			entry[reason] = list
-		end
-		local t = now()
-		for _ = 1, weight or 1 do
-			table.insert(list, t)
-		end
-		for index = #list, 1, -1 do
-			if t - list[index] > STRIKE_MEMORY then table.remove(list, index) end
-		end
-		if #list < (required[reason] or 3) then return end
+	local function flagPlayer(plr, reasons)
+		local key = tostring(plr)
+		local now = os.clock()
+		if flagged[key] and now < flagged[key] then return end
+		flagged[key] = now + 20
+
 		CheatersFlagged[plr] = true
-		whitelist.customtags[plr.Name] = {{text = 'CHEATER', color = Color3.fromRGB(235, 60, 60)}}
-		if notif then notif('CheatDetector', tostring(plr.Name)..' flagged: '..reason, 8, 'alert') end
-		persist(plr, reason)
-		table.clear(entry)
+		pcall(function()
+			whitelist.customtags[plr.Name] = {{text = 'CHEATER', color = Color3.fromRGB(235, 60, 60)}}
+		end)
+		persist(plr, reasons)
+		notif('CheatDetector', 'yo '..(plr.DisplayName or plr.Name)..' is prob cheatin -> '..reasons, 12, 'alert')
 	end
 
-	-- Only status-effect attributes count, so unrelated attributes cannot hand out a free pass.
-	local function hasEffect(character, words)
-		for name in character:GetAttributes() do
-			local lower = name:lower()
-			if lower:find('effect', 1, true) then
-				for _, word in words do
-					if lower:find(word, 1, true) then return true end
+	local function addScore(plr, amount, reason, label)
+		if not plr or ignored(plr) then return end
+		local now = os.clock()
+		local s = score[plr]
+		if not s then
+			s = {value = 0, seen = {}, labels = {}, last = now}
+			score[plr] = s
+		end
+		if s.seen[reason] and now - s.seen[reason] < REASON_COOLDOWN then return end
+		s.seen[reason] = now
+		s.labels[reason] = label
+		s.value = s.value + amount
+		if s.value >= FLAG_SCORE then
+			local list = {}
+			for r in s.labels do
+				list[#list + 1] = s.labels[r]
+			end
+			table.sort(list)
+			flagPlayer(plr, table.concat(list, ' + '))
+			s.value = 0
+			table.clear(s.seen)
+			table.clear(s.labels)
+		end
+	end
+
+	local function pushSample(plr, ent)
+		local root = ent.RootPart
+		if not root then return end
+		local h = history[plr]
+		if not h then
+			h = {}
+			history[plr] = h
+		end
+		local now = os.clock()
+		local cf = root.CFrame
+		h[#h + 1] = {t = now, pos = cf.Position, look = cf.LookVector, vel = root.AssemblyLinearVelocity}
+		while h[1] and now - h[1].t > HISTORY_TIME do
+			table.remove(h, 1)
+		end
+	end
+
+	local function trackMeta(plr, ent)
+		local now = os.clock()
+		local m = meta[plr]
+		if not m then
+			m = {spawn = now, lastMove = now, lastDamaged = 0, char = ent.Character}
+			meta[plr] = m
+		end
+		if m.char ~= ent.Character then
+			m.char = ent.Character
+			m.spawn = now
+			m.lastMove = now
+			m.lastPos = nil
+			history[plr] = nil
+			reachStreak[plr] = nil
+			airTime[plr] = nil
+			speedTime[plr] = nil
+			antiTracks[plr] = nil
+		end
+		local root = ent.RootPart
+		if root then
+			if not m.lastPos or (root.Position - m.lastPos).Magnitude > 0.05 then
+				m.lastMove = now
+			end
+			m.lastPos = root.Position
+		end
+		return m
+	end
+
+	local function getHumanoid(ent)
+		if ent.Humanoid then return ent.Humanoid end
+		return ent.Character and ent.Character:FindFirstChildOfClass('Humanoid')
+	end
+
+	-- Everything the game does on its own that could look like cheating: spawn protection, standing
+	-- still, balloons, a server correction, a stun, a dash window, or a local connection too poor to
+	-- judge from. Nothing is measured while any of these is in play.
+	local function trusted(plr, ent)
+		if not plr or not ent then return false end
+		local char = ent.Character
+		local root = ent.RootPart
+		if not char or not root or not char.Parent or not root.Parent then return false end
+		local m = meta[plr]
+		if not m then return false end
+		local now = os.clock()
+		if now - m.spawn < 3 then return false end
+		if now - m.lastMove > 0.35 then return false end
+		local hum = getHumanoid(ent)
+		if not hum or hum.Health <= 0 then return false end
+		if (char:GetAttribute('InflatedBalloons') or 0) > 0 then return false end
+		local serverNow = workspace:GetServerTimeNow()
+		if serverNow - (plr:GetAttribute('LastTeleported') or 0) < 1.5 then return false end
+		local stun = char:GetAttribute('StunnedUntilTime')
+		if stun and stun > serverNow - 1 then return false end
+		local dashNext = char:GetAttribute('CanDashNext')
+		if dashNext and dashNext > serverNow then return false end
+		if lplr:GetNetworkPing() > 0.15 then return false end
+		local h = history[plr]
+		if not h or #h < 8 then return false end
+		return true
+	end
+
+	local function minDistanceTo(plr, point, window)
+		local h = history[plr]
+		if not h or #h == 0 then return nil end
+		local now = os.clock()
+		local best
+		for i = #h, 1, -1 do
+			local s = h[i]
+			if now - s.t > window then break end
+			local d = (s.pos - point).Magnitude
+			if not best or d < best then best = d end
+		end
+		return best
+	end
+
+	local function minPairDistance(a, b, window)
+		local ha, hb = history[a], history[b]
+		if not ha or not hb then return nil end
+		local now = os.clock()
+		local best
+		for i = #ha, 1, -1 do
+			if now - ha[i].t > window then break end
+			for j = #hb, 1, -1 do
+				if now - hb[j].t > window then break end
+				if math.abs(ha[i].t - hb[j].t) <= 0.12 then
+					local d = (ha[i].pos - hb[j].pos).Magnitude
+					if not best or d < best then best = d end
 				end
 			end
 		end
-		return false
+		return best
 	end
 
-	-- The game marks the characters it has had to move itself: void rescues, respawns and ability
-	-- pulls. Speed and Fly read that so a server correction cannot look like a cheat. AntiDeaths
-	-- deliberately does not, because a correction is exactly what it is looking for.
-	local function recentlyCorrected(character)
-		return character:GetAttribute('LastTeleported') ~= nil or character:GetAttribute('LastServerCorrected') ~= nil
-	end
-
-	local function heldItem(character)
-		local value = character and character:FindFirstChild('HandInvItem')
-		local tool = value and value.Value
-		return tool and tool.Name or nil
-	end
-
-	local function holdingHoverItem(character)
-		local name = heldItem(character)
-		if not name then return false end
-		name = name:lower()
-		for _, needle in HOVER_ITEMS do
-			if name:find(needle, 1, true) then return true end
-		end
-		return false
-	end
-
-	local function kitOf(plr)
-		return (plr:GetAttribute('PlayingAsKit') or plr:GetAttribute('PlayingAsKits') or '')
-	end
-
-	local function entityList()
-		local list = {}
-		for _, ent in entitylib.List do
-			if ent and ent.Character and (ent.RootPart or ent.Character:FindFirstChild('HumanoidRootPart')) and ent.Targetable ~= false then
-				table.insert(list, ent)
+	-- The sample from roughly one network round trip ago, so a hit is judged against where both
+	-- bodies were when the attacker's client decided to swing.
+	local function recentSample(plr)
+		local h = history[plr]
+		if not h or #h == 0 then return nil end
+		local ping = math.clamp(lplr:GetNetworkPing() * 0.5, 0, 0.3)
+		local target = os.clock() - ping
+		local best, bestDiff
+		for i = #h, 1, -1 do
+			local diff = math.abs(h[i].t - target)
+			if not bestDiff or diff < bestDiff then
+				best = h[i]
+				bestDiff = diff
 			end
 		end
-		if SelfDetect and SelfDetect.Enabled and entitylib.character then
-			table.insert(list, {
-				Player = Players.LocalPlayer,
-				Character = entitylib.character.Character,
-				RootPart = entitylib.character.RootPart,
-				Humanoid = entitylib.character.Humanoid
-			})
+		return best
+	end
+
+	local function getAttackRange(plr)
+		-- The held tool is replicated on the character, so read it there first; the inventory
+		-- snapshot is only a fallback for the moment before it replicates.
+		local name
+		local character = plr.Character
+		local hand = character and character:FindFirstChild('HandInvItem')
+		local tool = hand and hand.Value
+		name = tool and tool.Name
+		if not name then
+			local inv = store.inventories[plr]
+			local handEntry = inv and inv.hand
+			name = handEntry and handEntry.tool and handEntry.tool.Name
 		end
-		return list
+		if not name then return nil end
+		local itemMeta = bedwars.ItemMeta[name]
+		local swordMeta = itemMeta and itemMeta.sword
+		if not swordMeta then return nil end
+		return swordMeta.attackRange
 	end
 
-	local function snapshot(ent)
-		local plr = ent.Player
-		local character = ent.Character
-		if not plr or not character or ignored(plr) then return nil end
-		local root = ent.RootPart or character:FindFirstChild('HumanoidRootPart')
-		local humanoid = character:FindFirstChildOfClass('Humanoid')
-		if not root or not root.Parent or not humanoid or humanoid.Health <= 0 then return nil end
-
-		local state = humanoid:GetState()
-		local record = {
-			Player = plr,
-			Character = character,
-			Root = root,
-			Humanoid = humanoid,
-			Position = root.Position,
-			Velocity = root.AssemblyLinearVelocity,
-			Grounded = humanoid.FloorMaterial ~= Enum.Material.Air,
-			Hurt = state == Enum.HumanoidStateType.Physics,
-			Seated = state == Enum.HumanoidStateType.Seated,
-			HoverItem = holdingHoverItem(character),
-			Kit = kitOf(plr),
-			Teleported = recentlyCorrected(character),
-			Time = now(),
-			Previous = records[plr]
-		}
-		records[plr] = record
-		return record
+	local function blockedByMap(fromPos, toPos)
+		local dir = toPos - fromPos
+		local dist = dir.Magnitude
+		if dist < 3 then return false end
+		-- cloneRaycast() excludes every body, so only the map can answer this.
+		local hit = workspace:Raycast(fromPos, dir.Unit * (dist - 1.5), cloneRaycast())
+		if not hit then return false end
+		return (hit.Position - fromPos).Magnitude < dist - 2
 	end
 
-	---------------------------------------------------------------------------
-	-- Speed: sustained ground speed above anything the game can produce
-	---------------------------------------------------------------------------
-
-	local function median(values)
-		local count = #values
-		if count == 0 then return 0 end
-		local sorted = table.clone(values)
-		table.sort(sorted)
-		if count % 2 == 1 then return sorted[(count + 1) // 2] end
-		return (sorted[count // 2] + sorted[count // 2 + 1]) * 0.5
-	end
-
-	local function checkSpeed(record)
-		-- Kits that really do move faster are exempt outright, so the limit can stay tight for
-		-- everybody else instead of being raised until it stops catching cheaters.
-		if SPEED_KITS[record.Kit] then
-			speedTracks[record.Player] = nil
-			return
+	local function kaState(plr)
+		local d = kaData[plr]
+		if not d then
+			d = {targets = {}, intervals = {}, lastHit = 0, angleHits = {}, wallHits = {}}
+			kaData[plr] = d
 		end
+		return d
+	end
 
-		local previous = record.Previous
-		if not previous then return end
-		local dt = record.Time - previous.Time
-		if dt < 0.05 or dt > 0.5 then return end
+	local function pruneStamps(list, life)
+		local now = os.clock()
+		for i = #list, 1, -1 do
+			if now - list[i] > life then table.remove(list, i) end
+		end
+		return #list
+	end
 
-		local track = speedTracks[record.Player]
-		-- A sample only counts while they are running on the ground with nothing speeding them up:
-		-- jumps, dashes, knockback and potions all move a player faster than sprinting legally.
-		local usable = record.Grounded and not record.Hurt and not record.Teleported
-			and not hasEffect(record.Character, MOVEMENT_WORDS)
-		if usable then
-			local delta = record.Position - previous.Position
-			local speed = Vector3.new(delta.X, 0, delta.Z).Magnitude / dt
-			if not track then
-				track = {start = record.Time, samples = {}}
-				speedTracks[record.Player] = track
+	local function checkReach(attacker, victimPlr, victimPos, fromPosition)
+		if not isOn('Reach') then return end
+		local range = getAttackRange(attacker)
+		if not range then return end
+
+		local best
+		if fromPosition then
+			if victimPlr then
+				best = minDistanceTo(victimPlr, fromPosition, 0.8)
+			elseif victimPos then
+				best = (victimPos - fromPosition).Magnitude
 			end
-			table.insert(track.samples, speed)
 		end
-
-		if not track then return end
-		if record.Time - track.start < SPEED_WINDOW then return end
-
-		local samples = track.samples
-		track.start = record.Time
-		track.samples = {}
-		if #samples < SPEED_SAMPLES then return end
-
-		local above = 0
-		for _, speed in samples do
-			if speed > SPEED_LIMIT then above += 1 end
+		if victimPlr then
+			local paired = minPairDistance(attacker, victimPlr, 0.8)
+			if paired and (not best or paired < best) then best = paired end
 		end
-		-- The median carries the verdict and the share of samples has to agree with it, so one
-		-- spike cannot flag someone and one stumble cannot excuse somebody who is cheating.
-		if median(samples) > SPEED_LIMIT and (above / #samples) >= SPEED_SAMPLE_LIMIT then
-			flag(record.Player, 'Speed')
+		if not best then return end
+
+		local allowance = range + 2.5 + math.min(lplr:GetNetworkPing(), 0.2) * 30
+		if best > allowance then
+			reachStreak[attacker] = (reachStreak[attacker] or 0) + 1
+			if reachStreak[attacker] >= 3 then
+				reachStreak[attacker] = 0
+				addScore(attacker, 45, 'reach', 'reach ('..string.format('%.1f', best)..' studs, max is '..string.format('%.1f', allowance)..')')
+			end
+		else
+			reachStreak[attacker] = 0
 		end
 	end
 
-	---------------------------------------------------------------------------
-	-- Fly: hanging over the void with nothing underneath
-	---------------------------------------------------------------------------
+	local function checkKillaura(attacker, victimInstance, victimPlr, victimPos, fromPosition)
+		if not isOn('Killaura') then return end
+		local d = kaState(attacker)
+		local now = os.clock()
 
-	local function overVoid(record)
-		groundRay.FilterDescendantsInstances = {record.Character}
-		return workspace:Raycast(record.Position, Vector3.new(0, -VOID_DEPTH, 0), groundRay) == nil
+		d.targets[victimInstance] = now
+		local distinct = 0
+		for inst, t in d.targets do
+			if now - t <= 0.35 then
+				distinct = distinct + 1
+			else
+				d.targets[inst] = nil
+			end
+		end
+		if distinct >= 2 then
+			addScore(attacker, 40, 'multi', 'killaura (hit '..distinct..' ppl at once)')
+		end
+
+		-- A machine swing cadence has no human jitter: the gaps between hits stay within a few
+		-- percent of their own average, which no person clicking produces.
+		if d.lastHit > 0 then
+			local gap = now - d.lastHit
+			if gap > 0.04 and gap < 1.2 then
+				d.intervals[#d.intervals + 1] = gap
+				while #d.intervals > 16 do
+					table.remove(d.intervals, 1)
+				end
+				if #d.intervals >= 12 then
+					local sum = 0
+					for _, g in d.intervals do sum = sum + g end
+					local mean = sum / #d.intervals
+					local varSum = 0
+					for _, g in d.intervals do varSum = varSum + (g - mean) ^ 2 end
+					local sd = math.sqrt(varSum / #d.intervals)
+					if mean > 0.05 and sd / mean < 0.07 then
+						addScore(attacker, 45, 'timing', 'killaura (hits perfectly on beat, no human jitter)')
+						table.clear(d.intervals)
+					end
+				end
+			end
+		end
+		d.lastHit = now
+
+		local attackerSample = recentSample(attacker)
+		local origin = attackerSample and attackerSample.pos or fromPosition
+		local look = attackerSample and attackerSample.look
+		local targetPos = victimPos
+		if victimPlr then
+			local vs = recentSample(victimPlr)
+			if vs then targetPos = vs.pos end
+		end
+
+		if origin and look and targetPos then
+			local flatLook = look * Vector3.new(1, 0, 1)
+			local flatDir = (targetPos - origin) * Vector3.new(1, 0, 1)
+			if flatLook.Magnitude > 0.001 and flatDir.Magnitude > 0.001 then
+				local angle = math.deg(math.acos(math.clamp(flatLook.Unit:Dot(flatDir.Unit), -1, 1)))
+				if angle > 75 then
+					d.angleHits[#d.angleHits + 1] = now
+					if pruneStamps(d.angleHits, 15) >= 4 then
+						table.clear(d.angleHits)
+						addScore(attacker, 35, 'angle', 'killaura (swingin at ppl behind them)')
+					end
+				end
+			end
+
+			if blockedByMap(origin, targetPos) then
+				d.wallHits[#d.wallHits + 1] = now
+				if pruneStamps(d.wallHits, 15) >= 3 then
+					table.clear(d.wallHits)
+					addScore(attacker, 40, 'wall', 'killaura (hittin straight thru blocks)')
+				end
+			end
+		end
 	end
 
-	local function checkFly(record)
-		local previous = record.Previous
-		-- Descending people are falling, not hovering, which is what keeps a legitimate drop off
-		-- the map from being read as flight.
-		local hovering = not record.Grounded and record.Velocity.Y > -VOID_DESCENT
-		if not previous or not hovering or record.Hurt or record.Seated or record.Teleported
-			or record.HoverItem or HOVER_KITS[record.Kit]
-			or hasEffect(record.Character, MOVEMENT_WORDS) then
-			airTracks[record.Player] = nil
-			return
+	local function onMeleeDamage(dmg)
+		if not CheatDetector.Enabled then return end
+		if dmg.damageType ~= 0 then return end
+		if not dmg.fromEntity or not dmg.entityInstance then return end
+
+		local attacker = playersService:GetPlayerFromCharacter(dmg.fromEntity)
+		if not attacker or not notSelf(attacker) then return end
+
+		local victimPlr = playersService:GetPlayerFromCharacter(dmg.entityInstance)
+		if victimPlr then
+			local vm = meta[victimPlr]
+			if vm then vm.lastDamaged = os.clock() end
 		end
 
-		local dt = record.Time - previous.Time
-		if dt <= 0 or dt > 0.5 then
-			airTracks[record.Player] = nil
-			return
-		end
+		local victimRoot = dmg.entityInstance.PrimaryPart or dmg.entityInstance:FindFirstChild('HumanoidRootPart')
+		local victimPos = victimRoot and victimRoot.Position
 
-		local track = airTracks[record.Player]
-		if not track then
-			track = {time = 0, moved = 0}
-			airTracks[record.Player] = track
-		end
-		track.time += dt
-		track.moved += (record.Position - previous.Position).Magnitude
-		if track.time < VOID_TIME then return end
+		local am = meta[attacker]
+		if not am or os.clock() - am.spawn < 3 then return end
+		if lplr:GetNetworkPing() > 0.15 then return end
 
-		-- The clock only means anything if there is no ground anywhere under them and they are
-		-- actually holding their height rather than being carried by something.
-		if record.Humanoid.SeatPart then
-			airTracks[record.Player] = nil
-			return
-		end
-		if overVoid(record) and track.moved > 1 then
-			flag(record.Player, 'Fly')
-		end
-		airTracks[record.Player] = nil
+		checkReach(attacker, victimPlr, victimPos, dmg.fromPosition)
+		checkKillaura(attacker, dmg.entityInstance, victimPlr, victimPos, dmg.fromPosition)
 	end
 
-	---------------------------------------------------------------------------
-	-- AntiDeaths: vertical teleports no velocity can explain
-	---------------------------------------------------------------------------
+	-- Fly: hanging off the ground with almost no vertical speed while still travelling sideways is
+	-- a hover, not a fall.
+	local function checkFly(plr, ent, dt, rayParams)
+		if not isOn('Fly') then
+			airTime[plr] = 0
+			return
+		end
+		local root = ent.RootPart
+		-- Every entry of a ray filter has to be an instance, so the local body is only added while
+		-- there is one; a respawning player would otherwise break the cast with a nil slot.
+		local ignore = {ent.Character, gameCamera}
+		if lplr.Character then table.insert(ignore, lplr.Character) end
+		rayParams.FilterDescendantsInstances = ignore
+		local hit = workspace:Raycast(root.Position, Vector3.new(0, -250, 0), rayParams)
+		local groundDist = hit and (root.Position.Y - hit.Position.Y) or 250
+		local vel = root.AssemblyLinearVelocity
+		local horizontal = (vel * Vector3.new(1, 0, 1)).Magnitude
 
-	local function checkAntiDeaths(record)
-		local previous = record.Previous
-		if not previous then return end
-		local dt = record.Time - previous.Time
+		if groundDist > 8 and math.abs(vel.Y) < 3 and horizontal > 2 then
+			airTime[plr] = (airTime[plr] or 0) + dt
+			if airTime[plr] >= 1.75 then
+				airTime[plr] = 0
+				addScore(plr, 50, 'fly', 'fly (hoverin '..math.floor(groundDist)..' studs off the ground)')
+			end
+		else
+			airTime[plr] = 0
+		end
+	end
+
+	local function checkSpeed(plr, ent, dt)
+		if not isOn('Speed') then
+			speedTime[plr] = 0
+			return
+		end
+		local m = meta[plr]
+		-- Being hit is a free pass: knockback and the hit's own momentum are not the player moving.
+		if m and os.clock() - (m.lastDamaged or 0) < 1.5 then
+			speedTime[plr] = 0
+			return
+		end
+		local h = history[plr]
+		if not h or #h < 8 then
+			speedTime[plr] = 0
+			return
+		end
+
+		local now = os.clock()
+		local newest, oldest, prev
+		local maxStep = 0
+		for i = #h, 1, -1 do
+			local s = h[i]
+			if now - s.t > 0.5 then break end
+			if not newest then newest = s end
+			if prev then
+				local step = ((prev.pos - s.pos) * Vector3.new(1, 0, 1)).Magnitude
+				if step > maxStep then maxStep = step end
+			end
+			prev = s
+			oldest = s
+		end
+
+		if not newest or not oldest then
+			speedTime[plr] = 0
+			return
+		end
+		local span = newest.t - oldest.t
+		-- A single huge step is a teleport, not sustained speed, so it is left to AntiDeaths.
+		if span < 0.3 or maxStep > 8 then
+			speedTime[plr] = 0
+			return
+		end
+
+		local travelled = ((newest.pos - oldest.pos) * Vector3.new(1, 0, 1)).Magnitude
+		local speed = travelled / span
+		if speed > 34 then
+			speedTime[plr] = (speedTime[plr] or 0) + dt
+			if speedTime[plr] >= 1.2 then
+				speedTime[plr] = 0
+				addScore(plr, 45, 'speed', 'speed ('..math.floor(speed)..' studs a sec)')
+			end
+		else
+			speedTime[plr] = 0
+		end
+	end
+
+	-- AntiDeaths: compare the movement between the two newest samples with what the replicated
+	-- velocity asked for, exactly as the pack always did, but feed it into the score instead of a
+	-- strike table. Three of these inside the reason's life is what raises the flag.
+	local function checkAntiDeaths(plr)
+		if not isOn('AntiDeaths') then
+			antiTracks[plr] = nil
+			return
+		end
+		local h = history[plr]
+		if not h or #h < 2 then return end
+
+		local latest, previous = h[#h], h[#h - 1]
+		local dt = latest.t - previous.t
 		if dt <= 0 or dt > 0.5 then return end
 
-		local delta = record.Position - previous.Position
-		-- What the replicated velocity says the body should have moved. A jump matches it; a
-		-- teleport does not.
-		local expected = previous.Velocity * dt
-		local unexplained = delta - expected
+		local delta = latest.pos - previous.pos
+		local unexplained = delta - (previous.vel * dt)
 		if math.abs(unexplained.Y) < TELEPORT_VERTICAL or unexplained.Magnitude < TELEPORT_MARGIN then
 			return
 		end
 
-		flag(record.Player, 'AntiDeaths')
+		addScore(plr, 30, 'antideaths', 'antideaths (moved '..string.format('%.1f', math.abs(unexplained.Y))..' studs with no velocity behind it)')
 
-		-- Deep drops are remembered so the trip back up can be matched to them: going under the
-		-- map and straight back up is the signature, and it is worth more than a lone strike.
 		if delta.Y <= -UNDER_MAP_DROP then
-			antiTracks[record.Player] = {time = record.Time, depth = -delta.Y}
+			antiTracks[plr] = {time = latest.t, depth = -delta.Y}
 		elseif delta.Y >= UNDER_MAP_DROP then
-			local under = antiTracks[record.Player]
-			if under and record.Time - under.time <= UNDER_MAP_WINDOW then
-				flag(record.Player, 'AntiDeaths', 2)
-				antiTracks[record.Player] = nil
-			end
-		end
-	end
-
-	---------------------------------------------------------------------------
-	-- Combat: reach, and hits landed while facing away
-	---------------------------------------------------------------------------
-
-	-- Split out of the damage handler so the connector tests can feed it a hit directly.
-	local function evaluateHit(attackRoot, victimRoot, damageType)
-		if damageType ~= 0 then return nil end
-		local distance = (attackRoot.Position - victimRoot.Position).Magnitude
-		if distance > REACH_LIMIT then
-			return 'Reach'
-		end
-
-		local direction = victimRoot.Position - attackRoot.Position
-		if direction.Magnitude <= 0 then return nil end
-		local angle = math.deg(math.acos(math.clamp(attackRoot.CFrame.LookVector:Dot(direction.Unit), -1, 1)))
-
-		local behind = angle >= BEHIND_ANGLE
-		local minDistance = behind and BEHIND_DISTANCE or SIDE_DISTANCE
-		if angle > SIDE_ANGLE and distance > minDistance then
-			return 'Killaura'
-		end
-		return nil
-	end
-
-	local function onDamage(data)
-		local attacker = data and data.fromEntity and Players:GetPlayerFromCharacter(data.fromEntity)
-		local victim = data and data.entityInstance and Players:GetPlayerFromCharacter(data.entityInstance)
-		if not attacker or not victim or attacker == victim or ignored(attacker) then return end
-		local attackRoot = data.fromEntity:FindFirstChild('HumanoidRootPart')
-		local victimRoot = data.entityInstance:FindFirstChild('HumanoidRootPart')
-		if not attackRoot or not victimRoot or not attackRoot.Parent or not victimRoot.Parent then return end
-
-		local reason = evaluateHit(attackRoot, victimRoot, data.damageType)
-		if reason and optionEnabled(Combat, reason) then flag(attacker, reason) end
-	end
-
-	---------------------------------------------------------------------------
-	-- Polling
-	---------------------------------------------------------------------------
-
-	local function poll()
-		if not CheatDetector.Enabled then return end
-		local checkSpeedOn = optionEnabled(Movement, 'Speed')
-		local checkFlyOn = optionEnabled(Movement, 'Fly')
-		local checkAntiDeathsOn = optionEnabled(Movement, 'AntiDeaths')
-		if not (checkSpeedOn or checkFlyOn or checkAntiDeathsOn) then return end
-
-		for _, ent in entityList() do
-			local ok, record = pcall(snapshot, ent)
-			if ok and record then
-				if checkSpeedOn then pcall(checkSpeed, record) end
-				if checkFlyOn then pcall(checkFly, record) end
-				if checkAntiDeathsOn then pcall(checkAntiDeaths, record) end
-			end
-		end
-
-		for plr in records do
-			if not plr.Parent then
-				records[plr] = nil
-				speedTracks[plr] = nil
-				airTracks[plr] = nil
+			local under = antiTracks[plr]
+			if under and latest.t - under.time <= UNDER_MAP_WINDOW then
+				addScore(plr, 45, 'antideaths', 'antideaths (dropped '..math.floor(under.depth)..' studs and came straight back)')
 				antiTracks[plr] = nil
-				strikes[plr] = nil
 			end
 		end
 	end
 
-	local function group(name, tooltip)
-		local children = {}
-		local toggle = CheatDetector:CreateToggle({
-			Name = name,
-			Tooltip = tooltip,
-			Default = true,
-			Function = function(callback)
-				for _, child in children do
-					if child.Object then child.Object.Visible = callback end
+	local function decayScores(dt)
+		local now = os.clock()
+		for plr, s in score do
+			s.last = now
+			s.value = math.max(0, s.value - SCORE_DECAY * dt)
+			for reason, t in s.seen do
+				if now - t > REASON_LIFE then
+					s.seen[reason] = nil
+					s.labels[reason] = nil
 				end
 			end
-		})
-		local api = {Toggle = toggle, Options = {}}
-		function api:Add(options)
-			options.Darker = true
-			local option = CheatDetector:CreateToggle(options)
-			if option.Object then
-				option.Object.Visible = toggle.Enabled == true
+			if s.value <= 0 and not next(s.seen) then
+				score[plr] = nil
 			end
-			api.Options[options.Name] = option
-			table.insert(children, option)
-			return option
 		end
-		return api
-	end
-
-	-- The per-check toggles under each group used to be decoration: the checks read the group
-	-- header and nothing else. The poll and damage paths now ask this before running one.
-	local function optionEnabled(group, name)
-		if not (group and group.Toggle.Enabled) then return false end
-		local option = group.Options[name]
-		return option == nil or option.Enabled == true
 	end
 
 	CheatDetector = vape.Categories.Utility:CreateModule({
 		Name = 'CheatDetector',
-		Tooltip = 'Flags players whose replicated movement or melee hits cannot actually happen',
+		Tooltip = 'Flags possible cheaters',
 		Function = function(callback)
-			if pollThread then
-				pcall(task.cancel, pollThread)
-				pollThread = nil
-			end
-			table.clear(records)
-			table.clear(speedTracks)
-			table.clear(airTracks)
-			table.clear(antiTracks)
-			table.clear(strikes)
-			if not callback then return end
-			pollThread = task.spawn(function()
-				while CheatDetector.Enabled do
-					pcall(poll)
-					task.wait(POLL)
-				end
-			end)
-			CheatDetector:Clean(pollThread)
-			if not CheatDetector.DamageConnection then
-				CheatDetector.DamageConnection = vapeEvents.EntityDamageEvent.Event:Connect(function(data)
-					if CheatDetector.Enabled then pcall(onDamage, data) end
+			if callback then
+				resetAll()
+
+				CheatDetector:Clean(playersService.PlayerRemoving:Connect(function(plr)
+					resetPlayer(plr)
+					flagged[tostring(plr)] = nil
+				end))
+
+				CheatDetector:Clean(vapeEvents.EntityDamageEvent.Event:Connect(function(dmg)
+					pcall(onMeleeDamage, dmg)
+				end))
+
+				task.spawn(function()
+					local rayParams = RaycastParams.new()
+					rayParams.FilterType = Enum.RaycastFilterType.Exclude
+					local last = os.clock()
+					local decayAccum = 0
+					repeat
+						local now = os.clock()
+						local dt = now - last
+						last = now
+						decayAccum = decayAccum + dt
+
+						for _, ent in getEntities() do
+							local plr = ent.Player
+							if plr and notSelf(plr) and ent.RootPart and ent.Character then
+								trackMeta(plr, ent)
+								pushSample(plr, ent)
+								if trusted(plr, ent) then
+									checkFly(plr, ent, dt, rayParams)
+									checkSpeed(plr, ent, dt)
+								else
+									airTime[plr] = 0
+									speedTime[plr] = 0
+								end
+								-- AntiDeaths is the one check that must not stand down for a server
+								-- correction: being snapped back into place is the thing it looks for.
+								checkAntiDeaths(plr)
+							end
+						end
+
+						if decayAccum >= 1 then
+							decayScores(decayAccum)
+							decayAccum = 0
+						end
+
+						task.wait(SAMPLE_STEP)
+					until not CheatDetector.Enabled
+					resetAll()
 				end)
-				CheatDetector:Clean(CheatDetector.DamageConnection)
+			else
+				resetAll()
 			end
 		end
 	})
 
-	-- The decision functions are kept reachable so the checks can be exercised with synthetic
-	-- records (the connector tests do exactly that) without needing a live match.
-	CheatDetector.Checks = {
-		Reach = evaluateHit,
-		SpeedLimit = SPEED_LIMIT,
-		ReachLimit = REACH_LIMIT,
-		SpeedKits = SPEED_KITS
-	}
-
-	Combat = group('Combat checks', 'Reach and hits landed while facing away')
-	Combat:Add({Name = 'Reach', Default = true})
-	Combat:Add({Name = 'Killaura', Default = true})
-	Movement = group('Movement checks', 'Speed, hovering over the void and vertical teleports')
-	Movement:Add({Name = 'Speed', Default = true})
-	Movement:Add({Name = 'Fly', Default = true})
-	Movement:Add({Name = 'AntiDeaths', Default = true})
-	SelfDetect = CheatDetector:CreateToggle({
-		Name = '[TEST] Detect self',
+	SelfTest = CheatDetector:CreateToggle({
+		Name = 'Self',
 		Default = false,
-		Tooltip = 'Includes your own character in scans so you can verify detections'
+		Tooltip = 'Test on yourself'
 	})
+
+	for _, name in {'Speed', 'Reach', 'Killaura', 'Fly', 'AntiDeaths'} do
+		toggles[name] = CheatDetector:CreateToggle({
+			Name = name,
+			Default = true,
+			Tooltip = tips[name]
+		})
+	end
 end)

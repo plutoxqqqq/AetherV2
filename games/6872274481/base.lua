@@ -76,6 +76,52 @@ local prediction = vape.Libraries.prediction
 local getfontsize = vape.Libraries.getfontsize
 local getcustomasset = vape.Libraries.getcustomasset
 
+-- The viewmodel swing table the Killaura modules tween the right wrist through. Upstream ships it
+-- as its own library and this pack never did, so `vape.Libraries.auraanims` was nil: the setup
+-- line that reads it left `anims` empty and the `for mode in anims` loop right after it threw,
+-- which is why Custom Animation listed no modes and everything declared below it in Killaura was
+-- never created. Supplying the table here gives both Killaura and KillauraV2 something to bind to.
+-- Each mode is a list of keyframes walked in order; every keyframe is a rotation applied on top of
+-- the arm's resting C0, and Time is the tween length before Animation Speed scales it.
+if not vape.Libraries.auraanims then
+	local function keyframe(x, y, z, time)
+		return {CFrame = CFrame.Angles(math.rad(x), math.rad(y), math.rad(z)), Time = time}
+	end
+
+	vape.Libraries.auraanims = {
+		-- A quick downward chop, the shape most sword swings in the game already have.
+		Default = {
+			keyframe(0, 0, -20, 0.05),
+			keyframe(0, 0, -45, 0.07),
+			keyframe(0, 0, 14, 0.06),
+			keyframe(0, 0, 0, 0.05)
+		},
+		-- A wide diagonal cut that comes back up the other way.
+		Slash = {
+			keyframe(-12, 0, 30, 0.06),
+			keyframe(6, 0, -55, 0.07),
+			keyframe(-4, 0, 35, 0.06),
+			keyframe(0, 0, 0, 0.05)
+		},
+		-- A flat sideways sweep, for the horizontal weapons.
+		Horizontal = {
+			keyframe(0, -35, 0, 0.06),
+			keyframe(0, 45, 0, 0.08),
+			keyframe(0, -10, 0, 0.06),
+			keyframe(0, 0, 0, 0.05)
+		},
+		-- A full roll of the wrist, twice as long as the others.
+		Spin = {
+			keyframe(0, 0, 120, 0.09),
+			keyframe(0, 0, 240, 0.09),
+			keyframe(0, 0, 360, 0.09),
+			keyframe(0, 0, 0, 0.05)
+		},
+		-- Filled in per swing by the module itself.
+		Random = {}
+	}
+end
+
 local function downloadFile(path, func)
 	if not isfile(path) then
 		local suc, res = pcall(function()
@@ -773,6 +819,68 @@ end
 
 local function notif(...) return vape:CreateNotification(...) end
 
+-- Walk every descendant of `root` and hand each one to `func`. The world modules scan the whole
+-- tree once when they switch on and then keep a DescendantAdded connection for whatever streams in
+-- later, so the one-shot scan is all this has to do; a part that is destroyed while it is being
+-- visited must not abort the rest of the walk, hence the pcall.
+local function scanDescendants(root, func, module)
+	if not root or type(func) ~= 'function' then return end
+	local ok, descendants = pcall(function()
+		return root:GetDescendants()
+	end)
+	if not ok or type(descendants) ~= 'table' then return end
+	for _, object in ipairs(descendants) do
+		local called, err = pcall(func, object)
+		if not called and shared.VapeDeveloper then
+			warn('[AetherV2] scanDescendants callback failed on '..tostring(object)..': '..tostring(err))
+		end
+	end
+end
+
+-- A ray that cannot see the local player or any entity. The detectors cast between two players to
+-- ask whether a wall is in the way, and a body always intersects its own ray, so every character
+-- has to be excluded up front. `extra` adds one more instance (usually the body under test).
+local function cloneRaycast(extra)
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	local ignore = {gameCamera}
+	if entitylib.character and entitylib.character.Character then
+		table.insert(ignore, entitylib.character.Character)
+	end
+	for _, ent in ipairs(entitylib.List) do
+		if ent.Character then
+			table.insert(ignore, ent.Character)
+		end
+	end
+	if extra then
+		table.insert(ignore, extra)
+	end
+	params.FilterDescendantsInstances = ignore
+	return params
+end
+
+-- The game models Sophia's ice as a `frozen` status effect, and being frozen is what stops a
+-- swing from landing. The optional stack threshold is only applied when the character actually
+-- replicates a stack count: an active effect with no count is still treated as frozen.
+local function isFrozen(char, threshold)
+	local character = char or (entitylib.character and entitylib.character.Character)
+	if not character or not bedwars.StatusEffectUtil then return false end
+	local ok, active = pcall(function()
+		return bedwars.StatusEffectUtil:isActive(character, 'frozen')
+	end)
+	if not ok or not active then return false end
+	if not threshold then return true end
+	local stacks
+	for name, value in character:GetAttributes() do
+		if name:find('frozen', 1, true) and name:find('stack', 1, true) and type(value) == 'number' then
+			stacks = value
+			break
+		end
+	end
+	if type(stacks) == 'number' then return stacks >= threshold end
+	return true
+end
+
 
 local function resolveAnimation(names)
 	local types = bedwars.AnimationType
@@ -1017,6 +1125,28 @@ local sortlist = {}
 for name in sortmethods do table.insert(sortlist, name) end
 table.sort(sortlist)
 getgenv().sortlist = sortlist
+-- The ported aim modules ask for a 'Cursor' sort by name; it is the crosshair sort, distance to the
+-- middle of the viewport. Registered after sortlist is built so the dropdowns that copy sortlist
+-- keep exactly the option set they already had, while a module that names 'Cursor' itself finds it.
+sortmethods.Cursor = sortmethods.Crosshair
+
+-- A dropdown list for the aim modules that name their own priorities first: anything they ask for
+-- that really exists comes first, then every other sort the pack offers, so no option is lost when
+-- a new sort is added to sortmethods later.
+local function getSortList(names)
+	local list = {}
+	for _, name in ipairs(names or {}) do
+		if sortmethods[name] and not table.find(list, name) then
+			table.insert(list, name)
+		end
+	end
+	for _, name in ipairs(sortlist) do
+		if not table.find(list, name) then
+			table.insert(list, name)
+		end
+	end
+	return list
+end
 
 
 run(function()

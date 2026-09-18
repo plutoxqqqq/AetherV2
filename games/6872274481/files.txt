@@ -8,11 +8,13 @@ Blatant/BoostAirJump.lua
 Kits/CannonSpeed.lua
 Blatant/DamageBoost.lua
 Kits/DeathAdderAimbot.lua
+Blatant/FastPickup.lua
 Blatant/Fly.lua
 Blatant/HitBoxes.lua
 Blatant/InfiniteFly.lua
 Blatant/KeepSprint.lua
 Blatant/Killaura.lua
+Blatant/KillauraV2.lua
 Blatant/LongJump.lua
 Blatant/NoFallDamage.lua
 Blatant/NoSlowdown.lua
@@ -222,6 +224,7 @@ Utility/CustomCursor.lua
 Utility/EntityAnalyser.lua
 Utility/FakeLag.lua
 Utility/InvisibleCursor.lua
+Utility/InviteSpam.lua
 Utility/KnockbackDelay.lua
 Utility/LeaveParty.lua
 Utility/MemoryFixer.lua
@@ -232,6 +235,7 @@ Utility/Scaffold.lua
 Utility/StaffDetector.lua
 Utility/TrapDisabler.lua
 World/ACMODView.lua
+World/AntiMagma.lua
 World/AutoCounter.lua
 World/AutoSuffocate.lua
 World/AutoTool.lua
