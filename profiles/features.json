@@ -1,60 +1,28 @@
 {
 	"added": [
-		"AutoAngel",
-		"AutoBlackMarket",
-		"AutoBlockKicker",
-		"AutoCat",
-		"AutoDinoTamer",
-		"AutoFalconer",
-		"AutoGunBlade",
-		"AutoHatter",
-		"AutoMerchant",
-		"AutoRaven",
-		"AutoSorcerer",
-		"AutoVulcan"
+		"AntiMagma",
+		"InviteSpam",
+		"FastPickup",
+		"KillauraV2"
 	],
 	"updated": [
-		"Killaura",
+		"SilentAim",
 		"CheatDetector",
-		"InfiniteJump",
-		"Speed",
-		"ChatSpammer",
-		"CatExtender",
-		"JadeExtender",
-		"VoidRegentExtender",
-		"XurotExtender",
-		"YaminiExtender",
-		"YuziExtender"
+		"Killaura"
 	],
 	"newModules": [
-		"AutoAngel",
-		"AutoBlackMarket",
-		"AutoBlockKicker",
-		"AutoCat",
-		"AutoDinoTamer",
-		"AutoFalconer",
-		"AutoGunBlade",
-		"AutoHatter",
-		"AutoMerchant",
-		"AutoRaven",
-		"AutoSorcerer",
-		"AutoVulcan"
+		"AntiMagma",
+		"InviteSpam",
+		"FastPickup",
+		"KillauraV2"
 	],
 	"updatedModules": [
-		"Killaura",
+		"SilentAim",
 		"CheatDetector",
-		"InfiniteJump",
-		"Speed",
-		"ChatSpammer",
-		"CatExtender",
-		"JadeExtender",
-		"VoidRegentExtender",
-		"XurotExtender",
-		"YaminiExtender",
-		"YuziExtender"
+		"Killaura"
 	],
 	"patchedModules": [],
 	"premiumModules": [],
 	"removedModules": [],
-	"text": "[BEDWARS]\n[!] Killaura now floors the hitreg cadence and swing animation at the weapon's own click limit, so Sync with a 0 swing time can no longer outrun the game\n[+] InfiniteJump Velocity mode has Max jumps: 2 is a double jump, the counter refills on landing, and holding spacebar no longer adds a jump\n[!] Speed CFrame mode no longer clips into walls while falling - each step is narrowed to what fits before the wall before it is applied\n[!] Fixed ChatSpammer doing nothing\n[!] Fixed every *Extender module: hooks install late and stay installed, kit reads fall back to the replicated attributes, and boosts land after the game's own movement\n[+] Added 12 kit modules: AutoAngel, AutoBlackMarket, AutoBlockKicker, AutoCat, AutoDinoTamer, AutoFalconer, AutoGunBlade, AutoHatter, AutoMerchant, AutoRaven, AutoSorcerer and AutoVulcan\n[^] CheatDetector rewritten with fixed, ping-independent thresholds: Speed 21 studs/sec with speed kits exempt, Reach 15 studs, Killaura angle rules, Fly over the void for a second, and a new AntiDeaths vertical-teleport check\n[^] CheatDetector per-check toggles now gate their check\n\n[GENERAL]\n[^] Version 3.12.0"
+	"text": "[BEDWARS]\n[+] Added AntiMagma, which strips the touch transmitters off magma so it can no longer kill you\n[+] Added InviteSpam, which invites everyone in the server and tells you who joins or leaves the party\n[+] Added FastPickup, which picks up drops faster than the game's own pickup rate\n[+] Added KillauraV2, the rebuilt aura with Fast Hits, Fast Hit projectiles and its own swing cadence\n[^] SilentAim gains an FOV circle, AutoCharge with a charge percentage, a range slider and a randomised body part with head/torso chances\n[^] CheatDetector now runs on a per-player score with Speed, Reach, Killaura, Fly and AntiDeaths toggles that each gate their own check\n[!] Fixed SilentAim doing nothing: it called a helper that does not exist, so every shot it tried to redirect threw\n[!] Fixed CheatDetector doing nothing: its poll loop called a helper that does not exist, so no check ever ran\n[!] Fixed Killaura's Custom Animation: the missing animation library threw during setup, which also meant Limit to items and Swing only were never created\n\n[GENERAL]\n[^] Version 3.13.0"
 }
