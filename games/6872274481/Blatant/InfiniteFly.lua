@@ -1147,7 +1147,7 @@ run(function()
 
 	InfiniteFly = vape.Categories.Blatant:CreateModule({
 		Name = 'InfiniteFly [BETA]',
-		Tooltip = 'Infinitely fly over the void'
+		Tooltip = 'Infinitely fly over the void',
 		Function = function(callback)
 			if callback then
 						local entity, root, character, humanoid = rigOf()
