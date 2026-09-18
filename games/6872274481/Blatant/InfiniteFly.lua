@@ -1146,11 +1146,8 @@ run(function()
 	end
 
 	InfiniteFly = vape.Categories.Blatant:CreateModule({
-		Name = 'InfiniteFly',
-		Tooltip = 'Flight controller for long void crossings.\n'
-			..'Velocity is collision checked before it is applied and the result is compared\n'
-			..'against the controller\'s own prediction, so server corrections are noticed\n'
-			..'and adapted to instead of being fought.',
+		Name = 'InfiniteFly [BETA]',
+		Tooltip = 'Infinitely fly over the void'
 		Function = function(callback)
 			if callback then
 						local entity, root, character, humanoid = rigOf()
@@ -1188,20 +1185,18 @@ run(function()
 		end,
 	})
 	Speed = InfiniteFly:CreateSlider({
-		Name = 'Speed',
+		Name = 'Horizontal Speed',
 		Min = 10,
 		Max = 100,
-		Default = 40,
+		Default = 23,
 		Suffix = ' studs/s',
-		Tooltip = 'Horizontal cruise speed. The controller accelerates into it and out of it\nrather than snapping to it.',
 	})
 	VerticalSpeed = InfiniteFly:CreateSlider({
 		Name = 'Vertical Speed',
-		Min = 5,
-		Max = 100,
-		Default = 30,
+		Min = 0,
+		Max = 200,
+		Default = 50,
 		Suffix = ' studs/s',
-		Tooltip = 'Climb and descent rate used while Space or LeftShift is held.\nWith no vertical key held the controller holds altitude instead.',
 	})
 	CycleHeight = InfiniteFly:CreateSlider({
 		Name = 'Cycle Height',
