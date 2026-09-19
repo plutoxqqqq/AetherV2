@@ -325,30 +325,11 @@
 		"Memory",
 		"Speedmeter"
 	],
-	"patchedModules": [
-		"SilentAim",
-		"Sprint",
-		"FastClimb",
-		"InfiniteFly",
-		"NoClip",
-		"Spider",
-		"ProjectileAimbot",
-		"ProjectileLanding",
-		"ProjectileTracers",
-		"PlayerOutline",
-		"CheatDetector",
-		"NoCameraCollision",
-		"PearlTP",
-		"Scaffold",
-		"BlockIn",
-		"AutoUpgrade",
-		"Interface",
-		"FPSBoost",
-		"Killaura",
-		"KillauraV2",
-		"AutoRamil",
-		"AutoZeno",
-		"BedAssist"
+	"brokenModules": [
+		"Builder",
+		"Gompy",
+		"Marcel",
+		"Styx"
 	],
 	"premiumModules": [],
 	"removedModules": [

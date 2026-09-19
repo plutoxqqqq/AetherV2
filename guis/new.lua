@@ -1212,24 +1212,27 @@ function configapi.Presets.GetOwner(file)
 	return type(owner) == 'table' and tonumber(owner.userId) == player.UserId and type(owner.token) == 'string' and owner or nil
 end
 
---[[
-	profiles/features.json drives the little pills drawn on the right of each
+--[[	profiles/features.json drives the little pills drawn on the right of each
 	module row. Expected shape:
 		{
 			"newModules": [...],
-			"updatedModules": [...]
+			"updatedModules": [...],
+			"brokenModules": [...]
 		}
-	Each list becomes a tag ('NEW', 'UPDATED') on every module it
-	names. A bare array is still accepted and treated as newModules, which is
-	the format the file used before the three lists existed.
+	Each list becomes a tag ('NEW', 'UPDATED', 'BROKEN') on every module it
+	names, and 'BROKEN' is painted in warning red rather than the theme colour so
+a known-broken module stands out. A bare array is still accepted and treated
+as newModules, which is the format the file used before the lists existed.
 
 	Names are matched loosely (case and separators ignored) so the file can say
 	'krystal disabler' for a module registered as 'KrystalDisabler'.
 ]]
 local featureLists = {
 	{Tag = 'new', Key = 'newModules'},
-	{Tag = 'updated', Key = 'updatedModules'}
+	{Tag = 'updated', Key = 'updatedModules'},
+	{Tag = 'broken', Key = 'brokenModules'}
 }
+local BROKEN_TAG_COLOUR = Color3.fromRGB(255, 95, 87)
 local featureTags = {}
 
 local function moduleTagKey(name)
@@ -4920,11 +4923,12 @@ function mainapi:CreateCategory(categorysettings)
 			applyFeatureTags(modulesettings.Tags, moduleapi.Name)
 			for i, tag in modulesettings.Tags do
 				tag = tag:upper()
+				local broken = tag == 'BROKEN'
 				local size = getfontsize(removeTags(tag), 12, uipallet.Font, Vector2.new(100000, 100000))
 				local indicator = Instance.new('TextLabel')
 				indicator.LayoutOrder = i - 1
 				indicator.Size = UDim2.new(0, size.X + 4, 0, 21)
-				indicator.BackgroundColor3 = Color3.new(1, 1, 1)
+				indicator.BackgroundColor3 = broken and BROKEN_TAG_COLOUR or Color3.new(1, 1, 1)
 				indicator.TextSize = 14
 				indicator.TextTransparency = 1
 				indicator.Text = tag
@@ -4942,6 +4946,7 @@ function mainapi:CreateCategory(categorysettings)
 				text.AnchorPoint = Vector2.new()
 				text.TextSize = 12
 				text.TextTransparency = 0
+				text.TextColor3 = broken and Color3.new(1, 1, 1) or Color3.new(0, 0, 0)
 				text.Parent = indicator
 				table.insert(moduleapi.Tags, indicator)
 				indicator.Visible = tag ~= 'MATCHED'
@@ -11770,6 +11775,17 @@ function mainapi:UpdateGUI(hue, sat, val, default)
 		end
 
 		for _, v in button.Tags do
+			if v.Name == 'BROKEN' then
+				-- A warning, not a release note: it keeps its own colour whatever the theme is doing.
+				v.BackgroundColor3 = BROKEN_TAG_COLOUR
+				v.BackgroundTransparency = 0
+				local label = v:FindFirstChild('Text')
+				if label then
+					label.TextColor3 = Color3.new(1, 1, 1)
+				end
+				continue
+			end
+
 			v.BackgroundColor3 = rainbow and Color3.fromHSV(mainapi:Color((hue - (button.Index * 0.025)) % 1)) or button.Enabled and Color3.new(1, 1, 1) or Color3.fromHSV(hue, sat, val)
 			v.BackgroundTransparency = (rainbow or not button.Enabled) and 0 or 0.85
 			v:FindFirstChild('Text').TextColor3 = mainapi.GUIColor.Rainbow and Color3.new(0.19, 0.19, 0.19) or mainapi:TextColor(hue, sat, val)

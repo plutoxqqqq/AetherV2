@@ -117,14 +117,14 @@ local source = table.concat(sourceParts, '\n')
 local actionsStart = source:find("\nlocal function renderActions()", 1, true)
 if actionsStart then source = source:sub(1, actionsStart - 1) end
 
--- Feature metadata is the source of truth for NEW / UPDATED / PATCHED / REMOVED tags and for the
+-- Feature metadata is the source of truth for NEW / UPDATED / BROKEN / REMOVED tags and for the
 -- statically-known premium list. Authorized premium modules loaded from the private source are
 -- added to the short-lived shared lookup by main.lua; module objects themselves are never mutated.
 local featurePrelude = [[
 local featureMeta = {
     newModules = {},
     updatedModules = {},
-    patchedModules = {},
+    brokenModules = {},
     removedModules = {},
     premiumModules = {}
 }
@@ -148,7 +148,7 @@ local function loadFeatureMetadata()
         if not ok or type(decoded) ~= 'table' then return false end
         addFeatureNames(featureMeta.newModules, decoded.newModules or decoded.added)
         addFeatureNames(featureMeta.updatedModules, decoded.updatedModules or decoded.updated)
-        addFeatureNames(featureMeta.patchedModules, decoded.patchedModules)
+        addFeatureNames(featureMeta.brokenModules, decoded.brokenModules)
         addFeatureNames(featureMeta.removedModules, decoded.removedModules)
         addFeatureNames(featureMeta.premiumModules, decoded.premiumModules)
         return true
@@ -183,7 +183,7 @@ local function featureTagsFor(module)
     end
     if featureMeta.newModules[key] then add('NEW') end
     if featureMeta.updatedModules[key] then add('UPDATED') end
-    if featureMeta.patchedModules[key] then add('PATCHED') end
+    if featureMeta.brokenModules[key] then add('BROKEN') end
     if featureMeta.removedModules[key] then add('REMOVED') end
     if featureMeta.premiumModules[key] then add('PREMIUM') end
     if type(shared.AetherV2PremiumModules) == 'table' and shared.AetherV2PremiumModules[key] then add('PREMIUM') end
@@ -191,6 +191,8 @@ local function featureTagsFor(module)
 end
 
 local function tagColor(tag)
+    -- BROKEN is not a release note, it is a warning, so it keeps the same colour whatever the theme is.
+    if tag == 'BROKEN' then return COLORS.Red end
     if tag == 'PREMIUM' or tag == 'NEW' then return accent() end
     return COLORS.Surface
 end
@@ -209,17 +211,18 @@ local function renderFeatureTags(parent, module)
         VerticalAlignment = Enum.VerticalAlignment.Center,
         Padding = UDim.new(0, 4)
     }, holder)
-    local widths = {NEW = 36, UPDATED = 52, PATCHED = 52, REMOVED = 52, PREMIUM = 62}
+    local widths = {NEW = 36, UPDATED = 52, BROKEN = 54, REMOVED = 52, PREMIUM = 62}
     for _, tag in ipairs(tags) do
         local pill = label(holder, tag, 7, true, COLORS.White, Enum.TextXAlignment.Center)
         pill.Size = UDim2.fromOffset(widths[tag] or 50, 18)
         pill.BackgroundColor3 = tagColor(tag)
-        pill.BackgroundTransparency = (tag == 'PREMIUM' or tag == 'NEW') and 0.12 or 0.25
+        -- BROKEN is a warning, so it stays solid instead of fading into the card like a release note.
+        pill.BackgroundTransparency = tag == 'BROKEN' and 0 or (tag == 'PREMIUM' or tag == 'NEW') and 0.12 or 0.25
         pill.ZIndex = 119
         corner(pill, 7)
         create('UIStroke', {
             Color = tagColor(tag), Thickness = 1,
-            Transparency = (tag == 'PREMIUM' or tag == 'NEW') and 0.25 or 0.7
+            Transparency = tag == 'BROKEN' and 0 or (tag == 'PREMIUM' or tag == 'NEW') and 0.25 or 0.7
         }, pill)
     end
 end
