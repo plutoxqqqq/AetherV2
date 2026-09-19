@@ -10,7 +10,6 @@ run(function()
 	local catalog = {}
 	local toggles = {}
 	local pending = {}
-	local maxedNotified = {}
 	local lastMatchState, lastTeam
 
 	-- The upgrade catalog is never hardcoded: it is read from the game's own TeamUpgradeMeta
@@ -81,13 +80,11 @@ run(function()
 		return list
 	end
 
-	-- A new match resets the team's upgrades, so the "already maxed" notes and the settle
-	-- timers are dropped with it.
+	-- A new match resets the team's upgrades, so the settle timers are dropped with it.
 	local function resetForMatch()
 		local team = lplr:GetAttribute('Team')
 		if store.matchState ~= lastMatchState or team ~= lastTeam then
 			lastMatchState, lastTeam = store.matchState, team
-			table.clear(maxedNotified)
 			table.clear(pending)
 		end
 	end
@@ -118,13 +115,7 @@ run(function()
 				local blocked = upgrade.DisabledInQueue and table.find(upgrade.DisabledInQueue, store.queueType or '')
 				if not blocked and (not offers or offers[upgrade.Id]) then
 					local tier = (currentTiers[upgrade.Id] or 0) + 1
-					if tier > #upgrade.Tiers then
-						-- Maxed: say so once, then leave it alone.
-						if not maxedNotified[upgrade.Id] then
-							maxedNotified[upgrade.Id] = true
-							util.Utils.Notify('AutoUpgrade', labelOf(upgrade)..' is already maxed', 4, 'info')
-						end
-					else
+					if tier <= #upgrade.Tiers then
 						local waiting = pending[upgrade.Id]
 						local settled = not waiting or waiting.Tier ~= tier or (now - waiting.At) >= SETTLE_TIME
 						if settled then

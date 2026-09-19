@@ -56,6 +56,45 @@ run(function()
 		return projectileRemote
 	end
 
+	-- Plays the shot the same way the game does for whatever is in hand, so the viewmodel, the
+	-- third person animation and the launch sound all happen on the frame the projectile leaves.
+	local function playShot(item, meta, ammo, projectile, shootPosition, velocity)
+		local toolName = tostring(item.tool and item.tool.Name or '')
+		local holdingCrossbow = toolName:find('crossbow', 1, true) ~= nil
+		local holdingBow = toolName:find('bow', 1, true) ~= nil
+
+		if holdingCrossbow then
+			pcall(bedwars.ViewmodelController.playAnimation, bedwars.ViewmodelController, bedwars.AnimationType.FP_CROSSBOW_FIRE)
+			pcall(bedwars.GameAnimationUtil.playAnimation, lplr, bedwars.AnimationType.CROSSBOW_FIRE)
+		elseif holdingBow then
+			pcall(bedwars.ViewmodelController.playAnimation, bedwars.ViewmodelController, bedwars.AnimationType.FP_BOW_FIRE or bedwars.AnimationType.FP_CROSSBOW_FIRE)
+			pcall(bedwars.GameAnimationUtil.playAnimation, lplr, bedwars.AnimationType.BOW_FIRE)
+		else
+			local shootAnim = meta and meta.thirdPerson and meta.thirdPerson.shootAnimation
+			if shootAnim then
+				pcall(bedwars.GameAnimationUtil.playAnimation, lplr, shootAnim)
+			end
+		end
+
+		local id = httpService:GenerateGUID(true)
+		local draw = {drawDurationSeconds = 1, shotId = httpService:GenerateGUID(false)}
+		pcall(bedwars.ProjectileController.createLocalProjectile, bedwars.ProjectileController, meta, ammo, projectile, shootPosition, id, velocity, draw)
+
+		local remote = getProjectileRemote()
+		if not remote then return false end
+		local ok, result = pcall(remote.InvokeServer, remote, item.tool, ammo, projectile, shootPosition, entitylib.character.RootPart.Position, velocity, id, draw, workspace:GetServerTimeNow() - 0.045)
+		if ok and result ~= false then
+			local sounds = meta and meta.launchSound
+			local sound = type(sounds) == 'table' and #sounds > 0 and sounds[math.random(1, #sounds)] or nil
+			local manager = bedwars.SoundManager
+			if sound and manager and type(manager.playSound) == 'function' then
+				pcall(manager.playSound, manager, sound)
+			end
+			return true
+		end
+		return false
+	end
+
 	ProjectileAura = vape.Categories.Blatant:CreateModule({
 		Name = 'ProjectileAura',
 		Function = function(callback)
@@ -63,7 +102,7 @@ run(function()
 			if not callback then return end
 			local token = generation
 			repeat
-				if (workspace:GetServerTimeNow() - bedwars.SwordController.lastAttack) > 0.3 and entitylib.isAlive then
+				if (workspace:GetServerTimeNow() - bedwars.SwordController.lastAttack) > 0.5 and entitylib.isAlive then
 					local ent = entitylib.EntityPosition({
 						Part = 'RootPart',
 						Range = Range.Value,
@@ -72,12 +111,12 @@ run(function()
 						NPCs = Targets.NPCs.Enabled,
 						Wallcheck = Targets.Walls.Enabled
 					})
-					local remote = ent and getProjectileRemote()
-					if ent and ent.RootPart and remote then
+					if ent and ent.RootPart then
 						local rootPosition = entitylib.character.RootPart.Position
 						for _, data in getProjectiles(List.ListEnabled, UseSophia.Enabled, UseWhim.Enabled) do
 							if token ~= generation or not ProjectileAura.Enabled then break end
 							local item, ammo, projectile, source, meta = unpack(data)
+							local itemMeta = item.tool and bedwars.ItemMeta[item.tool.Name] or nil
 							local now = workspace:GetServerTimeNow()
 							local aimPart = resolveProjectileAuraPart(ent, Part.Value, projectile)
 							if not aimPart then continue end
@@ -96,22 +135,13 @@ run(function()
 								if solution then
 									store.hitchance.ProjectileAura = {Value = getHitChance(ent, (aimPart.Position - shootPosition).Magnitude / math.max(speed, 1)), Clock = tick()}
 									switchItem(item.tool, 0)
-									FireDelays[item.itemType] = now + (source.fireDelaySec or 0) + FireRate:GetRandomValue()
+									FireDelays[item.itemType] = now + ((itemMeta and tonumber(itemMeta.fireDelaySec)) or 0.5) + FireRate:GetRandomValue()
 									task.spawn(function()
 										if token ~= generation or not ProjectileAura.Enabled or not item.tool.Parent then return end
-										local velocity = solution.Velocity
-										local id = httpService:GenerateGUID(true)
-										local draw = {drawDurationSeconds = 1, shotId = httpService:GenerateGUID(false)}
-										pcall(bedwars.ProjectileController.createLocalProjectile, bedwars.ProjectileController, meta, ammo, projectile, shootPosition, id, velocity, draw)
-										local ok, result = pcall(remote.InvokeServer, remote, item.tool, ammo, projectile, shootPosition, rootPosition, velocity, id, draw, workspace:GetServerTimeNow() - 0.045)
-										if token ~= generation or not ProjectileAura.Enabled then return end
-										if ok and result ~= false then
+										if playShot(item, meta, ammo, projectile, shootPosition, solution.Velocity) then
 											store.lastProjectileFire = workspace:GetServerTimeNow()
 											targetinfo.Targets[ent] = tick() + 1
 											prediction.trackShot(ent.RootPart)
-											local sounds = source.launchSound
-											local sound = type(sounds) == 'table' and #sounds > 0 and sounds[math.random(1, #sounds)] or nil
-											if sound then pcall(bedwars.SoundManager.playSound, bedwars.SoundManager, sound) end
 										else
 											FireDelays[item.itemType] = workspace:GetServerTimeNow()
 										end
@@ -125,7 +155,7 @@ run(function()
 				task.wait(0.03)
 			until not ProjectileAura.Enabled or token ~= generation
 		end,
-		Tooltip = 'Shoots people around you'
+		Tooltip = 'Shoots people around you with viewmodel animations'
 	})
 	Targets = ProjectileAura:CreateTargets({
 		Players = true,

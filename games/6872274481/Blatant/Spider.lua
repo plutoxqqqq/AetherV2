@@ -60,7 +60,7 @@ run(function()
 
                         Active = ray
                         if Active and ray.Normal.Y == 0 and not stop then
-                            if not (vape.Modules.Phase and vape.Modules.Phase.Enabled) or not SpiderShift then
+                            if not (vape.Modules.NoClip and vape.Modules.NoClip.Enabled) or not SpiderShift then
                                 if Animation.Enabled then
                                     entitylib.character.Humanoid:ChangeState(Enum.HumanoidStateType.Climbing)
                                 end
@@ -98,7 +98,7 @@ run(function()
 			SpiderShift = false
 		end
 	end,
-	Tooltip = 'Lets you climb up walls. (Hold shift to use Phase over spider)',
+	Tooltip = 'Lets you climb up walls. Hold shift to let NoClip take over while this is on',
     })
     Mode = Spider:CreateDropdown({
 	Name = 'Mode',

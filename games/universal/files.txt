@@ -20,7 +20,6 @@ Blatant/NoClip.lua
 Blatant/Speed.lua
 Blatant/Spider.lua
 Blatant/SpinBot.lua
-Blatant/Jesus.lua
 Blatant/TargetStrafe.lua
 Blatant/Timer.lua
 World/Wallhop.lua
@@ -31,10 +30,7 @@ Render/Fullbright.lua
 Render/GamingChair.lua
 Render/Health.lua
 Render/NameTags.lua
-Render/PlayerModel.lua
-Render/Search.lua
 Render/Tracers.lua
-Render/Waypoints.lua
 Render/ZoomUnlocker.lua
 Utility/AnimationPlayer.lua
 Utility/NoCameraCollision.lua
@@ -57,7 +53,6 @@ World/Gravity.lua
 World/Parkour.lua
 World/SafeWalk.lua
 World/Xray.lua
-Render/Theme.lua
 Legit/Breadcrumbs.lua
 Legit/Cape.lua
 Legit/ChinaHat.lua

@@ -159,7 +159,7 @@ run(function()
     })
     Sort = BedAssist:CreateDropdown({
         Name = 'Target Mode',
-        List = {'Distance', 'Health'},
+        List = {'Mouse', 'Distance', 'Damage', 'Angle', 'Health', 'Kit', 'Threat'},
         Default = 'Distance',
     })
     Speed = BedAssist:CreateSlider({

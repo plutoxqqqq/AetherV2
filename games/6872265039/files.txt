@@ -1,6 +1,5 @@
 base.lua
 Combat/Sprint.lua
-Utility/ClaimRewards.lua
 Utility/AutoGamble.lua
 Render/CustomClanTag.lua
 Utility/ViewMatchHistory.lua

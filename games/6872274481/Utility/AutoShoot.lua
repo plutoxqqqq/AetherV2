@@ -2,148 +2,158 @@ run(function()
 	local AutoShoot
 	local Targets
 	local Check
+	local Animation
 	local Projectiles
 	local UseSophia
 	local UseWhim
+	local UseNazar
 	local FireRate
 	local SwitchDelay
-
-	local fireDelays = {}
-	local generation = 0
-	local firing
-	local projectileRemote
-	local rayCheck = RaycastParams.new()
-	rayCheck.FilterType = Enum.RaycastFilterType.Exclude
-
-	local function getTarget(origin)
-		local facing = entitylib.character.RootPart.CFrame.LookVector * Vector3.new(1, 0, 1)
-		for _, target in entitylib.AllPosition({
-			Origin = origin,
+	
+	local FireDelays = {}
+	
+	local function getEntity()
+		local selfpos = entitylib.character.RootPart.Position
+		local plrs = entitylib.AllPosition({
+			Origin = selfpos,
 			Part = 'RootPart',
 			Range = 22,
 			Players = Targets.Players.Enabled,
-			Priority = Targets.Priority and Targets.Priority.Value,
 			NPCs = Targets.NPCs.Enabled,
+			Priority = Targets.Priority.Value,
 			Wallcheck = Targets.Walls.Enabled,
-			Limit = 10,
-			Sort = sortmethods.Distance
-		}) do
-			local delta = (target.RootPart.Position - origin) * Vector3.new(1, 0, 1)
-			if facing.Magnitude == 0 or delta.Magnitude == 0 or facing.Unit:Dot(delta.Unit) >= math.cos(math.rad(60)) then return target end
-		end
-	end
-
-	local function getDirection(origin, target, projectileMeta)
-		local speed = projectileMeta.launchVelocity
-		if type(speed) ~= 'number' or speed <= 0 then return end
-		if not target then return gameCamera.CFrame.LookVector * speed end
-		rayCheck.FilterDescendantsInstances = {lplr.Character, target.Character, gameCamera}
-		local gravity = projectileMeta.gravitationalAcceleration or 196.2
-		local solution = solveBedwarsProjectile(origin, speed, gravity, target, target.RootPart.Position, {
-			RaycastParams = rayCheck,
-			Lifetime = projectileMeta.lifetimeSec or 3
+			Limit = 10
 		})
-		return solution and solution.Velocity or nil
-	end
-
-	local function fireOne(data, target, token)
-		local item, ammo, projectile, source, projectileMeta = table.unpack(data)
-		if token ~= generation or not AutoShoot.Enabled or not entitylib.isAlive or not item.tool or not item.tool.Parent then return false end
-		local now = workspace:GetServerTimeNow()
-		if (fireDelays[item.itemType] or 0) > now then return false end
-		local slot = getHotbar(item.tool)
-		if not slot or not hotbarSwitch(slot) then return false end
-		task.wait(math.clamp(lplr:GetNetworkPing(), 0, 0.2))
-		if token ~= generation or not AutoShoot.Enabled or not entitylib.isAlive then return false end
-
-		local root = entitylib.character.RootPart
-		local rootPosition = root.Position
-		local velocity = getDirection(rootPosition, target, projectileMeta)
-		if not velocity then return false end
-		local shootPosition = projectileLaunchOrigin(rootPosition, velocity)
-		
-		
-		velocity = getDirection(shootPosition, target, projectileMeta) or velocity
-		local id = httpService:GenerateGUID(true)
-		local draw = {drawDurationSeconds = 1, shotId = httpService:GenerateGUID(false)}
-		local created = pcall(bedwars.ProjectileController.createLocalProjectile, bedwars.ProjectileController,
-			projectileMeta, ammo, projectile, shootPosition, id, velocity, draw)
-		if not created then return false end
-
-		local called, result = pcall(projectileRemote.InvokeServer, projectileRemote,
-			item.tool, ammo, projectile, shootPosition, rootPosition, velocity, id, draw,
-			workspace:GetServerTimeNow() - 0.045)
-		fireDelays[item.itemType] = workspace:GetServerTimeNow() + (source.fireDelaySec or 0) + FireRate:GetRandomValue()
-		if not called then return false end
-		store.lastProjectileFire = workspace:GetServerTimeNow()
-		if target then
-			targetinfo.Targets[target] = tick() + 1
-			prediction.trackShot(target.RootPart)
-		end
-		local sounds = source.launchSound
-		local sound = type(sounds) == 'table' and #sounds > 0 and sounds[math.random(1, #sounds)] or nil
-		if sound then pcall(bedwars.SoundManager.playSound, bedwars.SoundManager, sound) end
-		return result ~= false
-	end
-
-	local function shoot(token)
-		if firing or token ~= generation or not entitylib.isAlive then return end
-		firing = token
-		local originalSlot = store.hand.tool and getHotbar(store.hand.tool) or nil
-		local origin = entitylib.character.RootPart.Position
-		local target = getTarget(origin)
-		if not Check.Enabled or target then
-			for _, data in getProjectiles(Projectiles.ListEnabled, UseSophia.Enabled, UseWhim.Enabled) do
-				if token ~= generation or not AutoShoot.Enabled then break end
-				local ok, fired = pcall(fireOne, data, target, token)
-				if ok and fired then task.wait(SwitchDelay.Value) end
+		if #plrs > 0 then
+			for _, v in plrs do
+				local localfacing = entitylib.character.RootPart.CFrame.LookVector * Vector3.new(1, 0, 1)
+				local delta = (v.RootPart.Position - selfpos) * Vector3.new(1, 0, 1)
+				local angle = localfacing.Magnitude > 0 and delta.Magnitude > 0 and math.acos(math.clamp(localfacing.Unit:Dot(delta.Unit), -1, 1)) or 0
+				if angle > (math.rad(120) / 2) then continue end
+				return v
 			end
 		end
-		if token == generation and originalSlot ~= nil then hotbarSwitch(originalSlot) end
-		if firing == token then firing = nil end
+		return nil
 	end
-
+	
 	AutoShoot = vape.Categories.Utility:CreateModule({
 		Name = 'AutoShoot',
-		Function = function(enabled)
-			generation += 1
-			firing = nil
-			if not enabled then return end
-			local token = generation
-			local ok, remote = pcall(function() return bedwars.Client:Get(remotes.FireProjectile).instance end)
-			if not ok or not remote or type(remote.InvokeServer) ~= 'function' then
-				notif('AutoShoot', 'The projectile remote is unavailable.', 5, 'warning')
-				AutoShoot:Toggle()
-				return
-			end
-			projectileRemote = remote
-			local lastSwing = bedwars.SwordController.lastSwing or 0
-			AutoShoot:Clean(task.spawn(function()
-				while AutoShoot.Enabled and token == generation do
-					local swing = bedwars.SwordController.lastSwing or 0
-					if swing > lastSwing and tick() - swing <= 0.25 then
-						lastSwing = swing
-						task.spawn(shoot, token)
-					else
-						lastSwing = math.max(lastSwing, swing)
+		Function = function(callback)
+			if callback then
+				repeat
+					if entitylib.isAlive and store.hand.toolType == 'sword' and (tick() - bedwars.SwordController.lastSwing) < 0.2 then
+						local oldtool, oldhotbar = store.hand.tool, store.inventory.hotbarSlot
+						for _, v in getProjectiles(Projectiles.ListEnabled, UseSophia.Enabled, UseWhim.Enabled, UseNazar.Enabled) do
+							local item, ammo, projectile, itemMeta = unpack(v)
+							if (FireDelays[item.itemType] or 0) < tick() then
+								local ent = getEntity()
+								if not Check.Enabled or ent then
+									local hotbar = getHotbar(item.tool)
+									switchItem(item.tool)
+									if hotbar then
+										hotbarSwitch(hotbar)
+									end
+	
+									local meta = bedwars.ProjectileMeta[projectile]
+									local projSpeed, gravity = meta.launchVelocity, meta.gravitationalAcceleration or 196.2
+									local origin = entitylib.character.RootPart.Position
+									local calc = ent and prediction.SolveTrajectory(origin, projSpeed, gravity, ent.RootPart.Position, ent.RootPart.AssemblyLinearVelocity, workspace.Gravity, ent.HipHeight, ent.Jumping and 42.6 or nil, nil, ent.Humanoid.FloorMaterial == Enum.Material.Air or math.abs(ent.RootPart.AssemblyLinearVelocity.Y) > 0.01, ent.RootPart.Position, ent.RootPart, nil, true) or (not ent and (origin + gameCamera.CFrame.LookVector * 100))
+									if calc then
+										local shootPosition = (CFrame.new(origin, calc) * CFrame.new(Vector3.new(-bedwars.BowConstantsTable.RelX, -bedwars.BowConstantsTable.RelY, -bedwars.BowConstantsTable.RelZ))).Position
+										local aim = ent and prediction.SolveTrajectory(shootPosition, projSpeed, gravity, ent.RootPart.Position, ent.RootPart.AssemblyLinearVelocity, workspace.Gravity, ent.HipHeight, ent.Jumping and 42.6 or nil, nil, ent.Humanoid.FloorMaterial == Enum.Material.Air or math.abs(ent.RootPart.AssemblyLinearVelocity.Y) > 0.01, ent.RootPart.Position, ent.RootPart, nil, true) or calc
+										if Animation.Enabled then
+											bedwars.ProjectileController:launchProjectileWithValues({
+												initialVelocity = CFrame.lookAt(shootPosition, aim).LookVector * projSpeed,
+												positionFrom = shootPosition,
+												drawDurationSeconds = 1
+											}, item.tool, itemMeta, ammo, nil, projectile):await()
+										else
+											local dir, id = CFrame.lookAt(shootPosition, aim).LookVector, httpService:GenerateGUID(true)
+											bedwars.Handler:Get('ProjectileFire'):Fire('CallServerAsync',
+												item.tool,
+												ammo,
+												projectile,
+												shootPosition,
+												origin,
+												dir * projSpeed,
+												id,
+												{
+													drawDurationSeconds = 1,
+													shotId = httpService:GenerateGUID(false),
+												},
+												workspace:GetServerTimeNow() - 0.045
+											):andThen(function(res)
+												if res then
+													res.Parent = replicatedStorage
+												end
+											end)
+										end
+										if ent then
+											prediction.trackShot(ent.RootPart)
+										end
+										FireDelays[item.itemType] = tick() + (itemMeta.fireDelaySec + FireRate:GetRandomValue())
+										task.wait(SwitchDelay.Value)
+									end
+								end
+							end
+						end
+						if oldtool then
+							switchItem(oldtool)
+						end
+						hotbarSwitch(oldhotbar)
 					end
-					task.wait(0.03)
-				end
-			end))
+					task.wait(0.1)
+				until not AutoShoot.Enabled
+			end
 		end,
-		Tooltip = 'Fires compatible projectiles once after each manual sword swing'
+		Tooltip = 'Automatically crossbow macro\'s'
 	})
+	
 	Targets = AutoShoot:CreateTargets({Players = true})
 	Check = AutoShoot:CreateToggle({
 		Name = 'Target check',
-		Default = true,
 		Function = function(callback)
-			if Targets.Object then Targets.Object.Visible = callback end
-		end
+			if Targets.Object then
+				Targets.Object.Visible = callback
+			end
+		end,
+		Default = true
 	})
-	Projectiles = AutoShoot:CreateTextList({Name = 'Projectiles', Default = {'arrow', 'snowball'}})
-	UseSophia = AutoShoot:CreateToggle({Name = 'Use sophia', Tooltip = 'Also shoots compatible Sophia frost projectiles'})
-	UseWhim = AutoShoot:CreateToggle({Name = 'Use whim', Tooltip = 'Also shoots compatible Whim book projectiles'})
-	FireRate = AutoShoot:CreateTwoSlider({Name = 'Fire Rate', Min = 0, Max = 1, DefaultMin = 0.05, DefaultMax = 0.12, Decimal = 100})
-	SwitchDelay = AutoShoot:CreateSlider({Name = 'Switch Delay', Min = 0, Max = 1, Decimal = 100, Suffix = 'seconds', Default = 0.02})
+	Animation = AutoShoot:CreateToggle({
+		Name = 'Animation',
+		Default = true,
+		Tooltip = 'Plays the shot animation and arrow'
+	})
+	Projectiles = AutoShoot:CreateTextList({
+		Name = 'Projectiles',
+		Default = {'arrow', 'snowball'}
+	})
+	UseSophia = AutoShoot:CreateToggle({
+		Name = 'Use sophia',
+		Tooltip = 'Also shoots sophia\'s frost staff, swapping it out of mist mode on its own'
+	})
+	UseWhim = AutoShoot:CreateToggle({
+		Name = 'Use whim',
+		Tooltip = 'Also casts whim\'s magic book, follows whatever element you have cycled'
+	})
+	UseNazar = AutoShoot:CreateToggle({
+		Name = 'Use nazar',
+		Tooltip = 'Also shoots nazar\'s life bow, crossbow and headhunter'
+	})
+	FireRate = AutoShoot:CreateTwoSlider({
+		Name = 'Fire Rate',
+		Min = 0,
+		Max = 1,
+		DefaultMin = 0.05,
+		DefaultMax = 0.12,
+		Decimal = 100
+	})
+	SwitchDelay = AutoShoot:CreateSlider({
+		Name = 'Switch Delay',
+		Min = 0,
+		Max = 1,
+		Decimal = 100,
+		Suffix = 'seconds',
+		Default = 0.02
+	})
 end)

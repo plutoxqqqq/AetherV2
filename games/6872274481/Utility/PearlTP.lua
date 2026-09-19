@@ -16,6 +16,34 @@ run(function()
 		return result and result.Position
 	end
 
+	-- Walks the pearl's own arc and reports the first thing it would hit, so a pearl aimed through a wall is
+	-- called out instead of being thrown into it.
+	local function getPathObstacle(origin, velocity, speed, gravity, target)
+		local params = RaycastParams.new()
+		params.FilterType = Enum.RaycastFilterType.Exclude
+		params.FilterDescendantsInstances = {lplr.Character, gameCamera}
+		params.RespectCanCollide = true
+
+		local step, previous = 0.05, origin
+		for i = 1, 40 do
+			local flight = i * step
+			local point = origin + velocity.Unit * (speed * flight) + Vector3.new(0, -0.5 * gravity * flight * flight, 0)
+			if (point - target).Magnitude <= 1 then
+				-- the arc has arrived; anything past this point is the landing spot itself
+				break
+			end
+			local segment = point - previous
+			if segment.Magnitude > 0 then
+				local hit = workspace:Raycast(previous, segment, params)
+				if hit then
+					return hit
+				end
+			end
+			previous = point
+		end
+		return nil
+	end
+
 	local function throwPearl(target)
 		if not entitylib.isAlive then notif('PearlTP', 'Character missing.', 3, 'warning'); return false end
 		local pearl = getItem('telepearl')
@@ -53,6 +81,12 @@ run(function()
 		))).Position
 		local aim = prediction.SolveTrajectory(shootPosition, speed, gravity, target, Vector3.zero, 0, 0, 0) or calc
 		local direction = CFrame.lookAt(shootPosition, aim).LookVector * speed
+
+		local obstacle = getPathObstacle(shootPosition, direction, speed, gravity, target)
+		if obstacle and obstacle.Instance then
+			notif('PearlTP', 'Obstacle in the way of the pearl (' .. obstacle.Instance.Name .. ')', 4, 'warning')
+			return false
+		end
 
 		switchItem(pearl.tool)
 		if Legit.Enabled then

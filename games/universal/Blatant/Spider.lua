@@ -37,7 +37,7 @@ run(function()
 
 						Active = ray
 						if Active and ray.Normal.Y == 0 then
-							if not Phase.Enabled or not SpiderShift then
+							if not (NoClip and NoClip.Enabled) or not SpiderShift then
 								if State.Enabled then
 									entitylib.character.Humanoid:ChangeState(Enum.HumanoidStateType.Climbing)
 								end
@@ -58,7 +58,7 @@ run(function()
 							entitylib.character.RootPart.CFrame.LookVector * 2,
 							rayCheck
 						)
-						if ray and (not Phase.Enabled or not SpiderShift) then
+						if ray and (not (NoClip and NoClip.Enabled) or not SpiderShift) then
 							Truss.Position = ray.Position - ray.Normal * 0.9 or Vector3.zero
 						else
 							Truss.Position = Vector3.zero
@@ -73,7 +73,7 @@ run(function()
 			SpiderShift = false
 		end
 	end,
-	Tooltip = 'Lets you climb up walls. (Hold shift to use Phase over spider)',
+	Tooltip = 'Lets you climb up walls. Hold shift to let NoClip take over while this is on',
     })
     Mode = Spider:CreateDropdown({
 	Name = 'Mode',

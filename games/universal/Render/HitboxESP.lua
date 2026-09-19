@@ -3,13 +3,20 @@ run(function()
 	local Color
 	local Transparency
 	local Walls
+	local Targets
 	local Reference = {}
 	local Folder = Instance.new('Folder')
 	Folder.Name = 'AetherHitboxESP'
 	Folder.Parent = vape.gui
 
 	local function isValid(ent)
-		return ent.Player and ent.Player ~= lplr and ent.Character and ent.Character.Parent
+		if not (ent.Character and ent.Character.Parent) then return false end
+		if ent.Player and ent.Player == lplr then return false end
+		if Targets then
+			if ent.Player and not Targets.Players.Enabled then return false end
+			if ent.NPC and not Targets.NPCs.Enabled then return false end
+		end
+		return true
 	end
 
 	local function remove(ent)
@@ -77,6 +84,22 @@ run(function()
 			end
 		end,
 		Tooltip = 'Displays player hitboxes as transparent coloured boxes'
+	})
+
+	-- Target settings come first: they decide which entities the boxes are built for, so they read
+	-- before the appearance options that only apply to whatever they let through.
+	Targets = HitboxESP:CreateTargets({
+		Players = true,
+		NPCs = true,
+		Function = function()
+			if not HitboxESP.Enabled then return end
+			for ent in Reference do
+				if not isValid(ent) then remove(ent) end
+			end
+			for _, ent in entitylib.List do
+				add(ent)
+			end
+		end
 	})
 
 	Color = HitboxESP:CreateColorSlider({

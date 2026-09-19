@@ -285,18 +285,28 @@ run(function()
 			local viewport = gameCamera.ViewportSize
 			direction = gameCamera:ViewportPointToRay(viewport.X / 2, viewport.Y / 2).Direction.Unit
 		end
-		local origin = gameCamera.CFrame.Position + direction * 1.5
+		-- The launch point is the bow, not the camera. Standing off the camera put the preview a
+		-- camera-length away from the shot it was previewing (several studs behind the player in
+		-- third person), which is why the marker only lined up once the shot had really fired.
+		local origin
 		pcall(function()
 			local value = bedwars.ProjectileController:getLaunchPosition(gameCamera.CFrame)
 			if typeof(value) == 'Vector3' then
-				origin = value + direction * 1.2
+				origin = value
 			elseif typeof(value) == 'CFrame' then
-				origin = value.Position + direction * 1.2
+				origin = value.Position
 			end
 		end)
+		if not origin then
+			local bow = bedwars.BowConstantsTable
+			local root = entitylib.character.RootPart.Position
+			origin = bow and (CFrame.new(root, root + direction) * CFrame.new(Vector3.new(-bow.RelX, -bow.RelY, -bow.RelZ))).Position or (root + direction * 1.5)
+		end
 		return origin, direction * speed,
 			(tonumber(meta.gravitationalAcceleration) or workspace.Gravity) * (tonumber(source.gravityMultiplier) or 1),
-			tonumber(meta.lifetimeSec) or 7
+			-- The game's own prediction window first: the marker should live exactly as long as the
+			-- flight the game is simulating, not as long as the projectile can exist.
+			tonumber(meta.predictionLifetimeSec) or tonumber(meta.lifetimeSec) or 7
 	end
 
 	local function update()

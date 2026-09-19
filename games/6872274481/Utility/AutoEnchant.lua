@@ -4,12 +4,37 @@ run(function()
 	local AutoEnchant
 	local Wanted
 	local Repair
+	local Legit
 	local Range
 	local Delay
 
 	local Research = bedwars.Handler:Get('ResearchEnchant')
 	local Fix = bedwars.Handler:Get('RepairEnchantTable')
 	local learned
+
+	local function findRepairPrompt(table)
+		local part = table:IsA('Model') and (table.PrimaryPart or table:FindFirstChildWhichIsA('BasePart')) or table
+		local prompt = part and part:FindFirstChildWhichIsA('ProximityPrompt')
+		if not prompt and table:IsA('Model') then
+			prompt = table:FindFirstChildWhichIsA('ProximityPrompt', true)
+		end
+		return prompt, part
+	end
+
+	-- The repair done the way a player does it: the table's own proximity prompt is held for the
+	-- duration the game asks for, which is what plays the repair animation and what lets the game
+	-- decide the repair happened. Nothing is fired behind its back.
+	local function legitRepair(table, localPosition)
+		local prompt, part = findRepairPrompt(table)
+		if not prompt or not prompt.Enabled then return false end
+		if part and (localPosition - part.Position).Magnitude > (prompt.MaxActivationDistance or 10) then return false end
+		local hold = tonumber(prompt.HoldDuration) or 0
+		prompt:InputHoldBegin()
+		task.wait(hold + 0.05)
+		prompt:InputHoldEnd()
+		task.wait(0.1)
+		return true
+	end
 
 	AutoEnchant = vape.Categories.Utility:CreateModule({
 		Name = 'AutoEnchant',
@@ -30,8 +55,12 @@ run(function()
 
 							if v:HasTag('broken-enchant-table') then
 								if Repair.Enabled and diamonds and diamonds.amount >= 8 then
-									Fix:Fire('CallServer', v)
-									break
+									if Legit.Enabled then
+										if legitRepair(v, localPosition) then break end
+									else
+										Fix:Fire('CallServer', v)
+										break
+									end
 								end
 							elseif emeralds and emeralds.amount >= 2 then
 								local enchant = Research:Fire('CallServer', {enchantTable = v})
@@ -70,7 +99,18 @@ run(function()
 	Repair = AutoEnchant:CreateToggle({
 		Name = 'Repair tables',
 		Default = true,
+		Function = function(callback)
+			if Legit and Legit.Object then
+				Legit.Object.Visible = callback
+			end
+		end,
 		Tooltip = 'Fixes a broken enchant table for 8 diamonds before rerolling'
+	})
+	Legit = AutoEnchant:CreateToggle({
+		Name = 'Legit mode',
+		Darker = true,
+		Visible = false,
+		Tooltip = 'Repairs by holding the table\'s own prompt for its full hold time instead of firing the remote'
 	})
 	Wanted = AutoEnchant:CreateTextList({
 		Name = 'Enchants',

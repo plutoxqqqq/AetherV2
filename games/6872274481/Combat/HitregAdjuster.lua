@@ -15,7 +15,7 @@ run(function()
 			local original
 			firstConnection = sync:setPriority(150):connect(function(event)
 				original = event.attackSpeed
-				event.attackSpeed = 10 / math.max(Hitreg.Value - 1, 1)
+				event.attackSpeed = 10 / math.max(Hitreg:GetRandomValue() - 1, 1)
 			end)
 			restoreConnection = sync:setPriority(300):connect(function(event)
 				if original ~= nil then event.attackSpeed = original end
@@ -27,5 +27,5 @@ run(function()
 		end,
 		Tooltip = 'Adjusts manual and AutoClicker sword swing spacing without changing Killaura timing'
 	})
-	Hitreg = HitregAdjuster:CreateSlider({Name = 'Hitreg', Min = 1, Max = 36, Default = 35, Suffix = ' hits / 10s'})
+	Hitreg = HitregAdjuster:CreateTwoSlider({Name = 'Hitreg', Min = 1, Max = 36, DefaultMin = 35, DefaultMax = 35, Suffix = ' hits / 10s'})
 end)

@@ -7,15 +7,19 @@ run(function()
 	Category = 'Hud',
 	Function = function(callback)
 		if callback then
+			-- Read straight off the character's velocity instead of differencing two positions: position
+			-- sampling lags, misses vertical movement and only ever shows an average over the gap.
+			local smooth = 0
 			repeat
-				local lastpos = entitylib.isAlive
-						and entitylib.character.HumanoidRootPart.Position * Vector3.new(1, 0, 1)
-					or Vector3.zero
-				local dt = task.wait(0.2)
-				local newpos = entitylib.isAlive
-						and entitylib.character.HumanoidRootPart.Position * Vector3.new(1, 0, 1)
-					or Vector3.zero
-				label.Text = math.round(((lastpos - newpos) / dt).Magnitude) .. ' sps'
+				local speed = 0
+				if entitylib.isAlive then
+					local velocity = entitylib.character.RootPart.AssemblyLinearVelocity
+					speed = Vector3.new(velocity.X, 0, velocity.Z).Magnitude
+				end
+				-- A light ease keeps the last digit from flickering without hiding real changes.
+				smooth = smooth == 0 and speed or smooth + (speed - smooth) * 0.45
+				label.Text = math.floor(smooth + 0.5) .. ' sps'
+				task.wait(0.1)
 			until not Speedmeter.Enabled
 		end
 	end,

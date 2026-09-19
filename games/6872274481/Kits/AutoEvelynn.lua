@@ -10,6 +10,14 @@ run(function()
 	local rayCharacter
 	local swingMarker, swingSeenAt = nil, -math.huge
 
+	-- Evelynn's Auto Ability collects the same orbs this module recalls to, so this steps aside while it is
+	-- on instead of the two of them fighting over one soul.
+	local function autoAbilityOn()
+		local kit = getKitModule('spirit_assassin')
+		local option = kit and kit.Options and kit.Options['Auto Ability']
+		return option ~= nil and option.Enabled == true
+	end
+
 	local function soulPosition(soul)
 		if not soul or not soul.Parent then return nil end
 		if soul:IsA('BasePart') then return soul.Position end
@@ -97,7 +105,7 @@ run(function()
 				repeat
 					
 					if entitylib.isAlive and store.equippedKit == 'spirit_assassin'
-						and bedwars.SpiritAssassinController and not ((vape.Modules.AutoKit or {}).Enabled) then
+						and bedwars.SpiritAssassinController and not autoAbilityOn() then
 						local root = entitylib.character.RootPart
 						updateSwing()
 						local soul = findNearestSoul(souls, root)
@@ -131,7 +139,7 @@ run(function()
 				until not AutoEvelynn.Enabled
 			end)
 		end,
-		Tooltip = 'Conditionally recalls to Evelynn spirit orbs; AutoKit must be off'
+		Tooltip = 'Conditionally recalls to Evelynn spirit orbs; steps aside while the kit\'s Auto Ability is on'
 	})
 	Delay = AutoEvelynn:CreateSlider({Name = 'Delay', Min = 0, Max = 2, Default = 0.1, Decimal = 10, Suffix = 'seconds'})
 	OnlyFalling = AutoEvelynn:CreateToggle({Name = 'Only when falling', Tooltip = 'Only recalls while falling into the void'})

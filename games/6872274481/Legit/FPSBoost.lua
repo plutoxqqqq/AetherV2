@@ -65,6 +65,27 @@ run(function()
         end
     end
 
+    -- Effects, damage numbers and projectiles arrive by the hundred in a fight, so new instances are queued
+    -- and worked through on a short tick instead of the moment each one is added.
+    local queue, queued = {}, {}
+    local function queueObject(object)
+        if queued[object] then return end
+        queued[object] = true
+        table.insert(queue, object)
+    end
+
+    local function drain()
+        local processed = 0
+        while #queue > 0 and processed < 400 do
+            local object = table.remove(queue, 1)
+            queued[object] = nil
+            if object and object.Parent then
+                pcall(applyObject, object)
+            end
+            processed += 1
+        end
+    end
+
     local function restore()
         for object, properties in changed do
             for property, state in properties do
@@ -98,7 +119,12 @@ run(function()
                 setProperty(terrain, 'WaterWaveSpeed', 0)
             end
         end
-        for _, object in game:GetDescendants() do applyObject(object) end
+        -- Only the two containers that hold visual systems are walked: the DataModel walk this used to do
+        -- pulled in every service, GUI and script in the game for nothing.
+        local lighting = game:GetService('Lighting')
+        for _, root in {workspace, lighting} do
+            for _, object in root:GetDescendants() do applyObject(object) end
+        end
         if selected('Kill effects') then
             for name, effect in bedwars.KillEffectController.killEffects do
                 if not name:find('Custom') then
@@ -118,7 +144,20 @@ run(function()
             restore()
             if not callback then return end
             apply()
-            FPSBoost:Clean(game.DescendantAdded:Connect(applyObject))
+
+            local lighting = game:GetService('Lighting')
+            FPSBoost:Clean(game.DescendantAdded:Connect(function(object)
+                if not object:IsDescendantOf(workspace) and not object:IsDescendantOf(lighting) then return end
+                queueObject(object)
+            end))
+            task.spawn(function()
+                repeat
+                    drain()
+                    task.wait(0.25)
+                until not FPSBoost.Enabled
+                table.clear(queue)
+                table.clear(queued)
+            end)
         end,
         Tooltip = 'Reversibly reduces expensive visual effects'
     })

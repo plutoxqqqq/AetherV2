@@ -72,19 +72,22 @@ run(function()
 	local function paintHotbar()
 		local icons = hotbarIcons()
 		if not icons then return end
+		-- The GUI colour is the same for every slot and the slot tree never changes shape without an event, so
+		-- it is worked out once per paint and the pcall-per-property lookups are gone. This is what made the
+		-- module heavy: the old version re-walked and pcall-wrapped every slot on every single GUI change.
+		local sync = HotbarGuiSync and HotbarGuiSync.Enabled
+		local synced = sync and guiColor() or nil
 		for _, slot in ipairs(icons:GetChildren()) do
-			local label = ({pcall(function()
-				return slot:FindFirstChildWhichIsA('ImageButton'):FindFirstChildWhichIsA('TextLabel')
-			end)})[2]
-			if typeof(label) ~= 'Instance' then continue end
-			local button = label.Parent
-			if HotbarGuiSync and HotbarGuiSync.Enabled then
-				button.BackgroundColor3 = guiColor()
+			local button = slot:FindFirstChildWhichIsA('ImageButton')
+			local label = button and button:FindFirstChildWhichIsA('TextLabel')
+			if not label then continue end
+			if sync then
+				button.BackgroundColor3 = synced
 			elseif HotbarSlotColor and HotbarSlotColor.Enabled and not (HotbarGradient and HotbarGradient.Enabled) then
 				local c = HotbarColorA
-				button.BackgroundColor3 = c and Color3.fromHSV(c.Hue or 0, c.Sat or 0, c.Value or 1) or guiColor()
+				button.BackgroundColor3 = c and Color3.fromHSV(c.Hue or 0, c.Sat or 0, c.Value or 1) or synced
 			end
-			if HotbarGradient and HotbarGradient.Enabled and not (HotbarGuiSync and HotbarGuiSync.Enabled) then
+			if HotbarGradient and HotbarGradient.Enabled and not sync then
 				button.BackgroundColor3 = Color3.new(1, 1, 1)
 				if not button:FindFirstChildWhichIsA('UIGradient') then
 					local g = Instance.new('UIGradient')
@@ -104,7 +107,7 @@ run(function()
 			if HotbarHighlight and HotbarHighlight.Enabled and not button:FindFirstChildWhichIsA('UIStroke') then
 				local s = Instance.new('UIStroke')
 				s.Thickness = 1.3
-				s.Color = (HotbarGuiSync and HotbarGuiSync.Enabled) and guiColor()
+				s.Color = synced
 					or (HotbarOutlineColor and Color3.fromHSV(HotbarOutlineColor.Hue or 0, HotbarOutlineColor.Sat or 0, HotbarOutlineColor.Value or 1))
 					or Color3.new(1, 1, 1)
 				s.Parent = button
@@ -114,6 +117,26 @@ run(function()
 				label.Visible = false
 			end
 		end
+	end
+
+	-- Painting is coalesced: PlayerGui fires DescendantAdded for every damage number, health tick and menu
+	-- update, and repainting the whole hotbar for each one was the lag. A burst now causes one repaint.
+	local paintQueued, healthQueued = false, false
+	local function queuePaint()
+		if paintQueued then return end
+		paintQueued = true
+		task.delay(0.1, function()
+			paintQueued = false
+			if Interface and Interface.Enabled then paintHotbar() end
+		end)
+	end
+	local function queueHealth()
+		if healthQueued then return end
+		healthQueued = true
+		task.delay(0.15, function()
+			healthQueued = false
+			if Interface and Interface.Enabled then applyHealthbar() end
+		end)
 	end
 
 	local function clearHotbar()
@@ -236,11 +259,9 @@ run(function()
 			if callback then
 				Interface:Clean(lplr.PlayerGui.DescendantAdded:Connect(function(v)
 					if v.Name == 'hotbar' then
-						task.wait(0.05)
-						paintHotbar()
+						queuePaint()
 					elseif v.Name == 'HotbarHealthbarContainer' then
-						task.wait(0.05)
-						applyHealthbar()
+						queueHealth()
 					end
 				end))
 				paintHotbar()

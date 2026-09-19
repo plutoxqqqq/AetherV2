@@ -27,6 +27,20 @@ run(function()
         return false
     end
 
+    -- The cell the feet are standing in is the one to build into: a block placed there lifts the
+    -- character onto it, so a held space key steps the tower up block by block instead of waiting
+    -- for a jump to clear the cell below the feet first. Sinking a little into the block underneath
+    -- (which happens between placements) puts the feet fractionally inside the cell below, so the
+    -- first free cell upwards is the one that resolves to.
+    local function buildTarget(root, character)
+        local feet = root.Position.Y - (character.HipHeight or 3)
+        local base = bedwars.BlockController:getBlockPosition(Vector3.new(root.Position.X, feet, root.Position.Z))
+        for step = 0, 2 do
+            local world = (base + Vector3.new(0, step, 0)) * 3
+            if not getPlacedBlock(world) then return world end
+        end
+    end
+
     local function queuePlacement(pos, block)
         local key = tostring(pos)
         local request = pending[key]
@@ -73,13 +87,12 @@ run(function()
                     root.AssemblyLinearVelocity = Vector3.new(root.AssemblyLinearVelocity.X, 28, root.AssemblyLinearVelocity.Z)
                 end
                 if tick() < nextPlacement then return end
-                local feet = root.Position.Y - (character.HipHeight or 3)
-                local target = bedwars.BlockController:getBlockPosition(Vector3.new(root.Position.X, feet - 1.5, root.Position.Z)) * 3
-                if feet < target.Y + 1.5 or getPlacedBlock(target) then return end
+                local target = buildTarget(root, character)
+                if not target then return end
                 queuePlacement(target, block)
             end))
         end,
-        Tooltip = 'Towers upward while jump is held'
+        Tooltip = 'Towers upward while space is held'
     })
     LimitItems = AutoBuildUp:CreateToggle({Name = 'Limit to items', Tooltip = 'Only towers with the held block'})
 end)

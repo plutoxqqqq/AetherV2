@@ -20,7 +20,7 @@ run(function()
 		for dist = 5, 17, 3 do
 			for angle = 0, 330, 30 do
 				local spot = localPosition + (CFrame.Angles(0, math.rad(angle), 0).LookVector * dist)
-				local ray = entitylib.Raycast(spot + Vector3.new(0, 8, 0), Vector3.new(0, -26, 0), store.airRay)
+				local ray = workspace:Raycast(spot + Vector3.new(0, 8, 0), Vector3.new(0, -26, 0), store.airRay)
 				local check = ray and ray.Position or spot
 				local rejected = false
 				for _, v in rejects do
@@ -43,7 +43,9 @@ run(function()
 	end
 	
 	local function playMinigame()
+		-- The minigame is only reachable through the fisherman's own util; nothing to play without it.
 		local util = bedwars.FishermanUtil
+		if not util or util.startingMarkerIncrementSpeed == nil then return end
 		local marker, zone
 		local deadline = tick() + 3
 		repeat

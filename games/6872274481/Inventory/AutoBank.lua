@@ -10,6 +10,8 @@ run(function()
     local BeforeDeath
     local HPThreshold
     local BeforeDeathWhitelist
+    local WhileFalling
+    local FallingWhitelist
     local UI
 
     local util = vape.Libraries.bedwarsutil
@@ -39,6 +41,7 @@ run(function()
     local dangerTriggered = false
     local dangerCharacter
     local beforeDeathDepositing = false
+    local beforeDeathDeposited = {}
     local chestDepositBusy = false
 	local dangerConnections = {}
 	local evaluateDanger
@@ -245,6 +248,27 @@ run(function()
 		return true
 	end
 
+    -- 'wool' as a list entry covers every wool colour the game has, so a list written as
+    -- {'emerald', 'wool'} keeps working while you are carrying blue wool instead of white.
+    local function matchesWhitelist(list, name)
+        if not name then return false end
+        local lower = tostring(name):lower()
+        for _, entry in list do
+            local wanted = tostring(entry):lower()
+            if wanted == lower or (wanted == 'wool' and lower:find('wool', 1, true)) then
+                return true
+            end
+        end
+        return false
+    end
+
+    -- Falling hard enough that the void is the likely outcome.
+    local function isFalling()
+        if not entitylib.isAlive then return false end
+        local root = entitylib.character.RootPart
+        return root ~= nil and root.AssemblyLinearVelocity.Y < -25
+    end
+
     local function bankBeforeDeath()
         if beforeDeathDepositing or not AutoBank.Enabled or not BeforeDeath.Enabled then return end
         beforeDeathDepositing = true
@@ -253,18 +277,31 @@ run(function()
 		local character = entitylib.character
 		local root = character and character.RootPart
 		local bankPosition = root and root.Position
-		
-		
-		
-		
 		local inventory = store.inventory and store.inventory.inventory
+		-- Everything the normal whitelist banks goes with the before-death list, so a dangerous moment
+		-- never leaves a stack behind just because it was only on one of the two lists.
 		for _, item in type(inventory) == 'table' and inventory.items or {} do
 			local name = item.itemType or (item.tool and item.tool.Name)
-			if name and table.find(BeforeDeathWhitelist.ListEnabled, name) then
-				queueEmergencyDrop(item, token, bankPosition, bankCharacter)
+			local emergency = matchesWhitelist(BeforeDeathWhitelist.ListEnabled, name)
+			if name and (emergency or matchesWhitelist(Whitelist.ListEnabled, name)) then
+				if queueEmergencyDrop(item, token, bankPosition, bankCharacter) and emergency then
+					beforeDeathDeposited[name] = true
+				end
 			end
 		end
 		beforeDeathDepositing = false
+    end
+
+    -- Once the danger has passed only what before death pulled away is handed back: the normal whitelist
+    -- stays banked the way it always is.
+    local function restoreBeforeDeath()
+        if not next(beforeDeathDeposited) then return end
+        for _, drop in table.clone(droppedItems) do
+            if drop and drop.Parent and beforeDeathDeposited[drop.Name] then
+                reclaim(drop)
+            end
+        end
+        table.clear(beforeDeathDeposited)
     end
 
 	local function disconnectDangerConnections()
@@ -283,6 +320,7 @@ run(function()
 			if percent <= HPThreshold.Value then
 				if not dangerTriggered then dangerTriggered = true; bankBeforeDeath() end
 			elseif percent >= math.min(100, HPThreshold.Value + 5) then
+				if dangerTriggered then restoreBeforeDeath() end
 				dangerTriggered = false
 			end
 		end
@@ -376,19 +414,21 @@ run(function()
         for _, option in {ChestRange, Withdraw, OnlyWhenLow, LowHealth} do
             if option and option.Object then option.Object.Visible = legit end
         end
-        for _, option in {Whitelist, DisplayResources, BeforeDeath} do
+        for _, option in {Whitelist, DisplayResources, BeforeDeath, WhileFalling} do
             if option and option.Object then option.Object.Visible = not legit end
         end
         if not legit then
             local enabled = BeforeDeath.Enabled
             if HPThreshold and HPThreshold.Object then HPThreshold.Object.Visible = enabled end
             if BeforeDeathWhitelist and BeforeDeathWhitelist.Object then BeforeDeathWhitelist.Object.Visible = enabled end
+            if FallingWhitelist and FallingWhitelist.Object then FallingWhitelist.Object.Visible = WhileFalling.Enabled end
         elseif LowHealth and LowHealth.Object then
             LowHealth.Object.Visible = OnlyWhenLow.Enabled
         end
     end
 
     local function addDisplayEntry(itemType)
+        if displayEntries[itemType] then return end
         local icon = Instance.new('ImageButton')
         icon.Name = itemType
         icon.Image = bedwars.getIcon({itemType = itemType}, true)
@@ -407,13 +447,6 @@ run(function()
         amount.Font = Enum.Font.Arial
         amount.Parent = icon
         displayEntries[itemType] = amount
-        icon.Activated:Connect(function()
-            
-            
-            for _, drop in table.clone(droppedItems) do
-                if drop.Name == itemType then reclaim(drop) end
-            end
-        end)
     end
 
     AutoBank = vape.Categories.Inventory:CreateModule({
@@ -441,10 +474,21 @@ run(function()
                 layout.SortOrder = Enum.SortOrder.LayoutOrder
                 layout.Parent = UI
 
-                table.clear(displayEntries)
-                for _, itemType in Whitelist.ListEnabled do
-                    addDisplayEntry(itemType)
+                local function addListEntries(list)
+                    for _, itemType in list do
+                        if tostring(itemType):lower() == 'wool' then
+                            for known in bedwars.ItemMeta do
+                                if tostring(known):lower():find('wool', 1, true) then addDisplayEntry(known) end
+                            end
+                        else
+                            addDisplayEntry(itemType)
+                        end
+                    end
                 end
+                table.clear(displayEntries)
+                addListEntries(Whitelist.ListEnabled)
+                if BeforeDeath.Enabled then addListEntries(BeforeDeathWhitelist.ListEnabled) end
+                if WhileFalling.Enabled then addListEntries(FallingWhitelist.ListEnabled) end
 
                 local near = false
                 local base = CFrame.new(1e3, 1e5, 1e3)
@@ -489,7 +533,11 @@ run(function()
 						local inventory = store.inventory and store.inventory.inventory
 						for _, item in type(inventory) == 'table' and inventory.items or {} do
 							local name = item.tool and item.tool.Name or item.itemType
-							if name and item.tool and table.find(Whitelist.ListEnabled, name)
+							-- Falling into the void counts the while-falling list as whitelisted too, so the stacks you
+							-- would otherwise lose are banked on the way down.
+							if name and item.tool
+								and (matchesWhitelist(Whitelist.ListEnabled, name)
+									or (WhileFalling.Enabled and isFalling() and matchesWhitelist(FallingWhitelist.ListEnabled, name)))
 								and not pendingDrops[item.tool] and (dropCooldowns[name] or 0) < os.clock() then
 								local token = AutoBank.Generation
 								local bankCharacter = lplr.Character
@@ -643,7 +691,21 @@ run(function()
         Default = {'emerald', 'diamond', 'iron'},
         Darker = true,
         Visible = false,
-        Tooltip = 'Only these item types are deposited by Before death'
+        Tooltip = 'Extra item types deposited by Before death, on top of the whitelist. "wool" covers every wool colour'
+    })
+    WhileFalling = AutoBank:CreateToggle({
+        Name = 'While falling',
+        Function = function(enabled)
+            if FallingWhitelist and FallingWhitelist.Object then FallingWhitelist.Object.Visible = enabled end
+        end,
+        Tooltip = 'Banks the items listed below as well as the normal whitelist while you are falling into the void'
+    })
+    FallingWhitelist = AutoBank:CreateTextList({
+        Name = 'While falling items',
+        Default = {'emerald', 'diamond', 'iron'},
+        Darker = true,
+        Visible = false,
+        Tooltip = 'Extra item types banked while falling, on top of the whitelist. "wool" covers every wool colour'
     })
     Whitelist = AutoBank:CreateTextList({
         Name = 'Whitelist',

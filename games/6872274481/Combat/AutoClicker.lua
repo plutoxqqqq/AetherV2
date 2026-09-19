@@ -1,5 +1,6 @@
 run(function()
 	local AutoClicker
+	local Attack
 	local CPS
 	local Place
 	local Wool
@@ -71,7 +72,7 @@ run(function()
 								end
 							end
 						end
-					elseif store.hand.toolType == 'sword' then
+					elseif Attack.Enabled and store.hand.toolType == 'sword' then
 						if inputService.TouchEnabled then
 							local controller = bedwars.SwordController
 							if controller.mobileSwingPressed then
@@ -146,6 +147,16 @@ run(function()
 		Tooltip = 'Hold attack button to automatically click'
 	})
 
+	Attack = AutoClicker:CreateToggle({
+		Name = 'Attack',
+		Function = function(callback)
+			if CPS and CPS.Object then
+				CPS.Object.Visible = callback
+			end
+		end,
+		Default = true,
+		Tooltip = 'Swings your sword while the attack button is held'
+	})
 	CPS = AutoClicker:CreateTwoSlider({
 		Name = 'CPS',
 		Min = 1,

@@ -371,7 +371,7 @@ local function projectileMatches(enabled, ...)
 end
 
 
-local function getProjectiles(enabled, useSophia, useWhim)
+local function getProjectiles(enabled, useSophia, useWhim, useNazar)
 	local projectiles, inventory = {}, store.inventory and store.inventory.inventory
 	if type(inventory) ~= 'table' or type(inventory.items) ~= 'table' then return projectiles end
 	for _, item in inventory.items do
@@ -380,6 +380,7 @@ local function getProjectiles(enabled, useSophia, useWhim)
 		local loweredType = item and tostring(item.itemType):lower() or ''
 		local specialSource = useSophia and (loweredType:find('sophia', 1, true) or loweredType:find('frost_staff', 1, true))
 			or useWhim and (loweredType:find('whim', 1, true) or loweredType:find('magic_book', 1, true))
+			or useNazar and table.find({'life_bow', 'life_crossbow', 'life_headhunter'}, loweredType) ~= nil
 		if source and item.tool and type(source.projectileType) == 'function' then
 			for _, ammoType in source.ammoItemTypes or {} do
 				local ammoItem = getItem(ammoType, inventory.items)
@@ -678,6 +679,43 @@ local function getTableSize(tab)
 	end
 	return ind
 end
+
+-- Shared combat helpers. The Combat modules (AutoClicker, SilentAura, TriggerBot, AimAssist) all want
+-- to know whether a swing would register and how far whatever is in hand actually reaches, so they live
+-- here instead of being redeclared inside each module.
+store.lastInput = tick()
+local function markPlayerInput(input)
+	if input.UserInputType ~= Enum.UserInputType.MouseMovement or input.Delta.Magnitude > 0 then
+		store.lastInput = tick()
+	end
+end
+vape:Clean(inputService.InputBegan:Connect(markPlayerInput))
+vape:Clean(inputService.InputChanged:Connect(markPlayerInput))
+
+local function isAfk()
+	return (tick() - (store.lastInput or 0)) >= 30
+end
+getgenv().isAfk = isAfk
+
+local function getReach(tool)
+	local itemmeta = tool and bedwars.ItemMeta[tool.Name]
+	return itemmeta and itemmeta.sword and itemmeta.sword.attackRange or store.swordDistance or 3
+end
+getgenv().getReach = getReach
+
+local function isCasting()
+	local casting = lplr:GetAttribute('IsCasting')
+	return casting and casting ~= 0 and casting ~= ''
+end
+
+local function canSwing()
+	if type(bedwars.SwordController.getSwordSwingDisabled) == 'function' and bedwars.SwordController:getSwordSwingDisabled() then return false end
+	if isCasting() then return false end
+
+	local itemmeta = store.hand and store.hand.tool and bedwars.ItemMeta[store.hand.tool.Name]
+	return itemmeta ~= nil and itemmeta.sword ~= nil and itemmeta.sword.chargedAttack == nil
+end
+getgenv().canSwing = canSwing
 
 local function getHotbar(tool)
 	local inventory = store.inventory or {}
@@ -1120,32 +1158,31 @@ sortmethods.Crosshair = function(a, b)
 	local origin = gameCamera.ViewportSize / 2
 	return screenPriorityDistance(a, origin) < screenPriorityDistance(b, origin)
 end
+-- How far the entity is from you. Every Target Mode dropdown offers this, so it lives beside the other
+-- sorts instead of only existing for block breaking.
+sortmethods.Distance = function(a, b)
+	local selfpos = entitylib.isAlive and entitylib.character.RootPart.Position
+	if not selfpos then return false end
+	return (selfpos - a.Entity.RootPart.Position).Magnitude < (selfpos - b.Entity.RootPart.Position).Magnitude
+end
+
 shared.AetherScreenSorts = {[sortmethods.Mouse] = 'Mouse', [sortmethods.Crosshair] = 'Crosshair'}
+-- Every Target Mode dropdown offers exactly these, in this order.
+local TARGET_MODES = {'Mouse', 'Distance', 'Damage', 'Angle', 'Health', 'Kit', 'Threat'}
 local sortlist = {}
-for name in sortmethods do table.insert(sortlist, name) end
-table.sort(sortlist)
+for _, name in ipairs(TARGET_MODES) do
+	if sortmethods[name] then table.insert(sortlist, name) end
+end
 getgenv().sortlist = sortlist
 -- The ported aim modules ask for a 'Cursor' sort by name; it is the crosshair sort, distance to the
 -- middle of the viewport. Registered after sortlist is built so the dropdowns that copy sortlist
 -- keep exactly the option set they already had, while a module that names 'Cursor' itself finds it.
 sortmethods.Cursor = sortmethods.Crosshair
 
--- A dropdown list for the aim modules that name their own priorities first: anything they ask for
--- that really exists comes first, then every other sort the pack offers, so no option is lost when
--- a new sort is added to sortmethods later.
-local function getSortList(names)
-	local list = {}
-	for _, name in ipairs(names or {}) do
-		if sortmethods[name] and not table.find(list, name) then
-			table.insert(list, name)
-		end
-	end
-	for _, name in ipairs(sortlist) do
-		if not table.find(list, name) then
-			table.insert(list, name)
-		end
-	end
-	return list
+-- The one option set every Target Mode dropdown uses, whatever a caller asks for, so the modes are the
+-- same everywhere and a new one only has to be added in TARGET_MODES above.
+local function getSortList()
+	return table.clone(sortlist)
 end
 
 
@@ -2423,7 +2460,14 @@ run(function()
 	end)
 end, 20)
 
-for _, v in {'AntiRagdoll', 'TriggerBot', 'SilentAim', 'AutoRejoin', 'Rejoin', 'Disabler', 'Timer', 'ServerHop', 'NoFallDamage', 'MurderMystery', 'Invisible'} do
+for _, v in {'AntiRagdoll', 'TriggerBot', 'SilentAim', 'AutoRejoin', 'Rejoin', 'Disabler', 'Timer', 'ServerHop', 'NoFallDamage', 'MurderMystery', 'Invisible',
+	-- Removed from BedWars outright. The modules are gone, but a saved config from an older build can still
+	-- name them, so the names are cleared out here instead of leaving dead entries in the GUI.
+	'Jesus', 'MultiAction', 'ArmorHighlight', 'LegacyAnimation', 'PlayerModel', 'Search', 'Theme', 'Waypoints', 'BackTrack', 'ClaimRewards', 'CustomCursor', 'LeaveParty', 'KillfeedSpoofer',
+	-- Only the module goes: the blur behaviour stays available through shared.AetherBlurryTextures.
+	'BlurryTextures',
+	-- The kit abilities used to be toggles on one AutoKit module; they live on their own kits now.
+	'AutoKit'} do
 	vape:Remove(v)
 end
 
@@ -2576,6 +2620,178 @@ local function activateJadeTool(item)
 	end)
 	if not fired and mouse1click then fired = pcall(mouse1click) end
 	return fired
+end
+
+--[[
+    Kits
+]]
+-- The Kits category is shaped like the game's own roster: one module per kit, named the way the game names it,
+-- holding every behaviour that was built for that kit. The behaviour files are untouched - the wrapper below
+-- recognises their module names and gives each one a toggle on its kit's module, along with its own
+-- Clean/Enabled/Toggle/Options/Generation, so a behaviour file cannot tell the difference between being a
+-- module and being a toggle. A name that is not listed keeps its own module.
+local KIT_BEHAVIOURS = {
+	AutoAbaddon = 'scarab', AutoAdetunde = 'frost_hammer_kit', AutoAgni = 'agni',
+	AutoAngel = 'angel', AutoArachne = 'spider_queen', AutoBeekeeper = 'beekeeper',
+	AutoBlackMarket = 'black_market_trader', AutoBlockKicker = 'block_kicker', AutoBountyHunter = 'bounty_hunter',
+	AutoBuilder = 'builder', AutoCaitlyn = 'blood_assassin', AutoCard = 'card',
+	AutoCat = 'cat', AutoCogsworth = 'steam_engineer', AutoCrocowolf = 'beast', AutoCrypt = 'necromancer',
+	AutoCyber = 'cyber', AutoDavey = 'davey', AutoDinoTamer = 'dino_tamer',
+	AutoDragonSword = 'dragon_sword', AutoDrill = 'drill', AutoElder = 'bigman',
+	AutoEldric = 'warlock', AutoElektra = 'elektra', AutoEmber = 'ember',
+	AutoEvelynn = 'spirit_assassin', AutoFalconer = 'falconer', AutoFarmer = 'farmer_cletus',
+	AutoFarmerCletus = 'farmer_cletus', AutoFlora = 'queen_bee', AutoFortify = 'builder',
+	AutoFreiya = 'ice_queen', AutoGingerbreadMan = 'gingerbread_man', AutoGompy = 'ghost_catcher',
+	AutoGrim = 'grim_reaper', AutoGrove = 'spirit_gardener',
+	AutoGunBlade = 'gun_blade', AutoHannah = 'hannah', AutoHatter = 'hatter',
+	AutoHephaestus = 'tinker', AutoKaida = 'summoner', AutoKaliyah = 'dragon_slayer',
+	AutoKrystal = 'glacial_skater', AutoLani = 'paladin', AutoLasso = 'cowgirl',
+	AutoLumen = 'lumen', AutoMarcel = 'defender', AutoMarina = 'jellyfish', AutoMarrow = 'skeleton',
+	AutoMartin = 'cactus', AutoMelody = 'melody', AutoMerchant = 'merchant',
+	AutoMetal = 'metal_detector', AutoMushroom = 'alchemist', AutoNahila = 'oasis',
+	AutoNazar = 'nazar', AutoNoelle = 'slime_tamer', AutoNyx = 'midnight',
+	AutoPickpocket = 'mimic', AutoPyro = 'pyro', AutoRagnar = 'berserker',
+	AutoRamil = 'airbender', AutoRaven = 'raven', AutoSheepHerder = 'sheep_herder',
+	AutoShielderUlt = 'shielder', AutoSigrid = 'elk_master', AutoSilas = 'rebellion_leader',
+	AutoSmoke = 'smoke', AutoSophia = 'winter_lady', AutoSorcerer = 'sorcerer',
+	AutoStarCollector = 'star_collector', AutoStyx = 'styx', AutoTaliyah = 'taliyah', AutoTriton = 'harpoon',
+	AutoTrixie = 'void_walker', AutoUma = 'spirit_summoner', AutoVanessa = 'triple_shot',
+	AutoVoidHunter = 'void_hunter', AutoVoidKnight = 'void_knight', AutoVulcan = 'vulcan',
+	AutoWarden = 'jailor', AutoWarrior = 'warrior', AutoWhim = 'mage',
+	AutoWhisper = 'owl', AutoXurot = 'void_dragon', AutoYeti = 'yeti',
+	AutoZeno = 'wizard', AutoZola = 'soul_broker', CannonSpeed = 'davey',
+	CatExtender = 'cat', CryptAura = 'necromancer', DaveyAim = 'davey',
+	DeathAdderAimbot = 'sorcerer', FalconAura = 'falconer', FishermanSpy = 'fisherman',
+	GrimReaperFix = 'grim_reaper', InfiniteSigrid = 'elk_master', JadeExtender = 'jade',
+	JadeInstantKill = 'jade', KrystalDisabler = 'glacial_skater', OwlAura = 'owl',
+	RavenTP = 'raven', ReaperBypass = 'grim_reaper', TerraAimbot = 'block_kicker',
+	TritonClutch = 'harpoon', VoidRegentAutoClutch = 'regent', VoidRegentExtender = 'regent',
+	VulcanAssist = 'vulcan', XurotExtender = 'void_dragon', YaminiExtender = 'cat',
+	YuziExtender = 'dasher',
+}
+
+local kitModules = {}
+
+local function getKitModule(id)
+    local module = kitModules[id]
+    if module then return module end
+
+    local meta = bedwars.BedwarsKitMeta and bedwars.BedwarsKitMeta[id]
+    local display = (meta and (meta.name or meta.displayName)) or tostring(id)
+    module = kits:CreateModule({
+        Name = display,
+        Tooltip = 'Every behaviour built for the ' .. display .. ' kit'
+    })
+    kitModules[id] = module
+    return module
+end
+
+-- Every kit gets its module up front, in the order the game lists them, so the category mirrors the roster
+-- even before a kit has behaviours of its own.
+local kitRoster = {}
+for id, meta in bedwars.BedwarsKitMeta do
+    if id ~= 'none' and id ~= 'random' then
+        table.insert(kitRoster, {id = id, name = (meta.name or meta.displayName or tostring(id))})
+    end
+end
+table.sort(kitRoster, function(a, b)
+    return a.name:lower() < b.name:lower()
+end)
+for _, kit in kitRoster do
+    getKitModule(kit.id)
+end
+
+-- A behaviour whose kit is not in the table above becomes its own module, exactly like before.
+local function kitForBehaviour(behaviour)
+    local id = KIT_BEHAVIOURS[behaviour]
+    if id then
+        return getKitModule(id)
+    end
+
+    local key = 'behaviour:' .. behaviour
+    local module = kitModules[key]
+    if not module then
+        module = kits:CreateModule({
+            Name = behaviour,
+            Tooltip = 'Kit behaviour that is not attached to a kit yet'
+        })
+        kitModules[key] = module
+    end
+    return module
+end
+
+local BEHAVIOUR_OPTIONS = {
+    'CreateToggle', 'CreateSlider', 'CreateTwoSlider', 'CreateDropdown', 'CreateColorSlider', 'CreateTextList',
+    'CreateTextBox', 'CreateButton', 'CreateKeybind', 'CreateFont', 'CreateTargets', 'CreateHotbarList'
+}
+
+local function createKitBehaviour(settings)
+    local module = kitForBehaviour(settings.Name)
+    local cleanups, options, order = {}, {}, {}
+    local behaviour = {Enabled = false, Generation = 0, Options = options}
+
+    local function clear()
+        for _, v in cleanups do
+            if typeof(v) == 'RBXScriptConnection' then
+                pcall(function() v:Disconnect() end)
+            elseif typeof(v) == 'Instance' then
+                pcall(function() v:Destroy() end)
+            elseif typeof(v) == 'function' then
+                pcall(v)
+            end
+        end
+        table.clear(cleanups)
+    end
+
+    function behaviour:Clean(obj)
+        table.insert(cleanups, obj)
+    end
+
+    local toggle
+    function behaviour:Toggle()
+        if toggle then toggle:Toggle() end
+    end
+
+    -- The behaviour's own settings belong to the kit module and stay hidden until the behaviour is on, so a
+    -- kit reads as one module holding its behaviours and everything they use.
+    for _, kind in BEHAVIOUR_OPTIONS do
+        behaviour[kind] = function(_, optionSettings)
+            if not module[kind] then return nil end
+
+            local option = module[kind](module, optionSettings)
+            if option then
+                table.insert(order, option)
+                local name = optionSettings
+                if type(name) == 'table' then name = name.Name end
+                if type(name) == 'string' then options[name] = option end
+                if option.Object then option.Object.Visible = behaviour.Enabled end
+            end
+            return option
+        end
+    end
+
+    toggle = module:CreateToggle({
+        Name = settings.Name,
+        Tooltip = settings.Tooltip or settings.Name,
+        Function = function(enabled)
+            behaviour.Enabled = enabled
+            behaviour.Generation += 1
+            for _, option in order do
+                if option.Object then option.Object.Visible = enabled end
+            end
+            if settings.Function then settings.Function(enabled) end
+            if not enabled then clear() end
+        end
+    })
+    return behaviour
+end
+
+local createModule = kits.CreateModule
+function kits:CreateModule(settings)
+    if type(settings) == 'table' and type(settings.Name) == 'string' and KIT_BEHAVIOURS[settings.Name] then
+        return createKitBehaviour(settings)
+    end
+    return createModule(self, settings)
 end
 
 local AetherRuntimeContext = {

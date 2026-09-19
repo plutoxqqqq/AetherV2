@@ -3,7 +3,6 @@ run(function()
     local Mode
     local Value
     local WallCheck
-    local AutoJump
     local AlwaysJump
     local KrystalKit, KrystalSpeed
     local SigridKit, SigridSpeed
@@ -119,7 +118,7 @@ run(function()
 				if currentHorizontal.Magnitude < requested.Magnitude then
 									root.AssemblyLinearVelocity = Vector3.new(requested.X, current.Y, requested.Z)
 								end
-                                if AutoJump.Enabled and (state == Enum.HumanoidStateType.Running or state == Enum.HumanoidStateType.Landed) and moveDirection ~= Vector3.zero and (Attacking or AlwaysJump.Enabled) then
+                                if AlwaysJump.Enabled and (state == Enum.HumanoidStateType.Running or state == Enum.HumanoidStateType.Landed) and moveDirection ~= Vector3.zero then
                                     entitylib.character.Humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
                                 end
                             end
@@ -161,15 +160,8 @@ run(function()
         Name = 'Wall Check',
         Default = true
     })
-    AutoJump = Speed:CreateToggle({
-        Name = 'AutoJump',
-        Function = function(callback)
-            AlwaysJump.Object.Visible = callback
-        end
-    })
     AlwaysJump = Speed:CreateToggle({
-        Name = 'Always Jump',
-        Visible = false,
-        Darker = true
+        Name = 'Always jump',
+        Tooltip = 'Jumps continuously while you are moving, instead of only on the ledge'
     })
 end)

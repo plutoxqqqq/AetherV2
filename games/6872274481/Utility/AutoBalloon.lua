@@ -1,5 +1,24 @@
 run(function()
     local AutoBalloon
+    local PopAboveLand
+
+    local plainCheck = RaycastParams.new()
+    plainCheck.FilterType = Enum.RaycastFilterType.Exclude
+    plainCheck.RespectCanCollide = true
+
+    -- Ground under the feet, using the pack's map-only ray when it is available so the character and
+    -- every entity are never mistaken for land.
+    local function groundBelow(root)
+        if entitylib.isAlive then
+            plainCheck.FilterDescendantsInstances = {lplr.Character, gameCamera}
+        end
+        local params = store.airRay or plainCheck
+        return workspace:Raycast(root.Position, Vector3.new(0, -3000, 0), params)
+    end
+
+    local function balloonCount()
+        return (lplr.Character and lplr.Character:GetAttribute('InflatedBalloons')) or 0
+    end
 
     AutoBalloon = vape.Categories.Utility:CreateModule({
         Name = 'AutoBalloon',
@@ -18,7 +37,18 @@ run(function()
 
                 repeat
                     if entitylib.isAlive then
-                        if entitylib.character.RootPart.Position.Y < lowestpoint and (lplr.Character:GetAttribute('InflatedBalloons') or 0) < 3 then
+                        local root = entitylib.character.RootPart
+                        if PopAboveLand.Enabled and balloonCount() > 0 and groundBelow(root) then
+                            -- The controller owns the balloons, so it is asked to let them go: this
+                            -- is the same call the game makes when a balloon is popped in play.
+                            for _ = 1, 3 do
+                                if balloonCount() <= 0 then break end
+                                pcall(function()
+                                    bedwars.BalloonController:deflateBalloon()
+                                end)
+                                task.wait(0.05)
+                            end
+                        elseif root.Position.Y < lowestpoint and balloonCount() < 3 then
                             local balloon = getItem('balloon')
                             if balloon then
                                 for _ = 1, 3 do
@@ -33,5 +63,10 @@ run(function()
             end
         end,
         Tooltip = 'Inflates when you fall into the void'
+    })
+
+    PopAboveLand = AutoBalloon:CreateToggle({
+        Name = 'Pop when above land',
+        Tooltip = 'Pops the balloons as soon as there is ground underneath you again'
     })
 end)

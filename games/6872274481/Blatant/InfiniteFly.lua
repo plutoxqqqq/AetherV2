@@ -91,6 +91,12 @@ run(function()
 		-- under that: asking for more raises "Attempt to shapecast with distance ...", which
 		-- used to abort the frame and switch the module straight back off. `CastLimit` is
 		-- the hard ceiling every probe is clamped to (see `castDistance`).
+		-- A flight over the void is a fall as far as the server is concerned, and its own fall
+		-- bookkeeping is what pulls the character back mid-crossing. Nothing under the feet for
+		-- this many studs is treated as a void crossing, and the server is told the fall is over
+		-- this often while one is in progress.
+		VoidClearDistance = 60, -- studs of clearance below the feet before the fall is cleared
+		VoidClearInterval = 0.5, -- seconds between server fall clears
 		VoidProbeRange = 1000, -- studs searched when the void is the question
 		CastLimit = 1024, -- studs; engine maximum shape cast distance
 		LandingNormalY = 0.6, -- minimum upward normal accepted as a landing surface
@@ -261,6 +267,22 @@ run(function()
 	end
 
 	--------------------------------------------------------------------------
+	-- The game's GroundHit remote ends the fall the server is tracking. Resolved once and reused;
+	-- when it is unavailable the crossing simply goes on without it.
+	local groundHitHandler
+	local function clearServerFall(velocity)
+		if not groundHitHandler then
+			local ok, handler = pcall(function()
+				return bedwars.Handler:Get('GroundHit')
+			end)
+			if not ok or not handler then return end
+			groundHitHandler = handler
+		end
+		pcall(function()
+			groundHitHandler:Fire('SendToServer', nil, Vector3.new(0, math.min(velocity.Y, 0), 0), workspace:GetServerTimeNow())
+		end)
+	end
+
 	-- Reusable cast parameters
 	--
 	-- Three parameter objects for the module's lifetime; the excluded character
@@ -365,6 +387,7 @@ run(function()
 			HoldY = nil,
 			Takeoff = 0,
 			CommandedVelocity = Vector3.zero,
+			VoidClearAt = 0,
 			CommandedHorizontal = 0,
 			LastDt = 0,
 			WallBlocked = false,
@@ -910,6 +933,16 @@ run(function()
 			if clearance < TUNING.WorldFloorMargin or (clearance / descent) < TUNING.VoidRecoveryLead then
 				voidDanger = true
 			end
+		end
+
+		-- 5b. Void crossings. The server is still running a fall while the character flies, and
+		-- that fall state is what reconciles the character back over the void. The game's own
+		-- GroundHit remote is the channel that ends a fall, so it is told the fall ended every
+		-- interval: the crossing then reads as a series of short hops instead of one long fall.
+		if not session.Grounded and session.GroundDistance > TUNING.VoidClearDistance
+			and tick() - session.VoidClearAt >= TUNING.VoidClearInterval then
+			session.VoidClearAt = tick()
+			clearServerFall(observedVelocity)
 		end
 
 		-- 6. Mode. State names all live in the State table; these modes are the

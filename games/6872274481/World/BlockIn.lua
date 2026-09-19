@@ -19,6 +19,22 @@ run(function()
 	return UseBlacklist and UseBlacklist.Enabled and Blacklist and table.find(Blacklist.ListEnabled, itemType)
     end
 
+    -- BlockIn places blocks straight out of the hotbar, so only item types that are actually reachable there
+    -- (or held right now) can be used. Anything still sitting in the inventory is skipped.
+	local function getHotbarItemTypes()
+		local types = {}
+		for _, slot in store.inventory.hotbar do
+			local item = slot.item
+			if item and item.itemType then
+				types[item.itemType] = true
+			end
+		end
+		if store.hand.tool and store.hand.toolType == 'block' then
+			types[store.hand.tool.Name] = true
+		end
+		return types
+	end
+
     local function getBlocks()
 	local blocks = {}
 
@@ -33,11 +49,12 @@ run(function()
 		return blocks
 	end
 
+	local reachable = getHotbarItemTypes()
 	for _, item in store.inventory.inventory.items do
 		local itemType = item.itemType
 		local meta = itemType and bedwars.ItemMeta[itemType]
 		local block = meta and meta.block
-		if block and not isBlacklisted(itemType) and (item.amount or 0) > 0
+		if block and reachable[itemType] and not isBlacklisted(itemType) and (item.amount or 0) > 0
 			and (not WoolOnly.Enabled or itemType:find('wool')) then
 			table.insert(blocks, { itemType, block.health or 0, item.tool, item.amount })
 		end
@@ -175,6 +192,9 @@ run(function()
 					end
 
 					local blocks = getBlocks()
+					if #blocks <= 0 then
+						notif('BlockIn', 'No blocks in your hotbar', 3, 'warning')
+					end
                     local function currentBreakingDirection()
                         if not BedBreak.Enabled or not entitylib.isAlive or not inputService:IsMouseButtonPressed(0) then return nil end
                         local bed = getBed()

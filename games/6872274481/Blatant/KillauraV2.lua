@@ -2321,8 +2321,8 @@ run(function()
 
 	Sort = Killaura:CreateDropdown({
 		Name = 'Target Mode',
-		List = {'Cursor', 'Angle'},
-		Default = 'Cursor'
+		List = {'Mouse', 'Distance', 'Damage', 'Angle', 'Health', 'Kit', 'Threat'},
+		Default = 'Mouse'
 	})
 
 	GUI = Killaura:CreateToggle({

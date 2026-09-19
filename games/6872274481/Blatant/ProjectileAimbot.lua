@@ -22,9 +22,6 @@ run(function()
 	rayCheck.FilterDescendantsInstances = {workspace:FindFirstChild('Map')}
 	-- The arc test casts through everything except the shooter, the camera and every entity, so a
 	-- blocked shot is rejected before the launch is committed rather than after.
-	local arcCheck = RaycastParams.new()
-	arcCheck.FilterType = Enum.RaycastFilterType.Exclude
-	local arcFilter = {}
 	local launchHook
 
 	local function resolveProjectileAimbotPart(ent, requested, projectileType)
@@ -79,23 +76,19 @@ run(function()
 		return gravity
 	end
 
-	local function arcIsClear(origin, velocity, gravity, travelTime)
-		table.clear(arcFilter)
-		table.insert(arcFilter, gameCamera)
-		table.insert(arcFilter, lplr.Character)
-		for _, ent in entitylib.List do
-			if ent.Character then table.insert(arcFilter, ent.Character) end
-		end
-		arcCheck.FilterDescendantsInstances = arcFilter
-		return prediction.IsTrajectoryClear(origin, velocity, gravity, travelTime, arcCheck) and true or false
-	end
-
-	local function solveAimbotLaunch(launch, projmeta, projectileType)
-		local origin = launch.positionFrom
+	-- The scan below already respects the Walls target setting, so the shot is no longer thrown
+	-- away a second time by an arc test: an arc test that reads blocked for any reason (the
+	-- shooter standing in the block it fires out of, a cast that starts inside geometry) turned
+	-- every shot away and left the module looking like it did nothing at all.
+	local function solveAimbotLaunch(origin, projmeta, projectileType)
 		local metaOk, meta = pcall(projmeta.getProjectileMeta, projmeta)
 		meta = metaOk and meta or bedwars.ProjectileMeta[projectileType]
 		if type(meta) ~= 'table' then return end
-		local gravity = (tonumber(meta.gravitationalAcceleration) or 196.2) * (tonumber(projmeta.gravityMultiplier) or 1)
+		-- A launch data whose gravity multiplier is zero is not gravity-free, it is unset: the
+		-- arithmetic that multiplies by it has to keep the projectile's own gravity.
+		local gravityMultiplier = tonumber(projmeta.gravityMultiplier) or 1
+		if gravityMultiplier == 0 then gravityMultiplier = 1 end
+		local gravity = (tonumber(meta.gravitationalAcceleration) or 196.2) * gravityMultiplier
 		local fullSpeed = tonumber(meta.launchVelocity) or launch.initialVelocity.Magnitude
 		if not fullSpeed or fullSpeed <= 0 then return end
 		-- Max accuracy models the shot at the speed the server will see it travel, which is what
@@ -145,10 +138,6 @@ run(function()
 			end
 
 			local direction = CFrame.new(origin, aimPoint).LookVector
-			local velocity = direction * solveSpeed
-			if Targets.Walls.Enabled and travelTime and not arcIsClear(origin, velocity, gravity, travelTime) then
-				return
-			end
 			return {Velocity = direction * shootSpeed, Time = travelTime, Player = ent}
 		end
 
@@ -161,6 +150,7 @@ run(function()
 			Players = Targets.Players.Enabled,
 			NPCs = Targets.NPCs.Enabled,
 			Priority = Targets.Priority and Targets.Priority.Value,
+			Wallcheck = Targets.Walls.Enabled,
 			Origin = origin,
 			MouseOrigin = gameCamera.ViewportSize / 2,
 			Sort = sortmethods[Sort.Value],
@@ -179,6 +169,13 @@ run(function()
 		Name = 'ProjectileAimbot',
 		Function = function(callback)
 			if callback then
+				if not (bedwars.ProjectileLaunchHook and bedwars.ProjectileController) then
+					notif('ProjectileAimbot', 'The projectile controller is unavailable.', 5, 'warning')
+					task.defer(function()
+						if ProjectileAimbot.Enabled then ProjectileAimbot:Toggle() end
+					end)
+					return
+				end
 				if vape.Modules.SilentAim and vape.Modules.SilentAim.Enabled then vape.Modules.SilentAim:Toggle() end
 				-- The hook receives (self, launchData, ...) - the draw request the game is about to turn
 				-- into a launch. Auto Charge belongs here, before the game reads the charge, because the
@@ -194,9 +191,17 @@ run(function()
 						end
 					end
 
+					local worldmeta, launchOrigin, shootPosition = ...
 					local launch = nextLaunch(self, launchData, ...)
-					if type(launch) ~= 'table' or typeof(launch.positionFrom) ~= 'Vector3'
-						or typeof(launch.initialVelocity) ~= 'Vector3' or not projmeta then return launch end
+					if not projmeta then return launch end
+					-- The launch the game hands back is not read for its keys: this module answers the
+					-- launch itself, so a build whose table answers to different names (or answers with
+					-- nothing at all) can no longer leave every shot unaimed.
+					local base = (typeof(shootPosition) == 'Vector3' and shootPosition)
+						or (type(launch) == 'table' and typeof(launch.positionFrom) == 'Vector3' and launch.positionFrom)
+						or (typeof(launchOrigin) == 'Vector3' and launchOrigin)
+						or (entitylib.isAlive and entitylib.character.RootPart.Position)
+					if not base then return launch end
 					local projectileType = tostring(projmeta.projectile or '')
 					if projectileType == '' or ((not OtherProjectiles.Enabled) and not projectileType:find('arrow')) then return launch end
 					local blacklistName = (projectileType == 'glue_trap' or projectileType == 'glue_projectile') and 'gloop' or projectileType
@@ -205,7 +210,7 @@ run(function()
 					-- This runs inside the game's own launch path, so anything that throws here is a bow
 					-- that never fires and an aim line that never draws. The solve is therefore optional
 					-- work: a failure has to leave the launch exactly as the game built it.
-					local ok, solved = pcall(solveAimbotLaunch, launch, projmeta, projectileType)
+					local ok, solved = pcall(solveAimbotLaunch, base, projmeta, projectileType)
 					if not ok then
 						if shared.VapeDeveloper then
 							warn('[catvape] projectile aimbot solve failed: ' .. tostring(solved))
@@ -214,16 +219,31 @@ run(function()
 					end
 					if type(solved) ~= 'table' then return launch end
 
-					-- Only the velocity is redirected. deltaT is the beam's simulation step and
-					-- drawDurationSeconds is the charge the shot is being fired with: rewriting either of
-					-- those is what removed the aim line and stopped the projectile from firing at all.
-					launch.initialVelocity = solved.Velocity
+					-- Everything the game put on the launch is kept, and only the velocity and the launch
+					-- position are replaced. deltaT is the beam's simulation step and
+					-- drawDurationSeconds is the charge the shot is fired with: rewriting either of those
+					-- is what removed the aim line and stopped the projectile from firing at all.
+					local projMeta = bedwars.ProjectileMeta[projectileType] or {}
+					local answer = {
+						initialVelocity = solved.Velocity,
+						positionFrom = base,
+						deltaT = tonumber(projmeta.lifetimeSec) or tonumber(projMeta.lifetimeSec) or 7,
+						gravitationalAcceleration = tonumber(projMeta.gravitationalAcceleration) or 196.2,
+						drawDurationSeconds = tonumber(projmeta.drawDurationSeconds) or 1
+					}
+					if type(launch) == 'table' then
+						for key, value in pairs(launch) do
+							if key ~= 'initialVelocity' and key ~= 'positionFrom' then answer[key] = value end
+						end
+						answer.initialVelocity = solved.Velocity
+						answer.positionFrom = base
+					end
 					store.hitchance.ProjectileAimbot = {
 						Value = getHitChance(solved.Player, solved.Time),
 						Clock = tick()
 					}
 					targetinfo.Targets[solved.Player] = tick() + 1
-					return launch
+					return answer
 				end)
 				ProjectileAimbot:Clean(function()
 					if launchHook then launchHook(); launchHook = nil end

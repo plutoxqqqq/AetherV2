@@ -17,6 +17,7 @@ run(function()
 	local rayCheck = RaycastParams.new()
 	rayCheck.FilterType = Enum.RaycastFilterType.Include
 
+	local Debug
 	local namecall
 	local namecallHooked = false
 	local lockedRandomPart
@@ -25,6 +26,10 @@ run(function()
 	local fovConn
 	local fovDrawing
 	local lastWarn = 0
+	local diagReason = ''
+	local diagTarget = nil
+	local nextDiag = 0
+	local fireRemote, fireRemoteChecked
 
 	-- ProjectileFire(tool, ammo, projectile, shootPosition, rootPosition, velocity, shotId, draw, timestamp)
 	-- - the order every caller in the pack itself uses (see fireProjectile in base.lua, and the
@@ -130,6 +135,24 @@ run(function()
 		return table.find(list, key) ~= nil
 	end
 
+	-- The remote is matched against the instance the pack itself resolved for ProjectileFire and
+	-- only falls back to the name when that lookup is unavailable, so a build that renames the
+	-- remote cannot leave every shot unredirected.
+	local function isFireRemote(remote)
+		if typeof(remote) ~= 'Instance' then return false end
+		if remote.Name == 'ProjectileFire' then return true end
+		if not fireRemoteChecked then
+			fireRemoteChecked = true
+			local resolved = getgenv().remotes and getgenv().remotes.FireProjectile
+			if resolved then
+				pcall(function()
+					fireRemote = bedwars.Client:Get(resolved).instance
+				end)
+			end
+		end
+		return fireRemote ~= nil and remote == fireRemote
+	end
+
 	local function isHoldingProjectile()
 		local tool = store.hand and store.hand.tool
 		local itemType = tool and tool.Name or ''
@@ -184,21 +207,33 @@ run(function()
 	-- Returns the velocity to send and the slot it belongs in, or nothing when the shot should be
 	-- left exactly as the game fired it.
 	local function solveSilent(args)
+		diagReason, diagTarget = '', nil
 		local projType, origin, velocity, velocityIndex = locateLaunch(args)
 		if not projType or typeof(origin) ~= 'Vector3' or typeof(velocity) ~= 'Vector3' then
+			diagReason = 'the launch arguments did not line up'
 			return
 		end
 
 		if (not OtherProjectiles.Enabled) and not projType:find('arrow', 1, true) then
+			diagReason = projType..' is not an arrow and Other Projectiles is off'
 			return
 		end
-		if isBlacklisted(projType) then return end
+		if isBlacklisted(projType) then
+			diagReason = projType..' is blacklisted'
+			return
+		end
 
 		local meta = bedwars.ProjectileMeta[projType]
-		if not meta then return end
+		if not meta then
+			diagReason = 'no projectile meta for '..tostring(projType)
+			return
+		end
 
 		local projSpeed = velocity.Magnitude
-		if projSpeed <= 0 then return end
+		if projSpeed <= 0 then
+			diagReason = 'the shot carries no speed'
+			return
+		end
 		local gravity = tonumber(meta.gravitationalAcceleration)
 		if gravity == nil then gravity = 196.2 end
 		if gravity < 1 then gravity = 0 end
@@ -219,13 +254,23 @@ run(function()
 			MouseOrigin = gameCamera.ViewportSize / 2,
 			Origin = origin
 		})
-		if not plr then return end
+		if not plr then
+			diagReason = 'no target inside the FOV circle'
+			return
+		end
 
 		local targetPart = getTargetPart(plr)
-		if not targetPart then return end
+		if not targetPart then
+			diagReason = 'the target has no '..tostring(TargetPart.Value)..' part'
+			return
+		end
+		diagTarget = (plr.Player and plr.Player.Name) or 'the entity'
 
 		local dist = (targetPart.Position - origin).Magnitude
-		if dist > Range.Value then return end
+		if dist > Range.Value then
+			diagReason = string.format('%s is %.0f studs away, past Range', diagTarget, dist)
+			return
+		end
 
 		local playerGravity = workspace.Gravity
 		local balloons = plr.Character and plr.Character:GetAttribute('InflatedBalloons')
@@ -273,10 +318,16 @@ run(function()
 			nil,
 			true
 		)
-		if not calc then return end
+		if not calc then
+			diagReason = 'no ballistic solution to '..diagTarget
+			return
+		end
 
 		local lifetime = tonumber(meta.predictionLifetimeSec) or tonumber(meta.lifetimeSec) or (projSpeed > 0 and math.min(3, 120 / projSpeed) or 3)
-		if travelTime and travelTime > lifetime then return end
+		if travelTime and travelTime > lifetime then
+			diagReason = string.format('the %.2fs flight is longer than the %.2fs lifetime', travelTime, lifetime)
+			return
+		end
 
 		if targetinfo and targetinfo.Targets then
 			targetinfo.Targets[plr] = tick() + 1
@@ -285,6 +336,7 @@ run(function()
 			store.hitchance.SilentAim = {Value = getHitChance(plr, travelTime), Clock = tick()}
 		end
 
+		diagReason = 'redirected at '..tostring(diagTarget)
 		-- Only the direction is redirected; the launch speed stays the one the shot actually has,
 		-- so the server sees a normal-strength shot that happens to fly at the target.
 		return CFrame.lookAt(origin, calc).LookVector * projSpeed, velocityIndex
@@ -307,17 +359,33 @@ run(function()
 
 				-- The hook is installed once and stays: it re-checks SilentAim.Enabled on every call,
 				-- so unhooking on disable would only add a window where a shot is not redirected.
+				-- The shot is taken on its own merits - the remote, the method, and whether a target can
+				-- be solved - rather than on who called it. An identity gate is the one condition that
+				-- can silently leave every shot alone, and the pack's own aiming modules already fire
+				-- at a target, so letting their shots through costs nothing.
 				if not namecallHooked then
 					namecallHooked = true
 					namecall = hookmetamethod(game, '__namecall', newcclosure(function(...)
 						if not SilentAim.Enabled then return namecall(...) end
-						if checkcaller() then return namecall(...) end
-						if getnamecallmethod() ~= 'InvokeServer' then return namecall(...) end
 						local remote = ...
-						if typeof(remote) ~= 'Instance' or tostring(remote) ~= 'ProjectileFire' then
+						if not isFireRemote(remote) then
+							-- A remote whose name reads like a shot but is not the one being matched is the
+							-- one case the reason strings can never explain, because no solve is reached.
+							if Debug and Debug.Enabled and typeof(remote) == 'Instance' and tick() > nextDiag then
+								local name = remote.Name
+								if name:find('rojectile') or name:find('Fire') then
+									nextDiag = tick() + 3
+									task.defer(notif, 'SilentAim', 'saw '..name..' called as '..tostring(getnamecallmethod())..', which is not the shot remote', 4, 'warning')
+								end
+							end
 							return namecall(...)
 						end
 
+						-- The method is taken from the call rather than required to be a fixed name: the shot is
+						-- identified by the remote it lands on, and nothing is rewritten unless a solution was
+						-- actually solved for the arguments that arrived, so a differently named invoke can no
+						-- longer turn every shot away before it is looked at.
+						local method = getnamecallmethod()
 						local self = ...
 						local args = table.pack(select(2, ...))
 						local ok, newVelocity, velocityIndex = pcall(solveSilent, args)
@@ -337,12 +405,26 @@ run(function()
 								end
 								args[8].drawDurationSec = dur * (skidChargePercent.Value / 100)
 							end
-						elseif not ok and shared.VapeDeveloper and tick() > lastWarn then
-							lastWarn = tick() + 5
-							warn('[AetherV2] silentaim solve failed: '..tostring(newVelocity))
+							if Debug and Debug.Enabled and tick() > nextDiag then
+								nextDiag = tick() + 1
+								task.defer(notif, 'SilentAim', 'sent the '..tostring(args[3])..' at '..tostring(diagTarget), 4)
+							end
+						else
+							if not ok then
+								diagReason = tostring(newVelocity)
+							end
+							if shared.VapeDeveloper and tick() > lastWarn then
+								lastWarn = tick() + 5
+								warn('[AetherV2] silentaim left a projectile alone: '..tostring(diagReason))
+							end
+							if Debug and Debug.Enabled and tick() > nextDiag then
+								nextDiag = tick() + 1
+								task.defer(notif, 'SilentAim', 'left the shot alone: '..tostring(diagReason), 4, 'warning')
+							end
 						end
 
-						return self.InvokeServer(self, table.unpack(args, 1, args.n))
+						local invoke = self[method] or self.InvokeServer
+						return invoke(self, table.unpack(args, 1, args.n))
 					end))
 				end
 			else
@@ -466,5 +548,10 @@ run(function()
 		Min = 1,
 		Max = 100,
 		Default = 100
+	})
+
+	Debug = SilentAim:CreateToggle({
+		Name = 'Debug',
+		Tooltip = 'Reports what each shot did - which target it was sent to, or why it was left alone'
 	})
 end)

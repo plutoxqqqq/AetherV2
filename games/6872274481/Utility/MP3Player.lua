@@ -1,47 +1,36 @@
 run(function()
     local MP3Player
     local Volume
-    local Speed
     local Shuffle
     local Loop
-    local AutoRefresh
     local PlayField
     local Playlist
     local ShowHUD
-    local HUDProgress
-    local HUDTime
-    local HUDColor
     local PulseToBeat
-    local PulseFrequency
     local PulseIntensity
     local PulseType
-    local PulseAnimation
     local PulseColor
     local PulseRegions
-    local PULSE_EASINGS = {
-        ['Ease-in-out'] = 'InOut',
-        ['Ease-out'] = 'Out',
-        ['Ease-in'] = 'In',
-        ['Linear'] = 'Linear',
-        ['Quad'] = 'Quad',
-        ['Cubic'] = 'Cubic',
-        ['Bounce'] = 'Bounce',
-        ['Elastic'] = 'Elastic'
-    }
 
     local SONGS = 'aetherv2/songs'
     local SPOTIFY = 'aetherv2/spotify'
 
+    local soundService = game:GetService('SoundService')
     local sound
     local tracks, index = {}, 0
     local hudName, hudTime, hudBarFill, hudBackground
     local pulseWhole, pulseEdges = nil, {}
-    local pulseFovBase, pulseFovTween
     local lastScan = 0
     local scanKey = ''
     local lastPlay = 0
+    local loadDeadline = 0
+    local loadFailures = 0
     local beatCooldown = 0
-    local loudnessAverage = 0
+    local loudnessAverage, lastLoudness = 0, 0
+    local FOV_STEP_NAME = 'AetherMP3BeatPulse'
+    local FOV_PULSE_TIME = 0.28
+    local fovPulseStart, fovPulseSize, fovBase = 0, 0, nil
+    local fovBound, fovPreRender = false, nil
 
     local function fsList(path)
         local ok, res = pcall(function()
@@ -121,18 +110,11 @@ run(function()
     local function refreshHUD()
         if not hudName then return end
         local track = tracks[index]
-        local colour = HUDColor and Color3.fromHSV(HUDColor.Hue, HUDColor.Sat, HUDColor.Value) or Color3.new(1, 1, 1)
-        hudName.TextColor3 = colour
         hudName.Text = track and track.Name or 'No song loaded'
-        if hudBackground then
-            hudBackground.BackgroundTransparency = HUDColor and (1 - (HUDColor.Opacity * 0.65)) or 0.35
-        end
 
         local length = sound and sound.TimeLength or 0
         local at = sound and sound.TimePosition or 0
         if hudTime then
-            hudTime.Visible = HUDTime == nil or HUDTime.Enabled
-            hudTime.TextColor3 = colour
             local function clock(t)
                 t = math.max(math.floor(t), 0)
                 return string.format('%d:%02d', t // 60, t % 60)
@@ -140,8 +122,6 @@ run(function()
             hudTime.Text = track and (clock(at) .. ' / ' .. clock(length)) or ''
         end
         if hudBarFill then
-            hudBarFill.Parent.Visible = HUDProgress == nil or HUDProgress.Enabled
-            hudBarFill.BackgroundColor3 = colour
             hudBarFill.Size = UDim2.fromScale(length > 0 and math.clamp(at / length, 0, 1) or 0, 1)
         end
     end
@@ -156,14 +136,48 @@ run(function()
         end
     end
 
-    local function stopFovPulse()
-        if pulseFovTween then
-            pulseFovTween:Cancel()
-            pulseFovTween = nil
+    -- The game's camera puts the FOV back to its own value in PreRender, after every render step callback, so a
+    -- tween or a plain write here is undone before the frame is drawn and the bump is never seen. The bump is
+    -- therefore written as an offset on top of the game's own FOV, from both a late render step and from
+    -- PreRender (bound while pulsing, so it runs after the game's own PreRender and wins the frame).
+    local stopFovPulse
+
+    local function fovEnvelope(now)
+        local progress = (now - fovPulseStart) / FOV_PULSE_TIME
+        if progress >= 1 then return 0 end
+        local remaining = 1 - progress
+        return fovPulseSize * remaining * remaining * (3 - 2 * remaining)
+    end
+
+    local function applyFovPulse()
+        local camera = workspace.CurrentCamera
+        if not camera then return end
+        local size = fovEnvelope(os.clock())
+        if size <= 0.03 then
+            stopFovPulse()
+            return
         end
-        if pulseFovBase then
-            pcall(function() gameCamera.FieldOfView = pulseFovBase end)
-            pulseFovBase = nil
+        if not fovBase then fovBase = camera.FieldOfView end
+        camera.FieldOfView = fovBase + size
+    end
+
+    local function startFovPulse(amount)
+        fovPulseStart, fovPulseSize = os.clock(), amount
+        if fovBound then return end
+        fovBound = true
+        runService:BindToRenderStep(FOV_STEP_NAME, Enum.RenderPriority.Last.Value, applyFovPulse)
+        fovPreRender = runService.PreRender:Connect(applyFovPulse)
+    end
+
+    stopFovPulse = function()
+        fovPulseStart, fovPulseSize, fovBase = 0, 0, nil
+        if fovBound then
+            fovBound = false
+            runService:UnbindFromRenderStep(FOV_STEP_NAME)
+        end
+        if fovPreRender then
+            fovPreRender:Disconnect()
+            fovPreRender = nil
         end
     end
 
@@ -171,55 +185,38 @@ run(function()
         setPulseTransparency(1)
         stopFovPulse()
         beatCooldown = 0
-        loudnessAverage = 0
-    end
-
-    local function frequencyDelay()
-        if not PulseFrequency then return 0.25 end
-        if PulseFrequency.Value == 'Less' then return 0.8 end
-        if PulseFrequency.Value == 'Frequent' then return 0.15 end
-        return 0.25
+        loudnessAverage, lastLoudness = 0, 0
     end
 
     local function pulseFromBeat(loudness)
         if not PulseToBeat.Enabled or not sound or not sound.IsPlaying then return end
+        if loudness <= 0 then
+            lastLoudness = 0
+            return
+        end
+
+        if loudnessAverage <= 0 then
+            loudnessAverage = loudness
+        else
+            loudnessAverage = loudnessAverage * 0.9 + loudness * 0.1
+        end
+
+        -- Beats are found relative to the running average instead of against a hard number: music rarely
+        -- crosses a fixed floor, and the average only climbs when the whole song gets loud, so the pulse keeps
+        -- reacting the way the song does.
+        local rising = loudness >= lastLoudness
+        lastLoudness = loudness
+        local threshold = math.max(loudnessAverage * 1.3, 15)
+        if not rising or loudness < threshold then return end
+
         local now = os.clock()
         if now < beatCooldown then return end
 
-        loudnessAverage = loudnessAverage == 0 and loudness or (loudnessAverage * 0.92 + loudness * 0.08)
-        local threshold = math.max(loudnessAverage * 1.45, 120)
-        if loudness < threshold then return end
-
-        local peak = math.clamp((loudness - threshold) / math.max(threshold, 1), 0, 1)
-        local strength = math.clamp((PulseIntensity and PulseIntensity.Value or 55) / 100 * (0.35 + peak * 0.65), 0, 1)
+        local peak = math.clamp(loudness / math.max(loudnessAverage, 1) - 1, 0, 1)
+        local strength = math.clamp((PulseIntensity and PulseIntensity.Value or 55) / 100 * (0.4 + peak * 0.6), 0, 1)
         local kind = PulseType and PulseType.Value or 'FOV'
         if kind == 'FOV' then
-            local camera = workspace.CurrentCamera
-            if camera then
-                if not pulseFovBase then
-                    pulseFovBase = (bedwars.FovController and bedwars.FovController:getFOV()) or camera.FieldOfView
-                end
-                if pulseFovTween then
-                    pulseFovTween:Cancel()
-                    pulseFovTween = nil
-                end
-                local base = pulseFovBase or camera.FieldOfView
-                camera.FieldOfView = base
-                local styleName = PULSE_EASINGS[(PulseAnimation and PulseAnimation.Value) or 'Ease-in-out'] or 'Quad'
-                pulseFovTween = tweenService:Create(camera, TweenInfo.new(0.12, Enum.EasingStyle[styleName], Enum.EasingDirection.Out), {
-                    FieldOfView = base + 6 + strength * 14
-                })
-                pulseFovTween:Play()
-                task.delay(0.12, function()
-                    if not PulseToBeat.Enabled or kind ~= 'FOV' then return end
-                    local cam = workspace.CurrentCamera
-                    if not cam or not pulseFovBase then return end
-                    pulseFovTween = tweenService:Create(cam, TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-                        FieldOfView = pulseFovBase
-                    })
-                    pulseFovTween:Play()
-                end)
-            end
+            startFovPulse(6 + strength * 14)
         else
             local colour = PulseColor and Color3.fromHSV(PulseColor.Hue or 0, PulseColor.Sat or 0, PulseColor.Value == nil and 1 or PulseColor.Value) or Color3.new(1, 1, 1)
             if pulseWhole then
@@ -230,7 +227,7 @@ run(function()
             end
             setPulseTransparency(1 - strength)
         end
-        beatCooldown = now + frequencyDelay()
+        beatCooldown = now + 0.2
     end
 
     local function stop()
@@ -247,25 +244,32 @@ run(function()
         sound.Looped = Loop.Enabled and not Shuffle.Enabled
     end
 
-    local function play(newIndex)
-        if #tracks <= 0 then
+    local function play(newIndex, attempt)
+        attempt = attempt or 0
+        if #tracks <= 0 or attempt >= #tracks then
+            if #tracks > 0 then
+                notif('MP3Player', 'None of the songs in the folder could be played', 5, 'warning')
+            end
             index = 0
+            loadFailures = 0
             refreshHUD()
             resetPulse()
             return
         end
-        lastPlay = tick()
         index = ((newIndex - 1) % #tracks) + 1
         local track = tracks[index]
         local asset = track and assetFor(track.Path)
         if not asset then
-            notif('MP3Player', 'Could not load ' .. (track and track.Name or 'that song'), 4, 'warning')
+            notif('MP3Player', 'Skipping ' .. (track and track.Name or 'a song') .. ' - it could not be loaded', 4, 'warning')
+            play(index + 1, attempt + 1)
             return
         end
         if not sound then return end
+
+        lastPlay = tick()
+        loadDeadline = tick() + 5
         sound.SoundId = asset
         sound.Volume = Volume.Value / 100
-        sound.PlaybackSpeed = Speed.Value
         sound.TimePosition = 0
         applyLoop()
         resetPulse()
@@ -306,8 +310,7 @@ run(function()
                 sound = Instance.new('Sound')
                 sound.Name = 'AetherMP3'
                 sound.Volume = Volume.Value / 100
-                sound.PlaybackSpeed = Speed.Value
-                sound.Parent = vape.gui
+                sound.Parent = soundService
                 MP3Player:Clean(sound)
                 MP3Player:Clean(sound.Ended:Connect(function()
                     if not MP3Player.Enabled then return end
@@ -337,17 +340,36 @@ run(function()
 
                 MP3Player:Clean(task.spawn(function()
                     while MP3Player.Enabled do
-                        if AutoRefresh.Enabled and tick() - lastScan > 3 then
+                        if tick() - lastScan > 3 then
                             lastScan = tick()
                             local changed = scan(true)
                             if changed and sound and not sound.IsPlaying and #tracks > 0 then
                                 play(index > 0 and index or 1)
                             end
                         end
-                        if sound and #tracks > 0 and sound.SoundId ~= '' and sound.IsLoaded
-                            and not sound.IsPlaying and not sound.IsPaused
-                            and (tick() - lastPlay) > 1 then
-                            advance(1)
+                        local track = tracks[index]
+                        if sound and track and sound.SoundId ~= '' then
+                            if sound.IsPlaying or sound.IsPaused then
+                                loadDeadline = 0
+                                loadFailures = 0
+                            elseif loadDeadline > 0 and tick() > loadDeadline then
+                                -- The file never made it into the audio engine. Skip it rather than sitting on a
+                                -- track the HUD claims is playing while nothing comes out.
+                                loadDeadline = 0
+                                loadFailures += 1
+                                if loadFailures >= #tracks then
+                                    notif('MP3Player', 'No song in the folder would play', 5, 'warning')
+                                    index = 0
+                                    sound.SoundId = ''
+                                    refreshHUD()
+                                    resetPulse()
+                                else
+                                    notif('MP3Player', 'Skipping ' .. track.Name .. ' - it would not play', 4, 'warning')
+                                    advance(1)
+                                end
+                            elseif sound.IsLoaded and (tick() - lastPlay) > 1 then
+                                advance(1)
+                            end
                         end
                         refreshHUD()
                         task.wait(0.2)
@@ -358,6 +380,8 @@ run(function()
                 sound = nil
                 index = 0
                 scanKey = ''
+                loadDeadline = 0
+                loadFailures = 0
                 refreshHUD()
             end
         end,
@@ -524,20 +548,6 @@ run(function()
             end
         end
     })
-    Speed = MP3Player:CreateSlider({
-        Name = 'Speed',
-        Min = 0.5,
-        Max = 2,
-        Default = 1,
-        Decimal = 100,
-        Suffix = 'x',
-        Function = function(val)
-            if sound then
-                sound.PlaybackSpeed = val
-            end
-        end,
-        Tooltip = 'Playback speed'
-    })
     Shuffle = MP3Player:CreateToggle({
         Name = 'Shuffle',
         Function = applyLoop,
@@ -547,11 +557,6 @@ run(function()
         Name = 'Loop song',
         Function = applyLoop,
         Tooltip = 'Repeat the current song instead of moving on'
-    })
-    AutoRefresh = MP3Player:CreateToggle({
-        Name = 'Auto refresh',
-        Default = true,
-        Tooltip = 'Watch the songs folder and pick up new or deleted files while you play'
     })
     PlayField = MP3Player:CreateTextBox({
         Name = 'Play song',
@@ -585,42 +590,17 @@ run(function()
         Default = true,
         Tooltip = 'Show the now-playing panel. Drag it by its own frame to move it',
         Function = function(callback)
-            pcall(function()
-                HUDProgress.Object.Visible = callback
-                HUDTime.Object.Visible = callback
-                HUDColor.Object.Visible = callback
-            end)
             if MP3Player.Children then
                 MP3Player.Children.Visible = callback and MP3Player.Enabled
             end
         end
     })
-    HUDProgress = MP3Player:CreateToggle({
-        Name = 'Progress bar',
-        Default = true,
-        Darker = true,
-        Tooltip = 'Show how far through the song you are'
-    })
-    HUDTime = MP3Player:CreateToggle({
-        Name = 'Show time',
-        Default = true,
-        Darker = true,
-        Tooltip = 'Show elapsed and total time'
-    })
-    HUDColor = MP3Player:CreateColorSlider({
-        Name = 'HUD colour',
-        Darker = true,
-        DefaultOpacity = 0.55,
-        Function = refreshHUD
-    })
     local function refreshPulseOptions()
         local on = PulseToBeat and PulseToBeat.Enabled
         local kind = PulseType and PulseType.Value or 'FOV'
         local regions = PulseRegions and PulseRegions.Value or 'Whole'
-        if PulseFrequency and PulseFrequency.Object then PulseFrequency.Object.Visible = on end
         if PulseType and PulseType.Object then PulseType.Object.Visible = on end
         if PulseIntensity and PulseIntensity.Object then PulseIntensity.Object.Visible = on and kind == 'FOV' end
-        if PulseAnimation and PulseAnimation.Object then PulseAnimation.Object.Visible = on and kind == 'FOV' end
         if PulseColor and PulseColor.Object then PulseColor.Object.Visible = on and kind == 'Colour' end
         if PulseRegions and PulseRegions.Object then PulseRegions.Object.Visible = on and kind == 'Colour' end
         if pulseWhole then
@@ -641,13 +621,6 @@ run(function()
         end,
         Tooltip = 'Pulse the screen in time with peaks in the current song'
     })
-    PulseFrequency = MP3Player:CreateDropdown({
-        Name = 'Frequency',
-        List = { 'Regular', 'Frequent', 'Less' },
-        Default = 'Regular',
-        Darker = true,
-        Tooltip = 'Less - fewer pulses; Regular - balanced; Frequent - reacts more often',
-    })
     PulseType = MP3Player:CreateDropdown({
         Name = 'Type',
         List = { 'FOV', 'Colour' },
@@ -664,13 +637,6 @@ run(function()
         Suffix = '%',
         Darker = true,
         Tooltip = 'How strong the FOV bump is',
-    })
-    PulseAnimation = MP3Player:CreateDropdown({
-        Name = 'Animation',
-        List = { 'Ease-in-out', 'Ease-out', 'Ease-in', 'Linear', 'Quad', 'Cubic', 'Bounce', 'Elastic' },
-        Default = 'Ease-in-out',
-        Darker = true,
-        Tooltip = 'Easing used for the FOV bump',
     })
     PulseColor = MP3Player:CreateColorSlider({
         Name = 'Pulse Colour',

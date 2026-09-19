@@ -2,16 +2,25 @@ run(function()
     local Memory
     local label
 
+    -- The engine's own performance counter is the only memory figure a client can read, so it is looked
+    -- up once and then read directly rather than re-walking the Stats tree every second.
+    local stats = game:GetService('Stats')
+    local memoryStat = stats:FindFirstChild('PerformanceStats') and stats.PerformanceStats:FindFirstChild('Memory')
+    local function usedMemory()
+		if not memoryStat then return nil end
+		local ok, value = pcall(function() return memoryStat:GetValue() end)
+		return ok and tonumber(value) or nil
+    end
+
     Memory = vape.Categories.Legit:CreateModule({
 	Name = 'Memory',
 	Category = 'Hud',
 	Function = function(callback)
 		if callback then
 			repeat
-				label.Text = math.floor(
-					tonumber(game:GetService('Stats'):FindFirstChild('PerformanceStats').Memory:GetValue())
-				) .. ' MB'
-				task.wait(1)
+				local megabytes = usedMemory()
+				if megabytes then label.Text = math.floor(megabytes + 0.5) .. ' MB' end
+				task.wait(0.5)
 			until not Memory.Enabled
 		end
 	end,

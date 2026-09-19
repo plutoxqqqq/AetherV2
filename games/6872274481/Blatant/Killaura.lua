@@ -528,7 +528,7 @@ run(function()
         Players = true,
         NPCs = true
     })
-    local methods = {'Damage', 'Distance'}
+    local methods = {'Mouse', 'Distance', 'Damage', 'Angle', 'Health', 'Kit', 'Threat'}
     for _, i in sortlist do
         if not table.find(methods, i) then
             table.insert(methods, i)

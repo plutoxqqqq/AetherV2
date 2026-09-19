@@ -12,12 +12,18 @@ run(function()
 	local visualTween, visualPos
 	local visualSpeed = 0.1
 
+	local edgeAdjacent = {}
 	for x = -3, 3, 3 do
 		for y = -3, 3, 3 do
 			for z = -3, 3, 3 do
 				local vec = Vector3.new(x, y, z)
 				if vec ~= Vector3.zero then
 					table.insert(adjacent, vec)
+					-- a cell sharing a whole face, never just a corner or an edge
+					local flat = vec * Vector3.new(1, 0, 1)
+					if vec.Y == 0 and flat.Magnitude == 3 or vec.Y ~= 0 and flat.Magnitude == 0 then
+						table.insert(edgeAdjacent, vec)
+					end
 				end
 			end
 		end
@@ -31,11 +37,22 @@ run(function()
 	end
 	getgenv().nearCorner = nearCorner
 
-	local function blockProximity(pos)
+	local function nearFace(poscheck, pos)
+		local delta = pos - poscheck
+		local absx, absy, absz = math.abs(delta.X), math.abs(delta.Y), math.abs(delta.Z)
+		if absx >= absy and absx >= absz then
+			return poscheck + Vector3.new(delta.X > 0 and 3 or -3, 0, 0)
+		elseif absy >= absz then
+			return poscheck + Vector3.new(0, delta.Y > 0 and 3 or -3, 0)
+		end
+		return poscheck + Vector3.new(0, 0, delta.Z > 0 and 3 or -3)
+	end
+
+	local function blockProximity(pos, diagonal)
 		local mag, returned = 60
 		local tab = getBlocksInPoints(bedwars.BlockController:getBlockPosition(pos - Vector3.new(21, 21, 21)), bedwars.BlockController:getBlockPosition(pos + Vector3.new(21, 21, 21)))
 		for _, v in tab do
-			local blockpos = nearCorner(v, pos)
+			local blockpos = diagonal and nearCorner(v, pos) or nearFace(v, pos)
 			local newmag = (pos - blockpos).Magnitude
 			if newmag < mag then
 				mag, returned = newmag, blockpos
@@ -46,8 +63,8 @@ run(function()
 	end
 	getgenv().blockProximity = blockProximity
 
-	local function checkAdjacent(pos)
-		for _, v in adjacent do
+	local function checkAdjacent(pos, diagonal)
+		for _, v in (diagonal and adjacent or edgeAdjacent) do
 			if getPlacedBlock(pos + v) then
 				return true
 			end
@@ -150,7 +167,7 @@ run(function()
 
 								local block, blockpos = getPlacedBlock(currentpos)
 								if not block then
-									blockpos = checkAdjacent(blockpos * 3) and blockpos * 3 or blockProximity(currentpos)
+									blockpos = checkAdjacent(blockpos * 3, Diagonal.Enabled) and blockpos * 3 or blockProximity(currentpos, Diagonal.Enabled)
 									if blockpos then
 										task.delay(0, bedwars.placeBlock, blockpos, wool, false)
 									end

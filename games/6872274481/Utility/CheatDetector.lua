@@ -105,8 +105,8 @@ run(function()
 	-- rest of the pack colours them with, so one verdict is visible everywhere.
 	local function persist(plr, reason)
 		pcall(function()
-			if isfolder and not isfolder('aether') then makefolder('aether') end
-			local path = 'aether/exploiters.json'
+			if isfolder and not isfolder('aetherv2') then makefolder('aetherv2') end
+			local path = 'aetherv2/exploiters.json'
 			local decoded = {}
 			if isfile and isfile(path) then
 				local body = select(2, pcall(readfile, path))

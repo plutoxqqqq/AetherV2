@@ -4,17 +4,12 @@ run(function()
     local originalMode
     local renderName = 'AetherNoCameraCollision'
     local distance = 12
-    local manualInput
     local cameraModule
     local nextCameraLookup = 0
     local firstPersonDistance = 1
 
     local function stopManual()
 		runService:UnbindFromRenderStep(renderName)
-		if manualInput then
-			manualInput:Disconnect()
-			manualInput = nil
-		end
 		cameraModule = nil
 		nextCameraLookup = 0
 	end
@@ -54,19 +49,21 @@ run(function()
 
     local function startManual()
 		stopManual()
-		distance = math.clamp((gameCamera.CFrame.Position - gameCamera.Focus.Position).Magnitude, 0.5, lplr.CameraMaxZoomDistance)
-		manualInput = inputService.InputChanged:Connect(function(input)
-			if input.UserInputType == Enum.UserInputType.MouseWheel then
-				distance = math.clamp(distance - input.Position.Z * math.max(distance * 0.15, 1), 0.5, lplr.CameraMaxZoomDistance)
-			end
-		end)
-		runService:BindToRenderStep(renderName, Enum.RenderPriority.Camera.Value + 1, function()
+		distance = math.clamp((gameCamera.CFrame.Position - gameCamera.Focus.Position).Magnitude, 0.5, lplr.CameraMaxZoomDistance)		runService:BindToRenderStep(renderName, Enum.RenderPriority.Camera.Value + 1, function(delta)
 			-- Roblox updates character transparency from its own zoom state before this
 			-- callback. Respect that state in first person instead of moving an already
 			-- hidden character back into third person.
 			local cameraDistance, firstPerson = getCameraDistance()
-			distance = math.clamp(cameraDistance, 0.5, lplr.CameraMaxZoomDistance)
-			if firstPerson or distance <= firstPersonDistance or gameCamera.CameraType == Enum.CameraType.Scriptable then return end
+			if firstPerson or gameCamera.CameraType == Enum.CameraType.Scriptable then
+				distance = math.clamp(cameraDistance, 0.5, lplr.CameraMaxZoomDistance)
+				return
+			end
+			-- The game's distance already glides while you zoom, but snapping the camera straight onto it
+			-- each frame is what made zooming feel instant. Ease onto it instead so zooming keeps the
+			-- original weight, while the camera still ignores walls.
+			local alpha = 1 - math.exp(-math.clamp(delta or 0, 0, 0.1) * 12)
+			distance += (math.clamp(cameraDistance, 0.5, lplr.CameraMaxZoomDistance) - distance) * alpha
+			if distance <= firstPersonDistance then return end
 			local focus, look = gameCamera.Focus, gameCamera.CFrame.LookVector
 			gameCamera.CFrame = CFrame.lookAlong(focus.Position - look * distance, look)
 		end)

@@ -68,10 +68,10 @@ run(function()
 			rayCheck
 		)
 		if ray and (not Spider.Enabled or SpiderShift) then
-			local phaseDirection = grabClosestNormal(ray)
-			if ray.Instance.Size[phaseDirection] <= StudLimit.Value then
+			local wallAxis = grabClosestNormal(ray)
+			if ray.Instance.Size[wallAxis] <= StudLimit.Value then
 				local root = entitylib.character.RootPart
-				local dest = root.CFrame + (ray.Normal * (-ray.Instance.Size[phaseDirection] - (root.Size.X / 1.5)))
+				local dest = root.CFrame + (ray.Normal * (-ray.Instance.Size[wallAxis] - (root.Size.X / 1.5)))
 
 				if #workspace:GetPartBoundsInBox(dest, Vector3.one, overlapCheck) <= 0 then
 					if Mode.Value == 'Motor' then
@@ -93,18 +93,18 @@ run(function()
     }
     Functions.Motor = Functions.CFrame
 
-    Phase = vape.Categories.Blatant:CreateModule({
+    NoClip = vape.Categories.Blatant:CreateModule({
 	Name = 'NoClip',
 	Function = function(callback)
 		if callback then
-			Phase:Clean(runService.Stepped:Connect(function()
+			NoClip:Clean(runService.Stepped:Connect(function()
 				if entitylib.isAlive then
 					Functions[Mode.Value]()
 				end
 			end))
 
 			if Mode.Value == 'FFlag' then
-				Phase:Clean(lplr.OnTeleport:Connect(function()
+				NoClip:Clean(lplr.OnTeleport:Connect(function()
 					teleported = true
 					setfflag('AssemblyExtentsExpansionStudHundredth', '30')
 				end))
@@ -120,9 +120,9 @@ run(function()
 			fflag = nil
 		end
 	end,
-	Tooltip = 'Lets you Phase/Clip through walls. (Hold shift to use No Clip over spider)',
+	Tooltip = 'Walks through walls. Hold shift to let Spider take over while this is on',
     })
-    Mode = Phase:CreateDropdown({
+    Mode = NoClip:CreateDropdown({
 	Name = 'Mode',
 	List = { 'Part', 'Character', 'CFrame', 'Motor', 'FFlag' },
 	Function = function(val)
@@ -138,7 +138,7 @@ run(function()
 	end,
 	Tooltip = 'Part - nearby parts\nCharacter - local collisions\nCFrame - teleport past\nMotor - CFrame with bypass\nFFlag - all physics',
     })
-    StudLimit = Phase:CreateSlider({
+    StudLimit = NoClip:CreateSlider({
 	Name = 'Wall Size',
 	Min = 1,
 	Max = 20,

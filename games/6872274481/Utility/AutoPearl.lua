@@ -30,19 +30,25 @@ run(function()
 		hotbarSwitch(hotbar)
 	end
 
+	-- The switch costs time - the hotbar switch waits for the game to confirm it - and the pearl
+	-- leaves after it, so the solve is taken from where the character is now rather than from where
+	-- it was when the clutch started. Solving before the switch is what made the legit clutch fall
+	-- short: the pearl was aimed from a position the character had already fallen away from.
+	local firePos = entitylib.isAlive and entitylib.character.RootPart.Position or pos
+
 	local meta = bedwars.ProjectileMeta.telepearl
-	local calc = prediction.SolveTrajectory(pos, meta.launchVelocity, meta.gravitationalAcceleration, spot, Vector3.zero, workspace.Gravity, 0, 0)
+	local calc = prediction.SolveTrajectory(firePos, meta.launchVelocity, meta.gravitationalAcceleration, spot, Vector3.zero, workspace.Gravity, 0, 0)
 	local landed = false
 
 	if calc then
-		local dir = CFrame.lookAt(pos, calc).LookVector * meta.launchVelocity
-		local projectile = bedwars.ProjectileController:createLocalProjectile(meta, 'telepearl', 'telepearl', pos, nil, dir, {drawDurationSeconds = 1})
+		local dir = CFrame.lookAt(firePos, calc).LookVector * meta.launchVelocity
+		local projectile = bedwars.ProjectileController:createLocalProjectile(meta, 'telepearl', 'telepearl', firePos, nil, dir, {drawDurationSeconds = 1})
 		local res = projectileRemote:InvokeServer(
 			item.tool,
 			'telepearl',
 			'telepearl',
-			pos,
-			pos,
+			firePos,
+			firePos,
 			dir,
 			httpService:GenerateGUID(true),
 			{

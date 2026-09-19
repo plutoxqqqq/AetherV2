@@ -1,7 +1,6 @@
 run(function()
     local NoFall
     local Mode
-    local MinVelocity
     local BlockClutch
     local TelepearlClutch
     local DaoClutch
@@ -207,7 +206,11 @@ run(function()
         local health = (lplr.Character and lplr.Character:GetAttribute('Health')) or humanoid.Health
         local fallBlocks = math.max(0, ((fallAnchorY or root.Position.Y) - ground.Position.Y) / 3)
         local estimatedDamage = math.max(0, fallBlocks - 6) * 5
-        return estimatedDamage >= health
+        -- The estimate reads high: the anchor is set before the character leaves the ledge (and
+        -- includes the rise of whatever jump it was on), so a survivable drop used to clear the
+        -- health it was compared against. A clutch is only taken when the estimate beats the
+        -- health it has to beat by a margin.
+        return estimatedDamage >= health + 10
     end
 
     local function abilityClutch(item, ability, callback)
@@ -306,11 +309,22 @@ run(function()
         return pearl and ground and firePearl(root, ground.Position + Vector3.new(0, 3, 0), pearl)
     end
 
+    -- A fall is finished with the one method that started it. Switching halfway is what put a
+    -- telepearl at the end of a block clutch, so the chosen method is remembered for the rest of
+    -- the fall and only replaced once what it needs has run out.
+    local clutchMethod
+
+    local function hasWool()
+        local wool, amount = getWool()
+        return wool ~= nil and (amount or 0) >= 1
+    end
+
     local function legitClutch(root, humanoid, ground)
         local now = tick()
         if now < clutchBusyUntil or now - lastLegitUse < 0.06 then return end
         if humanoid.FloorMaterial ~= Enum.Material.Air or root.AssemblyLinearVelocity.Y >= 0 then
             fallAnchorY = root.Position.Y
+            clutchMethod = nil
             return
         end
 
@@ -320,23 +334,35 @@ run(function()
 
         if not isFallFatal(root, humanoid, ground) then return end
 
-        if BlockClutch and BlockClutch.Enabled and groundDistance > 21 and (fallAnchorY - root.Position.Y) >= 15 then
+        local blocksUsable = (BlockClutch and BlockClutch.Enabled) and groundDistance > 21
+            and (fallAnchorY - root.Position.Y) >= 15 and hasWool()
+        local pearlUsable = TelepearlClutch and TelepearlClutch.Enabled and not usedPearl and getItem('telepearl') ~= nil
+        local toolUsable = ground and shouldToolClutch(root, humanoid, groundDistance) and true or false
+
+        if clutchMethod == 'blocks' and not blocksUsable then clutchMethod = nil end
+        if clutchMethod == 'pearl' and not pearlUsable then clutchMethod = nil end
+        if clutchMethod == 'tool' and not toolUsable then clutchMethod = nil end
+        if not clutchMethod then
+            clutchMethod = blocksUsable and 'blocks' or pearlUsable and 'pearl' or toolUsable and 'tool' or nil
+        end
+
+        if root.AssemblyLinearVelocity.Y > -60 then return end
+
+        if clutchMethod == 'blocks' then
             if blockClutch(root) then
                 clutchBusyUntil = tick() + 0.08
                 return true
             end
-        end
-
-        if root.AssemblyLinearVelocity.Y > -(MinVelocity and MinVelocity.Value or 60) then return end
-
-        if TelepearlClutch and TelepearlClutch.Enabled and telepearlClutch(root, ground, groundDistance) then
-            clutchBusyUntil = tick() + 0.65
-            return true
-        end
-
-        if ground and shouldToolClutch(root, humanoid, groundDistance) and toolClutch(root) then
-            clutchBusyUntil = tick() + 0.65
-            return true
+        elseif clutchMethod == 'pearl' then
+            if telepearlClutch(root, ground, groundDistance) then
+                clutchBusyUntil = tick() + 0.65
+                return true
+            end
+        elseif clutchMethod == 'tool' then
+            if toolClutch(root) then
+                clutchBusyUntil = tick() + 0.65
+                return true
+            end
         end
     end
 
@@ -534,7 +560,6 @@ run(function()
     local function setSettingsVisible()
         local legit = Mode and Mode.Value == 'Legit'
         if CvDamage and CvDamage.Object then CvDamage.Object.Visible = not legit end
-        if MinVelocity and MinVelocity.Object then MinVelocity.Object.Visible = legit end
         if HealthCheck and HealthCheck.Object then HealthCheck.Object.Visible = legit end
         for _, option in {BlockClutch, TelepearlClutch, DaoClutch, JadeHammerClutch, VoidAxeClutch, Zephyr} do
             if option and option.Object then option.Object.Visible = legit end
@@ -581,6 +606,7 @@ run(function()
                 lastZephyrJump = 0
                 zephyrFired = false
                 fallAnchorY = nil
+                clutchMethod = nil
                 trackedFall = 0
             end
         end,
@@ -605,13 +631,6 @@ run(function()
         Default = 0,
         Suffix = '%',
         Tooltip = 'How much % of fall damage to take'
-    })
-    MinVelocity = NoFall:CreateSlider({
-        Name = 'Minimum Velocity',
-        Min = 35,
-        Max = 120,
-        Default = 60,
-        Tooltip = 'How fast the drop has to be before Legit uses a clutch'
     })
     BlockClutch = NoFall:CreateToggle({
         Name = 'Blocks',
